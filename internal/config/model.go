@@ -19,16 +19,37 @@ import (
 // keys render from constants (render.go) until the model grows to cover them
 // before the live node is cut over to store-rendered files.
 type Model struct {
-	General  General    `json:"general"`
-	Modem    Modem      `json:"modem"`
-	DMR      DMR        `json:"dmr"`
-	DMRNet   DMRNet     `json:"dmrnet"`
-	Modes    Modes      `json:"modes"`
-	Networks []Network  `json:"networks"`
-	YSF      YSF        `json:"ysf"`
-	YSFGW    YSFGateway `json:"ysfgw"`
-	P25      P25        `json:"p25"`
-	P25GW    P25Gateway `json:"p25gw"`
+	General  General     `json:"general"`
+	Modem    Modem       `json:"modem"`
+	DMR      DMR         `json:"dmr"`
+	DMRNet   DMRNet      `json:"dmrnet"`
+	Modes    Modes       `json:"modes"`
+	Networks []Network   `json:"networks"`
+	YSF      YSF         `json:"ysf"`
+	YSFGW    YSFGateway  `json:"ysfgw"`
+	P25      P25         `json:"p25"`
+	P25GW    P25Gateway  `json:"p25gw"`
+	NXDN     NXDN        `json:"nxdn"`
+	NXDNGW   NXDNGateway `json:"nxdngw"`
+}
+
+// NXDN holds MMDVM-Host's [NXDN] mode parameters (its enable flag is in Modes,
+// like the other modes). Unlike P25's NAC (hex), RAN is a plain decimal Radio
+// Access Number, and NXDN has no OverrideUIDCheck.
+type NXDN struct {
+	RAN           string `json:"ran"`            // Radio Access Number, decimal 0..63 (1 = the common default)
+	SelfOnly      bool   `json:"self_only"`      // accept only this station's own ID
+	RemoteGateway bool   `json:"remote_gateway"` // hand network control to a remote gateway (off for a local NXDNGateway)
+	TXHang        string `json:"tx_hang"`
+}
+
+// NXDNGateway is the NXDN gateway (NXDNGateway.ini): which reflector talkgroups
+// to link on startup, voice announcements, and the RF/net hang timers.
+type NXDNGateway struct {
+	Static      string `json:"static"`        // comma-separated startup/static TGs, e.g. "10200,65000"
+	Voice       bool   `json:"voice"`         // spoken link-status announcements
+	RFHangTime  string `json:"rf_hang_time"`  // seconds RF holds a talkgroup
+	NetHangTime string `json:"net_hang_time"` // seconds a network talkgroup is held
 }
 
 // P25 holds MMDVM-Host's [P25] mode parameters (its enable flag is in Modes,
@@ -162,6 +183,8 @@ func (m *Model) sections() map[string]any {
 		"ysfgw":    &m.YSFGW,
 		"p25":      &m.P25,
 		"p25gw":    &m.P25GW,
+		"nxdn":     &m.NXDN,
+		"nxdngw":   &m.NXDNGW,
 	}
 }
 

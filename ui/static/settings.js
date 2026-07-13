@@ -10,6 +10,7 @@ const TABS = [
   { id: "dmr",          tag: "DM", label: "DMR",          sub: "Master & Slots",       crumb: "MODES / DMR",             title: "DMR Settings",          desc: "Color code and per-slot behaviour for Digital Mobile Radio." },
   { id: "ysf",          tag: "YS", label: "System Fusion", sub: "YSF / FCS reflectors", crumb: "MODES / SYSTEM FUSION",   title: "System Fusion (YSF)",   desc: "C4FM gateway: startup reflector or FCS room, Wires-X, and which reflector networks are on." },
   { id: "p25",          tag: "25", label: "P25",          sub: "NAC & Talkgroups",     crumb: "MODES / P25",             title: "P25 (Phase 1)",         desc: "APCO P25 gateway: network access code, startup talkgroups, and gateway behaviour." },
+  { id: "nxdn",         tag: "NX", label: "NXDN",         sub: "RAN & Talkgroups",     crumb: "MODES / NXDN",            title: "NXDN",                  desc: "NXDN gateway: radio access number, startup talkgroups, and gateway behaviour." },
   { id: "modes",        tag: "MD", label: "Modes",        sub: "Digital Modes",        crumb: "MODES / DIGITAL",         title: "Digital Mode Control",  desc: "Which digital voice / data modes MMDVM-Host handles. Toggling one restarts the stack on Apply." },
   { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Bridges",   crumb: "BRIDGES / GATEWAYS",      title: "Cross-Mode Gateways",   desc: "Transcoding bridges between digital voice modes." },
   { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "SYSTEM / NETWORK",        title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
@@ -28,6 +29,7 @@ let dirty = new Set();      // sections with unsaved changes
 let applying = false;
 let ysfRefs = [];           // cached YSF reflector list for the startup picker
 let p25Refs = [];           // cached P25 talkgroup list for the startup-TG picker
+let nxdnRefs = [];          // cached NXDN talkgroup list for the startup-TG picker
 
 const el = (t, cls, html) => { const e = document.createElement(t); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -49,6 +51,8 @@ function buildEdit(c) {
     ysfgw: ysfgwFrom(c.ysf || {}),
     p25: p25From(c.p25 || {}),
     p25gw: p25gwFrom(c.p25 || {}),
+    nxdn: nxdnFrom(c.nxdn || {}),
+    nxdngw: nxdngwFrom(c.nxdn || {}),
   };
   dirty = new Set();
   refreshActions();
@@ -75,6 +79,21 @@ function p25gwFrom(p) {
   return {
     static: p.static || "", voice: p.voice !== false,
     rf_hang_time: p.rf_hang_time || "120", net_hang_time: p.net_hang_time || "60",
+  };
+}
+
+// The NXDN view is flat too; it splits back into "nxdn" (MMDVM-Host [NXDN]
+// params) and "nxdngw" (NXDNGateway.ini). RAN is a decimal Radio Access Number,
+// unlike P25's hex NAC.
+function nxdnFrom(n) {
+  return {
+    ran: n.ran || "1", self_only: !!n.self_only, remote_gateway: !!n.remote_gateway,
+  };
+}
+function nxdngwFrom(n) {
+  return {
+    static: n.static || "", voice: n.voice !== false,
+    rf_hang_time: n.rf_hang_time || "120", net_hang_time: n.net_hang_time || "60",
   };
 }
 
@@ -239,6 +258,26 @@ function panelP25() {
   return `<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
 }
 
+function panelNXDN() {
+  // Startup-TG picker: a datalist over the fetched talkgroup list. Static is a
+  // comma-separated list, so the datalist is a reference the user types from.
+  const opts = nxdnRefs.map((r) => `<option value="${esc(r.designator)}">${esc([r.name, r.country, r.sponsor].filter(Boolean).join(" · "))}</option>`).join("");
+  const stat = (edit.nxdngw || {}).static || "";
+  const gateway = card("GATEWAY",
+    toggle("modes", "nxdn", "NXDN", "ENABLED", "DISABLED") +
+    input("nxdn", "ran", { label: "RAN", accent: true }) +
+    row("Startup talkgroups", `<input data-sec="nxdngw" data-key="static" list="nxdn-refs" value="${esc(stat)}" placeholder="comma-separated TGs, e.g. 10200,65000"><datalist id="nxdn-refs">${opts}</datalist>`) +
+    toggleRow("nxdngw", "voice", "Voice announcements"));
+  const behaviour = card("BEHAVIOUR",
+    toggleRow("nxdn", "self_only", "Self only (accept only my ID)") +
+    toggleRow("nxdn", "remote_gateway", "Remote gateway (advanced — leave off for local control)"));
+  const timers = card("HANG TIMERS",
+    input("nxdngw", "rf_hang_time", { label: "RF hang", unit: "sec" }) +
+    input("nxdngw", "net_hang_time", { label: "Network hang", unit: "sec" }));
+  const hint = nxdnRefs.length ? "" : note("Talkgroup list not loaded yet (fetched from the NXDN register on a schedule). You can still type talkgroup numbers above.");
+  return `<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
+}
+
 function renderPanel() {
   const c = state.config || {};
   const box = document.getElementById("panels");
@@ -247,6 +286,7 @@ function renderPanel() {
     case "dmr":          box.innerHTML = panelDmr(); break;
     case "ysf":          box.innerHTML = panelYSF(); break;
     case "p25":          box.innerHTML = panelP25(); break;
+    case "nxdn":         box.innerHTML = panelNXDN(); break;
     case "modes":        box.innerHTML = panelModes(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
@@ -394,6 +434,10 @@ async function load() {
   try {
     p25Refs = await fetch("/api/p25/reflectors").then((r) => r.json());
     if (state.tab === "p25") renderPanel();
+  } catch { /* offline — the picker still accepts a typed TG */ }
+  try {
+    nxdnRefs = await fetch("/api/nxdn/reflectors").then((r) => r.json());
+    if (state.tab === "nxdn") renderPanel();
   } catch { /* offline — the picker still accepts a typed TG */ }
 }
 

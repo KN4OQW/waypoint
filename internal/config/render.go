@@ -10,7 +10,7 @@ import (
 // WriteFiles renders the model and writes both INI files atomically (write to a
 // temp file in the same directory, then rename). A crash mid-apply therefore
 // never leaves a daemon reading a half-written config.
-func (m *Model) WriteFiles(mmdvmPath, dmrgatewayPath, ysfgatewayPath, p25gatewayPath string) error {
+func (m *Model) WriteFiles(mmdvmPath, dmrgatewayPath, ysfgatewayPath, p25gatewayPath, nxdngatewayPath string) error {
 	if err := writeAtomic(mmdvmPath, m.RenderMMDVM()); err != nil {
 		return err
 	}
@@ -20,7 +20,10 @@ func (m *Model) WriteFiles(mmdvmPath, dmrgatewayPath, ysfgatewayPath, p25gateway
 	if err := writeAtomic(ysfgatewayPath, m.RenderYSFGateway()); err != nil {
 		return err
 	}
-	return writeAtomic(p25gatewayPath, m.RenderP25Gateway())
+	if err := writeAtomic(p25gatewayPath, m.RenderP25Gateway()); err != nil {
+		return err
+	}
+	return writeAtomic(nxdngatewayPath, m.RenderNXDNGateway())
 }
 
 func writeAtomic(path, content string) error {
@@ -128,7 +131,13 @@ func (m *Model) RenderMMDVM() string {
 		kb("RemoteGateway", m.P25.RemoteGateway),
 		kv("TXHang", def(m.P25.TXHang, "5")),
 	)
-	modeSect(&b, "NXDN", m.Modes.NXDN)
+	sect(&b, "NXDN",
+		kb("Enable", m.Modes.NXDN),
+		kv("RAN", def(m.NXDN.RAN, "1")),
+		kb("SelfOnly", m.NXDN.SelfOnly),
+		kb("RemoteGateway", m.NXDN.RemoteGateway),
+		kv("TXHang", def(m.NXDN.TXHang, "5")),
+	)
 	modeSect(&b, "M17", m.Modes.M17)
 	modeSect(&b, "POCSAG", m.Modes.POCSAG)
 	modeSect(&b, "FM", m.Modes.FM)
@@ -161,6 +170,17 @@ func (m *Model) RenderMMDVM() string {
 		kv("GatewayPort", p25MMDVMGatewayPort),
 		kv("Debug", "0"),
 	)
+	// The NXDN network talks to NXDNGateway on the fixed 14021/14020 pair.
+	// Protocol=Icom is the MMDVM transport (NXDNGateway's RptProtocol matches).
+	sect(&b, "NXDN Network",
+		kb("Enable", m.Modes.NXDN),
+		kv("Protocol", "Icom"),
+		kv("LocalAddress", "127.0.0.1"),
+		kv("LocalPort", nxdnMMDVMLocalPort),
+		kv("GatewayAddress", "127.0.0.1"),
+		kv("GatewayPort", nxdnMMDVMGatewayPort),
+		kv("Debug", "0"),
+	)
 	return b.String()
 }
 
@@ -171,6 +191,9 @@ const (
 
 	p25MMDVMLocalPort   = "32010" // MMDVM-Host listens here; P25Gateway RptPort
 	p25MMDVMGatewayPort = "42020" // P25Gateway listens here; MMDVM-Host sends here
+
+	nxdnMMDVMLocalPort   = "14021" // MMDVM-Host listens here; NXDNGateway RptPort
+	nxdnMMDVMGatewayPort = "14020" // NXDNGateway listens here; MMDVM-Host sends here
 )
 
 // RenderYSFGateway renders a complete YSFGateway.ini from the model. Callsign,
@@ -302,6 +325,82 @@ func (m *Model) RenderP25Gateway() string {
 		kv("RFHangTime", def(m.P25GW.RFHangTime, "120")),
 		kv("NetHangTime", def(m.P25GW.NetHangTime, "60")),
 		kv("Debug", "0"),
+	)
+	sect(&b, "Remote Commands",
+		kv("Enable", "0"),
+	)
+	return b.String()
+}
+
+// Managed paths for NXDNGateway. Like P25Gateway, NXDNGateway parses NXDNHosts
+// as JSON (Reflectors.cpp parseJSON reads data["reflectors"], each with a
+// designator/port/ipv4). Audio holds the spoken announcement clips; a missing
+// directory only disables voice (NXDNGateway nulls it and continues).
+const (
+	nxdnHostsPath = "/home/pi-star/waypoint/etc/NXDNHosts.json"
+	nxdnAudioDir  = "/home/pi-star/waypoint/etc/NXDNAudio"
+)
+
+// RenderNXDNGateway renders a complete NXDNGateway.ini from the model. Callsign
+// comes from the shared station config; the rest from the NXDN mode/gateway
+// sections. The reflector hostlist is a managed JSON file on disk. RptProtocol
+// is Icom, the MMDVM transport (mirrors MMDVM-Host's [NXDN Network] Protocol).
+func (m *Model) RenderNXDNGateway() string {
+	var b strings.Builder
+	b.WriteString(generatedHeader)
+
+	sect(&b, "General",
+		kv("Callsign", m.General.Callsign),
+		kv("Suffix", "NXDN"),
+		kv("RptProtocol", "Icom"),
+		kv("RptAddress", "127.0.0.1"),
+		kv("RptPort", nxdnMMDVMLocalPort),
+		kv("LocalPort", nxdnMMDVMGatewayPort),
+		kv("Debug", "0"),
+		kv("Daemon", "0"),
+	)
+	// NXDN callsign lookup shares the RadioID DMR ID space; NXDNLookup's parser
+	// splits on comma/tab, so it reads the tab-separated DMRIds.dat directly.
+	sect(&b, "Id Lookup",
+		kv("Name", "/usr/local/etc/DMRIds.dat"),
+		kv("Time", "24"),
+	)
+	sect(&b, "Voice",
+		kb("Enabled", m.NXDNGW.Voice),
+		kv("Language", "en_GB"),
+		kv("Directory", nxdnAudioDir),
+	)
+	sect(&b, "Log",
+		kv("MQTTLevel", "1"),
+		kv("DisplayLevel", "0"),
+	)
+	sect(&b, "MQTT",
+		kv("Address", "127.0.0.1"),
+		kv("Port", "1883"),
+		kv("Keepalive", "60"),
+		kv("Auth", "0"),
+		kv("Name", "nxdn-gateway"),
+	)
+	// Parrot (local echo, TG10) runs on 42021; NXDN2DMR is omitted so no dead
+	// cross-mode TG is advertised (Reflectors.cpp only adds TG20 when its port
+	// is set). Static holds any startup/auto-link TGs (empty by default).
+	sect(&b, "Network",
+		kv("Port", "14050"),
+		kv("HostsFile1", nxdnHostsPath),
+		// HostsFile2 is the optional local/private TG list. We keep it as an empty
+		// source (/dev/null) so NXDNGateway's unconditional parseHosts() opens
+		// cleanly instead of logging "Unable to open the Hosts file".
+		kv("HostsFile2", "/dev/null"),
+		kv("ReloadTime", "60"),
+		kv("ParrotAddress", "127.0.0.1"),
+		kv("ParrotPort", "42021"),
+		kv("Static", m.NXDNGW.Static),
+		kv("RFHangTime", def(m.NXDNGW.RFHangTime, "120")),
+		kv("NetHangTime", def(m.NXDNGW.NetHangTime, "60")),
+		kv("Debug", "0"),
+	)
+	sect(&b, "GPSD",
+		kv("Enable", "0"),
 	)
 	sect(&b, "Remote Commands",
 		kv("Enable", "0"),

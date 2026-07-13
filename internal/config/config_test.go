@@ -26,15 +26,17 @@ func fixture() *Model {
 		Modem:   Modem{Port: "/dev/ttyAMA0", UARTSpeed: "115200", RXFreqHz: "433900000", TXFreqHz: "438900000", RXOffset: "75", TXOffset: "-40", TXInvert: true, RXInvert: false, PTTInvert: false, RXLevel: "50", TXLevel: "50"},
 		DMR:     DMR{ColorCode: "1", ID: "3180202", EmbeddedLCOnly: true, SelfOnly: false, DumpTAData: true},
 		DMRNet:  DMRNet{LocalPort: "62032", GatewayAddress: "127.0.0.1", GatewayPort: "62031", Slot1: true, Slot2: true, Jitter: "360"},
-		Modes:   Modes{DStar: false, DMR: true, YSF: true, P25: false, NXDN: false, M17: false, POCSAG: false, FM: false},
+		Modes:   Modes{DStar: false, DMR: true, YSF: true, P25: false, NXDN: true, M17: false, POCSAG: false, FM: false},
 		Networks: []Network{
 			{Name: "BM_3102_United_States", Address: "3102.master.brandmeister.network", Port: "62031", Password: "s3cr3t", Enabled: true, Rewrites: []string{"PCRewrite0=2,94000,2,4000,1001", "TGRewrite0=2,9,2,9,1"}},
 			{Name: "TGIF_Network", Address: "tgif.network", Port: "62031", Password: "hunter2", Enabled: false, Rewrites: nil},
 		},
-		YSF:   YSF{LowDeviation: true, SelfOnly: false, TXHang: "6", RemoteGateway: false, ModeHang: "20"},
-		YSFGW: YSFGateway{Suffix: "RPT", WiresXPassthrough: true, WiresXMakeUpper: true, Startup: "FCS00290", Reconnect: true, Revert: true, InactivityTimeout: "30", YSFNetwork: true, FCSNetwork: true, APRS: false},
-		P25:   P25{NAC: "293", SelfOnly: true, OverrideUIDCheck: false, RemoteGateway: false, TXHang: "5"},
-		P25GW: P25Gateway{Static: "10100,10200", Voice: true, RFHangTime: "120", NetHangTime: "60"},
+		YSF:    YSF{LowDeviation: true, SelfOnly: false, TXHang: "6", RemoteGateway: false, ModeHang: "20"},
+		YSFGW:  YSFGateway{Suffix: "RPT", WiresXPassthrough: true, WiresXMakeUpper: true, Startup: "FCS00290", Reconnect: true, Revert: true, InactivityTimeout: "30", YSFNetwork: true, FCSNetwork: true, APRS: false},
+		P25:    P25{NAC: "293", SelfOnly: true, OverrideUIDCheck: false, RemoteGateway: false, TXHang: "5"},
+		P25GW:  P25Gateway{Static: "10100,10200", Voice: true, RFHangTime: "120", NetHangTime: "60"},
+		NXDN:   NXDN{RAN: "1", SelfOnly: true, RemoteGateway: false, TXHang: "5"},
+		NXDNGW: NXDNGateway{Static: "10200,65000", Voice: true, RFHangTime: "120", NetHangTime: "60"},
 	}
 }
 
@@ -57,7 +59,11 @@ func TestLosslessRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := fromINI(mm, dg, yg, pg)
+	ng, err := ParseINI(strings.NewReader(m.RenderNXDNGateway()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := fromINI(mm, dg, yg, pg, ng)
 	if !reflect.DeepEqual(m, got) {
 		t.Fatalf("round-trip lost data:\n want %+v\n  got %+v", m, got)
 	}

@@ -19,16 +19,17 @@ func Import(mmdvmPath, dmrgatewayPath string) (*Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", dmrgatewayPath, err)
 	}
-	// No YSFGateway/P25Gateway.ini exists at seed time (waypointd creates them);
-	// those sections get defaults. yg/pg are non-nil only in the round-trip harness.
-	return fromINI(mm, dg, nil, nil), nil
+	// No YSFGateway/P25Gateway/NXDNGateway.ini exists at seed time (waypointd
+	// creates them); those sections get defaults. yg/pg/ng are non-nil only in
+	// the round-trip harness.
+	return fromINI(mm, dg, nil, nil, nil), nil
 }
 
 // fromINI builds a Model from already-parsed INIs. Shared by Import (from disk)
 // and the round-trip harness (render → parse → fromINI, all in memory). The
-// gateway INIs yg (YSFGateway) and pg (P25Gateway) may be nil, in which case
-// their sections take their defaults.
-func fromINI(mm, dg, yg, pg *INI) *Model {
+// gateway INIs yg (YSFGateway), pg (P25Gateway) and ng (NXDNGateway) may be nil,
+// in which case their sections take their defaults.
+func fromINI(mm, dg, yg, pg, ng *INI) *Model {
 	m := &Model{
 		General: General{
 			Callsign:    mm.Get("General", "Callsign"),
@@ -96,6 +97,13 @@ func fromINI(mm, dg, yg, pg *INI) *Model {
 			TXHang:           orDefault(mm.Get("P25", "TXHang"), "5"),
 		},
 		P25GW: p25GatewayFromINI(pg),
+		NXDN: NXDN{
+			RAN:           orDefault(mm.Get("NXDN", "RAN"), "1"),
+			SelfOnly:      mm.Bool("NXDN", "SelfOnly"),
+			RemoteGateway: mm.Bool("NXDN", "RemoteGateway"),
+			TXHang:        orDefault(mm.Get("NXDN", "TXHang"), "5"),
+		},
+		NXDNGW: nxdnGatewayFromINI(ng),
 	}
 	return m
 }
@@ -161,6 +169,37 @@ func p25GatewayFromINI(pg *INI) P25Gateway {
 		Voice:       pg.Bool("Voice", "Enabled"),
 		RFHangTime:  orDefault(pg.Get("Network", "RFHangTime"), "120"),
 		NetHangTime: orDefault(pg.Get("Network", "NetHangTime"), "60"),
+	}
+}
+
+// DefaultNXDN is the MMDVM-Host [NXDN] default: RAN 1 (decimal Radio Access
+// Number), TXHang 5, and every restrictive/advanced flag off — matching
+// MMDVM-Host's own member initializers (Conf.cpp). Used to backfill a store
+// seeded before NXDN.
+func DefaultNXDN() NXDN {
+	return NXDN{RAN: "1", SelfOnly: false, RemoteGateway: false, TXHang: "5"}
+}
+
+// DefaultNXDNGateway is the sane hotspot default: no startup/static TG (don't
+// auto-link the user anywhere on boot), voice announcements on, upstream hang
+// timers. Used to seed a fresh store and to backfill the section on a store
+// created before NXDN existed.
+func DefaultNXDNGateway() NXDNGateway {
+	return NXDNGateway{
+		Static: "", Voice: true, RFHangTime: "120", NetHangTime: "60",
+	}
+}
+
+// nxdnGatewayFromINI reads an NXDNGateway.ini, or returns the defaults when ng is nil.
+func nxdnGatewayFromINI(ng *INI) NXDNGateway {
+	if ng == nil {
+		return DefaultNXDNGateway()
+	}
+	return NXDNGateway{
+		Static:      ng.Get("Network", "Static"),
+		Voice:       ng.Bool("Voice", "Enabled"),
+		RFHangTime:  orDefault(ng.Get("Network", "RFHangTime"), "120"),
+		NetHangTime: orDefault(ng.Get("Network", "NetHangTime"), "60"),
 	}
 }
 
