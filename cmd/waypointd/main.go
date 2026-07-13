@@ -64,6 +64,15 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Networks are an array with secrets: use the password-preserving merge.
+	if section == "networks" {
+		if err := config.SetNetworks(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	known, err := config.SetSection(s.store, section, body, "api")
 	if !known {
 		http.Error(w, "unknown config section: "+section, http.StatusNotFound)

@@ -135,6 +135,38 @@ func TestSetSectionRejectsUnknownField(t *testing.T) {
 	}
 }
 
+// Editing networks without resupplying passwords keeps the stored ones; a new
+// password replaces; a dropped network is removed.
+func TestSetNetworksPreservesPasswords(t *testing.T) {
+	s := memStore(t)
+	_ = fixture().Save(s, "seed") // BM (pw s3cr3t) + TGIF (pw hunter2)
+
+	// UI edits BM's port, supplies no password, and drops TGIF entirely.
+	body := `[{"name":"BM_3102_United_States","address":"3102.master.brandmeister.network","port":"62035","password":"","enabled":true,"rewrites":["TGRewrite0=2,9,2,9,1"]}]`
+	if err := SetNetworks(s, []byte(body), "test"); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := Load(s)
+	if len(m.Networks) != 1 {
+		t.Fatalf("want 1 network after drop, got %d", len(m.Networks))
+	}
+	n := m.Networks[0]
+	if n.Port != "62035" {
+		t.Fatalf("port not updated: %q", n.Port)
+	}
+	if n.Password != "s3cr3t" {
+		t.Fatalf("blank password should have kept the stored one, got %q", n.Password)
+	}
+
+	// Now supply a new password — it replaces.
+	body2 := `[{"name":"BM_3102_United_States","address":"a","port":"1","password":"newpw","enabled":true,"rewrites":[]}]`
+	_ = SetNetworks(s, []byte(body2), "test")
+	m2, _ := Load(s)
+	if m2.Networks[0].Password != "newpw" {
+		t.Fatalf("new password should replace, got %q", m2.Networks[0].Password)
+	}
+}
+
 func TestViewRedactsPasswords(t *testing.T) {
 	v := fixture().View("/tmp/config.db")
 	blob := ""

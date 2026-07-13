@@ -40,9 +40,17 @@ function buildEdit(c) {
     dmr:     { color_code: d.color_code, id: d.id, embedded_lc_only: !!d.embedded_lc_only },
     dmrnet:  { slot1: !!d.slot1, slot2: !!d.slot2 },
     modes:   Object.fromEntries((c.modes || []).map((m) => [m.key, !!m.enabled])),
+    // password starts blank (blank = keep the stored one); has_password drives the placeholder.
+    networks: (c.networks || []).map((n) => ({ name: n.name, address: n.address, port: n.port, enabled: !!n.enabled, password: "", rewrites: (n.rewrites || []).slice(), has_password: !!n.has_password })),
   };
   dirty = new Set();
   refreshActions();
+}
+
+// cleanNet strips UI-only fields before sending to the store (which rejects
+// unknown fields). A blank password means "keep the stored one".
+function cleanNet(n) {
+  return { name: n.name, address: n.address, port: n.port, enabled: !!n.enabled, password: n.password || "", rewrites: n.rewrites || [] };
 }
 
 function setField(sec, key, val) {
@@ -126,16 +134,23 @@ function panelModes() {
   return `<div class="modes-grid">${cards}</div>`;
 }
 
-function panelBrandmeister(c) {
-  const nets = (c || {}).networks || [];
-  if (!nets.length) return note("No DMR networks found.");
-  const cards = nets.map((n) => card(n.name,
-    `<div class="row"><label>State</label><span class="pill ${n.enabled ? "on" : "off"}">${n.enabled ? "ENABLED" : "DISABLED"}</span></div>` +
-    `<div class="row"><label>Server Address</label><input value="${esc(n.address)}" readonly></div>` +
-    `<div class="row"><label>Port</label><input value="${esc(n.port)}" readonly></div>` +
-    `<div class="row"><label>Password</label><input value="${n.has_password ? "••••••••••••" : ""}" readonly style="letter-spacing:2px;"></div>`)).join("");
-  return `<div class="grid2">${cards}</div>` +
-    note("Editing DMR networks (add/remove, address, password, rewrites) is the next slice — arrays need a dedicated editor. Scalar settings above are editable now.");
+function panelBrandmeister() {
+  const nets = edit.networks || [];
+  const cards = nets.map((n, i) => `
+    <div class="card">
+      <div class="card-head">
+        <span class="sq"></span>
+        <input class="netname" data-net="${i}" data-nkey="name" value="${esc(n.name)}" placeholder="Network name">
+        <span class="pill ${n.enabled ? "on" : "off"}" data-nettoggle="${i}" style="cursor:pointer;">${n.enabled ? "ENABLED" : "DISABLED"}</span>
+        <button class="netdel" data-netdel="${i}" title="Remove network">✕</button>
+      </div>
+      ${row("Server Address", `<input data-net="${i}" data-nkey="address" value="${esc(n.address)}">`)}
+      ${row("Port", `<input data-net="${i}" data-nkey="port" value="${esc(n.port)}">`)}
+      ${row("Password", `<input data-net="${i}" data-nkey="password" type="password" value="${esc(n.password || "")}" placeholder="${n.has_password ? "•••••• unchanged" : "set password"}">`)}
+      ${row("Rewrites", `<textarea class="rewrites" data-net="${i}" data-nkey="rewrites" rows="4" placeholder="TGRewrite0=2,9,2,9,1">${esc((n.rewrites || []).join("\n"))}</textarea>`)}
+    </div>`).join("");
+  const empty = nets.length ? "" : note("No DMR networks. Add one to bridge this hotspot to BrandMeister, TGIF, FreeDMR, or an HBLink server.");
+  return `<div class="grid2">${cards}</div>${empty}<button class="btn ghost" id="net-add" style="margin-top:16px;">+ ADD NETWORK</button>`;
 }
 
 function panelExpert(c, h) {
@@ -156,7 +171,7 @@ function renderPanel() {
     case "general":      box.innerHTML = panelGeneral(); break;
     case "dmr":          box.innerHTML = panelDmr(); break;
     case "modes":        box.innerHTML = panelModes(); break;
-    case "brandmeister": box.innerHTML = panelBrandmeister(c); break;
+    case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
     case "gateways":     box.innerHTML = panelPending("Cross-mode gateway"); break;
     case "network":      box.innerHTML = panelPending("Network & Wi-Fi"); break;
@@ -198,7 +213,8 @@ async function apply() {
   refreshActions();
   try {
     for (const sec of dirty) {
-      const r = await fetch("/api/config/" + sec, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(edit[sec]) });
+      const payload = sec === "networks" ? edit.networks.map(cleanNet) : edit[sec];
+      const r = await fetch("/api/config/" + sec, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!r.ok) throw new Error(sec + ": " + (await r.text()).trim());
     }
     const r = await fetch("/api/config/apply", { method: "POST" });
@@ -236,8 +252,10 @@ function renderNav() {
 }
 
 function selectTab(id) {
+  if (!TABS.some((x) => x.id === id)) id = TABS[0].id;
   state.tab = id;
-  const t = TABS.find((x) => x.id === id) || TABS[0];
+  const t = TABS.find((x) => x.id === id);
+  if (location.hash !== "#" + id) history.replaceState(null, "", "#" + id);
   document.getElementById("crumb").textContent = t.crumb;
   document.getElementById("title").textContent = t.title;
   document.getElementById("desc").textContent = t.desc;
@@ -296,22 +314,43 @@ async function load() {
 // text edits update the working copy; toggles flip a bool and re-render.
 document.getElementById("panels").addEventListener("input", (e) => {
   const t = e.target;
-  if (!t.dataset || !t.dataset.sec) return;
-  let v = t.value;
-  if (t.dataset.kind === "mhz") { const f = parseFloat(v); v = isNaN(f) ? "" : String(Math.round(f * 1e6)); }
-  setField(t.dataset.sec, t.dataset.key, v);
+  if (!t.dataset) return;
+  if (t.dataset.sec) {
+    let v = t.value;
+    if (t.dataset.kind === "mhz") { const f = parseFloat(v); v = isNaN(f) ? "" : String(Math.round(f * 1e6)); }
+    setField(t.dataset.sec, t.dataset.key, v);
+    return;
+  }
+  if (t.dataset.net != null) {
+    const i = +t.dataset.net, key = t.dataset.nkey;
+    let v = t.value;
+    if (key === "rewrites") v = v.split("\n").map((s) => s.trim()).filter(Boolean);
+    edit.networks[i][key] = v;
+    dirty.add("networks");
+    refreshActions();
+  }
 });
 document.getElementById("panels").addEventListener("click", (e) => {
   const tg = e.target.closest("[data-toggle]");
-  if (!tg) return;
-  const [sec, key] = tg.dataset.toggle.split(".");
-  setField(sec, key, !(edit[sec] || {})[key]);
-  renderPanel();
+  if (tg) {
+    const [sec, key] = tg.dataset.toggle.split(".");
+    setField(sec, key, !(edit[sec] || {})[key]);
+    renderPanel();
+    return;
+  }
+  const nt = e.target.closest("[data-nettoggle]");
+  if (nt) { const i = +nt.dataset.nettoggle; edit.networks[i].enabled = !edit.networks[i].enabled; dirty.add("networks"); renderPanel(); refreshActions(); return; }
+  const nd = e.target.closest("[data-netdel]");
+  if (nd) { edit.networks.splice(+nd.dataset.netdel, 1); dirty.add("networks"); renderPanel(); refreshActions(); return; }
+  if (e.target.id === "net-add") {
+    edit.networks.push({ name: "New Network", address: "", port: "62031", enabled: false, password: "", rewrites: [], has_password: false });
+    dirty.add("networks"); renderPanel(); refreshActions();
+  }
 });
 document.getElementById("btn-apply").onclick = apply;
 document.getElementById("btn-reset").onclick = reset;
 
 renderNav();
 renderThemes();
-selectTab("general");
+selectTab((location.hash || "").slice(1) || "general");
 load();

@@ -46,11 +46,12 @@ type ViewMode struct {
 }
 
 type ViewNetwork struct {
-	Name        string `json:"name"`
-	Address     string `json:"address"`
-	Port        string `json:"port"`
-	Enabled     bool   `json:"enabled"`
-	HasPassword bool   `json:"has_password"`
+	Name        string   `json:"name"`
+	Address     string   `json:"address"`
+	Port        string   `json:"port"`
+	Enabled     bool     `json:"enabled"`
+	HasPassword bool     `json:"has_password"`
+	Rewrites    []string `json:"rewrites"` // not secret; editable
 }
 
 // modeDisplay maps a mode key to its display name and its Modes-struct value.
@@ -105,6 +106,7 @@ func (m *Model) View(storePath string) *View {
 			Port:        n.Port,
 			Enabled:     n.Enabled,
 			HasPassword: n.Password != "",
+			Rewrites:    n.Rewrites,
 		})
 	}
 	return v

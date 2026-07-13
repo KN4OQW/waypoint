@@ -135,6 +135,13 @@
   .mode-foot .s { font-family: var(--mono); font-size: 10px; letter-spacing: 1.5px; color: var(--dim); }
   .mode-card.on .mode-foot .s { color: var(--accent); }
 
+  .netname { flex: 1; background: transparent; border: none; border-bottom: 1px solid transparent; color: #aeb7c4; font-family: var(--mono); font-size: 11px; letter-spacing: 2px; padding: 2px 0; }
+  .netname:hover { border-bottom-color: var(--field-line); }
+  .netname:focus { border-bottom-color: var(--accent); box-shadow: none; }
+  .netdel { background: transparent; border: 1px solid #2a3140; color: var(--dim); border-radius: 6px; width: 26px; height: 26px; cursor: pointer; font-size: 13px; flex: none; }
+  .netdel:hover { color: var(--bad); border-color: var(--bad); }
+  .rewrites { width: 100%; background: var(--field); border: 1px solid var(--field-line); border-radius: 6px; padding: 9px 11px; color: var(--ink); font-size: 12px; line-height: 1.6; resize: vertical; }
+  .row textarea { grid-column: 2; }
   .note { background: var(--panel); border: 1px dashed var(--panel-line); border-radius: 11px; padding: 22px; color: var(--muted); font-size: 13px; line-height: 1.6; }
   .note b { color: var(--ink-body); }
   .hide { display: none; }
