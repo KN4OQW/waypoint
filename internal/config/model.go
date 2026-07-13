@@ -192,6 +192,7 @@ type DMR struct {
 	EmbeddedLCOnly bool   `json:"embedded_lc_only"`
 	SelfOnly       bool   `json:"self_only"`
 	DumpTAData     bool   `json:"dump_ta_data"`
+	Beacons        bool   `json:"beacons"` // DMR Roaming Beacon (MMDVM-Host [DMR Network] Beacons)
 }
 
 // DMRNet is MMDVM-Host's link to the local DMRGateway.
@@ -224,12 +225,12 @@ type NetworkType string
 
 const (
 	NetBrandmeister NetworkType = "brandmeister" // prefix 2 (when not primary)
-	NetDMRPlus      NetworkType = "dmrplus"       // DMR+/FreeDMR/HB-Link, prefix 8
-	NetDMR2YSF      NetworkType = "dmr2ysf"       // DMR2YSF/DMR2NXDN, prefix 7
-	NetTGIF         NetworkType = "tgif"          // prefix 5
-	NetSystemX      NetworkType = "systemx"       // prefix 4
-	NetXLX          NetworkType = "xlx"           // prefix 6
-	NetCustom       NetworkType = "custom"        // raw Rewrites, no generation
+	NetDMRPlus      NetworkType = "dmrplus"      // DMR+/FreeDMR/HB-Link, prefix 8
+	NetDMR2YSF      NetworkType = "dmr2ysf"      // DMR2YSF/DMR2NXDN, prefix 7
+	NetTGIF         NetworkType = "tgif"         // prefix 5
+	NetSystemX      NetworkType = "systemx"      // prefix 4
+	NetXLX          NetworkType = "xlx"          // prefix 6
+	NetCustom       NetworkType = "custom"       // raw Rewrites, no generation
 )
 
 // Network is one DMRGateway upstream (BrandMeister, TGIF, …). Password is a
@@ -250,9 +251,20 @@ type Network struct {
 	Port     string      `json:"port"`
 	Password string      `json:"password"`
 	Options  string      `json:"options"`
+	ESSID    string      `json:"essid"` // extended-ID suffix appended to the DMR ID ("01".."99"); "" = none
 	Primary  bool        `json:"primary"`
 	Enabled  bool        `json:"enabled"`
-	Rewrites []string    `json:"rewrites"`
+	// Custom-network extras (Pi-Star "Custom DMR Network"): AutoRewrite generates
+	// the prefix-9 template instead of rendering raw Rewrites; TGListFile is an
+	// optional talkgroup lookup file.
+	AutoRewrite bool     `json:"auto_rewrite"`
+	TGListFile  string   `json:"tg_list_file"`
+	Rewrites    []string `json:"rewrites"`
+	// XLX-specific (rendered into the [XLX Network] section): the startup
+	// reflector number, startup module letter, and time slot.
+	XLXStartup string `json:"xlx_startup"`
+	XLXModule  string `json:"xlx_module"`
+	XLXSlot    string `json:"xlx_slot"`
 }
 
 // DMRRoute ties one dialed talkgroup on one slot to a specific network by Name,

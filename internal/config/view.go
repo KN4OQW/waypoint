@@ -119,6 +119,8 @@ type ViewDMR struct {
 	Slot1          bool   `json:"slot1"`
 	Slot2          bool   `json:"slot2"`
 	EmbeddedLCOnly bool   `json:"embedded_lc_only"`
+	DumpTAData     bool   `json:"dump_ta_data"`
+	Beacons        bool   `json:"beacons"`
 	ID             string `json:"id"`
 }
 
@@ -139,8 +141,14 @@ type ViewNetwork struct {
 	Port        string      `json:"port"`
 	Primary     bool        `json:"primary"`
 	Options     string      `json:"options"`
+	ESSID       string      `json:"essid"`
 	Enabled     bool        `json:"enabled"`
 	HasPassword bool        `json:"has_password"`
+	AutoRewrite bool        `json:"auto_rewrite"`
+	TGListFile  string      `json:"tg_list_file"`
+	XLXStartup  string      `json:"xlx_startup"`
+	XLXModule   string      `json:"xlx_module"`
+	XLXSlot     string      `json:"xlx_slot"`
 	Rewrites    []string    `json:"rewrites"` // custom type only; not secret; editable
 }
 
@@ -190,6 +198,8 @@ func (m *Model) View(storePath string) *View {
 			Slot1:          m.DMRNet.Slot1,
 			Slot2:          m.DMRNet.Slot2,
 			EmbeddedLCOnly: m.DMR.EmbeddedLCOnly,
+			DumpTAData:     m.DMR.DumpTAData,
+			Beacons:        m.DMR.Beacons,
 			ID:             m.DMR.ID,
 		},
 	}
@@ -263,8 +273,14 @@ func (m *Model) View(storePath string) *View {
 			Port:        n.Port,
 			Primary:     n.Primary,
 			Options:     n.Options,
+			ESSID:       n.ESSID,
 			Enabled:     n.Enabled,
 			HasPassword: n.Password != "",
+			AutoRewrite: n.AutoRewrite,
+			TGListFile:  n.TGListFile,
+			XLXStartup:  n.XLXStartup,
+			XLXModule:   n.XLXModule,
+			XLXSlot:     n.XLXSlot,
 		}
 		if n.Type == NetCustom || n.Type == "" {
 			vn.Rewrites = n.Rewrites // raw lines surface for custom + legacy (untyped) networks

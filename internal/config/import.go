@@ -63,6 +63,7 @@ func fromINI(mm, dg, yg, pg, ng, xg, mg *INI) *Model {
 			EmbeddedLCOnly: mm.Bool("DMR", "EmbeddedLCOnly"),
 			SelfOnly:       mm.Bool("DMR", "SelfOnly"),
 			DumpTAData:     mm.Bool("DMR", "DumpTAData"),
+			Beacons:        mm.Bool("DMR", "Beacons"),
 		},
 		DMRNet: DMRNet{
 			LocalPort:      orDefault(mm.Get("DMR Network", "LocalPort"), "62032"),
@@ -82,7 +83,7 @@ func fromINI(mm, dg, yg, pg, ng, xg, mg *INI) *Model {
 			POCSAG: mm.Bool("POCSAG", "Enable"),
 			FM:     mm.Bool("FM", "Enable"),
 		},
-		Networks: importNetworks(dg),
+		Networks: importNetworks(dg, firstNonEmpty(mm.Get("DMR", "Id"), mm.Get("General", "Id"))),
 		YSF: YSF{
 			LowDeviation:  mm.Bool("System Fusion", "LowDeviation"),
 			SelfOnly:      mm.Bool("System Fusion", "SelfOnly"),
@@ -303,7 +304,7 @@ func dstarGatewayFromINI(xg *INI) DStarGateway {
 // verbatim lines are preserved as a "custom" network so no hand-tuned routing is
 // lost (best-effort + preserve). Per-TG DMRRoute overrides are a Waypoint-native
 // concept and are not reverse-engineered from the file.
-func importNetworks(dg *INI) []Network {
+func importNetworks(dg *INI, dmrID string) []Network {
 	var nets []Network
 	for n := 1; n <= 8; n++ {
 		sec := fmt.Sprintf("DMR Network %d", n)
@@ -319,13 +320,17 @@ func importNetworks(dg *INI) []Network {
 			Port:     orDefault(dg.Get(sec, "Port"), "62031"),
 			Password: dg.Get(sec, "Password"),
 			Options:  dg.Get(sec, "Options"),
+			ESSID:    strings.TrimPrefix(dg.Get(sec, "Id"), dmrID), // the Id's suffix past the base DMR ID
 			Enabled:  dg.Get(sec, "Enabled") != "0",
 			Primary:  len(dg.Matching(sec, "PassAll")) > 0,
 		}
-		if t := classifyNetwork(name, addr); t != NetCustom &&
-			sameRewrites(raw, networkRewrites(Network{Type: t, Primary: net.Primary}, nil)) {
+		switch t := classifyNetwork(name, addr); {
+		case dg.Get(sec, "WPSD_AutoRewrites") == "1":
+			net.Type = NetCustom // custom host with auto-generated prefix-9 routing
+			net.AutoRewrite = true
+		case t != NetCustom && sameRewrites(raw, networkRewrites(Network{Type: t, Primary: net.Primary}, nil)):
 			net.Type = t // clean, standard routing → store as a typed network
-		} else {
+		default:
 			net.Type = NetCustom // unrecognized or hand-tuned → preserve verbatim
 			net.Rewrites = raw
 		}
@@ -387,13 +392,14 @@ func importXLX(dg *INI) *Network {
 		return nil
 	}
 	return &Network{
-		Name:     "XLX",
-		Type:     NetXLX,
-		Address:  dg.Get(sec, "Startup"),
-		Port:     orDefault(dg.Get(sec, "Port"), "62030"),
-		Password: dg.Get(sec, "Password"),
-		Options:  dg.Get(sec, "Module"),
-		Enabled:  dg.Get(sec, "Enabled") != "0",
+		Name:       "XLX",
+		Type:       NetXLX,
+		Port:       orDefault(dg.Get(sec, "Port"), "62030"),
+		Password:   dg.Get(sec, "Password"),
+		Enabled:    dg.Get(sec, "Enabled") != "0",
+		XLXStartup: dg.Get(sec, "Startup"),
+		XLXModule:  dg.Get(sec, "Module"),
+		XLXSlot:    dg.Get(sec, "Slot"),
 	}
 }
 

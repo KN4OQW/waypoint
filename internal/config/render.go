@@ -131,6 +131,7 @@ func (m *Model) RenderMMDVM() string {
 		kb("SelfOnly", m.DMR.SelfOnly),
 		kb("EmbeddedLCOnly", m.DMR.EmbeddedLCOnly),
 		kb("DumpTAData", m.DMR.DumpTAData),
+		kb("Beacons", m.DMR.Beacons),
 	)
 	sect(&b, "System Fusion",
 		kb("Enable", m.Modes.YSF),
@@ -693,23 +694,22 @@ func (m *Model) RenderDMRGateway() string {
 	for _, net := range m.Networks {
 		if net.Type == NetXLX {
 			// XLX talks over a dedicated [XLX Network] section, not a DMR Network
-			// block. Address holds the startup reflector number, Options the
-			// startup module letter (see the model doc). WPSD template values.
+			// block. Startup reflector, module, and slot are their own fields.
 			sect(&b, "XLX Network",
 				kb("Enabled", net.Enabled),
-				kv("Startup", net.Address),
+				kv("Startup", net.XLXStartup),
 				kv("File", "/usr/local/etc/XLXHosts.txt"),
 				kv("Port", def(net.Port, "62030")),
 				kv("Password", net.Password),
 				kv("ReloadTime", "60"),
-				kv("Slot", "2"),
+				kv("Slot", def(net.XLXSlot, "2")),
 				kv("TG", "6"),
 				kv("Base", "64000"),
 				kv("Relink", "60"),
 				kb("Debug", false),
 				kv("Id", dmrID),
 				kv("UserControl", "1"),
-				kv("Module", def(net.Options, "A")),
+				kv("Module", def(net.XLXModule, "A")),
 			)
 			continue
 		}
@@ -719,7 +719,7 @@ func (m *Model) RenderDMRGateway() string {
 			kv("Address", net.Address),
 			kv("Port", def(net.Port, "62031")),
 			kv("Password", net.Password),
-			kv("Id", dmrID),
+			kv("Id", dmrID+net.ESSID), // ESSID extends the DMR ID (Pi-Star extended ID)
 		}
 		if strings.TrimSpace(net.Options) != "" {
 			lines = append(lines, kv("Options", net.Options))

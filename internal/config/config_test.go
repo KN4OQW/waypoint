@@ -25,7 +25,7 @@ func fixture() *Model {
 	return &Model{
 		General: General{Callsign: "KN4OQW", ID: "3180202", Duplex: true, Timeout: "240", RFModeHang: "300", NetModeHang: "300", Power: "1", Location: "Milton, EM60", URL: "https://waypoint.kn4oqw.com"},
 		Modem:   Modem{Port: "/dev/ttyAMA0", UARTSpeed: "115200", RXFreqHz: "433900000", TXFreqHz: "438900000", RXOffset: "75", TXOffset: "-40", TXInvert: true, RXInvert: false, PTTInvert: false, RXLevel: "50", TXLevel: "50"},
-		DMR:     DMR{ColorCode: "1", ID: "3180202", EmbeddedLCOnly: true, SelfOnly: false, DumpTAData: true},
+		DMR:     DMR{ColorCode: "1", ID: "3180202", EmbeddedLCOnly: true, SelfOnly: false, DumpTAData: true, Beacons: true},
 		DMRNet:  DMRNet{LocalPort: "62032", GatewayAddress: "127.0.0.1", GatewayPort: "62031", Slot1: true, Slot2: true, Jitter: "360"},
 		Modes:   Modes{DStar: false, DMR: true, YSF: true, P25: false, NXDN: true, M17: false, POCSAG: false, FM: false},
 		// Routing round-trips through generated type templates, not verbatim
@@ -33,9 +33,9 @@ func fixture() *Model {
 		// a prefixed TGIF alternate, and an XLX section network. Options carries a
 		// verbatim BM subscription string (with '=' in the value).
 		Networks: []Network{
-			{Name: "BM_3102_United_States", Type: NetBrandmeister, Primary: true, Address: "3102.master.brandmeister.network", Port: "62031", Password: "s3cr3t", Options: "StartRef=4000;RelinkTime=15;UserLink=1;", Enabled: true},
+			{Name: "BM_3102_United_States", Type: NetBrandmeister, Primary: true, Address: "3102.master.brandmeister.network", Port: "62031", Password: "s3cr3t", Options: "StartRef=4000;RelinkTime=15;UserLink=1;", ESSID: "01", Enabled: true},
 			{Name: "TGIF_Network", Type: NetTGIF, Address: "tgif.network", Port: "62031", Password: "hunter2", Enabled: false},
-			{Name: "XLX", Type: NetXLX, Address: "950", Port: "62030", Password: "xlxpw", Options: "E", Enabled: true},
+			{Name: "XLX", Type: NetXLX, Port: "62030", Password: "xlxpw", XLXStartup: "950", XLXModule: "E", XLXSlot: "2", Enabled: true},
 		},
 		YSF:    YSF{LowDeviation: true, SelfOnly: false, TXHang: "6", RemoteGateway: false, ModeHang: "20"},
 		YSFGW:  YSFGateway{Suffix: "RPT", WiresXPassthrough: true, Startup: "FCS00290", Revert: true, InactivityTimeout: "30", YSFNetwork: true, FCSNetwork: true, APRS: false},
@@ -329,14 +329,14 @@ func TestImportClassifies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nets := importNetworks(dg)
+	nets := importNetworks(dg, "3180202")
 	if len(nets) != 1 || nets[0].Type != NetBrandmeister || !nets[0].Primary || len(nets[0].Rewrites) != 0 {
 		t.Fatalf("standard BM block should import as primary brandmeister w/ no raw rewrites: %+v", nets)
 	}
 
 	tweaked := "[DMR Network 1]\nName=BM_Master\nAddress=bm.example\nTGRewrite0=2,1234,2,5678,1\n"
 	dg2, _ := ParseINI(strings.NewReader(tweaked))
-	nets2 := importNetworks(dg2)
+	nets2 := importNetworks(dg2, "3180202")
 	if len(nets2) != 1 || nets2[0].Type != NetCustom || len(nets2[0].Rewrites) != 1 {
 		t.Fatalf("hand-tuned block should be preserved as custom: %+v", nets2)
 	}

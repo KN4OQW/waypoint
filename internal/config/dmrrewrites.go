@@ -107,10 +107,14 @@ func alternateRewrites(t dmrTemplate) []string {
 func networkRewrites(n Network, routes []DMRRoute) []string {
 	var out []string
 	switch {
+	case n.Type == NetCustom && n.AutoRewrite:
+		// Custom host with WPSD auto-rewrites: prefix-9 generated template.
+		out = append(out, "WPSD_AutoRewrites=1")
+		out = append(out, alternateRewrites(dmrTemplate{prefix: 9, reflector: true})...)
 	case n.Type == NetCustom || n.Type == "":
-		// Custom, or a legacy network from a store predating typed routing: render
-		// the stored rewrites verbatim so a binary upgrade never wipes routing.
-		// The operator re-picks a type in the UI to move to generated routing.
+		// Custom (manual), or a legacy network from a store predating typed
+		// routing: render the stored rewrites verbatim so a binary upgrade never
+		// wipes routing. The operator re-picks a type in the UI for generated routing.
 		out = append(out, n.Rewrites...)
 	case n.Primary:
 		out = append(out, primaryRewrites()...)
