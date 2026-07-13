@@ -1,0 +1,30 @@
+name: Bug report
+description: Something doesn't work
+labels: ["type:bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Waypoint version
+      placeholder: waypointd --version
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Board + host
+      placeholder: e.g. MMDVM_HS_Dual_Hat rev1.0 on Pi 3B, Raspberry Pi OS Lite arm64
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / MQTT events
+      description: journalctl -u waypointd, plus relevant stack daemon output
+      render: text

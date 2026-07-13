@@ -1,0 +1,49 @@
+name: Claude (auto triage & review)
+
+# Every new issue gets a first technical read; every PR gets a review pass.
+# Per GOVERNANCE.md this supplements — never replaces — the 14-day human SLA.
+
+on:
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened, ready_for_review]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  triage-issue:
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Triage issue #${{ github.event.issue.number }} in this repository.
+            1. Read the issue. If it's a bug report, check whether it contains enough to reproduce (versions, board, logs); if not, ask specifically for what's missing.
+            2. Search existing issues for duplicates; link any you find.
+            3. Apply the most fitting area:* and priority label if clearly warranted (use `gh issue edit`); otherwise leave labeling to maintainers.
+            4. Post one concise, friendly comment with your read. Newcomers get extra warmth — elmering is the culture here.
+            You advise; maintainers decide. Never close issues.
+          claude_args: --allowedTools "Bash(gh issue:*),Bash(gh search:*),Read,Grep,Glob"
+
+  review-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review PR #${{ github.event.pull_request.number }}: correctness first, then test coverage (config-losslessness regressions are release-blockers), then accessibility for UI changes (no color-only status), then style drift. Post findings as a single review comment, most severe first, each anchored to file:line. Acknowledge what the PR does well. If the change is architecture-scale, note that GOVERNANCE.md asks for an RFC — kindly.
+            You advise; maintainers merge.
+          claude_args: --allowedTools "Bash(gh pr:*),Read,Grep,Glob"

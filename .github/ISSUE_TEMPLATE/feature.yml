@@ -1,0 +1,18 @@
+name: Feature request
+description: Something Waypoint should do
+labels: ["type:feature"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The real-world situation, not the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+  - type: markdown
+    attributes:
+      value: Architecture-scale ideas go through the lightweight RFC process — see GOVERNANCE.md. Opening here first is always fine.
