@@ -122,7 +122,7 @@ func (m *Model) RenderMMDVM() string {
 		kb("Duplex", m.General.Duplex),
 		kv("RFModeHang", def(m.General.RFModeHang, "300")),
 		kv("NetModeHang", def(m.General.NetModeHang, "300")),
-		kv("Display", "None"),
+		kv("Display", def(m.Display.Type, "None")),
 		kv("Daemon", "0"),
 	)
 	sect(&b, "Info",
@@ -278,7 +278,67 @@ func (m *Model) RenderMMDVM() string {
 		kv("GatewayPort", m17MMDVMGatewayPort),
 		kv("Debug", "0"),
 	)
+
+	renderDisplaySections(&b, m)
 	return b.String()
+}
+
+// renderDisplaySections emits MMDVM-Host's [Display] driver subsections. All
+// five are always written (like the stock MMDVM-Host.ini), regardless of which
+// one [General] Display selects — the daemon reads only the selected section, and
+// carrying them all keeps the file a faithful WPSD clone (and makes every Display
+// field round-trip). The operator-set keys come from the model; the fixed
+// operational keys are constants transcribed from the pre-MQTT g4klx
+// MMDVM-Host.ini. On Waypoint's own node these sections are inert (the forked
+// MQTT-era MMDVM-Host has no [Display] parser); they matter for a clone running
+// stock MMDVM-Host or driving a physical panel.
+func renderDisplaySections(b *strings.Builder, m *Model) {
+	// [Nextion]/[TFT Serial] share the same serial Port. ScreenLayout picks the
+	// on-screen layout (0 G4KLX / 2 ON7LDS L2 / 3 L3 / 4 L3 HS).
+	port := def(m.Display.Port, "modem")
+	sect(b, "TFT Serial",
+		kv("Port", port),
+		kv("Brightness", "50"),
+	)
+	// HD44780: Pins is the GPIO 4-bit wiring (rs,strb,d0..d3), I2CAddress the
+	// PCF8574 adapter address — this node wires over I2C, so Pins stays a constant
+	// default and I2CAddress is the operator field. There is no I2C-bus key.
+	sect(b, "HD44780",
+		kv("Rows", def(m.Display.HD44780Rows, "2")),
+		kv("Columns", def(m.Display.HD44780Cols, "16")),
+		kv("Pins", "11,10,0,1,2,3"),
+		kv("I2CAddress", def(m.Display.HD44780I2CAddr, "0x20")),
+		kv("PWM", "0"),
+		kv("PWMPin", "21"),
+		kv("PWMBright", "100"),
+		kv("PWMDim", "16"),
+		kv("DisplayClock", "1"),
+		kv("UTC", "0"),
+	)
+	sect(b, "Nextion",
+		kv("Port", port),
+		kv("Brightness", "50"),
+		kv("DisplayClock", "1"),
+		kv("UTC", "0"),
+		kv("ScreenLayout", def(m.Display.NextionLayout, "0")),
+		kv("IdleBrightness", "20"),
+	)
+	sect(b, "OLED",
+		kv("Type", def(m.Display.OLEDType, "3")),
+		kv("Brightness", "0"),
+		kv("Invert", "0"),
+		kv("Scroll", "1"),
+		kv("Rotate", "0"),
+		kv("Cast", "0"),
+		kv("LogoScreensaver", "1"),
+	)
+	sect(b, "LCDproc",
+		kv("Address", "localhost"),
+		kv("Port", "13666"),
+		kv("LocalPort", "13667"),
+		kv("DisplayClock", "1"),
+		kv("UTC", "0"),
+	)
 }
 
 // DStarReconnectValues is DStarGateway's allowed [Repeater] ReflectorReconnect

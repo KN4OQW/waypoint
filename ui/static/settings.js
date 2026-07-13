@@ -6,6 +6,7 @@
 
 const TABS = [
   { id: "general",      tag: "RF", label: "General",      sub: "Radio & Station",     crumb: "SYSTEM / GENERAL",        title: "General Configuration", desc: "Station identity, operating frequencies and modem hardware for this hotspot node." },
+  { id: "setup",        tag: "SU", label: "Setup",         sub: "Control & Display",    crumb: "SYSTEM / SETUP",          title: "Control Software & Display", desc: "TRX mode and the MMDVM-Host display driver. Waypoint runs display-free (status is served over MQTT); these fields are here for parity and for nodes driving a physical panel." },
   { id: "brandmeister", tag: "BM", label: "BrandMeister", sub: "Network & Security",   crumb: "NETWORKS / BRANDMEISTER", title: "DMR Networks",          desc: "Master servers this node bridges DMR traffic to. Passwords are stored on the node and never shown." },
   { id: "dmr",          tag: "DM", label: "DMR",          sub: "Master & Slots",       crumb: "MODES / DMR",             title: "DMR Settings",          desc: "Color code and per-slot behaviour for Digital Mobile Radio." },
   { id: "dstar",        tag: "DS", label: "D-Star",        sub: "ircDDB & reflectors",  crumb: "MODES / D-STAR",          title: "D-Star",                desc: "D-Star gateway: module band letter, ircDDB callsign routing, startup reflector, and which reflector protocols are on." },
@@ -47,6 +48,7 @@ function buildEdit(c) {
   edit = {
     general: { callsign: g.callsign, id: g.dmr_id, duplex: !!g.duplex, power: g.power, location: g.location, url: g.url },
     modem:   { rx_freq_hz: g.rx_freq_hz, tx_freq_hz: g.tx_freq_hz, port: g.modem_port, rx_offset: g.rx_offset, tx_offset: g.tx_offset },
+    display: displayFrom(c.display || {}),
     dmr:     { color_code: d.color_code, id: d.id, embedded_lc_only: !!d.embedded_lc_only, dump_ta_data: !!d.dump_ta_data, beacons: !!d.beacons, self_only: !!d.self_only },
     dmrnet:  { slot1: !!d.slot1, slot2: !!d.slot2 },
     modes:   Object.fromEntries((c.modes || []).map((m) => [m.key, !!m.enabled])),
@@ -87,6 +89,17 @@ function dstargwFrom(d) {
     has_ircddb_password: !!d.has_ircddb_password,
     dextra: d.dextra !== false, dplus: d.dplus !== false, dplus_login: d.dplus_login || "",
     dcs: d.dcs !== false, xlx: d.xlx !== false,
+  };
+}
+
+// The "display" section maps to MMDVM-Host's [Display] surface (the [General]
+// Display selector + per-driver subsections). One store section, no secrets.
+function displayFrom(d) {
+  return {
+    type: d.type || "None", oled_type: d.oled_type || "3", port: d.port || "modem",
+    nextion_layout: d.nextion_layout || "0",
+    hd44780_rows: d.hd44780_rows || "2", hd44780_cols: d.hd44780_cols || "16",
+    hd44780_i2c_addr: d.hd44780_i2c_addr || "0x20",
   };
 }
 
@@ -264,6 +277,64 @@ function panelModes() {
     </div>`;
   }).join("");
   return `<div class="modes-grid">${cards}</div>`;
+}
+
+// --- Setup: Control Software + Display ------------------------------------
+// WPSD's "Setup" surface above the mode panels. Control Software is MMDVMHost-
+// only by design (no DStarRepeater selector), so its one live control is TRX
+// Mode (Simplex/Duplex) → general.duplex. Display maps the [General] Display
+// selector + the driver subsection it points at; the type dropdown combines
+// OLED Type 3/6 into one entry (WPSD does the same), split back into
+// display.type + display.oled_type on change.
+function panelDisplay() {
+  const g = edit.general || (edit.general = {}), d = edit.display || (edit.display = {});
+
+  const trxSel = `<select data-trxmode>` +
+    [["simplex", "Simplex Node"], ["duplex", "Duplex Repeater"]]
+      .map(([v, l]) => `<option value="${v}"${(v === "duplex") === !!g.duplex ? " selected" : ""}>${l}</option>`).join("") + `</select>`;
+  const control = card("CONTROL SOFTWARE",
+    row("Radio Control Software", `<input value="MMDVMHost" readonly>`) +
+    row("TRX Mode", trxSel));
+
+  // Combined display-type value: OLED folds its Type into the option (OLED3/OLED6).
+  const typeVal = d.type === "OLED" ? "OLED" + (d.oled_type || "3") : (d.type || "None");
+  const typeOpts = [
+    ["None", "None"], ["OLED3", "OLED Type 3 (0.96\")"], ["OLED6", "OLED Type 6 (1.3\")"],
+    ["Nextion", "Nextion"], ["HD44780", "HD44780"], ["TFT Serial", "TFT Serial"], ["LCDproc", "LCDproc"],
+  ].map(([v, l]) => `<option value="${esc(v)}"${v === typeVal ? " selected" : ""}>${esc(l)}</option>`).join("");
+
+  // Port list: the fixed set WPSD offers, plus the current value if it's something
+  // else (e.g. an imported /dev/ttyAMA0) so selecting it is never lost.
+  const portList = ["None", "modem", "/dev/ttyACM0", "/dev/ttyUSB0", "/dev/ttyS2", "/dev/ttyNextionDriver"];
+  const cur = d.port || "modem";
+  if (!portList.includes(cur)) portList.splice(2, 0, cur);
+  const portOpts = portList.map((p) => `<option value="${esc(p)}"${p === cur ? " selected" : ""}>${esc(p)}</option>`).join("");
+
+  let displayRows =
+    row("Display Type", `<select data-displaytype>${typeOpts}</select>`) +
+    row("Port", `<select data-sec="display" data-key="port">${portOpts}</select>`);
+
+  // Nextion layout — only when a Nextion is selected.
+  if (d.type === "Nextion") {
+    const lay = d.nextion_layout || "0";
+    const layOpts = [["0", "G4KLX"], ["2", "ON7LDS L2"], ["3", "ON7LDS L3"], ["4", "ON7LDS L3 HS"]]
+      .map(([v, l]) => `<option value="${v}"${v === lay ? " selected" : ""}>${l}</option>`).join("");
+    displayRows += row("Nextion Layout", `<select data-sec="display" data-key="nextion_layout">${layOpts}</select>`);
+  }
+
+  // HD44780 geometry + I2C wiring — only when HD44780 is selected. This node wires
+  // over I2C (a PCF8574 adapter), so the I2C address is the wiring field; there is
+  // no separate I2C-bus key in MMDVM-Host's [HD44780] section.
+  if (d.type === "HD44780") {
+    displayRows +=
+      input("display", "hd44780_rows", { label: "Rows" }) +
+      input("display", "hd44780_cols", { label: "Columns" }) +
+      input("display", "hd44780_i2c_addr", { label: "I2C Address", accent: true });
+  }
+
+  const display = card("DISPLAY", displayRows);
+  const hint = note("This MMDVM-Host build is <b>display-free</b> — it renders status over MQTT and ignores these keys. They are carried for WPSD parity and for a clone running stock MMDVM-Host or driving a physical panel.");
+  return `<div class="grid2">${control}${display}</div>${hint}`;
 }
 
 // --- DMR networks (WPSD-style: routing generated from network type) -------
@@ -553,6 +624,7 @@ function renderPanel() {
   const box = document.getElementById("panels");
   switch (state.tab) {
     case "general":      box.innerHTML = panelGeneral(); break;
+    case "setup":        box.innerHTML = panelDisplay(); break;
     case "dmr":          box.innerHTML = panelDmr(); break;
     case "dstar":        box.innerHTML = panelDStar(); break;
     case "ysf":          box.innerHTML = panelYSF(); break;
@@ -736,6 +808,18 @@ document.getElementById("panels").addEventListener("input", (e) => {
     let v = t.value;
     if (t.dataset.kind === "mhz") { const f = parseFloat(v); v = isNaN(f) ? "" : String(Math.round(f * 1e6)); }
     setField(t.dataset.sec, t.dataset.key, v);
+    return;
+  }
+  // TRX Mode selector (Setup) — one control over general.duplex.
+  if (t.dataset.trxmode != null) { setField("general", "duplex", t.value === "duplex"); return; }
+  // Display Type selector (Setup) — combined value splits into type + oled_type;
+  // re-render so the driver sub-fields (Nextion layout / HD44780) show or hide.
+  if (t.dataset.displaytype != null) {
+    const v = t.value;
+    if (v === "OLED3") { setField("display", "type", "OLED"); setField("display", "oled_type", "3"); }
+    else if (v === "OLED6") { setField("display", "type", "OLED"); setField("display", "oled_type", "6"); }
+    else setField("display", "type", v);
+    renderPanel();
     return;
   }
   // DMR Master (primary) selector — the primary is the no-prefix catch-all.
