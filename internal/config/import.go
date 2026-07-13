@@ -96,7 +96,11 @@ func fromINI(mm, dg, yg *INI) *Model {
 // section on a store created before YSF existed.
 func DefaultYSFGateway() YSFGateway {
 	return YSFGateway{
-		Suffix: "RPT", WiresXPassthrough: true, WiresXMakeUpper: true,
+		// WiresXPassthrough MUST default off: with it on, YSFGateway does not
+		// handle the radio's Wires-X commands locally (browse/connect all
+		// return NONE), so the radio gets no response. Passthrough is the
+		// advanced "hand Wires-X to the network reflector" mode.
+		Suffix: "RPT", WiresXPassthrough: false, WiresXMakeUpper: true,
 		Reconnect: true, Revert: true, InactivityTimeout: "30",
 		YSFNetwork: true, FCSNetwork: true, APRS: false,
 	}

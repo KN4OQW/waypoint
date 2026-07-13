@@ -187,7 +187,7 @@ function panelYSF() {
     row("Startup reflector", `<input data-sec="ysfgw" data-key="startup" list="ysf-refs" value="${esc(startup)}" placeholder="e.g. FCS00290 or a YSF reflector"><datalist id="ysf-refs">${opts}</datalist>`) +
     input("ysfgw", "inactivity_timeout", { label: "Inactivity revert", unit: "min" }));
   const behaviour = card("BEHAVIOUR",
-    toggleRow("ysfgw", "wiresx_passthrough", "Wires-X command passthrough") +
+    toggleRow("ysfgw", "wiresx_passthrough", "Wires-X passthrough (advanced — leave off for local control)") +
     toggleRow("ysfgw", "wiresx_make_upper", "Wires-X uppercase") +
     toggleRow("ysfgw", "revert", "Revert to startup on inactivity") +
     toggleRow("ysfgw", "reconnect", "Reconnect on link loss"));
