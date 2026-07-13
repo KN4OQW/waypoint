@@ -11,7 +11,21 @@ type View struct {
 	Networks []ViewNetwork `json:"networks"`
 	YSF      ViewYSF       `json:"ysf"`
 	P25      ViewP25       `json:"p25"`
+	NXDN     ViewNXDN      `json:"nxdn"`
 	ReadOnly bool          `json:"read_only"`
+}
+
+// ViewNXDN is the NXDN tab's read model: the mode enable, the [NXDN] mode
+// params, and the gateway settings a user actually sets. No secrets.
+type ViewNXDN struct {
+	Enable        bool   `json:"enable"`
+	RAN           string `json:"ran"`
+	SelfOnly      bool   `json:"self_only"`
+	RemoteGateway bool   `json:"remote_gateway"`
+	Static        string `json:"static"`
+	Voice         bool   `json:"voice"`
+	RFHangTime    string `json:"rf_hang_time"`
+	NetHangTime   string `json:"net_hang_time"`
 }
 
 // ViewP25 is the P25 tab's read model: the mode enable, the [P25] mode params,
@@ -151,6 +165,16 @@ func (m *Model) View(storePath string) *View {
 		Voice:            m.P25GW.Voice,
 		RFHangTime:       m.P25GW.RFHangTime,
 		NetHangTime:      m.P25GW.NetHangTime,
+	}
+	v.NXDN = ViewNXDN{
+		Enable:        m.Modes.NXDN,
+		RAN:           m.NXDN.RAN,
+		SelfOnly:      m.NXDN.SelfOnly,
+		RemoteGateway: m.NXDN.RemoteGateway,
+		Static:        m.NXDNGW.Static,
+		Voice:         m.NXDNGW.Voice,
+		RFHangTime:    m.NXDNGW.RFHangTime,
+		NetHangTime:   m.NXDNGW.NetHangTime,
 	}
 	for _, md := range modeDisplay {
 		v.Modes = append(v.Modes, ViewMode{Key: md.key, Name: md.name, Enabled: md.get(m.Modes)})
