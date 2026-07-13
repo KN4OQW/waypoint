@@ -21,9 +21,10 @@ func Import(mmdvmPath, dmrgatewayPath string) (*Model, error) {
 		return nil, fmt.Errorf("read %s: %w", dmrgatewayPath, err)
 	}
 	// No YSFGateway/DGIdGateway/P25Gateway/NXDNGateway/dstargateway.cfg/M17Gateway.ini
-	// exists at seed time (waypointd creates them); those sections get defaults.
-	// yg/dgid/pg/ng/xg/mg are non-nil only in the round-trip harness.
-	return fromINI(mm, dg, nil, nil, nil, nil, nil, nil), nil
+	// or cross-mode bridge INI exists at seed time (waypointd creates them); those
+	// sections get defaults. The gateway/bridge INIs are non-nil only in the
+	// round-trip harness.
+	return fromINI(mm, dg, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil), nil
 }
 
 // fromINI builds a Model from already-parsed INIs. Shared by Import (from disk)
@@ -32,7 +33,13 @@ func Import(mmdvmPath, dmrgatewayPath string) (*Model, error) {
 // (NXDNGateway), xg (dstargateway.cfg) and mg (M17Gateway) may be nil, in which
 // case their sections take their defaults. When dgid is non-nil the System
 // Fusion config is read from it (the DG-ID daemon) instead of yg.
-func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg *INI) *Model {
+//
+// The five trailing INIs are the cross-mode bridges — y2d (YSF2DMR), d2y
+// (DMR2YSF), y2n (YSF2NXDN), d2n (DMR2NXDN), n2d (NXDN2DMR). A bridge daemon has
+// no INI Enable key, so its presence (non-nil) IS its Enable: a nil bridge INI
+// yields a disabled default, a non-nil one an enabled bridge with its fields read
+// back (mirrors how dgid's presence implies EnableDGId).
+func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg, y2d, d2y, y2n, d2n, n2d *INI) *Model {
 	m := &Model{
 		General: General{
 			Callsign:    mm.Get("General", "Callsign"),
@@ -121,9 +128,92 @@ func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg *INI) *Model {
 			AllowEncryption: mm.Bool("M17", "AllowEncryption"),
 			TXHang:          orDefault(mm.Get("M17", "TXHang"), "5"),
 		},
-		M17GW: m17GatewayFromINI(mg),
+		M17GW:    m17GatewayFromINI(mg),
+		YSF2DMR:  ysf2dmrFromINI(y2d),
+		DMR2YSF:  dmr2ysfFromINI(d2y),
+		YSF2NXDN: ysf2nxdnFromINI(y2n),
+		DMR2NXDN: dmr2nxdnFromINI(d2n),
+		NXDN2DMR: nxdn2dmrFromINI(n2d),
 	}
 	return m
+}
+
+// --- cross-mode bridges --------------------------------------------------
+// A bridge INI carries no Enable key, so each reader treats a nil INI as the
+// disabled default and a non-nil INI as an enabled bridge (its presence is its
+// Enable — see fromINI). Only the operator-facing keys are read back; the fixed
+// loopback/log keys are constants in render.go and need no round-trip.
+
+// DefaultYSF2DMR / DefaultDMR2YSF / … are the disabled defaults used to seed a
+// fresh store and to backfill a store created before the bridges existed. A zero
+// bridge is off with empty fields; the operator fills in the master/TG when
+// enabling it.
+func DefaultYSF2DMR() YSF2DMR   { return YSF2DMR{} }
+func DefaultDMR2YSF() DMR2YSF   { return DMR2YSF{} }
+func DefaultYSF2NXDN() YSF2NXDN { return YSF2NXDN{} }
+func DefaultDMR2NXDN() DMR2NXDN { return DMR2NXDN{} }
+func DefaultNXDN2DMR() NXDN2DMR { return NXDN2DMR{} }
+
+func ysf2dmrFromINI(ini *INI) YSF2DMR {
+	if ini == nil {
+		return DefaultYSF2DMR()
+	}
+	return YSF2DMR{
+		Enable:   true,
+		DMRId:    ini.Get("DMR Network", "Id"),
+		Master:   ini.Get("DMR Network", "Address"),
+		Password: ini.Get("DMR Network", "Password"),
+		Options:  ini.Get("DMR Network", "Options"),
+		TG:       ini.Get("DMR Network", "StartupDstId"),
+	}
+}
+
+func dmr2ysfFromINI(ini *INI) DMR2YSF {
+	if ini == nil {
+		return DefaultDMR2YSF()
+	}
+	return DMR2YSF{
+		Enable:    true,
+		DMRId:     ini.Get("DMR Network", "Id"),
+		DefaultTG: ini.Get("DMR Network", "DefaultDstTG"),
+	}
+}
+
+func ysf2nxdnFromINI(ini *INI) YSF2NXDN {
+	if ini == nil {
+		return DefaultYSF2NXDN()
+	}
+	return YSF2NXDN{
+		Enable: true,
+		NXDNId: ini.Get("NXDN Network", "Id"),
+		TG:     ini.Get("NXDN Network", "StartupDstId"),
+	}
+}
+
+func dmr2nxdnFromINI(ini *INI) DMR2NXDN {
+	if ini == nil {
+		return DefaultDMR2NXDN()
+	}
+	return DMR2NXDN{
+		Enable: true,
+		DMRId:  ini.Get("DMR Network", "Id"),
+		NXDNId: ini.Get("NXDN Network", "DefaultID"),
+	}
+}
+
+func nxdn2dmrFromINI(ini *INI) NXDN2DMR {
+	if ini == nil {
+		return DefaultNXDN2DMR()
+	}
+	return NXDN2DMR{
+		Enable:   true,
+		DMRId:    ini.Get("DMR Network", "Id"),
+		Master:   ini.Get("DMR Network", "Address"),
+		Password: ini.Get("DMR Network", "Password"),
+		Options:  ini.Get("DMR Network", "Options"),
+		TG:       ini.Get("DMR Network", "StartupDstId"),
+		NXDNTG:   ini.Get("NXDN Network", "TG"),
+	}
 }
 
 // DefaultDisplay is the display-free default matching Waypoint's own node:

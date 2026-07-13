@@ -84,7 +84,7 @@ WPSD `<h2>` "MMDVMHost Configuration" (mode enables, then Display Type).
 | M17 Mode | `[M17] Enable` | `modes.m17` | done | requires the MMDVM-Host fork (upstream removed M17). |
 | POCSAG Mode | `[POCSAG] Enable` | `modes.pocsag` | done | enable only; DAPNET config pending. |
 | FM Mode | `[FM] Enable` | `modes.fm` | done | *Waypoint-only toggle* — Pi-Star/WPSD edit FM via the expert INI editor. |
-| YSF2DMR / YSF2NXDN / YSF2P25 / DMR2YSF / DMR2NXDN Mode | per cross-mode daemon | — | pending | cross-mode bridges; "Gateways" tab is a stub. |
+| YSF2DMR / DMR2YSF / YSF2NXDN / DMR2NXDN / NXDN2DMR Mode | per cross-mode daemon (MMDVM_CM) | `ysf2dmr.enable` / `dmr2ysf.enable` / `ysf2nxdn.enable` / `dmr2nxdn.enable` / `nxdn2dmr.enable` | done | Gateways tab — each bridge is its own store section + INI + `waypoint-<bridge>.service` unit + card. Enable is a Waypoint-model gate (no INI Enable key): it decides whether the bridge contributes a render target, inferred from the file's presence on import. A bridge and the gateway it borrows loopback ports from are mutually exclusive at runtime (deploy `Conflicts=`). YSF2P25 / P252DMR not modeled. |
 | Display Type (None / OLED3 / OLED6 / Nextion / HD44780 / TFT Serial / LCDproc) | `[General] Display` (+ `[OLED] Type`) | `display.type` / `display.oled_type` | done | Setup tab. Node stays `DisplayLevel=0` (status over MQTT); the driver subsections render for clone parity. |
 | Display Port | `[Nextion]` / `[TFT Serial]` `Port` | `display.port` | done | Setup tab — None / modem / ttyACM* / ttyUSB* / ttyS2 / ttyNextionDriver. |
 | Nextion Layout (G4KLX / ON7LDS L2 / L3 / L3 HS) | `[Nextion] ScreenLayout` | `display.nextion_layout` | done | Setup tab — shown only when type = Nextion. |
@@ -233,8 +233,9 @@ YSFClients tree; they share MMDVM-Host's fixed 3200/4200 loopback, so they are
 mutually exclusive). The deploy's two units — `waypoint-ysfgateway.service` and
 `waypoint-dgidgateway.service` — must carry systemd `Conflicts=` on each other so
 restarting the enabled one stops the other; waypointd's apply restarts whichever
-target `ysfgw.enable_dgid` selects. The YSF2DMR/NXDN/P25 cross-mode bridges remain
-out of scope (Waypoint runs no DMR/NXDN/P25 cross-gateways).
+target `ysfgw.enable_dgid` selects. The YSF2DMR/YSF2NXDN cross-mode bridges (and
+their DMR/NXDN counterparts) are modeled on the **Gateways** tab, not the YSF
+panel — see the Cross-mode bridges row in the mode table.
 
 ### WPSD YSF fields
 
@@ -245,9 +246,9 @@ out of scope (Waypoint runs no DMR/NXDN/P25 cross-gateways).
 | WiresX Auto Passthrough | `[General] WiresXCommandPassthrough` | `ysfgw.wiresx_passthrough` | done | |
 | Enable DGIdGateway *(WPSD new — D2)* | `DGIdGateway.ini` | `ysfgw.enable_dgid` | done | swaps the YSF render target/unit to DGIdGateway (mutually exclusive with YSFGateway). |
 | YCS Network *(WPSD new — D2)* | `DGIdGateway.ini` `[DGId=5]` | `ysfgw.ycs_network` | done | links the startup reflector/room as a static DG-ID network (Type from the id: FCS room → `FCS`, else `YSF`). |
-| YSF2DMR: CCS7/DMR ID · DMR Master · DMR Options · DMR Master Password · YSF2DMR TG | `YSF2DMR.ini` | — | pending | cross-mode bridge (DMR Options is a WPSD addition). |
-| YSF2NXDN: NXDN ID · NXDN Host | `YSF2NXDN.ini` | — | pending | cross-mode bridge. |
-| YSF2P25: DMR ID · P25 Host | `YSF2P25.ini` | — | pending | cross-mode bridge. |
+| YSF2DMR: CCS7/DMR ID · DMR Master · DMR Options · DMR Master Password · YSF2DMR TG | `YSF2DMR.ini` `[DMR Network]` Id/Address/Options/Password/StartupDstId | `ysf2dmr.dmr_id` / `.master` / `.options` / `.password` / `.tg` | done | Gateways tab; password is redacted/preserved. DMR Options is the WPSD addition. |
+| YSF2NXDN: NXDN ID · NXDN TG | `YSF2NXDN.ini` `[NXDN Network]` Id/StartupDstId | `ysf2nxdn.nxdn_id` / `.tg` | done | Gateways tab. |
+| YSF2P25: DMR ID · P25 Host | `YSF2P25.ini` | — | not modeled | out of scope (no P25 cross-gateway). |
 
 ### Waypoint YSF fields (modeled beyond the WPSD panel labels)
 

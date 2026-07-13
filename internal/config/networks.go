@@ -61,3 +61,37 @@ func SetDStarGateway(s *store.Store, raw []byte, by string) error {
 	}
 	return s.Set("dstargw", &incoming, by)
 }
+
+// SetCrossBridge writes one cross-mode bridge section (ysf2dmr, dmr2ysf, …) with
+// the same write-only-secret rule the DMR networks and the D-Star gateway use: a
+// blank "password" in the body means "keep the stored one". The redacted view
+// never carries the DMR-master password, so the UI PUTs the section without it;
+// this strips a blank password from the body before delegating to SetSection, so
+// its merge keeps the stored secret. A non-blank password replaces it. Bridges
+// with no secret (dmr2ysf, ysf2nxdn, dmr2nxdn) simply carry no "password" key and
+// pass straight through; an unexpected password on one of those is rejected by
+// SetSection's DisallowUnknownFields exactly as before. Returns known=false for
+// an unrecognized section, mirroring SetSection.
+func SetCrossBridge(s *store.Store, section string, raw []byte, by string) (known bool, err error) {
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return true, err
+	}
+	if pw, ok := body["password"]; ok && blankJSONString(pw) {
+		delete(body, "password")
+		if raw, err = json.Marshal(body); err != nil {
+			return true, err
+		}
+	}
+	return SetSection(s, section, raw, by)
+}
+
+// blankJSONString reports whether a JSON value is the empty (or whitespace-only)
+// string. A non-string value is not blank — SetSection will reject it downstream.
+func blankJSONString(raw json.RawMessage) bool {
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return false
+	}
+	return len(bytes.TrimSpace([]byte(s))) == 0
+}

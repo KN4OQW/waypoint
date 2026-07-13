@@ -60,6 +60,17 @@ func fixture() *Model {
 		},
 		M17:   M17{CAN: "0", SelfOnly: true, AllowEncryption: false, TXHang: "5"},
 		M17GW: M17Gateway{Suffix: "H", Startup: "M17-M17 C", Revert: true, HangTime: "240", Voice: true},
+		// Cross-mode bridges: every bridge enabled with non-empty fields so the
+		// round-trip cannot be masked by a rendered default filling an empty field.
+		// The two DMR-master bridges (YSF2DMR, NXDN2DMR) each carry their own master
+		// password so the round-trip and secret redaction/preservation cover them;
+		// YSF2DMR also carries a DMR Options line (the WPSD addition) with an '=' in
+		// the value, like a DMR network's options.
+		YSF2DMR:  YSF2DMR{Enable: true, DMRId: "3180202", Master: "3102.master.brandmeister.network", Password: "y2d-s3cret", Options: "TS1_1=3100;TS2_1=31665;", TG: "31665"},
+		DMR2YSF:  DMR2YSF{Enable: true, DMRId: "3180202", DefaultTG: "9"},
+		YSF2NXDN: YSF2NXDN{Enable: true, NXDNId: "31802", TG: "1200"},
+		DMR2NXDN: DMR2NXDN{Enable: true, DMRId: "3180202", NXDNId: "65519"},
+		NXDN2DMR: NXDN2DMR{Enable: true, DMRId: "3180202", Master: "3102.master.brandmeister.network", Password: "n2d-s3cret", Options: "TS2_1=31665;", TG: "31665", NXDNTG: "20"},
 	}
 }
 
@@ -132,7 +143,31 @@ func TestLosslessRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := fromINI(mm, dg, yg, nil, pg, ng, xg, mg) // dgid nil: fixture runs the classic YSFGateway
+	// Cross-mode bridges: the fixture enables all five, so each renders and parses
+	// back. A bridge INI has no Enable key — its presence in fromINI IS its Enable
+	// (see fromINI), so passing every rendered bridge recovers Enable=true plus its
+	// fields, exactly as a running node's files would.
+	y2d, err := ParseINI(strings.NewReader(m.RenderYSF2DMR()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d2y, err := ParseINI(strings.NewReader(m.RenderDMR2YSF()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	y2n, err := ParseINI(strings.NewReader(m.RenderYSF2NXDN()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d2n, err := ParseINI(strings.NewReader(m.RenderDMR2NXDN()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n2d, err := ParseINI(strings.NewReader(m.RenderNXDN2DMR()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := fromINI(mm, dg, yg, nil, pg, ng, xg, mg, y2d, d2y, y2n, d2n, n2d) // dgid nil: fixture runs the classic YSFGateway
 	if !reflect.DeepEqual(m, got) {
 		t.Fatalf("round-trip lost data:\n want %+v\n  got %+v", m, got)
 	}
@@ -437,6 +472,167 @@ func TestSetDStarGatewayPreservesPassword(t *testing.T) {
 	m2, _ := Load(s)
 	if m2.DStarGW.IRCDDBPassword != "newirc" {
 		t.Fatalf("new password should replace, got %q", m2.DStarGW.IRCDDBPassword)
+	}
+}
+
+// TestCrossModeBridgeRendered: the fat YSF2DMR bridge renders its DMR master,
+// password, target TG and the WPSD Options line into [DMR Network], and reads the
+// YSF side from YSFGateway's [YSF Network] Port. Every asserted key is one the
+// MMDVM_CM YSF2DMR daemon parses.
+func TestCrossModeBridgeRendered(t *testing.T) {
+	m := fixture()
+	ini := m.RenderYSF2DMR()
+	for sec, wants := range map[string][]string{
+		"YSF Network": {"DstPort=42000", "Callsign=KN4OQW"},
+		"DMR Network": {
+			"Id=3180202",
+			"Address=3102.master.brandmeister.network",
+			"Password=y2d-s3cret",
+			"StartupDstId=31665",
+			"Options=TS1_1=3100;TS2_1=31665;",
+		},
+	} {
+		got := section(ini, sec)
+		for _, w := range wants {
+			if !strings.Contains(got, w) {
+				t.Errorf("[%s] missing %q\n%s", sec, w, got)
+			}
+		}
+	}
+	// A blank Options must be omitted (like a DMR network's), not rendered empty.
+	m.YSF2DMR.Options = ""
+	if strings.Contains(section(m.RenderYSF2DMR(), "DMR Network"), "Options=") {
+		t.Error("blank Options should be omitted from [DMR Network]")
+	}
+}
+
+// TestCrossModeTargetsGated: an enabled bridge contributes a render target (INI +
+// unit); a disabled one contributes none, so apply neither writes its file nor
+// restarts its unit. The always-on MMDVM/DMRGateway targets keep the lead.
+func TestCrossModeTargetsGated(t *testing.T) {
+	paths := Paths{
+		MMDVM: "/etc/MMDVM-Host.ini", DMRGateway: "/etc/DMRGateway.ini",
+		YSFGateway: "/etc/YSFGateway.ini", P25Gateway: "/etc/P25Gateway.ini",
+		NXDNGateway: "/etc/NXDNGateway.ini", DStarGateway: "/etc/dstargateway.cfg",
+		M17Gateway: "/etc/M17Gateway.ini", YSF2DMR: "/etc/YSF2DMR.ini",
+	}
+	m := fixture()
+	m.DMR2YSF.Enable = false
+	m.YSF2NXDN.Enable = false
+	m.DMR2NXDN.Enable = false
+	m.NXDN2DMR.Enable = false // leave only YSF2DMR enabled
+
+	has := func(targets []RenderTarget, unit string) bool {
+		for _, tg := range targets {
+			if tg.Unit == unit {
+				return true
+			}
+		}
+		return false
+	}
+	targets := m.RenderTargets(paths)
+	if targets[0].Unit != unitMMDVM || targets[1].Unit != unitDMRGateway {
+		t.Fatalf("bridges must append after the always-on gateways; got %q, %q", targets[0].Unit, targets[1].Unit)
+	}
+	if !has(targets, unitYSF2DMR) {
+		t.Error("enabled YSF2DMR should contribute a render target")
+	}
+	if has(targets, unitDMR2YSF) {
+		t.Error("disabled DMR2YSF must not contribute a render target")
+	}
+
+	// Enable them all: all five units appear.
+	m2 := fixture()
+	all := m2.RenderTargets(paths)
+	for _, u := range []string{unitYSF2DMR, unitDMR2YSF, unitYSF2NXDN, unitDMR2NXDN, unitNXDN2DMR} {
+		if !has(all, u) {
+			t.Errorf("enabled bridge target %q missing", u)
+		}
+	}
+}
+
+// TestCrossModeIsolation: changing a bridge section renders into that bridge's own
+// INI only — never the MMDVM-Host [DMR]/[Modem] sections, and never another
+// bridge's file.
+func TestCrossModeIsolation(t *testing.T) {
+	m := fixture()
+	beforeDMR, beforeModem := section(m.RenderMMDVM(), "DMR"), section(m.RenderMMDVM(), "Modem")
+	beforeDMR2YSF := m.RenderDMR2YSF()
+
+	m.YSF2DMR.Master = "changed.master.example"
+	m.YSF2DMR.Password = "rotated"
+	m.YSF2DMR.TG = "91"
+
+	if got := section(m.RenderMMDVM(), "DMR"); got != beforeDMR {
+		t.Errorf("changing YSF2DMR altered MMDVM [DMR]:\n before %q\n after %q", beforeDMR, got)
+	}
+	if got := section(m.RenderMMDVM(), "Modem"); got != beforeModem {
+		t.Errorf("changing YSF2DMR altered MMDVM [Modem]:\n before %q\n after %q", beforeModem, got)
+	}
+	if got := m.RenderDMR2YSF(); got != beforeDMR2YSF {
+		t.Errorf("changing YSF2DMR altered DMR2YSF.ini:\n before %q\n after %q", beforeDMR2YSF, got)
+	}
+}
+
+// TestViewRedactsCrossModeSecrets: the two DMR-master bridges' passwords never
+// reach the view — it reports only has_password.
+func TestViewRedactsCrossModeSecrets(t *testing.T) {
+	v := fixture().View("/tmp/config.db")
+	cm := fmt.Sprintf("%+v", v.CrossMode)
+	if strings.Contains(cm, "y2d-s3cret") || strings.Contains(cm, "n2d-s3cret") {
+		t.Fatal("cross-mode DMR-master password leaked into the view")
+	}
+	if !v.CrossMode.YSF2DMR.HasPassword || !v.CrossMode.NXDN2DMR.HasPassword {
+		t.Fatal("cross-mode bridges with a master password should report has_password")
+	}
+	// The non-secret bridge still surfaces its fields.
+	if v.CrossMode.DMR2YSF.DefaultTG != "9" {
+		t.Fatalf("DMR2YSF view should carry DefaultTG, got %q", v.CrossMode.DMR2YSF.DefaultTG)
+	}
+}
+
+// TestSetCrossBridgePreservesPassword: editing a DMR-master bridge without
+// resupplying its password keeps the stored one; a non-blank one replaces it.
+// Mirrors the DMR-networks / ircDDB write-only-secret rule for the bridges.
+func TestSetCrossBridgePreservesPassword(t *testing.T) {
+	s := memStore(t)
+	_ = fixture().Save(s, "seed") // YSF2DMR password y2d-s3cret
+
+	// UI edits the target TG, supplies no password (blank = keep stored), and sends
+	// only the fields the card manages — the merge must keep the rest.
+	body := `{"enable":true,"master":"3102.master.brandmeister.network","tg":"91","password":""}`
+	known, err := SetCrossBridge(s, "ysf2dmr", []byte(body), "test")
+	if !known || err != nil {
+		t.Fatalf("known=%v err=%v", known, err)
+	}
+	m, _ := Load(s)
+	if m.YSF2DMR.TG != "91" {
+		t.Fatalf("TG not updated: %q", m.YSF2DMR.TG)
+	}
+	if m.YSF2DMR.Password != "y2d-s3cret" {
+		t.Fatalf("blank password should have kept the stored one, got %q", m.YSF2DMR.Password)
+	}
+	// An unspecified field (DMRId) survives the merge.
+	if m.YSF2DMR.DMRId != "3180202" {
+		t.Fatalf("unspecified field lost on merge: %q", m.YSF2DMR.DMRId)
+	}
+
+	// A supplied password replaces.
+	if _, err := SetCrossBridge(s, "ysf2dmr", []byte(`{"password":"rotated"}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	m2, _ := Load(s)
+	if m2.YSF2DMR.Password != "rotated" {
+		t.Fatalf("new password should replace, got %q", m2.YSF2DMR.Password)
+	}
+
+	// A no-secret bridge writes through unchanged, and an unknown section reports
+	// known=false (mirrors SetSection).
+	if _, err := SetCrossBridge(s, "dmr2ysf", []byte(`{"enable":true,"default_tg":"8"}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	if known, _ := SetCrossBridge(s, "nosuch", []byte(`{}`), "test"); known {
+		t.Fatal("unknown section should report known=false")
 	}
 }
 
