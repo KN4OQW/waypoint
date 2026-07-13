@@ -10,11 +10,14 @@ import (
 // WriteFiles renders the model and writes both INI files atomically (write to a
 // temp file in the same directory, then rename). A crash mid-apply therefore
 // never leaves a daemon reading a half-written config.
-func (m *Model) WriteFiles(mmdvmPath, dmrgatewayPath string) error {
+func (m *Model) WriteFiles(mmdvmPath, dmrgatewayPath, ysfgatewayPath string) error {
 	if err := writeAtomic(mmdvmPath, m.RenderMMDVM()); err != nil {
 		return err
 	}
-	return writeAtomic(dmrgatewayPath, m.RenderDMRGateway())
+	if err := writeAtomic(dmrgatewayPath, m.RenderDMRGateway()); err != nil {
+		return err
+	}
+	return writeAtomic(ysfgatewayPath, m.RenderYSFGateway())
 }
 
 func writeAtomic(path, content string) error {
@@ -106,7 +109,14 @@ func (m *Model) RenderMMDVM() string {
 		kb("EmbeddedLCOnly", m.DMR.EmbeddedLCOnly),
 		kb("DumpTAData", m.DMR.DumpTAData),
 	)
-	modeSect(&b, "System Fusion", m.Modes.YSF)
+	sect(&b, "System Fusion",
+		kb("Enable", m.Modes.YSF),
+		kb("LowDeviation", m.YSF.LowDeviation),
+		kb("SelfOnly", m.YSF.SelfOnly),
+		kv("TXHang", def(m.YSF.TXHang, "4")),
+		kb("RemoteGateway", m.YSF.RemoteGateway),
+		kv("ModeHang", def(m.YSF.ModeHang, "20")),
+	)
 	modeSect(&b, "P25", m.Modes.P25)
 	modeSect(&b, "NXDN", m.Modes.NXDN)
 	modeSect(&b, "M17", m.Modes.M17)
@@ -123,8 +133,93 @@ func (m *Model) RenderMMDVM() string {
 		kb("Slot1", m.DMRNet.Slot1),
 		kb("Slot2", m.DMRNet.Slot2),
 	)
+	// The System Fusion network talks to YSFGateway on the fixed 3200/4200 pair.
+	sect(&b, "System Fusion Network",
+		kb("Enable", m.Modes.YSF),
+		kv("LocalAddress", "127.0.0.1"),
+		kv("LocalPort", ysfMMDVMLocalPort),
+		kv("GatewayAddress", "127.0.0.1"),
+		kv("GatewayPort", ysfMMDVMGatewayPort),
+		kv("ModeHang", def(m.YSF.ModeHang, "20")),
+	)
 	return b.String()
 }
+
+// Fixed loopback ports between MMDVM-Host and YSFGateway (the g4klx convention).
+const (
+	ysfMMDVMLocalPort   = "3200" // MMDVM-Host listens here; YSFGateway RptPort
+	ysfMMDVMGatewayPort = "4200" // YSFGateway listens here; MMDVM-Host sends here
+)
+
+// RenderYSFGateway renders a complete YSFGateway.ini from the model. Callsign,
+// ID, and frequencies come from the shared station config; the rest from the
+// YSFGateway section. Reflector/room hostlists are managed files on disk.
+func (m *Model) RenderYSFGateway() string {
+	var b strings.Builder
+	b.WriteString(generatedHeader)
+
+	sect(&b, "General",
+		kv("Callsign", m.General.Callsign),
+		kv("Suffix", def(m.YSFGW.Suffix, "RPT")),
+		kv("Id", m.General.ID),
+		kv("RptAddress", "127.0.0.1"),
+		kv("RptPort", ysfMMDVMLocalPort),
+		kv("LocalAddress", "127.0.0.1"),
+		kv("LocalPort", ysfMMDVMGatewayPort),
+		kb("WiresXCommandPassthrough", m.YSFGW.WiresXPassthrough),
+		kb("WiresXMakeUpper", m.YSFGW.WiresXMakeUpper),
+		kv("Daemon", "0"),
+	)
+	sect(&b, "Info",
+		kv("RXFrequency", m.Modem.RXFreqHz),
+		kv("TXFrequency", m.Modem.TXFreqHz),
+		kv("Power", def(m.General.Power, "1")),
+		kv("Name", def(m.General.Location, "Waypoint")),
+	)
+	sect(&b, "Log",
+		kv("MQTTLevel", "1"),
+		kv("DisplayLevel", "0"),
+	)
+	sect(&b, "MQTT",
+		kv("Address", "127.0.0.1"),
+		kv("Port", "1883"),
+		kv("Keepalive", "60"),
+		kv("Auth", "0"),
+		kv("Name", "ysf-gateway"),
+	)
+	sect(&b, "Network",
+		kv("Startup", m.YSFGW.Startup),
+		kb("Reconnect", m.YSFGW.Reconnect),
+		kb("Revert", m.YSFGW.Revert),
+		kv("InactivityTimeout", def(m.YSFGW.InactivityTimeout, "30")),
+		kv("Debug", "0"),
+	)
+	sect(&b, "YSF Network",
+		kb("Enable", m.YSFGW.YSFNetwork),
+		kv("Port", "42000"),
+		kv("Hosts", ysfHostsPath),
+		kv("ReloadTime", "60"),
+		kv("ParrotAddress", "127.0.0.1"),
+		kv("ParrotPort", "42012"),
+	)
+	sect(&b, "FCS Network",
+		kb("Enable", m.YSFGW.FCSNetwork),
+		kv("Port", "42001"),
+		kv("Rooms", fcsRoomsPath),
+	)
+	sect(&b, "APRS",
+		kb("Enable", m.YSFGW.APRS),
+		kv("Suffix", "Y"),
+	)
+	return b.String()
+}
+
+// Managed reflector/room hostlists, fetched and cached by waypointd. The pinned
+// YSFGateway parses YSFHosts as JSON (data["reflectors"]).
+const (
+	ysfHostsPath = "/home/pi-star/waypoint/etc/YSFHosts.json"
+	fcsRoomsPath = "/home/pi-star/waypoint/etc/FCSRooms.txt"
+)
 
 // RenderDMRGateway renders a complete DMRGateway.ini from the model.
 func (m *Model) RenderDMRGateway() string {

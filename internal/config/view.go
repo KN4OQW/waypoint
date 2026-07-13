@@ -9,7 +9,24 @@ type View struct {
 	DMR      ViewDMR       `json:"dmr"`
 	Modes    []ViewMode    `json:"modes"`
 	Networks []ViewNetwork `json:"networks"`
+	YSF      ViewYSF       `json:"ysf"`
 	ReadOnly bool          `json:"read_only"`
+}
+
+// ViewYSF is the System Fusion tab's read model: the mode enable plus the
+// gateway settings a user actually sets.
+type ViewYSF struct {
+	Enable            bool   `json:"enable"`
+	Suffix            string `json:"suffix"`
+	WiresXPassthrough bool   `json:"wiresx_passthrough"`
+	WiresXMakeUpper   bool   `json:"wiresx_make_upper"`
+	Startup           string `json:"startup"`
+	Reconnect         bool   `json:"reconnect"`
+	Revert            bool   `json:"revert"`
+	InactivityTimeout string `json:"inactivity_timeout"`
+	YSFNetwork        bool   `json:"ysf_network"`
+	FCSNetwork        bool   `json:"fcs_network"`
+	APRS              bool   `json:"aprs"`
 }
 
 type Sources struct {
@@ -95,6 +112,19 @@ func (m *Model) View(storePath string) *View {
 			EmbeddedLCOnly: m.DMR.EmbeddedLCOnly,
 			ID:             m.DMR.ID,
 		},
+	}
+	v.YSF = ViewYSF{
+		Enable:            m.Modes.YSF,
+		Suffix:            m.YSFGW.Suffix,
+		WiresXPassthrough: m.YSFGW.WiresXPassthrough,
+		WiresXMakeUpper:   m.YSFGW.WiresXMakeUpper,
+		Startup:           m.YSFGW.Startup,
+		Reconnect:         m.YSFGW.Reconnect,
+		Revert:            m.YSFGW.Revert,
+		InactivityTimeout: m.YSFGW.InactivityTimeout,
+		YSFNetwork:        m.YSFGW.YSFNetwork,
+		FCSNetwork:        m.YSFGW.FCSNetwork,
+		APRS:              m.YSFGW.APRS,
 	}
 	for _, md := range modeDisplay {
 		v.Modes = append(v.Modes, ViewMode{Key: md.key, Name: md.name, Enabled: md.get(m.Modes)})
