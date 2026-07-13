@@ -15,15 +15,20 @@ permissions:
   pull-requests: write
   id-token: write
 
+# Quota protection: auto-runs are limited to trusted authors (owner/member/
+# collaborator). Anything else waits for a maintainer to @claude it manually
+# — the interactive workflow is write-access-gated by the action itself.
 jobs:
   triage-issue:
-    if: github.event_name == 'issues'
+    if: >-
+      github.event_name == 'issues' &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Triage issue #${{ github.event.issue.number }} in this repository.
             1. Read the issue. If it's a bug report, check whether it contains enough to reproduce (versions, board, logs); if not, ask specifically for what's missing.
@@ -34,7 +39,9 @@ jobs:
           claude_args: --allowedTools "Bash(gh issue:*),Bash(gh search:*),Read,Grep,Glob"
 
   review-pr:
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,7 +49,7 @@ jobs:
           fetch-depth: 0
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Review PR #${{ github.event.pull_request.number }}: correctness first, then test coverage (config-losslessness regressions are release-blockers), then accessibility for UI changes (no color-only status), then style drift. Post findings as a single review comment, most severe first, each anchored to file:line. Acknowledge what the PR does well. If the change is architecture-scale, note that GOVERNANCE.md asks for an RFC — kindly.
             You advise; maintainers merge.

@@ -22,11 +22,11 @@ Changes that alter architecture, protocol/API contracts, security posture, or go
 
 ## AI-assisted triage
 
-Waypoint uses Claude (Anthropic) via GitHub Actions as a triage and review assistant:
+Waypoint uses Claude (Anthropic) via GitHub Actions as a triage and review assistant, funded by a maintainer's subscription quota:
 
-- New issues get an automated first read: reproduction check, affected-area labeling, duplicate detection.
-- New PRs get an automated technical review: correctness concerns, test coverage, style drift — posted as comments for the author and human reviewers.
-- Anyone can mention `@claude` in a thread for interactive help.
+- Issues and PRs from established contributors get an automated first read (reproduction check, duplicate detection) and a technical review pass (correctness, tests, accessibility).
+- For new contributors, a maintainer mentions `@claude` to invoke the same review on your thread — this is quota protection against drive-by spam, not a trust judgment; expect it within the review SLA.
+- Contributors with write access can mention `@claude` anywhere for interactive help.
 
 **Boundaries:** the AI never merges, never closes, and never has the last word — maintainers do. Its comments are advisory. If AI triage is ever wrong or unhelpful, say so in the thread; that feedback tunes the prompts, which live in `.github/workflows/` and are themselves subject to PR review.
 
