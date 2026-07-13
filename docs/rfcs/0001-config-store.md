@@ -37,12 +37,18 @@ store  →  typed model (Go structs)  →  per-daemon renderers  →  staged dir
 ### Override layer
 
 - `/etc/waypoint/overrides.d/<daemon>.d/*.conf` fragments merge **last** into the rendered output, keyed by INI section: an override section replaces keys it names, leaves the rest.
+- **Precedence among fragments is lexical filename order** (the `10-name.conf` convention); when two fragments set the same section/key, the later filename wins. The UI's override view shows the effective winner per key.
+- **Deletion is expressible**: a key set to the literal token `!unset` removes that key from the rendered output entirely (suppressing a rendered default, not just replacing its value).
+- **Accepted risk, stated plainly**: override fragments are hand-edited disk files and bypass the store's JSON-Schema validation. They are the human escape hatch; the store's validation guarantees do not extend to their *content*. What is guaranteed — and tested (property 5) — is that overrides re-apply deterministically and don't interact with unrelated store changes.
+- Overrides carry a provenance field in the daemon's model (`disk` today; `ui` reserved) so UI-managed overrides can later reuse the `applies` journal without a schema migration.
 - Hostfile-style resources get `prepend.d`/`append.d` hooks instead (they aren't INI).
 - Active overrides are surfaced in the UI (name, target, diff vs. rendered base) — visible, not fought. Updates never touch `/etc/waypoint/overrides.d`.
 
 ### Profiles
 
 - A profile is a named, exported subset of the key tree (the `network.*` and `mode.*` namespaces by default), stored in a `profiles` table and exportable as a JSON file (optionally minisign-signed).
+- **Secrets never leave the device by default**: schema keys carrying credentials are annotated `sensitive: true`, and sensitive keys are excluded from profile *export* (exported as a named placeholder requiring re-entry on import). In-store profile switching retains them. This annotation also drives redaction in UI diffs and logs.
+- The export format carries a **hardware fingerprint block** (board family, TCXO frequency) from day one, so importing a 14.7456 MHz profile onto a 12.288 MHz board can warn — the field exists in the schema even before the warning UI ships.
 - Switching a profile = transactional bulk write of that subset + regenerate + supervised restarts. Target: < 5 s on a Pi 3.
 - Keys outside the profile's namespaces (device identity, auth, hardware calibration) are never part of a profile — switching can't brick access or lose calibration.
 
@@ -58,7 +64,9 @@ CI enforces, as release-blocking property tests:
 1. **Round-trip**: randomized valid stores (property-based, covering every schema key) render → daemon-parse (using the daemons' own INI readers where feasible) → no semantic loss vs. the model.
 2. **Isolation**: for random pairs (change key A, observe key B≠A): applying A never alters B's rendered output outside A's section.
 3. **Disable/re-enable**: toggling any `*.enabled` off, applying unrelated changes, toggling back on ⇒ byte-identical section to the original.
-4. **Migration**: every historical schema version's fixture DB migrates to head losslessly.
+4. **Migration**: every historical schema version's fixture DB migrates to head losslessly — and a migration interrupted at any step (crash-injection) leaves a system that boots on the pre-migration backup.
+5. **Override determinism**: with randomized override fragments active (including same-key conflicts across fragments and `!unset` markers), properties 1–3 still hold for the non-overridden surface, and the override-affected keys re-render identically across repeated applies and unrelated store changes.
+6. **Profile round-trip**: export → import into a fresh store → activate ⇒ rendered output for the exported namespaces is byte-identical, with `sensitive: true` keys verified absent from the export artifact.
 
 ## Alternatives considered
 
@@ -68,6 +76,6 @@ CI enforces, as release-blocking property tests:
 
 ## Open questions
 
-1. Should overrides be expressible *in* the store (UI-managed) as well as on disk? (Leaning yes, later — disk first for the update-survival guarantee.)
-2. Secrets at rest (network passwords): plaintext-in-DB matches incumbent practice; OS keyring integration is a candidate for RFC-0002 (security posture).
-3. Whether profile export should include a hardware-fingerprint warning block (importing a 14.7456 MHz profile onto a 12.288 MHz board).
+1. Should overrides be expressible *in* the store (UI-managed) as well as on disk? Leaning yes, later — disk first for the update-survival guarantee. *(Partially settled in review: the override model carries a provenance field from day one so the UI path needs no migration.)*
+2. Secrets **at rest** (encryption/keyring): deferred to RFC-0002 (security posture). *(Settled in review: secrets in transit are handled now — `sensitive: true` schema annotation, excluded from profile exports, redacted in diffs/logs.)*
+3. ~~Whether profile export should include a hardware-fingerprint block~~ *(Settled in review: yes — the schema field ships with the export format; the warning UI may follow later.)*
