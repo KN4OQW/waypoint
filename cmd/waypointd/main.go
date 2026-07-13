@@ -19,8 +19,13 @@ import (
 
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/demo"
+	"github.com/KN4OQW/waypoint/internal/dmrhosts"
+	"github.com/KN4OQW/waypoint/internal/dstarhosts"
 	"github.com/KN4OQW/waypoint/internal/hub"
+	"github.com/KN4OQW/waypoint/internal/m17hosts"
 	"github.com/KN4OQW/waypoint/internal/mqtt"
+	"github.com/KN4OQW/waypoint/internal/nxdnhosts"
+	"github.com/KN4OQW/waypoint/internal/p25hosts"
 	"github.com/KN4OQW/waypoint/internal/store"
 	"github.com/KN4OQW/waypoint/internal/ysfhosts"
 	"github.com/KN4OQW/waypoint/ui"
@@ -30,16 +35,83 @@ import (
 var Version = "dev"
 
 type server struct {
-	hub       *hub.Hub
-	demo      bool
-	started   time.Time
-	store     *store.Store
-	storePath string
-	mmdvmINI  string // render target: the file MMDVM-Host reads
-	dmrgwINI  string // render target: the file DMRGateway reads
-	ysfgwINI  string // render target: the file YSFGateway reads
-	ysfHosts  string // cached YSF reflector hostlist (JSON)
-	units     []string
+	hub        *hub.Hub
+	demo       bool
+	started    time.Time
+	store      *store.Store
+	storePath  string
+	mmdvmINI   string // render target: the file MMDVM-Host reads
+	dmrgwINI   string // render target: the file DMRGateway reads
+	ysfgwINI   string // render target: the file YSFGateway reads
+	p25gwINI   string // render target: the file P25Gateway reads
+	nxdngwINI  string // render target: the file NXDNGateway reads
+	dstargwINI string // render target: the file DStarGateway reads (dstargateway.cfg)
+	m17gwINI   string // render target: the file M17Gateway reads (M17Gateway.ini)
+	ysfHosts   string // cached YSF reflector hostlist (JSON)
+	p25Hosts   string // cached P25 reflector (talkgroup) hostlist (JSON)
+	nxdnHosts  string // cached NXDN reflector (talkgroup) hostlist (JSON)
+	dstarHosts string // cached D-Star reflector hostlist (JSON)
+	m17Hosts   string // cached M17 reflector hostlist (space/tab text)
+	dmrHosts   string // cached DMR master hostlist (DMR_Hosts.txt, space/tab text)
+	units      []string
+}
+
+// m17Reflectors serves the cached M17 reflector hostlist for the settings-page
+// startup-reflector picker (GET /api/m17/reflectors).
+func (s *server) m17Reflectors(w http.ResponseWriter, _ *http.Request) {
+	refs, err := m17hosts.Reflectors(s.m17Hosts)
+	if err != nil {
+		refs = []m17hosts.Reflector{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(refs)
+}
+
+// dstarReflectors serves the cached D-Star reflector hostlist for the
+// settings-page startup-reflector picker (GET /api/dstar/reflectors).
+func (s *server) dstarReflectors(w http.ResponseWriter, _ *http.Request) {
+	refs, err := dstarhosts.Reflectors(s.dstarHosts)
+	if err != nil {
+		// No cache yet (offline / first boot) → empty list, not an error.
+		refs = []dstarhosts.Reflector{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(refs)
+}
+
+// nxdnReflectors serves the cached NXDN reflector (talkgroup) hostlist for the
+// settings-page startup-TG picker (GET /api/nxdn/reflectors).
+func (s *server) nxdnReflectors(w http.ResponseWriter, _ *http.Request) {
+	refs, err := nxdnhosts.Reflectors(s.nxdnHosts)
+	if err != nil {
+		// No cache yet (offline / first boot) → empty list, not an error.
+		refs = []nxdnhosts.Reflector{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(refs)
+}
+
+// p25Reflectors serves the cached P25 reflector (talkgroup) hostlist for the
+// settings-page startup-TG picker (GET /api/p25/reflectors).
+func (s *server) p25Reflectors(w http.ResponseWriter, _ *http.Request) {
+	refs, err := p25hosts.Reflectors(s.p25Hosts)
+	if err != nil {
+		// No cache yet (offline / first boot) → empty list, not an error.
+		refs = []p25hosts.Reflector{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(refs)
+}
+
+// dmrMasters serves the cached DMR master hostlist for the settings-page DMR
+// master-server dropdowns (GET /api/dmr/masters).
+func (s *server) dmrMasters(w http.ResponseWriter, _ *http.Request) {
+	m, err := dmrhosts.Masters(s.dmrHosts)
+	if err != nil {
+		m = []dmrhosts.Master{} // no cache yet (offline / first boot) → empty list
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(m)
 }
 
 // ysfReflectors serves the cached YSF reflector hostlist for the settings-page
@@ -109,7 +181,7 @@ func (s *server) configApply(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := m.WriteFiles(s.mmdvmINI, s.dmrgwINI, s.ysfgwINI); err != nil {
+	if err := m.WriteFiles(s.mmdvmINI, s.dmrgwINI, s.ysfgwINI, s.p25gwINI, s.nxdngwINI, s.dstargwINI, s.m17gwINI); err != nil {
 		http.Error(w, "render: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -159,13 +231,96 @@ func (s *server) seedStore() error {
 // seeded (a store created before YSF has no ysfgw row). It only fills absent
 // sections, so it never overwrites a user's settings.
 func (s *server) backfillDefaults() error {
-	if _, ok, err := s.store.Get("ysfgw"); err != nil || ok {
-		return err
+	if _, ok, err := s.store.Get("ysfgw"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("ysfgw", config.DefaultYSFGateway(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled ysfgw defaults")
 	}
-	if err := s.store.Set("ysfgw", config.DefaultYSFGateway(), "backfill"); err != nil {
-		return err
+	// P25 arrived after YSF: a store seeded before it lacks both the [P25] mode
+	// params and the gateway section. A fresh store gets p25 from the import; an
+	// older one needs both backfilled so Load never returns zero values.
+	if _, ok, err := s.store.Get("p25"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("p25", config.DefaultP25(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled p25 defaults")
 	}
-	log.Printf("config store: backfilled ysfgw defaults")
+	if _, ok, err := s.store.Get("p25gw"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("p25gw", config.DefaultP25Gateway(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled p25gw defaults")
+	}
+	// NXDN arrived after P25: same story — a store seeded before it lacks the
+	// [NXDN] mode params and the gateway section, so backfill both.
+	if _, ok, err := s.store.Get("nxdn"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("nxdn", config.DefaultNXDN(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled nxdn defaults")
+	}
+	if _, ok, err := s.store.Get("nxdngw"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("nxdngw", config.DefaultNXDNGateway(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled nxdngw defaults")
+	}
+	// D-Star arrived after NXDN: same story — a store seeded before it lacks the
+	// [D-Star] mode params and the gateway section, so backfill both.
+	if _, ok, err := s.store.Get("dstar"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("dstar", config.DefaultDStar(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled dstar defaults")
+	}
+	if _, ok, err := s.store.Get("dstargw"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("dstargw", config.DefaultDStarGateway(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled dstargw defaults")
+	}
+	// M17 arrived after D-Star: same story — a store seeded before it lacks the
+	// [M17] mode params and the gateway section, so backfill both.
+	if _, ok, err := s.store.Get("m17"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("m17", config.DefaultM17(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled m17 defaults")
+	}
+	if _, ok, err := s.store.Get("m17gw"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("m17gw", config.DefaultM17Gateway(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled m17gw defaults")
+	}
 	return nil
 }
 
@@ -253,10 +408,26 @@ func main() {
 	mmdvmINI := flag.String("mmdvm-ini", "/home/pi-star/waypoint/etc/MMDVM-Host.ini", "MMDVM-Host.ini render target (the file the daemon reads)")
 	dmrgwINI := flag.String("dmrgateway-ini", "/home/pi-star/waypoint/etc/DMRGateway.ini", "DMRGateway.ini render target")
 	ysfgwINI := flag.String("ysfgateway-ini", "/home/pi-star/waypoint/etc/YSFGateway.ini", "YSFGateway.ini render target")
+	p25gwINI := flag.String("p25gateway-ini", "/home/pi-star/waypoint/etc/P25Gateway.ini", "P25Gateway.ini render target")
+	nxdngwINI := flag.String("nxdngateway-ini", "/home/pi-star/waypoint/etc/NXDNGateway.ini", "NXDNGateway.ini render target")
+	dstargwINI := flag.String("dstargateway-ini", "/home/pi-star/waypoint/etc/dstargateway.cfg", "dstargateway.cfg render target")
+	m17gwINI := flag.String("m17gateway-ini", "/home/pi-star/waypoint/etc/M17Gateway.ini", "M17Gateway.ini render target")
 	ysfHosts := flag.String("ysf-hosts", "/home/pi-star/waypoint/etc/YSFHosts.json", "cached YSF reflector hostlist path")
 	ysfHostsURL := flag.String("ysf-hosts-url", ysfhosts.DefaultURL, "YSF reflector hostlist source URL")
+	p25Hosts := flag.String("p25-hosts", "/home/pi-star/waypoint/etc/P25Hosts.json", "cached P25 reflector hostlist path")
+	p25HostsURL := flag.String("p25-hosts-url", p25hosts.DefaultURL, "P25 reflector hostlist source URL")
+	nxdnHosts := flag.String("nxdn-hosts", "/home/pi-star/waypoint/etc/NXDNHosts.json", "cached NXDN reflector hostlist path")
+	nxdnHostsURL := flag.String("nxdn-hosts-url", nxdnhosts.DefaultURL, "NXDN reflector hostlist source URL")
+	// The D-Star cache path is the DStar_Hosts.json inside the gateway's HostsFiles
+	// directory — the gateway reads it there directly (no separate copy).
+	dstarHosts := flag.String("dstar-hosts", "/home/pi-star/waypoint/etc/DStar_Hosts.json", "cached D-Star reflector hostlist path")
+	dstarHostsURL := flag.String("dstar-hosts-url", dstarhosts.DefaultURL, "D-Star reflector hostlist source URL")
+	m17Hosts := flag.String("m17-hosts", "/home/pi-star/waypoint/etc/M17Hosts.txt", "cached M17 reflector hostlist path")
+	m17HostsURL := flag.String("m17-hosts-url", m17hosts.DefaultURL, "M17 reflector hostlist source URL")
+	dmrHosts := flag.String("dmr-hosts", "/usr/local/etc/DMR_Hosts.txt", "cached DMR master hostlist path (DMR_Hosts.txt)")
+	dmrHostsURL := flag.String("dmr-hosts-url", dmrhosts.DefaultURL, "DMR master hostlist source URL")
 	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
-	units := flag.String("units", "waypoint-mmdvm.service,waypoint-dmrgateway.service,waypoint-ysfgateway.service", "comma-separated systemd units to restart on apply")
+	units := flag.String("units", "waypoint-mmdvm.service,waypoint-dmrgateway.service,waypoint-ysfgateway.service,waypoint-p25gateway.service,waypoint-nxdngateway.service,waypoint-dstargateway.service,waypoint-m17gateway.service", "comma-separated systemd units to restart on apply")
 	flag.Parse()
 
 	st, err := store.Open(*storePath)
@@ -268,9 +439,9 @@ func main() {
 	s := &server{
 		hub: hub.New(), demo: *demoMode, started: time.Now(),
 		store: st, storePath: *storePath,
-		mmdvmINI: *mmdvmINI, dmrgwINI: *dmrgwINI, ysfgwINI: *ysfgwINI,
-		ysfHosts: *ysfHosts,
-		units:    strings.Split(*units, ","),
+		mmdvmINI: *mmdvmINI, dmrgwINI: *dmrgwINI, ysfgwINI: *ysfgwINI, p25gwINI: *p25gwINI, nxdngwINI: *nxdngwINI, dstargwINI: *dstargwINI, m17gwINI: *m17gwINI,
+		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts,
+		units: strings.Split(*units, ","),
 	}
 	if err := s.seedStore(); err != nil {
 		log.Printf("config store seed skipped: %v", err)
@@ -292,8 +463,13 @@ func main() {
 				log.Printf("mqtt bridge stopped: %v", err)
 			}
 		}()
-		// Keep the YSF reflector hostlist fresh for the gateway + picker.
+		// Keep the reflector hostlists fresh for the gateways + pickers.
 		go ysfhosts.Run(context.Background(), *ysfHostsURL, *ysfHosts, 6*time.Hour)
+		go p25hosts.Run(context.Background(), *p25HostsURL, *p25Hosts, 6*time.Hour)
+		go nxdnhosts.Run(context.Background(), *nxdnHostsURL, *nxdnHosts, 6*time.Hour)
+		go dstarhosts.Run(context.Background(), *dstarHostsURL, *dstarHosts, 6*time.Hour)
+		go m17hosts.Run(context.Background(), *m17HostsURL, *m17Hosts, 6*time.Hour)
+		go dmrhosts.Run(context.Background(), *dmrHostsURL, *dmrHosts, 6*time.Hour)
 	}
 
 	mux := http.NewServeMux()
@@ -303,6 +479,11 @@ func main() {
 	mux.HandleFunc("/api/config/apply", s.configApply)
 	mux.HandleFunc("/api/config/", s.configView) // PUT /api/config/{section}
 	mux.HandleFunc("/api/ysf/reflectors", s.ysfReflectors)
+	mux.HandleFunc("/api/p25/reflectors", s.p25Reflectors)
+	mux.HandleFunc("/api/nxdn/reflectors", s.nxdnReflectors)
+	mux.HandleFunc("/api/dstar/reflectors", s.dstarReflectors)
+	mux.HandleFunc("/api/m17/reflectors", s.m17Reflectors)
+	mux.HandleFunc("/api/dmr/masters", s.dmrMasters)
 	mux.Handle("/", http.FileServerFS(ui.FS()))
 
 	mode := "live, mqtt " + *broker

@@ -8,7 +8,11 @@ const TABS = [
   { id: "general",      tag: "RF", label: "General",      sub: "Radio & Station",     crumb: "SYSTEM / GENERAL",        title: "General Configuration", desc: "Station identity, operating frequencies and modem hardware for this hotspot node." },
   { id: "brandmeister", tag: "BM", label: "BrandMeister", sub: "Network & Security",   crumb: "NETWORKS / BRANDMEISTER", title: "DMR Networks",          desc: "Master servers this node bridges DMR traffic to. Passwords are stored on the node and never shown." },
   { id: "dmr",          tag: "DM", label: "DMR",          sub: "Master & Slots",       crumb: "MODES / DMR",             title: "DMR Settings",          desc: "Color code and per-slot behaviour for Digital Mobile Radio." },
+  { id: "dstar",        tag: "DS", label: "D-Star",        sub: "ircDDB & reflectors",  crumb: "MODES / D-STAR",          title: "D-Star",                desc: "D-Star gateway: module band letter, ircDDB callsign routing, startup reflector, and which reflector protocols are on." },
   { id: "ysf",          tag: "YS", label: "System Fusion", sub: "YSF / FCS reflectors", crumb: "MODES / SYSTEM FUSION",   title: "System Fusion (YSF)",   desc: "C4FM gateway: startup reflector or FCS room, Wires-X, and which reflector networks are on." },
+  { id: "p25",          tag: "25", label: "P25",          sub: "NAC & Talkgroups",     crumb: "MODES / P25",             title: "P25 (Phase 1)",         desc: "APCO P25 gateway: network access code, startup talkgroups, and gateway behaviour." },
+  { id: "nxdn",         tag: "NX", label: "NXDN",         sub: "RAN & Talkgroups",     crumb: "MODES / NXDN",            title: "NXDN",                  desc: "NXDN gateway: radio access number, startup talkgroups, and gateway behaviour." },
+  { id: "m17",          tag: "17", label: "M17",          sub: "CAN & Reflectors",     crumb: "MODES / M17",             title: "M17",                   desc: "M17 gateway: channel access number, startup reflector + module, and gateway behaviour." },
   { id: "modes",        tag: "MD", label: "Modes",        sub: "Digital Modes",        crumb: "MODES / DIGITAL",         title: "Digital Mode Control",  desc: "Which digital voice / data modes MMDVM-Host handles. Toggling one restarts the stack on Apply." },
   { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Bridges",   crumb: "BRIDGES / GATEWAYS",      title: "Cross-Mode Gateways",   desc: "Transcoding bridges between digital voice modes." },
   { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "SYSTEM / NETWORK",        title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
@@ -26,6 +30,10 @@ let edit = {};              // section -> {field: value} working copy
 let dirty = new Set();      // sections with unsaved changes
 let applying = false;
 let ysfRefs = [];           // cached YSF reflector list for the startup picker
+let p25Refs = [];           // cached P25 talkgroup list for the startup-TG picker
+let nxdnRefs = [];          // cached NXDN talkgroup list for the startup-TG picker
+let dstarRefs = [];         // cached D-Star reflector list for the startup picker
+let m17Refs = [];           // cached M17 reflector list for the startup picker
 
 const el = (t, cls, html) => { const e = document.createElement(t); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -39,30 +47,128 @@ function buildEdit(c) {
   edit = {
     general: { callsign: g.callsign, id: g.dmr_id, duplex: !!g.duplex, power: g.power, location: g.location, url: g.url },
     modem:   { rx_freq_hz: g.rx_freq_hz, tx_freq_hz: g.tx_freq_hz, port: g.modem_port, rx_offset: g.rx_offset, tx_offset: g.tx_offset },
-    dmr:     { color_code: d.color_code, id: d.id, embedded_lc_only: !!d.embedded_lc_only },
+    dmr:     { color_code: d.color_code, id: d.id, embedded_lc_only: !!d.embedded_lc_only, dump_ta_data: !!d.dump_ta_data, beacons: !!d.beacons },
     dmrnet:  { slot1: !!d.slot1, slot2: !!d.slot2 },
     modes:   Object.fromEntries((c.modes || []).map((m) => [m.key, !!m.enabled])),
     // password starts blank (blank = keep the stored one); has_password drives the placeholder.
-    networks: (c.networks || []).map((n) => ({ name: n.name, address: n.address, port: n.port, enabled: !!n.enabled, password: "", rewrites: (n.rewrites || []).slice(), has_password: !!n.has_password })),
+    networks: (c.networks || []).map((n) => ({ name: n.name, type: n.type || "custom", address: n.address, port: n.port, primary: !!n.primary, options: n.options || "", essid: n.essid || "", enabled: !!n.enabled, password: "", has_password: !!n.has_password, auto_rewrite: !!n.auto_rewrite, tg_list_file: n.tg_list_file || "", xlx_startup: n.xlx_startup || "", xlx_module: n.xlx_module || "", xlx_slot: n.xlx_slot || "2", rewrites: (n.rewrites || []).slice() })),
+    routes: (c.routes || []).map((r) => ({ slot: r.slot || "2", tg: r.tg || "", network: r.network || "" })),
     ysfgw: ysfgwFrom(c.ysf || {}),
+    p25: p25From(c.p25 || {}),
+    p25gw: p25gwFrom(c.p25 || {}),
+    nxdn: nxdnFrom(c.nxdn || {}),
+    nxdngw: nxdngwFrom(c.nxdn || {}),
+    dstar: dstarFrom(c.dstar || {}),
+    dstargw: dstargwFrom(c.dstar || {}),
+    m17: m17From(c.m17 || {}),
+    m17gw: m17gwFrom(c.m17 || {}),
   };
   dirty = new Set();
   refreshActions();
 }
 
+// The D-Star view is flat (mode params + gateway settings); it splits back into
+// two store sections: "dstar" (MMDVM-Host [D-Star] params) and "dstargw"
+// (dstargateway.cfg). The Module band letter must match on both sides — it lives
+// in the "dstar" section and the renderer mirrors it into the gateway Band.
+function dstarFrom(d) {
+  return {
+    module: d.module || "B", self_only: !!d.self_only, remote_gateway: !!d.remote_gateway,
+  };
+}
+// ircddb_password starts blank; blank means "keep the stored one" (the store
+// merge preserves fields the payload omits — apply() drops the blank password).
+// has_ircddb_password drives the placeholder.
+function dstargwFrom(d) {
+  return {
+    reflector: d.reflector || "", reflector_reconnect: d.reflector_reconnect || "Never",
+    ircddb_hostname: d.ircddb_hostname || "ircv4.openquad.net",
+    ircddb_username: d.ircddb_username || "", ircddb_password: "",
+    has_ircddb_password: !!d.has_ircddb_password,
+    dextra: d.dextra !== false, dplus: d.dplus !== false, dplus_login: d.dplus_login || "",
+    dcs: d.dcs !== false, xlx: d.xlx !== false,
+  };
+}
+
 function ysfgwFrom(y) {
   return {
     suffix: y.suffix || "RPT", startup: y.startup || "",
-    wiresx_passthrough: !!y.wiresx_passthrough, wiresx_make_upper: !!y.wiresx_make_upper,
-    reconnect: !!y.reconnect, revert: !!y.revert, inactivity_timeout: y.inactivity_timeout || "30",
+    wiresx_passthrough: !!y.wiresx_passthrough,
+    revert: !!y.revert, inactivity_timeout: y.inactivity_timeout || "30",
     ysf_network: !!y.ysf_network, fcs_network: !!y.fcs_network, aprs: !!y.aprs,
   };
 }
 
-// cleanNet strips UI-only fields before sending to the store (which rejects
-// unknown fields). A blank password means "keep the stored one".
+// The P25 view is flat (mode params + gateway settings); it splits back into two
+// store sections: "p25" (MMDVM-Host [P25] params) and "p25gw" (P25Gateway.ini).
+function p25From(p) {
+  return {
+    nac: p.nac || "293", self_only: !!p.self_only,
+    override_uid_check: !!p.override_uid_check, remote_gateway: !!p.remote_gateway,
+  };
+}
+function p25gwFrom(p) {
+  return {
+    static: p.static || "", voice: p.voice !== false,
+    rf_hang_time: p.rf_hang_time || "120", net_hang_time: p.net_hang_time || "60",
+  };
+}
+
+// The NXDN view is flat too; it splits back into "nxdn" (MMDVM-Host [NXDN]
+// params) and "nxdngw" (NXDNGateway.ini). RAN is a decimal Radio Access Number,
+// unlike P25's hex NAC.
+function nxdnFrom(n) {
+  return {
+    ran: n.ran || "1", self_only: !!n.self_only, remote_gateway: !!n.remote_gateway,
+  };
+}
+// The M17 view is flat too; it splits back into "m17" (MMDVM-Host [M17] params)
+// and "m17gw" (M17Gateway.ini). CAN is a decimal Channel Access Number; M17 has
+// no remote-gateway toggle but adds AllowEncryption.
+function m17From(n) {
+  return {
+    can: n.can || "0", self_only: !!n.self_only, allow_encryption: !!n.allow_encryption,
+  };
+}
+function m17gwFrom(n) {
+  return {
+    suffix: n.suffix || "H", startup: n.startup || "", revert: n.revert !== false,
+    hang_time: n.hang_time || "240", voice: n.voice !== false,
+  };
+}
+
+function nxdngwFrom(n) {
+  return {
+    static: n.static || "", voice: n.voice !== false,
+    rf_hang_time: n.rf_hang_time || "120", net_hang_time: n.net_hang_time || "60",
+  };
+}
+
+// cleanNet strips UI-only fields (has_password) before sending to the store,
+// which rejects unknown fields. A blank password means "keep the stored one".
+// Raw rewrites are sent only for a custom network; typed networks generate them.
 function cleanNet(n) {
-  return { name: n.name, address: n.address, port: n.port, enabled: !!n.enabled, password: n.password || "", rewrites: n.rewrites || [] };
+  return {
+    name: n.name, type: n.type || "custom", address: n.address, port: n.port,
+    primary: !!n.primary, options: n.options || "", essid: n.essid || "", enabled: !!n.enabled,
+    password: n.password || "", auto_rewrite: !!n.auto_rewrite, tg_list_file: n.tg_list_file || "",
+    xlx_startup: n.xlx_startup || "", xlx_module: n.xlx_module || "", xlx_slot: n.xlx_slot || "2",
+    rewrites: n.type === "custom" && !n.auto_rewrite ? (n.rewrites || []) : [],
+  };
+}
+
+// cleanDstargw strips the UI-only has_ircddb_password flag (the store rejects
+// unknown fields) and omits ircddb_password when blank, so the merge keeps the
+// stored secret. A supplied password replaces it.
+function cleanDstargw(d) {
+  const out = {
+    reflector: d.reflector || "", reflector_reconnect: d.reflector_reconnect || "Never",
+    ircddb_hostname: d.ircddb_hostname || "", ircddb_username: d.ircddb_username || "",
+    dextra: !!d.dextra, dplus: !!d.dplus, dplus_login: d.dplus_login || "",
+    dcs: !!d.dcs, xlx: !!d.xlx,
+  };
+  if (d.ircddb_password) out.ircddb_password = d.ircddb_password;
+  return out;
 }
 
 function setField(sec, key, val) {
@@ -146,23 +252,147 @@ function panelModes() {
   return `<div class="modes-grid">${cards}</div>`;
 }
 
+// --- DMR networks (WPSD-style: routing generated from network type) -------
+// The operator never hand-writes DMRGateway rewrite lines. Each network has a
+// type whose dial-prefix routing is generated on the node; exactly one network
+// is the primary catch-all (no prefix — this is what makes the TG9990 Parrot
+// echo). The only routing table is the optional "tie a talkgroup to a gateway"
+// override. A "custom" network keeps a raw-rules escape hatch.
+// Fixed per-network sections mirroring Pi-Star's "DMR Configuration" body: a DMR
+// Master (primary) selector, then BrandMeister / DMR+ / Custom / SystemX / TGIF
+// / XLX blocks, then General DMR Settings and the talkgroup-routing override.
+// Each section binds to the single network of its type in edit.networks, created
+// on demand when its master/enable is set. Routing itself is generated on the
+// node from type + primary — no hand-written rewrites.
+let dmrMasters = []; // cached /api/dmr/masters, for the master dropdowns
+
+const slotSelect = (sel, attrs) =>
+  `<select class="mini" ${attrs}><option value="1"${String(sel) === "1" ? " selected" : ""}>TS1</option><option value="2"${String(sel) !== "1" ? " selected" : ""}>TS2</option></select>`;
+
+function netOf(type) { return (edit.networks || []).find((n) => n.type === type); }
+// ensureNet returns the network of a type, creating a disabled one if absent.
+function ensureNet(type) {
+  let n = netOf(type);
+  if (!n) {
+    // TGIF has a single fixed master (no dropdown); default its address.
+    const addr = type === "tgif" ? "tgif.network" : "";
+    n = { name: type, type, address: addr, port: type === "xlx" ? "62030" : "62031", primary: false,
+          options: "", essid: "", enabled: false, password: "", has_password: false,
+          auto_rewrite: type === "custom", tg_list_file: "", xlx_startup: "", xlx_module: "", xlx_slot: "2", rewrites: [] };
+    (edit.networks = edit.networks || []).push(n);
+  }
+  return n;
+}
+
+const enPill = (type, n) => `<span class="pill ${n && n.enabled ? "on" : "off"}" data-neten="${type}" style="cursor:pointer;">${n && n.enabled ? "ENABLED" : "DISABLED"}</span>`;
+const netField = (type, key, n, ph, pw) =>
+  `<input data-netf="${type}" data-nkey="${key}"${pw ? ' type="password"' : ""} value="${esc(n ? (n[key] || "") : "")}" placeholder="${esc(ph || "")}">`;
+
+// masterSelect renders the DMR_Hosts.txt masters for a category; picking one
+// fills the network's address/name/port on the node side.
+function masterSelect(type, cat, n) {
+  const list = dmrMasters.filter((m) => m.category === cat);
+  const cur = (n && n.address) || "";
+  const opts = ['<option value="">— select master —</option>']
+    .concat(list.map((m) => `<option value="${esc(m.address)}"${m.address === cur ? " selected" : ""}>${esc(m.name)}</option>`))
+    .join("");
+  return `<select data-dmrmaster="${type}">${opts}</select>${list.length ? "" : " <small style='color:var(--dim)'>host list loading…</small>"}`;
+}
+
+// essidSelect: None / 01..99 extended-ID suffix, per Pi-Star.
+function essidSelect(type, n) {
+  const cur = (n && n.essid) || "";
+  let opts = `<option value=""${cur === "" ? " selected" : ""}>None</option>`;
+  for (let i = 1; i <= 99; i++) { const v = String(i).padStart(2, "0"); opts += `<option value="${v}"${v === cur ? " selected" : ""}>${v}</option>`; }
+  return `<select data-netf="${type}" data-nkey="essid">${opts}</select>`;
+}
+
+function sectionHead(title, type, n) {
+  return `<div class="card-head"><span class="sq"></span><span class="t">${title}</span>${enPill(type, n)}</div>`;
+}
+
 function panelBrandmeister() {
-  const nets = edit.networks || [];
-  const cards = nets.map((n, i) => `
-    <div class="card">
-      <div class="card-head">
-        <span class="sq"></span>
-        <input class="netname" data-net="${i}" data-nkey="name" value="${esc(n.name)}" placeholder="Network name">
-        <span class="pill ${n.enabled ? "on" : "off"}" data-nettoggle="${i}" style="cursor:pointer;">${n.enabled ? "ENABLED" : "DISABLED"}</span>
-        <button class="netdel" data-netdel="${i}" title="Remove network">✕</button>
-      </div>
-      ${row("Server Address", `<input data-net="${i}" data-nkey="address" value="${esc(n.address)}">`)}
-      ${row("Port", `<input data-net="${i}" data-nkey="port" value="${esc(n.port)}">`)}
-      ${row("Password", `<input data-net="${i}" data-nkey="password" type="password" value="${esc(n.password || "")}" placeholder="${n.has_password ? "•••••• unchanged" : "set password"}">`)}
-      ${row("Rewrites", `<textarea class="rewrites" data-net="${i}" data-nkey="rewrites" rows="4" placeholder="TGRewrite0=2,9,2,9,1">${esc((n.rewrites || []).join("\n"))}</textarea>`)}
+  const d = edit.dmr || (edit.dmr = {});
+  const bm = netOf("brandmeister"), dp = netOf("dmrplus"), sx = netOf("systemx"), tg = netOf("tgif"), xl = netOf("xlx");
+  const primaryType = ((edit.networks || []).find((n) => n.primary) || {}).type || "brandmeister";
+  const masterSel = [["brandmeister", "Brandmeister"], ["dmrplus", "DMR+ / FreeDMR / ADN / HBlink Network"], ["systemx", "SystemX"], ["tgif", "TGIF"]]
+    .map(([v, l]) => `<option value="${v}"${v === primaryType ? " selected" : ""}>${l}</option>`).join("");
+
+  const master = `<section class="card">
+      <div class="card-head"><span class="sq"></span><span class="t">DMR Master</span></div>
+      ${row("DMR Master", `<select data-dmrprimary>${masterSel}</select>`)}
+    </section>`;
+
+  const bmSec = `<section class="card">
+      ${sectionHead("BrandMeister Network Settings", "brandmeister", bm)}
+      ${row("BrandMeister Master", masterSelect("brandmeister", "brandmeister", bm))}
+      ${row("BM Hotspot Security", `<input data-netf="brandmeister" data-nkey="password" type="password" value="${esc(bm ? bm.password || "" : "")}" placeholder="${bm && bm.has_password ? "•••••• unchanged" : ""}">`)}
+      ${row("BrandMeister Network ESSID", essidSelect("brandmeister", bm))}
+    </section>`;
+
+  const dpSec = `<section class="card">
+      ${sectionHead("DMR+ / FreeDMR / ADN / HBlink Network Settings", "dmrplus", dp)}
+      ${row("DMR Master", masterSelect("dmrplus", "dmrplus", dp))}
+      ${row("Network Options", netField("dmrplus", "options", dp, ""))}
+      ${row("ESSID", essidSelect("dmrplus", dp))}
+    </section>`;
+
+  const sxSec = `<section class="card">
+      ${sectionHead("SystemX Network Settings", "systemx", sx)}
+      ${row("SystemX Master", masterSelect("systemx", "systemx", sx))}
+      ${row("Network Options", netField("systemx", "options", sx, ""))}
+      ${row("ESSID", essidSelect("systemx", sx))}
+    </section>`;
+
+  const tgSec = `<section class="card">
+      ${sectionHead("TGIF Network Settings", "tgif", tg)}
+      ${row("TGIF Security Key", `<input data-netf="tgif" data-nkey="password" type="password" value="${esc(tg ? tg.password || "" : "")}" placeholder="${tg && tg.has_password ? "•••••• unchanged" : ""}">`)}
+      ${row("ESSID", essidSelect("tgif", tg))}
+    </section>`;
+
+  const xlSec = `<section class="card">
+      ${sectionHead("XLX Network Settings", "xlx", xl)}
+      ${row("XLX Startup TG", netField("xlx", "xlx_startup", xl, ""))}
+      ${row("XLX Startup Module", netField("xlx", "xlx_module", xl, ""))}
+      ${row("Time Slot", slotSelect(xl && xl.xlx_slot, `data-netf="xlx" data-nkey="xlx_slot"`))}
+    </section>`;
+
+  const cc = d.color_code || "1";
+  let ccOpts = "";
+  for (let i = 0; i <= 15; i++) ccOpts += `<option value="${i}"${String(i) === String(cc) ? " selected" : ""}>${i}</option>`;
+  const general = `<section class="card">
+      <div class="card-head"><span class="sq"></span><span class="t">General DMR Settings</span></div>
+      <div class="toggle-row"><span class="name">DMR Roaming Beacon</span><span class="pill ${d.beacons ? "on" : "off"}" data-toggle="dmr.beacons" style="cursor:pointer;">${d.beacons ? "ON" : "OFF"}</span></div>
+      ${row("DMR Color Code", `<select data-sec="dmr" data-key="color_code">${ccOpts}</select>`)}
+      <div class="toggle-row"><span class="name">DMR EmbeddedLCOnly</span><span class="pill ${d.embedded_lc_only ? "on" : "off"}" data-toggle="dmr.embedded_lc_only" style="cursor:pointer;">${d.embedded_lc_only ? "ON" : "OFF"}</span></div>
+      <div class="toggle-row"><span class="name">DMR DumpTAData</span><span class="pill ${d.dump_ta_data ? "on" : "off"}" data-toggle="dmr.dump_ta_data" style="cursor:pointer;">${d.dump_ta_data ? "ON" : "OFF"}</span></div>
+    </section>`;
+
+  return `<div class="stack">${master}${bmSec}${dpSec}${sxSec}${tgSec}${xlSec}${general}</div>${routingTable()}`;
+}
+
+// The talkgroup routing override table — "tie this dialed TG to this gateway".
+function routingTable() {
+  const nets = (edit.networks || []).filter((n) => n.enabled);
+  const routes = edit.routes || [];
+  const netOpts = (sel) => nets.map((n) => `<option value="${esc(n.name)}"${n.name === sel ? " selected" : ""}>${esc(n.name)} (${esc(n.type)})</option>`).join("");
+  const rows = routes.map((r, j) => `
+    <div class="route-row">
+      ${slotSelect(r.slot, `data-rtslot="${j}"`)}
+      <input class="mini" data-rttg="${j}" value="${esc(r.tg)}" placeholder="dialed TG">
+      <span class="arr" aria-hidden="true">→</span>
+      <select class="mini" data-rtnet="${j}">${netOpts(r.network)}</select>
+      <button class="netdel" data-rtdel="${j}" title="Remove route">✕</button>
     </div>`).join("");
-  const empty = nets.length ? "" : note("No DMR networks. Add one to bridge this hotspot to BrandMeister, TGIF, FreeDMR, or an HBLink server.");
-  return `<div class="grid2">${cards}</div>${empty}<button class="btn ghost" id="net-add" style="margin-top:16px;">+ ADD NETWORK</button>`;
+  const body = routes.length
+    ? `<div class="route-head"><span>Slot</span><span>Dialed TG</span><span></span><span>Gateway</span><span></span></div>${rows}`
+    : `<div class="route-empty">No overrides — every talkgroup follows its network's prefix, and anything unrouted goes to the primary.</div>`;
+  return `
+    <div class="card" style="margin-top:16px;">
+      <div class="route-title">TALKGROUP ROUTING</div>
+      ${body}
+      <button class="btn ghost mini-btn" id="route-add"${nets.length ? "" : " disabled"}>+ ADD ROUTE</button>
+    </div>`;
 }
 
 function panelExpert(c, h) {
@@ -188,9 +418,7 @@ function panelYSF() {
     input("ysfgw", "inactivity_timeout", { label: "Inactivity revert", unit: "min" }));
   const behaviour = card("BEHAVIOUR",
     toggleRow("ysfgw", "wiresx_passthrough", "Wires-X passthrough (advanced — leave off for local control)") +
-    toggleRow("ysfgw", "wiresx_make_upper", "Wires-X uppercase") +
-    toggleRow("ysfgw", "revert", "Revert to startup on inactivity") +
-    toggleRow("ysfgw", "reconnect", "Reconnect on link loss"));
+    toggleRow("ysfgw", "revert", "Revert to startup on inactivity"));
   const networks = card("REFLECTOR NETWORKS",
     toggleRow("ysfgw", "ysf_network", "YSF reflector network") +
     toggleRow("ysfgw", "fcs_network", "FCS room network") +
@@ -199,13 +427,110 @@ function panelYSF() {
   return `<div class="grid2">${gateway}<div class="stack">${behaviour}${networks}</div></div>${hint}`;
 }
 
+function panelP25() {
+  // Startup-TG picker: a datalist over the fetched talkgroup list. Static is a
+  // comma-separated list, so the datalist is a reference the user types from.
+  const opts = p25Refs.map((r) => `<option value="${esc(r.designator)}">${esc([r.name, r.country, r.sponsor].filter(Boolean).join(" · "))}</option>`).join("");
+  const stat = (edit.p25gw || {}).static || "";
+  const gateway = card("GATEWAY",
+    toggle("modes", "p25", "P25", "ENABLED", "DISABLED") +
+    input("p25", "nac", { label: "NAC (hex)", accent: true }) +
+    row("Startup talkgroups", `<input data-sec="p25gw" data-key="static" list="p25-refs" value="${esc(stat)}" placeholder="comma-separated TGs, e.g. 10100,10200"><datalist id="p25-refs">${opts}</datalist>`) +
+    toggleRow("p25gw", "voice", "Voice announcements"));
+  const behaviour = card("BEHAVIOUR",
+    toggleRow("p25", "self_only", "Self only (accept only my ID)") +
+    toggleRow("p25", "override_uid_check", "Override UID check") +
+    toggleRow("p25", "remote_gateway", "Remote gateway (advanced — leave off for local control)"));
+  const timers = card("HANG TIMERS",
+    input("p25gw", "rf_hang_time", { label: "RF hang", unit: "sec" }) +
+    input("p25gw", "net_hang_time", { label: "Network hang", unit: "sec" }));
+  const hint = p25Refs.length ? "" : note("Talkgroup list not loaded yet (fetched from the P25 register on a schedule). You can still type talkgroup numbers above.");
+  return `<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
+}
+
+function panelNXDN() {
+  // Startup-TG picker: a datalist over the fetched talkgroup list. Static is a
+  // comma-separated list, so the datalist is a reference the user types from.
+  const opts = nxdnRefs.map((r) => `<option value="${esc(r.designator)}">${esc([r.name, r.country, r.sponsor].filter(Boolean).join(" · "))}</option>`).join("");
+  const stat = (edit.nxdngw || {}).static || "";
+  const gateway = card("GATEWAY",
+    toggle("modes", "nxdn", "NXDN", "ENABLED", "DISABLED") +
+    input("nxdn", "ran", { label: "RAN", accent: true }) +
+    row("Startup talkgroups", `<input data-sec="nxdngw" data-key="static" list="nxdn-refs" value="${esc(stat)}" placeholder="comma-separated TGs, e.g. 10200,65000"><datalist id="nxdn-refs">${opts}</datalist>`) +
+    toggleRow("nxdngw", "voice", "Voice announcements"));
+  const behaviour = card("BEHAVIOUR",
+    toggleRow("nxdn", "self_only", "Self only (accept only my ID)") +
+    toggleRow("nxdn", "remote_gateway", "Remote gateway (advanced — leave off for local control)"));
+  const timers = card("HANG TIMERS",
+    input("nxdngw", "rf_hang_time", { label: "RF hang", unit: "sec" }) +
+    input("nxdngw", "net_hang_time", { label: "Network hang", unit: "sec" }));
+  const hint = nxdnRefs.length ? "" : note("Talkgroup list not loaded yet (fetched from the NXDN register on a schedule). You can still type talkgroup numbers above.");
+  return `<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
+}
+
+function panelDStar() {
+  // Startup reflector picker: a datalist over the fetched hostlist so the user
+  // can type-filter reflectors (REF/XRF/DCS) while still allowing a raw value.
+  // The gateway wants "name module", e.g. "REF001 C", so the datalist offers
+  // names the user completes with a band letter.
+  const opts = dstarRefs.map((r) => `<option value="${esc(r.name)} ">${esc(r.type)}</option>`).join("");
+  const gw = edit.dstargw || {};
+  const reflector = gw.reflector || "";
+  const gateway = card("GATEWAY",
+    toggle("modes", "dstar", "D-Star", "ENABLED", "DISABLED") +
+    input("dstar", "module", { label: "Module (band letter)", accent: true }) +
+    row("Startup reflector", `<input data-sec="dstargw" data-key="reflector" list="dstar-refs" value="${esc(reflector)}" placeholder="e.g. REF001 C — blank for none"><datalist id="dstar-refs">${opts}</datalist>`) +
+    input("dstargw", "reflector_reconnect", { label: "Reflector reconnect (min / Never / Fixed)" }));
+  const ircddb = card("ircDDB (CALLSIGN ROUTING)",
+    input("dstargw", "ircddb_hostname", { label: "ircDDB host" }) +
+    input("dstargw", "ircddb_username", { label: "Username (blank = callsign)" }) +
+    row("Password", `<input data-sec="dstargw" data-key="ircddb_password" type="password" value="${esc(gw.ircddb_password || "")}" placeholder="${gw.has_ircddb_password ? "•••••• unchanged" : "blank = anonymous"}">`));
+  const behaviour = card("RF BEHAVIOUR",
+    toggleRow("dstar", "self_only", "Self only (accept only my callsign)") +
+    toggleRow("dstar", "remote_gateway", "Remote gateway (advanced — leave off for local control)"));
+  const protocols = card("REFLECTOR PROTOCOLS",
+    toggleRow("dstargw", "dextra", "DExtra (XRF)") +
+    toggleRow("dstargw", "dplus", "D-Plus (REF — needs a registered callsign)") +
+    row("D-Plus login", `<input data-sec="dstargw" data-key="dplus_login" value="${esc(gw.dplus_login || "")}" placeholder="registered callsign (blank = station callsign)">`) +
+    toggleRow("dstargw", "dcs", "DCS") +
+    toggleRow("dstargw", "xlx", "XLX"));
+  const hint = dstarRefs.length ? "" : note("Reflector list not loaded yet (fetched from the pinned D-Star register on a schedule). You can still type a reflector above.");
+  return `<div class="grid2"><div class="stack">${gateway}${ircddb}</div><div class="stack">${behaviour}${protocols}</div></div>${hint}`;
+}
+
+function panelM17() {
+  const opts = m17Refs.map((r) => `<option value="${esc(r.name)} ">${esc(r.address)}</option>`).join("");
+  const gw = edit.m17gw || {};
+  const suffix = (gw.suffix || "H").toUpperCase();
+  const suffixSel = `<select data-sec="m17gw" data-key="suffix">` +
+    ["H", "R"].map((v) => `<option value="${v}"${v === suffix ? " selected" : ""}>${v === "H" ? "H — hotspot" : "R — repeater"}</option>`).join("") + `</select>`;
+  const gateway = card("GATEWAY",
+    toggle("modes", "m17", "M17", "ENABLED", "DISABLED") +
+    input("m17", "can", { label: "CAN", accent: true }) +
+    row("Startup reflector", `<input data-sec="m17gw" data-key="startup" list="m17-refs" value="${esc(gw.startup || "")}" placeholder="e.g. M17-M17 C — blank for none"><datalist id="m17-refs">${opts}</datalist>`) +
+    row("Node suffix", suffixSel) +
+    toggleRow("m17gw", "voice", "Voice announcements"));
+  const behaviour = card("BEHAVIOUR",
+    toggleRow("m17", "self_only", "Self only (accept only my callsign)") +
+    toggleRow("m17", "allow_encryption", "Allow encrypted M17 frames") +
+    toggleRow("m17gw", "revert", "Revert to startup reflector after inactivity"));
+  const timers = card("HANG TIMER",
+    input("m17gw", "hang_time", { label: "Network hang", unit: "sec" }));
+  const hint = m17Refs.length ? "" : note("Reflector list not loaded yet (fetched from the M17 register on a schedule). You can still type a reflector above.");
+  return `<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
+}
+
 function renderPanel() {
   const c = state.config || {};
   const box = document.getElementById("panels");
   switch (state.tab) {
     case "general":      box.innerHTML = panelGeneral(); break;
     case "dmr":          box.innerHTML = panelDmr(); break;
+    case "dstar":        box.innerHTML = panelDStar(); break;
     case "ysf":          box.innerHTML = panelYSF(); break;
+    case "p25":          box.innerHTML = panelP25(); break;
+    case "nxdn":         box.innerHTML = panelNXDN(); break;
+    case "m17":          box.innerHTML = panelM17(); break;
     case "modes":        box.innerHTML = panelModes(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
@@ -249,7 +574,10 @@ async function apply() {
   refreshActions();
   try {
     for (const sec of dirty) {
-      const payload = sec === "networks" ? edit.networks.map(cleanNet) : edit[sec];
+      const payload = sec === "networks" ? edit.networks.map(cleanNet)
+        : sec === "routes" ? (edit.routes || []).filter((r) => r.tg && r.network)
+        : sec === "dstargw" ? cleanDstargw(edit.dstargw)
+        : edit[sec];
       const r = await fetch("/api/config/" + sec, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!r.ok) throw new Error(sec + ": " + (await r.text()).trim());
     }
@@ -345,11 +673,31 @@ async function load() {
   buildEdit(state.config);
   renderStatus();
   renderPanel();
-  // Reflector list loads lazily; refresh the YSF panel if it's showing.
+  // Reflector lists load lazily; refresh the relevant panel if it's showing.
   try {
     ysfRefs = await fetch("/api/ysf/reflectors").then((r) => r.json());
     if (state.tab === "ysf") renderPanel();
   } catch { /* offline — the picker still accepts a typed id */ }
+  try {
+    p25Refs = await fetch("/api/p25/reflectors").then((r) => r.json());
+    if (state.tab === "p25") renderPanel();
+  } catch { /* offline — the picker still accepts a typed TG */ }
+  try {
+    nxdnRefs = await fetch("/api/nxdn/reflectors").then((r) => r.json());
+    if (state.tab === "nxdn") renderPanel();
+  } catch { /* offline — the picker still accepts a typed TG */ }
+  try {
+    dstarRefs = await fetch("/api/dstar/reflectors").then((r) => r.json());
+    if (state.tab === "dstar") renderPanel();
+  } catch { /* offline — the picker still accepts a typed reflector */ }
+  try {
+    m17Refs = await fetch("/api/m17/reflectors").then((r) => r.json());
+    if (state.tab === "m17") renderPanel();
+  } catch { /* offline — the picker still accepts a typed reflector */ }
+  try {
+    dmrMasters = await fetch("/api/dmr/masters").then((r) => r.json()) || [];
+    if (state.tab === "brandmeister") renderPanel();
+  } catch { /* offline — the master dropdowns show what's cached (may be empty) */ }
 }
 
 // text edits update the working copy; toggles flip a bool and re-render.
@@ -362,13 +710,30 @@ document.getElementById("panels").addEventListener("input", (e) => {
     setField(t.dataset.sec, t.dataset.key, v);
     return;
   }
-  if (t.dataset.net != null) {
-    const i = +t.dataset.net, key = t.dataset.nkey;
-    let v = t.value;
-    if (key === "rewrites") v = v.split("\n").map((s) => s.trim()).filter(Boolean);
-    edit.networks[i][key] = v;
-    dirty.add("networks");
-    refreshActions();
+  // DMR Master (primary) selector — the primary is the no-prefix catch-all.
+  if (t.dataset.dmrprimary != null) {
+    const type = t.value, n = ensureNet(type);
+    n.primary = true; n.enabled = true;
+    (edit.networks || []).forEach((x) => { x.primary = x.type === type; });
+    dirty.add("networks"); renderPanel(); refreshActions();
+    return;
+  }
+  // Master dropdown: apply the chosen DMR_Hosts.txt master to the network.
+  if (t.dataset.dmrmaster != null) {
+    const type = t.dataset.dmrmaster, m = dmrMasters.find((x) => x.address === t.value), n = ensureNet(type);
+    if (m) { n.address = m.address; n.port = m.port || n.port; if (!n.name || n.name === type) n.name = m.name; }
+    else { n.address = t.value; }
+    dirty.add("networks"); renderPanel(); refreshActions();
+    return;
+  }
+  // talkgroup routing table: slot / dialed TG / target gateway.
+  if (t.dataset.rtslot != null) { edit.routes[+t.dataset.rtslot].slot = t.value; dirty.add("routes"); refreshActions(); return; }
+  if (t.dataset.rttg != null) { edit.routes[+t.dataset.rttg].tg = t.value; dirty.add("routes"); refreshActions(); return; }
+  if (t.dataset.rtnet != null) { edit.routes[+t.dataset.rtnet].network = t.value; dirty.add("routes"); refreshActions(); return; }
+  // per-network field, bound by network type (created on demand).
+  if (t.dataset.netf != null) {
+    ensureNet(t.dataset.netf)[t.dataset.nkey] = t.value;
+    dirty.add("networks"); refreshActions();
   }
 });
 document.getElementById("panels").addEventListener("click", (e) => {
@@ -379,13 +744,18 @@ document.getElementById("panels").addEventListener("click", (e) => {
     renderPanel();
     return;
   }
-  const nt = e.target.closest("[data-nettoggle]");
-  if (nt) { const i = +nt.dataset.nettoggle; edit.networks[i].enabled = !edit.networks[i].enabled; dirty.add("networks"); renderPanel(); refreshActions(); return; }
-  const nd = e.target.closest("[data-netdel]");
-  if (nd) { edit.networks.splice(+nd.dataset.netdel, 1); dirty.add("networks"); renderPanel(); refreshActions(); return; }
-  if (e.target.id === "net-add") {
-    edit.networks.push({ name: "New Network", address: "", port: "62031", enabled: false, password: "", rewrites: [], has_password: false });
-    dirty.add("networks"); renderPanel(); refreshActions();
+  // per-network Enable toggle, bound by type (creates the network on demand).
+  const en = e.target.closest("[data-neten]");
+  if (en) { const n = ensureNet(en.dataset.neten); n.enabled = !n.enabled; if (!n.enabled) n.primary = false; dirty.add("networks"); renderPanel(); refreshActions(); return; }
+  // per-network boolean toggle (e.g. custom Automatic Rewrite Rules).
+  const nb = e.target.closest("[data-netbool]");
+  if (nb) { const n = ensureNet(nb.dataset.netbool); n[nb.dataset.nbkey] = !n[nb.dataset.nbkey]; dirty.add("networks"); renderPanel(); refreshActions(); return; }
+  const rtd = e.target.closest("[data-rtdel]");
+  if (rtd) { edit.routes.splice(+rtd.dataset.rtdel, 1); dirty.add("routes"); renderPanel(); refreshActions(); return; }
+  if (e.target.id === "route-add") {
+    const firstEnabled = (edit.networks || []).find((n) => n.enabled) || {};
+    (edit.routes = edit.routes || []).push({ slot: "2", tg: "", network: firstEnabled.name || "" });
+    dirty.add("routes"); renderPanel(); refreshActions();
   }
 });
 document.getElementById("btn-apply").onclick = apply;

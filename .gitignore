@@ -1,3 +1,8 @@
 /waypointd
+/waypointd-arm64
 *.deb
 dist/
+
+# Build-time upstream clones (built by waypoint-stack, never vendored here)
+/MMDVMHost/
+/ircDDBGateway/

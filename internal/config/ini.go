@@ -94,18 +94,24 @@ func (i *INI) Has(section string) bool {
 	return i.section(section) != nil
 }
 
-// Prefixed returns every "Key=Value" line in a section whose key contains
-// substr, sorted by key. Used to preserve the DMRGateway rewrite lines
-// (TGRewrite0, PCRewrite0, …) verbatim without modelling each rule.
-func (i *INI) Prefixed(section, substr string) []string {
+// Matching returns every "Key=Value" line in a section whose key contains any
+// of substrs, sorted by key. Used to preserve the DMRGateway routing lines
+// (TGRewrite0, PCRewrite0, PassAllTG, PassAllPC, …) verbatim without modelling
+// each rule. PassAll* must be kept: on a stock Brandmeister config the TG9990
+// Parrot has no dedicated rewrite and rides on PassAllTG/PassAllPC, so dropping
+// them silently kills the Parrot echo.
+func (i *INI) Matching(section string, substrs ...string) []string {
 	s := i.section(section)
 	if s == nil {
 		return nil
 	}
 	var out []string
 	for k, v := range s {
-		if strings.Contains(k, substr) {
-			out = append(out, k+"="+v)
+		for _, sub := range substrs {
+			if strings.Contains(k, sub) {
+				out = append(out, k+"="+v)
+				break
+			}
 		}
 	}
 	sort.Strings(out)
