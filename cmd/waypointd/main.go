@@ -19,6 +19,7 @@ import (
 
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/demo"
+	"github.com/KN4OQW/waypoint/internal/dmrhosts"
 	"github.com/KN4OQW/waypoint/internal/dstarhosts"
 	"github.com/KN4OQW/waypoint/internal/hub"
 	"github.com/KN4OQW/waypoint/internal/m17hosts"
@@ -51,6 +52,7 @@ type server struct {
 	nxdnHosts  string // cached NXDN reflector (talkgroup) hostlist (JSON)
 	dstarHosts string // cached D-Star reflector hostlist (JSON)
 	m17Hosts   string // cached M17 reflector hostlist (space/tab text)
+	dmrHosts   string // cached DMR master hostlist (DMR_Hosts.txt, space/tab text)
 	units      []string
 }
 
@@ -99,6 +101,17 @@ func (s *server) p25Reflectors(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(refs)
+}
+
+// dmrMasters serves the cached DMR master hostlist for the settings-page DMR
+// master-server dropdowns (GET /api/dmr/masters).
+func (s *server) dmrMasters(w http.ResponseWriter, _ *http.Request) {
+	m, err := dmrhosts.Masters(s.dmrHosts)
+	if err != nil {
+		m = []dmrhosts.Master{} // no cache yet (offline / first boot) → empty list
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(m)
 }
 
 // ysfReflectors serves the cached YSF reflector hostlist for the settings-page
@@ -411,6 +424,8 @@ func main() {
 	dstarHostsURL := flag.String("dstar-hosts-url", dstarhosts.DefaultURL, "D-Star reflector hostlist source URL")
 	m17Hosts := flag.String("m17-hosts", "/home/pi-star/waypoint/etc/M17Hosts.txt", "cached M17 reflector hostlist path")
 	m17HostsURL := flag.String("m17-hosts-url", m17hosts.DefaultURL, "M17 reflector hostlist source URL")
+	dmrHosts := flag.String("dmr-hosts", "/usr/local/etc/DMR_Hosts.txt", "cached DMR master hostlist path (DMR_Hosts.txt)")
+	dmrHostsURL := flag.String("dmr-hosts-url", dmrhosts.DefaultURL, "DMR master hostlist source URL")
 	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
 	units := flag.String("units", "waypoint-mmdvm.service,waypoint-dmrgateway.service,waypoint-ysfgateway.service,waypoint-p25gateway.service,waypoint-nxdngateway.service,waypoint-dstargateway.service,waypoint-m17gateway.service", "comma-separated systemd units to restart on apply")
 	flag.Parse()
@@ -425,7 +440,7 @@ func main() {
 		hub: hub.New(), demo: *demoMode, started: time.Now(),
 		store: st, storePath: *storePath,
 		mmdvmINI: *mmdvmINI, dmrgwINI: *dmrgwINI, ysfgwINI: *ysfgwINI, p25gwINI: *p25gwINI, nxdngwINI: *nxdngwINI, dstargwINI: *dstargwINI, m17gwINI: *m17gwINI,
-		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts,
+		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts,
 		units: strings.Split(*units, ","),
 	}
 	if err := s.seedStore(); err != nil {
@@ -454,6 +469,7 @@ func main() {
 		go nxdnhosts.Run(context.Background(), *nxdnHostsURL, *nxdnHosts, 6*time.Hour)
 		go dstarhosts.Run(context.Background(), *dstarHostsURL, *dstarHosts, 6*time.Hour)
 		go m17hosts.Run(context.Background(), *m17HostsURL, *m17Hosts, 6*time.Hour)
+		go dmrhosts.Run(context.Background(), *dmrHostsURL, *dmrHosts, 6*time.Hour)
 	}
 
 	mux := http.NewServeMux()
@@ -467,6 +483,7 @@ func main() {
 	mux.HandleFunc("/api/nxdn/reflectors", s.nxdnReflectors)
 	mux.HandleFunc("/api/dstar/reflectors", s.dstarReflectors)
 	mux.HandleFunc("/api/m17/reflectors", s.m17Reflectors)
+	mux.HandleFunc("/api/dmr/masters", s.dmrMasters)
 	mux.Handle("/", http.FileServerFS(ui.FS()))
 
 	mode := "live, mqtt " + *broker
