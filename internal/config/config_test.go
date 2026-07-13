@@ -1,132 +1,175 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/KN4OQW/waypoint/internal/store"
 )
 
-const mmdvmFixture = `[General]
-Callsign=KN4OQW
-Id=3180202
-Duplex=1
-
-[Info]
-RXFrequency=433900000
-TXFrequency=438900000
-Power=1
-
-[Modem]
-Port=/dev/ttyAMA0
-UARTPort=/dev/ttyAMA0
-RXOffset=0
-
-[DMR]
-Enable=1
-ColorCode=1
-
-[DMR Network]
-Slot1=1
-Slot2=1
-
-[System Fusion]
-Enable=0
-
-[YSF]
-`
-
-const dmrgwFixture = `[DMR Network 1]
-Name=BM_3102_United_States
-Address=3102.master.brandmeister.network
-Port=62031
-Password="secret-do-not-leak"
-
-[DMR Network 2]
-Address=tgif.network
-Port=62031
-Enabled=0
-`
-
-func writeFixture(t *testing.T, name, content string) string {
+func memStore(t *testing.T) *store.Store {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return p
-}
-
-func TestParseINIAccessors(t *testing.T) {
-	ini, err := ParseINI(strings.NewReader(mmdvmFixture))
+	s, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ini.Get("general", "callsign"); got != "KN4OQW" { // case-insensitive
-		t.Fatalf("callsign = %q", got)
-	}
-	if !ini.Bool("DMR", "Enable") {
-		t.Fatal("DMR Enable should be true")
-	}
-	if ini.Bool("System Fusion", "Enable") {
-		t.Fatal("System Fusion Enable should be false")
-	}
-	if !ini.Has("DMR Network") || ini.Has("Nonexistent") {
-		t.Fatal("Has() wrong")
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
+// fixture is a fully-populated model. Every field is non-empty so the
+// round-trip cannot be masked by a rendered default filling an empty field.
+func fixture() *Model {
+	return &Model{
+		General: General{Callsign: "KN4OQW", ID: "3180202", Duplex: true, Timeout: "240", RFModeHang: "300", NetModeHang: "300", Power: "1", Location: "Milton, EM60", URL: "https://waypoint.kn4oqw.com"},
+		Modem:   Modem{Port: "/dev/ttyAMA0", UARTSpeed: "115200", RXFreqHz: "433900000", TXFreqHz: "438900000", RXOffset: "75", TXOffset: "-40", TXInvert: true, RXInvert: false, PTTInvert: false, RXLevel: "50", TXLevel: "50"},
+		DMR:     DMR{ColorCode: "1", ID: "3180202", EmbeddedLCOnly: true, SelfOnly: false, DumpTAData: true},
+		DMRNet:  DMRNet{LocalPort: "62032", GatewayAddress: "127.0.0.1", GatewayPort: "62031", Slot1: true, Slot2: true, Jitter: "360"},
+		Modes:   Modes{DStar: false, DMR: true, YSF: true, P25: false, NXDN: false, M17: false, POCSAG: false, FM: false},
+		Networks: []Network{
+			{Name: "BM_3102_United_States", Address: "3102.master.brandmeister.network", Port: "62031", Password: "s3cr3t", Enabled: true, Rewrites: []string{"PCRewrite0=2,94000,2,4000,1001", "TGRewrite0=2,9,2,9,1"}},
+			{Name: "TGIF_Network", Address: "tgif.network", Port: "62031", Password: "hunter2", Enabled: false, Rewrites: nil},
+		},
 	}
 }
 
-func TestReadViewShape(t *testing.T) {
-	mm := writeFixture(t, "MMDVM-Host.ini", mmdvmFixture)
-	dg := writeFixture(t, "DMRGateway.ini", dmrgwFixture)
-	v := Read(mm, dg)
-
-	if v.Errors != nil {
-		t.Fatalf("unexpected errors: %v", v.Errors)
+// Property 1 — Round-trip: render → parse → model with no semantic loss.
+func TestLosslessRoundTrip(t *testing.T) {
+	m := fixture()
+	mm, err := ParseINI(strings.NewReader(m.RenderMMDVM()))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !v.ReadOnly {
-		t.Fatal("view should be read-only")
+	dg, err := ParseINI(strings.NewReader(m.RenderDMRGateway()))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if v.General.Callsign != "KN4OQW" || v.General.RXFreqHz != "433900000" || v.General.ModemPort != "/dev/ttyAMA0" {
-		t.Fatalf("general wrong: %+v", v.General)
-	}
-	if !v.DMR.Enable || v.DMR.ColorCode != "1" || !v.DMR.Slot1 {
-		t.Fatalf("dmr wrong: %+v", v.DMR)
-	}
-	// modes: DMR enabled, System Fusion disabled
-	got := map[string]bool{}
-	for _, m := range v.Modes {
-		got[m.Name] = m.Enabled
-	}
-	if !got["DMR"] || got["System Fusion"] {
-		t.Fatalf("modes wrong: %+v", v.Modes)
-	}
-	if len(v.Networks) != 2 {
-		t.Fatalf("want 2 networks, got %d", len(v.Networks))
+	got := fromINI(mm, dg)
+	if !reflect.DeepEqual(m, got) {
+		t.Fatalf("round-trip lost data:\n want %+v\n  got %+v", m, got)
 	}
 }
 
-func TestReadRedactsPasswords(t *testing.T) {
-	mm := writeFixture(t, "MMDVM-Host.ini", mmdvmFixture)
-	dg := writeFixture(t, "DMRGateway.ini", dmrgwFixture)
-	v := Read(mm, dg)
+// Rendering is a pure function: same model ⇒ byte-identical output.
+func TestRenderDeterministic(t *testing.T) {
+	m := fixture()
+	if m.RenderMMDVM() != m.RenderMMDVM() || m.RenderDMRGateway() != m.RenderDMRGateway() {
+		t.Fatal("render is not deterministic")
+	}
+}
 
-	var bm *Network
-	for i := range v.Networks {
-		if strings.HasPrefix(v.Networks[i].Name, "BM_3102") {
-			bm = &v.Networks[i]
-		}
+// Property 2 — Isolation: changing one section never alters another section's
+// rendered output.
+func TestIsolation(t *testing.T) {
+	m := fixture()
+	before := section(m.RenderMMDVM(), "Modem")
+
+	m.General.Callsign = "W1AW" // change an unrelated section
+	after := section(m.RenderMMDVM(), "Modem")
+
+	if before != after {
+		t.Fatalf("changing [General] altered [Modem]:\n before %q\n after %q", before, after)
 	}
-	if bm == nil {
-		t.Fatal("BM network not found")
+}
+
+// Property 3 — Disable/re-enable: a disabled mode's settings survive unrelated
+// changes and come back intact. Modelled at the store: toggling a mode off is a
+// value flip, never a row delete.
+func TestDisableReEnablePreservesSettings(t *testing.T) {
+	s := memStore(t)
+	m := fixture()
+	m.DMR.ColorCode = "7" // a DMR-specific setting we must not lose
+	if err := m.Save(s, "test"); err != nil {
+		t.Fatal(err)
 	}
-	if !bm.HasPassword {
-		t.Fatal("HasPassword should be true")
+
+	// Disable DMR, change something unrelated, save.
+	m2, _ := Load(s)
+	m2.Modes.DMR = false
+	m2.General.Location = "elsewhere"
+	if err := m2.Save(s, "test"); err != nil {
+		t.Fatal(err)
 	}
-	// The secret must never appear anywhere in the serialized view.
+
+	// Re-enable DMR — its color code must still be 7.
+	m3, _ := Load(s)
+	m3.Modes.DMR = true
+	if err := m3.Save(s, "test"); err != nil {
+		t.Fatal(err)
+	}
+	final, _ := Load(s)
+	if final.DMR.ColorCode != "7" {
+		t.Fatalf("disabled mode's ColorCode was lost: got %q", final.DMR.ColorCode)
+	}
+}
+
+// A partial section write merges — unspecified fields survive (the guarantee
+// that lets the UI PUT only the fields it manages).
+func TestSetSectionMergePreserves(t *testing.T) {
+	s := memStore(t)
+	if err := fixture().Save(s, "seed"); err != nil {
+		t.Fatal(err)
+	}
+	known, err := SetSection(s, "general", []byte(`{"callsign":"W1AW"}`), "test")
+	if !known || err != nil {
+		t.Fatalf("known=%v err=%v", known, err)
+	}
+	m, _ := Load(s)
+	if m.General.Callsign != "W1AW" {
+		t.Fatalf("callsign not updated: %q", m.General.Callsign)
+	}
+	if m.General.Timeout != "240" || m.General.ID != "3180202" {
+		t.Fatalf("unspecified fields lost on merge: %+v", m.General)
+	}
+}
+
+func TestSetSectionRejectsUnknownField(t *testing.T) {
+	s := memStore(t)
+	_ = fixture().Save(s, "seed")
+	if _, err := SetSection(s, "general", []byte(`{"bogus":true}`), "test"); err == nil {
+		t.Fatal("unknown field should be rejected")
+	}
+	if known, _ := SetSection(s, "nosuch", []byte(`{}`), "test"); known {
+		t.Fatal("unknown section should report known=false")
+	}
+}
+
+func TestViewRedactsPasswords(t *testing.T) {
+	v := fixture().View("/tmp/config.db")
+	blob := ""
 	for _, n := range v.Networks {
-		if strings.Contains(n.Name+n.Address+n.Port, "secret-do-not-leak") {
-			t.Fatal("password leaked into view")
+		blob += n.Name + n.Address + n.Port
+		if !n.HasPassword {
+			t.Fatalf("network %s should report has_password", n.Name)
 		}
 	}
+	if strings.Contains(blob, "s3cr3t") || strings.Contains(blob, "hunter2") {
+		t.Fatal("password leaked into the view")
+	}
+}
+
+func TestGeneratedHeaderPresent(t *testing.T) {
+	if !strings.HasPrefix(fixture().RenderMMDVM(), "; Generated by waypointd") {
+		t.Fatal("rendered MMDVM-Host.ini missing the generated-by header")
+	}
+}
+
+// section extracts the lines of one [Section] (excluding the header line) from
+// rendered INI text, for isolation assertions.
+func section(ini, name string) string {
+	lines := strings.Split(ini, "\n")
+	var out []string
+	in := false
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "[") && strings.HasSuffix(t, "]") {
+			in = t == "["+name+"]"
+			continue
+		}
+		if in && t != "" {
+			out = append(out, t)
+		}
+	}
+	return strings.Join(out, "\n")
 }
