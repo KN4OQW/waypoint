@@ -21,6 +21,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/demo"
 	"github.com/KN4OQW/waypoint/internal/hub"
 	"github.com/KN4OQW/waypoint/internal/mqtt"
+	"github.com/KN4OQW/waypoint/internal/p25hosts"
 	"github.com/KN4OQW/waypoint/internal/store"
 	"github.com/KN4OQW/waypoint/internal/ysfhosts"
 	"github.com/KN4OQW/waypoint/ui"
@@ -38,8 +39,22 @@ type server struct {
 	mmdvmINI  string // render target: the file MMDVM-Host reads
 	dmrgwINI  string // render target: the file DMRGateway reads
 	ysfgwINI  string // render target: the file YSFGateway reads
+	p25gwINI  string // render target: the file P25Gateway reads
 	ysfHosts  string // cached YSF reflector hostlist (JSON)
+	p25Hosts  string // cached P25 reflector (talkgroup) hostlist (JSON)
 	units     []string
+}
+
+// p25Reflectors serves the cached P25 reflector (talkgroup) hostlist for the
+// settings-page startup-TG picker (GET /api/p25/reflectors).
+func (s *server) p25Reflectors(w http.ResponseWriter, _ *http.Request) {
+	refs, err := p25hosts.Reflectors(s.p25Hosts)
+	if err != nil {
+		// No cache yet (offline / first boot) → empty list, not an error.
+		refs = []p25hosts.Reflector{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(refs)
 }
 
 // ysfReflectors serves the cached YSF reflector hostlist for the settings-page
@@ -109,7 +124,7 @@ func (s *server) configApply(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := m.WriteFiles(s.mmdvmINI, s.dmrgwINI, s.ysfgwINI); err != nil {
+	if err := m.WriteFiles(s.mmdvmINI, s.dmrgwINI, s.ysfgwINI, s.p25gwINI); err != nil {
 		http.Error(w, "render: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -159,13 +174,36 @@ func (s *server) seedStore() error {
 // seeded (a store created before YSF has no ysfgw row). It only fills absent
 // sections, so it never overwrites a user's settings.
 func (s *server) backfillDefaults() error {
-	if _, ok, err := s.store.Get("ysfgw"); err != nil || ok {
-		return err
+	if _, ok, err := s.store.Get("ysfgw"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("ysfgw", config.DefaultYSFGateway(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled ysfgw defaults")
 	}
-	if err := s.store.Set("ysfgw", config.DefaultYSFGateway(), "backfill"); err != nil {
-		return err
+	// P25 arrived after YSF: a store seeded before it lacks both the [P25] mode
+	// params and the gateway section. A fresh store gets p25 from the import; an
+	// older one needs both backfilled so Load never returns zero values.
+	if _, ok, err := s.store.Get("p25"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("p25", config.DefaultP25(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled p25 defaults")
 	}
-	log.Printf("config store: backfilled ysfgw defaults")
+	if _, ok, err := s.store.Get("p25gw"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("p25gw", config.DefaultP25Gateway(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled p25gw defaults")
+	}
 	return nil
 }
 
@@ -253,10 +291,13 @@ func main() {
 	mmdvmINI := flag.String("mmdvm-ini", "/home/pi-star/waypoint/etc/MMDVM-Host.ini", "MMDVM-Host.ini render target (the file the daemon reads)")
 	dmrgwINI := flag.String("dmrgateway-ini", "/home/pi-star/waypoint/etc/DMRGateway.ini", "DMRGateway.ini render target")
 	ysfgwINI := flag.String("ysfgateway-ini", "/home/pi-star/waypoint/etc/YSFGateway.ini", "YSFGateway.ini render target")
+	p25gwINI := flag.String("p25gateway-ini", "/home/pi-star/waypoint/etc/P25Gateway.ini", "P25Gateway.ini render target")
 	ysfHosts := flag.String("ysf-hosts", "/home/pi-star/waypoint/etc/YSFHosts.json", "cached YSF reflector hostlist path")
 	ysfHostsURL := flag.String("ysf-hosts-url", ysfhosts.DefaultURL, "YSF reflector hostlist source URL")
+	p25Hosts := flag.String("p25-hosts", "/home/pi-star/waypoint/etc/P25Hosts.json", "cached P25 reflector hostlist path")
+	p25HostsURL := flag.String("p25-hosts-url", p25hosts.DefaultURL, "P25 reflector hostlist source URL")
 	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
-	units := flag.String("units", "waypoint-mmdvm.service,waypoint-dmrgateway.service,waypoint-ysfgateway.service", "comma-separated systemd units to restart on apply")
+	units := flag.String("units", "waypoint-mmdvm.service,waypoint-dmrgateway.service,waypoint-ysfgateway.service,waypoint-p25gateway.service", "comma-separated systemd units to restart on apply")
 	flag.Parse()
 
 	st, err := store.Open(*storePath)
@@ -268,9 +309,9 @@ func main() {
 	s := &server{
 		hub: hub.New(), demo: *demoMode, started: time.Now(),
 		store: st, storePath: *storePath,
-		mmdvmINI: *mmdvmINI, dmrgwINI: *dmrgwINI, ysfgwINI: *ysfgwINI,
-		ysfHosts: *ysfHosts,
-		units:    strings.Split(*units, ","),
+		mmdvmINI: *mmdvmINI, dmrgwINI: *dmrgwINI, ysfgwINI: *ysfgwINI, p25gwINI: *p25gwINI,
+		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts,
+		units: strings.Split(*units, ","),
 	}
 	if err := s.seedStore(); err != nil {
 		log.Printf("config store seed skipped: %v", err)
@@ -292,8 +333,9 @@ func main() {
 				log.Printf("mqtt bridge stopped: %v", err)
 			}
 		}()
-		// Keep the YSF reflector hostlist fresh for the gateway + picker.
+		// Keep the reflector hostlists fresh for the gateways + pickers.
 		go ysfhosts.Run(context.Background(), *ysfHostsURL, *ysfHosts, 6*time.Hour)
+		go p25hosts.Run(context.Background(), *p25HostsURL, *p25Hosts, 6*time.Hour)
 	}
 
 	mux := http.NewServeMux()
@@ -303,6 +345,7 @@ func main() {
 	mux.HandleFunc("/api/config/apply", s.configApply)
 	mux.HandleFunc("/api/config/", s.configView) // PUT /api/config/{section}
 	mux.HandleFunc("/api/ysf/reflectors", s.ysfReflectors)
+	mux.HandleFunc("/api/p25/reflectors", s.p25Reflectors)
 	mux.Handle("/", http.FileServerFS(ui.FS()))
 
 	mode := "live, mqtt " + *broker
