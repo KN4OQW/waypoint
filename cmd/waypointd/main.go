@@ -153,6 +153,16 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// The D-Star gateway carries the ircDDB password, the same write-only secret
+	// rule: a blank field keeps the stored one (see SetDStarGateway).
+	if section == "dstargw" {
+		if err := config.SetDStarGateway(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	known, err := config.SetSection(s.store, section, body, "api")
 	if !known {
 		http.Error(w, "unknown config section: "+section, http.StatusNotFound)

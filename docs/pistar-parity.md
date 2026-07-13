@@ -175,40 +175,49 @@ first-class networks.
 
 ---
 
-## D-Star panel  ·  status: **pending** (deliberate functional map — Δ1)
+## D-Star panel  ·  status: **done** (deliberate functional map — Δ1)
 
 WPSD/Pi-Star expose **ircDDBGateway** fields. Waypoint runs **DStarGateway**
 (MQTT era): MMDVM-Host `[D-Star]` / `[D-Star Network]`, gateway
 `dstargateway.cfg`. The tables below give (a) each WPSD ircDDBGateway field and how
 Waypoint covers its intent, then (b) the DStarGateway fields with no WPSD label.
 
+There is **no RPT1/RPT2 concept** here (Δ1): the repeater callsign comes from the
+station identity (`general.callsign`) and the module is a single band letter
+(`dstar.module`) that the renderer mirrors into the gateway `[Repeater 1] Band` —
+so the two files can never disagree on the module. The ircDDB password is a
+write-only secret handled exactly like the DMR-network passwords: redacted from
+the API View (`has_ircddb_password` reports only whether one is set) and preserved
+on a blank write, both UI-side (`cleanDstargw` omits it) and server-side
+(`SetDStarGateway`).
+
 ### WPSD ircDDBGateway fields → Waypoint
 
 | WPSD field label | Waypoint INI key | store `section.key` | status | notes |
 |---|---|---|---|---|
-| RPT1 Callsign (callsign + module) | `[D-Star] Module` + `[General] Callsign` | `dstar.module` (+ `general.callsign`) | pending | Δ1: callsign from station identity, module from `dstar.module`; renderer mirrors module into gateway `[Repeater 1] Band`. |
+| RPT1 Callsign (callsign + module) | `[D-Star] Module` + `[General] Callsign` | `dstar.module` (+ `general.callsign`) | done | Δ1: callsign from station identity, module from `dstar.module`; renderer mirrors module into gateway `[Repeater 1] Band`. |
 | RPT2 Callsign (callsign + "G") | gateway callsign (auto) | — | N/A | gateway callsign derived; not a separate field. |
-| Remote Password (ircDDBGateway remote control) | `[Remote Commands] Enabled=0` | — | pending | Waypoint disables remote commands; no equivalent field. |
-| Default Reflector (reflector + module + startup + auto-connect) | `[Repeater 1] Reflector` + `ReflectorAtStartup` | `dstargw.reflector` | pending | e.g. "REF001 C"; empty = none. |
+| Remote Password (ircDDBGateway remote control) | `[Remote Commands] Enabled=0` | — | N/A | Waypoint disables remote commands; no equivalent field. |
+| Default Reflector (reflector + module + startup + auto-connect) | `[Repeater 1] Reflector` + `ReflectorAtStartup` | `dstargw.reflector` | done | e.g. "REF001 C"; empty = none; auto-connect derived — `ReflectorAtStartup=1` iff a reflector is set. |
 | ircDDBGateway Language | — | — | pending | no dashboard/gateway language. |
 | Time Announce | — | — | pending | not modeled. |
-| Callsign Routing | `[IRCDDB 1]` login | `dstargw.ircddb_*` | pending | Δ1: Waypoint always runs ircDDB for routing (see next table). |
-| No DExtra | `[Dextra] Enabled` (inverse) | `dstargw.dextra` | pending | |
+| Callsign Routing | `[IRCDDB 1]` login | `dstargw.ircddb_*` | done | Δ1: Waypoint always runs ircDDB for routing (see next table). |
+| No DExtra | `[Dextra] Enabled` (inverse) | `dstargw.dextra` | done | Waypoint models the enable directly (not the inverse "No" toggle). |
 
 ### Waypoint DStarGateway fields (no direct WPSD label — Δ1)
 
 | Waypoint field | INI key | store `section.key` | status | notes |
 |---|---|---|---|---|
-| Reflector reconnect | `[Repeater 1] ReflectorReconnect` | `dstargw.reflector_reconnect` | pending | enum Never/Fixed/5..180; clamped. |
-| ircDDB host | `[IRCDDB 1] Hostname` | `dstargw.ircddb_hostname` | pending | default ircv4.openquad.net. |
-| ircDDB username | `[IRCDDB 1] Username` | `dstargw.ircddb_username` | pending | blank = station callsign. |
-| ircDDB password | `[IRCDDB 1] Password` | `dstargw.ircddb_password` | pending | secret; write-only; blank = anonymous. |
-| D-Plus (REF) enable | `[D-Plus] Enabled` | `dstargw.dplus` | pending | force-disabled upstream if Login empty. |
-| D-Plus login | `[D-Plus] Login` | `dstargw.dplus_login` | pending | blank = station callsign; needs US-Trust registration. |
-| DCS enable | `[DCS] Enabled` | `dstargw.dcs` | pending | |
-| XLX enable | `[XLX] Enabled` | `dstargw.xlx` | pending | |
-| Self Only | `[D-Star] SelfOnly` | `dstar.self_only` | pending | |
-| Remote Gateway | `[D-Star] RemoteGateway` | `dstar.remote_gateway` | pending | off for a local DStarGateway. |
+| Reflector reconnect | `[Repeater 1] ReflectorReconnect` | `dstargw.reflector_reconnect` | done | enum Never/Fixed/5..180; clamped so a bad value can't render an unstartable config. |
+| ircDDB host | `[IRCDDB 1] Hostname` | `dstargw.ircddb_hostname` | done | default ircv4.openquad.net. |
+| ircDDB username | `[IRCDDB 1] Username` | `dstargw.ircddb_username` | done | blank = station callsign. |
+| ircDDB password | `[IRCDDB 1] Password` | `dstargw.ircddb_password` | done | secret; write-only; redacted in view; preserved on blank write; blank = anonymous. |
+| D-Plus (REF) enable | `[D-Plus] Enabled` | `dstargw.dplus` | done | force-disabled upstream if Login empty. |
+| D-Plus login | `[D-Plus] Login` | `dstargw.dplus_login` | done | blank = station callsign; needs US-Trust registration. |
+| DCS enable | `[DCS] Enabled` | `dstargw.dcs` | done | |
+| XLX enable | `[XLX] Enabled` | `dstargw.xlx` | done | |
+| Self Only | `[D-Star] SelfOnly` | `dstar.self_only` | done | |
+| Remote Gateway | `[D-Star] RemoteGateway` | `dstar.remote_gateway` | done | off for a local DStarGateway. |
 
 ---
 

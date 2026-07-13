@@ -316,6 +316,60 @@ func TestSetNetworksPreservesPasswords(t *testing.T) {
 	}
 }
 
+// Editing the D-Star gateway without resupplying the ircDDB password keeps the
+// stored one; a non-blank password replaces it. Mirrors the DMR-networks rule
+// (TestSetNetworksPreservesPasswords) for the other write-only secret.
+func TestSetDStarGatewayPreservesPassword(t *testing.T) {
+	s := memStore(t)
+	_ = fixture().Save(s, "seed") // ircDDB password irc-s3cret
+
+	// UI edits the startup reflector, supplies no password (blank = keep stored),
+	// and sends only the fields the panel manages — the merge must keep the rest.
+	body := `{"reflector":"DCS006 B","ircddb_username":"KN4OQW","ircddb_password":""}`
+	if err := SetDStarGateway(s, []byte(body), "test"); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := Load(s)
+	if m.DStarGW.Reflector != "DCS006 B" {
+		t.Fatalf("reflector not updated: %q", m.DStarGW.Reflector)
+	}
+	if m.DStarGW.IRCDDBPassword != "irc-s3cret" {
+		t.Fatalf("blank password should have kept the stored one, got %q", m.DStarGW.IRCDDBPassword)
+	}
+	// An unspecified field (Hostname) survives the merge.
+	if m.DStarGW.IRCDDBHostname != "ircv4.openquad.net" {
+		t.Fatalf("unspecified field lost on merge: %q", m.DStarGW.IRCDDBHostname)
+	}
+
+	// Now supply a new password — it replaces.
+	if err := SetDStarGateway(s, []byte(`{"ircddb_password":"newirc"}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	m2, _ := Load(s)
+	if m2.DStarGW.IRCDDBPassword != "newirc" {
+		t.Fatalf("new password should replace, got %q", m2.DStarGW.IRCDDBPassword)
+	}
+}
+
+// TestDStarIsolation: changing D-Star settings (mode params or the gateway
+// secret/reflector) must not alter the [DMR] or [Modem] sections of
+// MMDVM-Host.ini — the gateway fields render into dstargateway.cfg only.
+func TestDStarIsolation(t *testing.T) {
+	m := fixture()
+	beforeDMR, beforeModem := section(m.RenderMMDVM(), "DMR"), section(m.RenderMMDVM(), "Modem")
+
+	m.DStar.SelfOnly = !m.DStar.SelfOnly
+	m.DStarGW.Reflector = "DCS006 B"
+	m.DStarGW.IRCDDBPassword = "changed" // gateway-only; never touches MMDVM
+
+	if got := section(m.RenderMMDVM(), "DMR"); got != beforeDMR {
+		t.Errorf("changing D-Star altered [DMR]:\n before %q\n after %q", beforeDMR, got)
+	}
+	if got := section(m.RenderMMDVM(), "Modem"); got != beforeModem {
+		t.Errorf("changing D-Star altered [Modem]:\n before %q\n after %q", beforeModem, got)
+	}
+}
+
 func TestViewRedactsPasswords(t *testing.T) {
 	v := fixture().View("/tmp/config.db")
 	blob := ""
