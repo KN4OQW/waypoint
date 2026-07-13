@@ -217,7 +217,8 @@ type Modes struct {
 
 // Network is one DMRGateway upstream (BrandMeister, TGIF, …). Password is a
 // secret: it is stored, but the API View never serializes it. Rewrites are the
-// verbatim TG/PC/Src rewrite lines, preserved so routing is not lost.
+// verbatim TG/PC/Src rewrite and PassAllTG/PassAllPC lines, preserved so routing
+// (including the TG9990 Parrot, which rides on PassAll*) is not lost.
 type Network struct {
 	Name     string   `json:"name"`
 	Address  string   `json:"address"`

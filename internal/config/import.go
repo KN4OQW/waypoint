@@ -309,7 +309,7 @@ func importNetworks(dg *INI) []Network {
 			Port:     orDefault(dg.Get(sec, "Port"), "62031"),
 			Password: dg.Get(sec, "Password"),
 			Enabled:  dg.Get(sec, "Enabled") != "0",
-			Rewrites: dg.Prefixed(sec, "Rewrite"),
+			Rewrites: dg.Matching(sec, "Rewrite", "PassAll"),
 		})
 	}
 	return nets

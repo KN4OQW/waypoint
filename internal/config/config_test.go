@@ -29,7 +29,9 @@ func fixture() *Model {
 		DMRNet:  DMRNet{LocalPort: "62032", GatewayAddress: "127.0.0.1", GatewayPort: "62031", Slot1: true, Slot2: true, Jitter: "360"},
 		Modes:   Modes{DStar: false, DMR: true, YSF: true, P25: false, NXDN: true, M17: false, POCSAG: false, FM: false},
 		Networks: []Network{
-			{Name: "BM_3102_United_States", Address: "3102.master.brandmeister.network", Port: "62031", Password: "s3cr3t", Enabled: true, Rewrites: []string{"PCRewrite0=2,94000,2,4000,1001", "TGRewrite0=2,9,2,9,1"}},
+			// PassAllTG/PassAllPC must round-trip: the TG9990 Parrot has no dedicated
+			// rewrite on a stock BM config and rides on PassAll*. Order is sorted.
+			{Name: "BM_3102_United_States", Address: "3102.master.brandmeister.network", Port: "62031", Password: "s3cr3t", Enabled: true, Rewrites: []string{"PCRewrite0=2,94000,2,4000,1001", "PassAllPC=2", "PassAllTG=2", "TGRewrite0=2,9,2,9,1"}},
 			{Name: "TGIF_Network", Address: "tgif.network", Port: "62031", Password: "hunter2", Enabled: false, Rewrites: nil},
 		},
 		YSF:    YSF{LowDeviation: true, SelfOnly: false, TXHang: "6", RemoteGateway: false, ModeHang: "20"},

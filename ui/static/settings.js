@@ -244,8 +244,109 @@ function panelModes() {
   return `<div class="modes-grid">${cards}</div>`;
 }
 
+// --- DMR routing (DMRGateway rewrites, presented friendly) ----------------
+// The store keeps each network's routing as verbatim DMRGateway lines
+// (rewrites[]). Rather than make the operator hand-write them, the UI parses
+// those lines into a small model — a "catch-all" (PassAllTG/PassAllPC pair, the
+// "just key up and it follows" primary) plus a table of talkgroup routes
+// (TGRewrite) — and re-serialises on every edit. Anything it can't model
+// (PCRewrite/SrcRewrite/TypeRewrite or hand-tuned lines) is preserved untouched
+// in an "advanced" bucket, so no existing config is ever lost.
+function parseRouting(lines) {
+  const r = { catchAll: false, catchSlot: 2, routes: [], raw: [] };
+  let passTG = null, passPC = null;
+  (lines || []).forEach((line) => {
+    const s = String(line).trim();
+    if (!s) return;
+    const eq = s.indexOf("=");
+    if (eq < 0) { r.raw.push(s); return; }
+    const base = s.slice(0, eq).trim().replace(/\d+$/, ""); // TGRewrite0 -> TGRewrite
+    const val = s.slice(eq + 1).trim();
+    if (/^PassAllTG$/i.test(base)) { passTG = { slot: parseInt(val, 10), line: s }; return; }
+    if (/^PassAllPC$/i.test(base)) { passPC = { slot: parseInt(val, 10), line: s }; return; }
+    if (/^TGRewrite$/i.test(base)) {
+      const p = val.split(",").map((x) => parseInt(x.trim(), 10));
+      // Only model same-slot, well-formed rewrites; slot-crossing ones stay raw.
+      if (p.length === 5 && p.every((x) => !isNaN(x)) && p[0] === p[2]) {
+        r.routes.push({ slot: p[0], from: String(p[1]), to: String(p[3]), count: String(p[4]) });
+        return;
+      }
+    }
+    r.raw.push(s);
+  });
+  // A matching PassAllTG + PassAllPC on the same slot is a clean catch-all;
+  // anything lopsided is kept raw so we render it back exactly as found.
+  if (passTG && passPC && passTG.slot === passPC.slot) {
+    r.catchAll = true; r.catchSlot = passTG.slot || 2;
+  } else {
+    if (passTG) r.raw.push(passTG.line);
+    if (passPC) r.raw.push(passPC.line);
+  }
+  return r;
+}
+
+function serializeRouting(r) {
+  const out = [];
+  (r.routes || []).forEach((rt, i) => {
+    const from = String(rt.from == null ? "" : rt.from).trim();
+    if (from === "") return; // skip half-typed rows until a dialed TG is set
+    const slot = String(rt.slot || 2);
+    const to = String(rt.to == null ? "" : rt.to).trim() || from;
+    const count = String(rt.count == null ? "" : rt.count).trim() || "1";
+    out.push(`TGRewrite${i}=${slot},${from},${slot},${to},${count}`);
+  });
+  if (r.catchAll) { const s = String(r.catchSlot || 2); out.push(`PassAllTG=${s}`, `PassAllPC=${s}`); }
+  (r.raw || []).forEach((line) => { const s = String(line).trim(); if (s) out.push(s); });
+  return out;
+}
+// Re-derive the stored rewrites[] from the working routing model after any edit.
+function syncRouting(i) {
+  const n = edit.networks[i];
+  n.rewrites = serializeRouting(n._routing);
+  dirty.add("networks");
+}
+const slotOpt = (sel, name, val) =>
+  `<select class="mini" ${name}><option value="1"${+sel === 1 ? " selected" : ""}>TS1</option><option value="2"${+sel !== 1 ? " selected" : ""}>TS2</option></select>`;
+
+function routingBlock(n, i) {
+  const r = n._routing;
+  const routes = r.routes.map((rt, j) => `
+    <div class="route-row">
+      ${slotOpt(rt.slot, `data-route="${i}" data-ridx="${j}" data-rkey="slot"`)}
+      <input class="mini" data-route="${i}" data-ridx="${j}" data-rkey="from" value="${esc(rt.from)}" placeholder="dialed TG">
+      <span class="arr" aria-hidden="true">→</span>
+      <input class="mini" data-route="${i}" data-ridx="${j}" data-rkey="to" value="${esc(rt.to)}" placeholder="same">
+      <input class="mini" data-route="${i}" data-ridx="${j}" data-rkey="count" value="${esc(rt.count)}" placeholder="1">
+      <button class="netdel" data-route-del="${i}" data-rdel="${j}" title="Remove route">✕</button>
+    </div>`).join("");
+  const catchSlotSel = r.catchAll ? slotOpt(r.catchSlot, `data-net-catchslot="${i}"`) : "";
+  const routesUI = r.routes.length
+    ? `<div class="route-head"><span>Slot</span><span>Dialed TG</span><span></span><span>Network TG</span><span>Count</span><span></span></div>${routes}`
+    : `<div class="route-empty">${r.catchAll ? "Catch-all handles every talkgroup — add a route only to remap or split one out." : "No routes yet."}</div>`;
+  const warn = (n.enabled && !r.catchAll && !r.routes.length && !r.raw.length)
+    ? `<div class="route-warn">⚠ No routing configured — dialed talkgroups won't reach this network. Turn on catch-all (or add a route).</div>`
+    : "";
+  const adv = `<details class="raw-adv"${r.raw.length ? " open" : ""}>
+      <summary>Advanced raw rules${r.raw.length ? ` (${r.raw.length})` : ""}</summary>
+      <textarea class="rewrites" data-rawnet="${i}" rows="3" placeholder="PCRewrite0=2,4000,2,4000,1000&#10;SrcRewrite0=2,4000,2,9,1000">${esc(r.raw.join("\n"))}</textarea>
+    </details>`;
+  return `
+    <div class="toggle-row" style="margin-top:14px;">
+      <span class="name">Primary — pass every dialed talkgroup to this network (catch-all)</span>
+      <span class="catch-ctl">${catchSlotSel}<span class="pill ${r.catchAll ? "on" : "off"}" data-net-catch="${i}" style="cursor:pointer;">${r.catchAll ? "ON" : "OFF"}</span></span>
+    </div>
+    ${warn}
+    <div class="route-block">
+      <div class="route-title">TALKGROUP ROUTES</div>
+      ${routesUI}
+      <button class="btn ghost mini-btn" data-route-add="${i}">+ ADD ROUTE</button>
+    </div>
+    ${adv}`;
+}
+
 function panelBrandmeister() {
   const nets = edit.networks || [];
+  nets.forEach((n) => { if (!n._routing) n._routing = parseRouting(n.rewrites); });
   const cards = nets.map((n, i) => `
     <div class="card">
       <div class="card-head">
@@ -257,10 +358,11 @@ function panelBrandmeister() {
       ${row("Server Address", `<input data-net="${i}" data-nkey="address" value="${esc(n.address)}">`)}
       ${row("Port", `<input data-net="${i}" data-nkey="port" value="${esc(n.port)}">`)}
       ${row("Password", `<input data-net="${i}" data-nkey="password" type="password" value="${esc(n.password || "")}" placeholder="${n.has_password ? "•••••• unchanged" : "set password"}">`)}
-      ${row("Rewrites", `<textarea class="rewrites" data-net="${i}" data-nkey="rewrites" rows="4" placeholder="TGRewrite0=2,9,2,9,1">${esc((n.rewrites || []).join("\n"))}</textarea>`)}
+      ${routingBlock(n, i)}
     </div>`).join("");
   const empty = nets.length ? "" : note("No DMR networks. Add one to bridge this hotspot to BrandMeister, TGIF, FreeDMR, or an HBLink server.");
-  return `<div class="grid2">${cards}</div>${empty}<button class="btn ghost" id="net-add" style="margin-top:16px;">+ ADD NETWORK</button>`;
+  const intro = note("A single network usually wants just <b>catch-all</b> on — then any talkgroup you dial on the radio is passed straight through, and the master handles dynamic/static TGs. Add <b>routes</b> only when you run several networks and need to send specific talkgroups to each.");
+  return `${intro}<div class="grid2">${cards}</div>${empty}<button class="btn ghost" id="net-add" style="margin-top:16px;">+ ADD NETWORK</button>`;
 }
 
 function panelExpert(c, h) {
@@ -573,11 +675,33 @@ document.getElementById("panels").addEventListener("input", (e) => {
     setField(t.dataset.sec, t.dataset.key, v);
     return;
   }
+  // routing: a talkgroup-route field (slot / from / to / count).
+  if (t.dataset.route != null) {
+    const i = +t.dataset.route;
+    edit.networks[i]._routing.routes[+t.dataset.ridx][t.dataset.rkey] = t.value;
+    syncRouting(i);
+    refreshActions();
+    return;
+  }
+  // routing: the catch-all slot selector.
+  if (t.dataset.netCatchslot != null) {
+    const i = +t.dataset.netCatchslot;
+    edit.networks[i]._routing.catchSlot = +t.value;
+    syncRouting(i);
+    refreshActions();
+    return;
+  }
+  // routing: the advanced raw-rules textarea (verbatim DMRGateway lines).
+  if (t.dataset.rawnet != null) {
+    const i = +t.dataset.rawnet;
+    edit.networks[i]._routing.raw = t.value.split("\n").map((s) => s.trim()).filter(Boolean);
+    syncRouting(i);
+    refreshActions();
+    return;
+  }
   if (t.dataset.net != null) {
     const i = +t.dataset.net, key = t.dataset.nkey;
-    let v = t.value;
-    if (key === "rewrites") v = v.split("\n").map((s) => s.trim()).filter(Boolean);
-    edit.networks[i][key] = v;
+    edit.networks[i][key] = t.value;
     dirty.add("networks");
     refreshActions();
   }
@@ -594,8 +718,16 @@ document.getElementById("panels").addEventListener("click", (e) => {
   if (nt) { const i = +nt.dataset.nettoggle; edit.networks[i].enabled = !edit.networks[i].enabled; dirty.add("networks"); renderPanel(); refreshActions(); return; }
   const nd = e.target.closest("[data-netdel]");
   if (nd) { edit.networks.splice(+nd.dataset.netdel, 1); dirty.add("networks"); renderPanel(); refreshActions(); return; }
+  const ct = e.target.closest("[data-net-catch]");
+  if (ct) { const i = +ct.dataset.netCatch, r = edit.networks[i]._routing; r.catchAll = !r.catchAll; if (r.catchAll && !r.catchSlot) r.catchSlot = 2; syncRouting(i); renderPanel(); refreshActions(); return; }
+  const ra = e.target.closest("[data-route-add]");
+  if (ra) { const i = +ra.dataset.routeAdd; edit.networks[i]._routing.routes.push({ slot: 2, from: "", to: "", count: "1" }); renderPanel(); return; }
+  const rd = e.target.closest("[data-route-del]");
+  if (rd) { const i = +rd.dataset.routeDel; edit.networks[i]._routing.routes.splice(+rd.dataset.rdel, 1); syncRouting(i); renderPanel(); refreshActions(); return; }
   if (e.target.id === "net-add") {
-    edit.networks.push({ name: "New Network", address: "", port: "62031", enabled: false, password: "", rewrites: [], has_password: false });
+    // First network defaults to catch-all — a lone hotspot just wants pass-through.
+    const routing = { catchAll: edit.networks.length === 0, catchSlot: 2, routes: [], raw: [] };
+    edit.networks.push({ name: "New Network", address: "", port: "62031", enabled: false, password: "", rewrites: serializeRouting(routing), has_password: false, _routing: routing });
     dirty.add("networks"); renderPanel(); refreshActions();
   }
 });
