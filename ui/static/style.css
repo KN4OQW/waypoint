@@ -38,6 +38,8 @@ h1 { font-size: 18px; margin: 0; letter-spacing: .01em; }
 }
 .pill[data-state="up"]   { color: var(--ok); border-color: var(--ok); }
 .pill[data-state="down"] { color: var(--bad); border-color: var(--bad); }
+a.pill { text-decoration: none; }
+a.pill:hover { border-color: var(--accent); color: var(--accent); }
 
 main { max-width: 1080px; margin: 0 auto; padding: 18px 20px 60px; display: grid; gap: 16px; }
 .cols { display: grid; grid-template-columns: 1fr; gap: 16px; }
