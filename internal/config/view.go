@@ -266,8 +266,8 @@ func (m *Model) View(storePath string) *View {
 			Enabled:     n.Enabled,
 			HasPassword: n.Password != "",
 		}
-		if n.Type == NetCustom {
-			vn.Rewrites = n.Rewrites // raw lines only surface for the custom escape hatch
+		if n.Type == NetCustom || n.Type == "" {
+			vn.Rewrites = n.Rewrites // raw lines surface for custom + legacy (untyped) networks
 		}
 		v.Networks = append(v.Networks, vn)
 	}

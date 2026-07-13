@@ -107,8 +107,11 @@ func alternateRewrites(t dmrTemplate) []string {
 func networkRewrites(n Network, routes []DMRRoute) []string {
 	var out []string
 	switch {
-	case n.Type == NetCustom:
-		out = append(out, n.Rewrites...) // operator-supplied, rendered verbatim
+	case n.Type == NetCustom || n.Type == "":
+		// Custom, or a legacy network from a store predating typed routing: render
+		// the stored rewrites verbatim so a binary upgrade never wipes routing.
+		// The operator re-picks a type in the UI to move to generated routing.
+		out = append(out, n.Rewrites...)
 	case n.Primary:
 		out = append(out, primaryRewrites()...)
 	default:

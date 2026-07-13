@@ -341,3 +341,22 @@ func TestImportClassifies(t *testing.T) {
 		t.Fatalf("hand-tuned block should be preserved as custom: %+v", nets2)
 	}
 }
+
+// TestLegacyUntypedNetworkPreserved: a network from a store predating typed
+// routing (Type == "") must render its stored rewrites verbatim, so upgrading
+// the binary never wipes DMR routing before the operator re-picks a type.
+func TestLegacyUntypedNetworkPreserved(t *testing.T) {
+	m := &Model{
+		DMR: DMR{ID: "1"},
+		Networks: []Network{{
+			Name: "BM", Address: "bm.example", Enabled: true,
+			Rewrites: []string{"TGRewrite0=2,9,2,9,1", "PassAllTG=2", "PassAllPC=2"},
+		}},
+	}
+	got := section(m.RenderDMRGateway(), "DMR Network 1")
+	for _, want := range []string{"TGRewrite0=2,9,2,9,1", "PassAllTG=2", "PassAllPC=2"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("legacy untyped network dropped %q\n%s", want, got)
+		}
+	}
+}
