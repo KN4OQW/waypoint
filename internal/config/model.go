@@ -136,14 +136,21 @@ func (m *Model) Save(s *store.Store, by string) error {
 	return nil
 }
 
-// SetSection writes one section by name from raw JSON, rejecting unknown fields
-// (schema drift is a caller error, not silently kept). Returns known=false if
-// the section name is not recognized.
+// SetSection merges a partial JSON body into one section and writes it back,
+// rejecting unknown fields (schema drift is a caller error, not silently kept).
+// It is a merge, not a replace: the current section is loaded first, then the
+// body is decoded over it, so a UI that sends only the fields it manages never
+// drops the keys it doesn't (timeout, invert flags, …). Returns known=false for
+// an unrecognized section name.
 func SetSection(s *store.Store, section string, raw []byte, by string) (known bool, err error) {
 	m := &Model{}
 	ptr, ok := m.sections()[section]
 	if !ok {
 		return false, nil
+	}
+	// Load the current section so unspecified fields survive the merge.
+	if _, err := s.GetInto(section, ptr); err != nil {
+		return true, err
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()

@@ -72,7 +72,7 @@ var modeDisplay = []struct {
 func (m *Model) View(storePath string) *View {
 	v := &View{
 		Sources:  Sources{Store: storePath},
-		ReadOnly: true, // store + apply API are wired; the page's edit UI lands next
+		ReadOnly: false, // store + apply are wired end to end; the page edits
 		General: ViewGeneral{
 			Callsign:  m.General.Callsign,
 			DMRID:     m.General.ID,

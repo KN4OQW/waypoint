@@ -104,6 +104,37 @@ func TestDisableReEnablePreservesSettings(t *testing.T) {
 	}
 }
 
+// A partial section write merges — unspecified fields survive (the guarantee
+// that lets the UI PUT only the fields it manages).
+func TestSetSectionMergePreserves(t *testing.T) {
+	s := memStore(t)
+	if err := fixture().Save(s, "seed"); err != nil {
+		t.Fatal(err)
+	}
+	known, err := SetSection(s, "general", []byte(`{"callsign":"W1AW"}`), "test")
+	if !known || err != nil {
+		t.Fatalf("known=%v err=%v", known, err)
+	}
+	m, _ := Load(s)
+	if m.General.Callsign != "W1AW" {
+		t.Fatalf("callsign not updated: %q", m.General.Callsign)
+	}
+	if m.General.Timeout != "240" || m.General.ID != "3180202" {
+		t.Fatalf("unspecified fields lost on merge: %+v", m.General)
+	}
+}
+
+func TestSetSectionRejectsUnknownField(t *testing.T) {
+	s := memStore(t)
+	_ = fixture().Save(s, "seed")
+	if _, err := SetSection(s, "general", []byte(`{"bogus":true}`), "test"); err == nil {
+		t.Fatal("unknown field should be rejected")
+	}
+	if known, _ := SetSection(s, "nosuch", []byte(`{}`), "test"); known {
+		t.Fatal("unknown section should report known=false")
+	}
+}
+
 func TestViewRedactsPasswords(t *testing.T) {
 	v := fixture().View("/tmp/config.db")
 	blob := ""
