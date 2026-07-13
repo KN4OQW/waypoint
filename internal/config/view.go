@@ -12,7 +12,29 @@ type View struct {
 	YSF      ViewYSF       `json:"ysf"`
 	P25      ViewP25       `json:"p25"`
 	NXDN     ViewNXDN      `json:"nxdn"`
+	DStar    ViewDStar     `json:"dstar"`
 	ReadOnly bool          `json:"read_only"`
+}
+
+// ViewDStar is the D-Star tab's read model: the mode enable, the [D-Star] mode
+// params, and the gateway settings a user actually sets. The ircDDB password is
+// a secret — never serialized; HasIRCDDBPassword reports only whether one is set
+// (the write path preserves it when the field is left blank).
+type ViewDStar struct {
+	Enable             bool   `json:"enable"`
+	Module             string `json:"module"`
+	SelfOnly           bool   `json:"self_only"`
+	RemoteGateway      bool   `json:"remote_gateway"`
+	Reflector          string `json:"reflector"`
+	ReflectorReconnect string `json:"reflector_reconnect"`
+	IRCDDBHostname     string `json:"ircddb_hostname"`
+	IRCDDBUsername     string `json:"ircddb_username"`
+	HasIRCDDBPassword  bool   `json:"has_ircddb_password"`
+	Dextra             bool   `json:"dextra"`
+	DPlus              bool   `json:"dplus"`
+	DPlusLogin         string `json:"dplus_login"`
+	DCS                bool   `json:"dcs"`
+	XLX                bool   `json:"xlx"`
 }
 
 // ViewNXDN is the NXDN tab's read model: the mode enable, the [NXDN] mode
@@ -48,9 +70,7 @@ type ViewYSF struct {
 	Enable            bool   `json:"enable"`
 	Suffix            string `json:"suffix"`
 	WiresXPassthrough bool   `json:"wiresx_passthrough"`
-	WiresXMakeUpper   bool   `json:"wiresx_make_upper"`
 	Startup           string `json:"startup"`
-	Reconnect         bool   `json:"reconnect"`
 	Revert            bool   `json:"revert"`
 	InactivityTimeout string `json:"inactivity_timeout"`
 	YSFNetwork        bool   `json:"ysf_network"`
@@ -146,9 +166,7 @@ func (m *Model) View(storePath string) *View {
 		Enable:            m.Modes.YSF,
 		Suffix:            m.YSFGW.Suffix,
 		WiresXPassthrough: m.YSFGW.WiresXPassthrough,
-		WiresXMakeUpper:   m.YSFGW.WiresXMakeUpper,
 		Startup:           m.YSFGW.Startup,
-		Reconnect:         m.YSFGW.Reconnect,
 		Revert:            m.YSFGW.Revert,
 		InactivityTimeout: m.YSFGW.InactivityTimeout,
 		YSFNetwork:        m.YSFGW.YSFNetwork,
@@ -175,6 +193,22 @@ func (m *Model) View(storePath string) *View {
 		Voice:         m.NXDNGW.Voice,
 		RFHangTime:    m.NXDNGW.RFHangTime,
 		NetHangTime:   m.NXDNGW.NetHangTime,
+	}
+	v.DStar = ViewDStar{
+		Enable:             m.Modes.DStar,
+		Module:             m.DStar.Module,
+		SelfOnly:           m.DStar.SelfOnly,
+		RemoteGateway:      m.DStar.RemoteGateway,
+		Reflector:          m.DStarGW.Reflector,
+		ReflectorReconnect: m.DStarGW.ReflectorReconnect,
+		IRCDDBHostname:     m.DStarGW.IRCDDBHostname,
+		IRCDDBUsername:     m.DStarGW.IRCDDBUsername,
+		HasIRCDDBPassword:  m.DStarGW.IRCDDBPassword != "",
+		Dextra:             m.DStarGW.Dextra,
+		DPlus:              m.DStarGW.DPlus,
+		DPlusLogin:         m.DStarGW.DPlusLogin,
+		DCS:                m.DStarGW.DCS,
+		XLX:                m.DStarGW.XLX,
 	}
 	for _, md := range modeDisplay {
 		v.Modes = append(v.Modes, ViewMode{Key: md.key, Name: md.name, Enabled: md.get(m.Modes)})

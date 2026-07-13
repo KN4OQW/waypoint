@@ -19,17 +19,18 @@ func Import(mmdvmPath, dmrgatewayPath string) (*Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", dmrgatewayPath, err)
 	}
-	// No YSFGateway/P25Gateway/NXDNGateway.ini exists at seed time (waypointd
-	// creates them); those sections get defaults. yg/pg/ng are non-nil only in
-	// the round-trip harness.
-	return fromINI(mm, dg, nil, nil, nil), nil
+	// No YSFGateway/P25Gateway/NXDNGateway/dstargateway.cfg exists at seed time
+	// (waypointd creates them); those sections get defaults. yg/pg/ng/xg are
+	// non-nil only in the round-trip harness.
+	return fromINI(mm, dg, nil, nil, nil, nil), nil
 }
 
 // fromINI builds a Model from already-parsed INIs. Shared by Import (from disk)
 // and the round-trip harness (render → parse → fromINI, all in memory). The
-// gateway INIs yg (YSFGateway), pg (P25Gateway) and ng (NXDNGateway) may be nil,
-// in which case their sections take their defaults.
-func fromINI(mm, dg, yg, pg, ng *INI) *Model {
+// gateway INIs yg (YSFGateway), pg (P25Gateway), ng (NXDNGateway) and xg
+// (dstargateway.cfg) may be nil, in which case their sections take their
+// defaults.
+func fromINI(mm, dg, yg, pg, ng, xg *INI) *Model {
 	m := &Model{
 		General: General{
 			Callsign:    mm.Get("General", "Callsign"),
@@ -104,6 +105,12 @@ func fromINI(mm, dg, yg, pg, ng *INI) *Model {
 			TXHang:        orDefault(mm.Get("NXDN", "TXHang"), "5"),
 		},
 		NXDNGW: nxdnGatewayFromINI(ng),
+		DStar: DStar{
+			Module:        orDefault(strings.ToUpper(mm.Get("D-Star", "Module")), "B"),
+			SelfOnly:      mm.Bool("D-Star", "SelfOnly"),
+			RemoteGateway: mm.Bool("D-Star", "RemoteGateway"),
+		},
+		DStarGW: dstarGatewayFromINI(xg),
 	}
 	return m
 }
@@ -117,8 +124,8 @@ func DefaultYSFGateway() YSFGateway {
 		// handle the radio's Wires-X commands locally (browse/connect all
 		// return NONE), so the radio gets no response. Passthrough is the
 		// advanced "hand Wires-X to the network reflector" mode.
-		Suffix: "RPT", WiresXPassthrough: false, WiresXMakeUpper: true,
-		Reconnect: true, Revert: true, InactivityTimeout: "30",
+		Suffix: "RPT", WiresXPassthrough: false,
+		Revert: true, InactivityTimeout: "30",
 		YSFNetwork: true, FCSNetwork: true, APRS: false,
 	}
 }
@@ -131,9 +138,7 @@ func ysfGatewayFromINI(yg *INI) YSFGateway {
 	return YSFGateway{
 		Suffix:            orDefault(yg.Get("General", "Suffix"), "RPT"),
 		WiresXPassthrough: yg.Bool("General", "WiresXCommandPassthrough"),
-		WiresXMakeUpper:   yg.Bool("General", "WiresXMakeUpper"),
 		Startup:           yg.Get("Network", "Startup"),
-		Reconnect:         yg.Bool("Network", "Reconnect"),
 		Revert:            yg.Bool("Network", "Revert"),
 		InactivityTimeout: orDefault(yg.Get("Network", "InactivityTimeout"), "30"),
 		YSFNetwork:        yg.Bool("YSF Network", "Enable"),
@@ -200,6 +205,52 @@ func nxdnGatewayFromINI(ng *INI) NXDNGateway {
 		Voice:       ng.Bool("Voice", "Enabled"),
 		RFHangTime:  orDefault(ng.Get("Network", "RFHangTime"), "120"),
 		NetHangTime: orDefault(ng.Get("Network", "NetHangTime"), "60"),
+	}
+}
+
+// DefaultDStar is the MMDVM-Host [D-Star] default: Module B (the common 70cm
+// hotspot band letter; upstream's own initializer is C, but the module letter
+// only needs to match the gateway repeater Band, and B is the conventional
+// choice), and both restrictive flags off. RemoteGateway stays off so the local
+// DStarGateway keeps control (DStarControl.cpp:741 rewrites RPT calls only when
+// on). Used to backfill a store seeded before D-Star.
+func DefaultDStar() DStar {
+	return DStar{Module: "B", SelfOnly: false, RemoteGateway: false}
+}
+
+// DefaultDStarGateway is the sane hotspot default: openquad ircDDB for callsign
+// routing, no startup reflector, and all four reflector protocols on — matching
+// DStarGateway's own initializers (DExtra/DPlus/DCS/XLX all default Enabled=true,
+// DStarGatewayConfig.cpp:119/126/138/105). IRCDDBUsername/DPlusLogin are left
+// blank so they render as the station callsign (upstream's own default). Used to
+// seed a fresh store and to backfill the section on a store created before
+// D-Star existed.
+func DefaultDStarGateway() DStarGateway {
+	return DStarGateway{
+		Reflector: "", ReflectorReconnect: "Never",
+		IRCDDBHostname: "ircv4.openquad.net", IRCDDBUsername: "", IRCDDBPassword: "",
+		Dextra: true, DPlus: true, DPlusLogin: "", DCS: true, XLX: true,
+	}
+}
+
+// dstarGatewayFromINI reads a dstargateway.cfg, or returns the defaults when xg
+// is nil. Enable flags are read from each protocol section; the ircDDB/repeater
+// values come from the first (only) instance Waypoint renders.
+func dstarGatewayFromINI(xg *INI) DStarGateway {
+	if xg == nil {
+		return DefaultDStarGateway()
+	}
+	return DStarGateway{
+		Reflector:          xg.Get("Repeater 1", "Reflector"),
+		ReflectorReconnect: orDefault(xg.Get("Repeater 1", "ReflectorReconnect"), "Never"),
+		IRCDDBHostname:     orDefault(xg.Get("IRCDDB 1", "Hostname"), "ircv4.openquad.net"),
+		IRCDDBUsername:     xg.Get("IRCDDB 1", "Username"),
+		IRCDDBPassword:     xg.Get("IRCDDB 1", "Password"),
+		Dextra:             xg.Bool("Dextra", "Enabled"),
+		DPlus:              xg.Bool("D-Plus", "Enabled"),
+		DPlusLogin:         xg.Get("D-Plus", "Login"),
+		DCS:                xg.Bool("DCS", "Enabled"),
+		XLX:                xg.Bool("XLX", "Enabled"),
 	}
 }
 

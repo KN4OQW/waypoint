@@ -43,7 +43,7 @@ behind the gateway-plugin model ([#21]); DMR + YSF are the MVP ([#17]).
 |---|---|---|---|---|
 | DMR | `[DMR]` + `[DMR Network]` | DMRGateway | networks ✅ · static/dynamic TG (Options), TG hold, per-mode hangs ⬜ | 🟡 |
 | YSF (Fusion) | `[System Fusion]` | YSFGateway / DGIdGateway | YSF + FCS rooms, DG-ID map, Wires-X passthrough | ⬜ (P0) |
-| D-Star | `[D-Star]` | DStarGateway (ircDDB) | repeater/module, ircDDB, DExtra/DPlus/DCS, routing | ⬜ |
+| D-Star | `[D-Star]` + `[D-Star Network]` | DStarGateway (ircDDB, MQTT era) | module ✅ · ircDDB login ✅ · startup reflector ✅ · DExtra/DPlus/DCS/XLX ✅ | ✅ |
 | P25 | `[P25]` | P25Gateway | P25 reflector network, TG list, NAC | ⬜ |
 | NXDN | `[NXDN]` | NXDNGateway | NXDN reflectors, TG list, RAN | ⬜ |
 | M17 | `[M17]` | M17Gateway | M17 reflectors/modules | ⬜ |
