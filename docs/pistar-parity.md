@@ -34,8 +34,8 @@ above WPSD parity · `partial` — present but diverging or incomplete/not surfa
 `dmr`, `dmrnet`, `modes`, and `networks` are **done**. Every other mode's own
 parameters and its gateway configuration are **pending** acceptance — the
 store/renderer/UI scaffolding present on the `dmr-pistar-ui` branch is exactly
-what this checklist gates. Host/OS, Display, cross-mode, POCSAG, and FM config are
-not modeled at all.
+what this checklist gates. Host/OS, cross-mode, POCSAG, and FM config are
+not modeled at all. Display is modeled (store section `display`, Setup tab).
 
 ---
 
@@ -51,10 +51,11 @@ place Waypoint deliberately differs from both. Prompt 10 verifies these.
 | D3 | **M17 Callsign Suffix** — WPSD adds the node-type letter (H hotspot / R repeater) appended to the callsign; classic Pi-Star has only host + CAN | Follow **WPSD** | M17 panel — `m17gw.suffix` → `M17Gateway.ini [General] Suffix` |
 | Δ1 | **D-Star runs DStarGateway (MQTT era), not ircDDBGateway.** WPSD/Pi-Star expose ircDDBGateway fields (RPT1/RPT2 Callsign, Remote Password, Default Reflector, No DExtra, Callsign Routing…). Waypoint maps the same operator intent onto DStarGateway's `[Repeater 1]` / `[IRCDDB 1]` / protocol sections — a **functional** map, not a label clone | **Deliberate** difference | D-Star panel — see the two D-Star tables below |
 
-A second deliberate simplification (not a parity target): Waypoint is
-**display-free** (`[General] Display=None`, dashboard over MQTT), so WPSD's
-*Display Type / Port / Nextion Layout* controls have **no** Waypoint equivalent by
-design — see the Control Software table.
+Waypoint's own node runs **display-free** (`[General] Display=None`, dashboard
+over MQTT; its forked MQTT-era MMDVM-Host has no `[Display]` parser and ignores
+the keys). But as a WPSD clone Waypoint still **models** the full Display surface
+(store section `display`, Setup tab) so a clone on stock/pre-MQTT MMDVM-Host, or
+one driving a physical panel, gets working config — see the Setup / Display table.
 
 ---
 
@@ -66,8 +67,8 @@ WPSD `<h2>` "Control Software".
 
 | WPSD field label | INI key | store `section.key` | status | notes |
 |---|---|---|---|---|
-| Radio Control Software (DStarRepeater / MMDVMHost) | — | — | done (fixed) | Waypoint is MMDVMHost-only by design; no selector. |
-| TRX Mode (Simplex Node / Duplex Repeater) | `[General] Duplex` | `general.duplex` | done | UI toggle DUPLEX / SIMPLEX. |
+| Radio Control Software (DStarRepeater / MMDVMHost) | — | — | done (fixed) | Waypoint is MMDVMHost-only by design; no selector — Setup tab shows a read-only `MMDVMHost`. |
+| TRX Mode (Simplex Node / Duplex Repeater) | `[General] Duplex` | `general.duplex` | done | Setup tab — labelled Simplex/Duplex selector (also the DUPLEX/SIMPLEX toggle on General). |
 
 ### MMDVMHost Configuration panel — mode toggles + Display
 
@@ -84,8 +85,10 @@ WPSD `<h2>` "MMDVMHost Configuration" (mode enables, then Display Type).
 | POCSAG Mode | `[POCSAG] Enable` | `modes.pocsag` | done | enable only; DAPNET config pending. |
 | FM Mode | `[FM] Enable` | `modes.fm` | done | *Waypoint-only toggle* — Pi-Star/WPSD edit FM via the expert INI editor. |
 | YSF2DMR / YSF2NXDN / YSF2P25 / DMR2YSF / DMR2NXDN Mode | per cross-mode daemon | — | pending | cross-mode bridges; "Gateways" tab is a stub. |
-| Display Type (None / OLED3 / OLED6 / Nextion / HD44780 / TFT Serial / LCDproc) | `[General] Display` | — | N/A (by design) | display-free: `Display=None`, `DisplayLevel=0`, status over MQTT. |
-| Display Port / Nextion Layout (G4KLX / ON7LDS L2 / L3 / L3 HS) | `[General]` display keys | — | N/A (by design) | no physical display. |
+| Display Type (None / OLED3 / OLED6 / Nextion / HD44780 / TFT Serial / LCDproc) | `[General] Display` (+ `[OLED] Type`) | `display.type` / `display.oled_type` | done | Setup tab. Node stays `DisplayLevel=0` (status over MQTT); the driver subsections render for clone parity. |
+| Display Port | `[Nextion]` / `[TFT Serial]` `Port` | `display.port` | done | Setup tab — None / modem / ttyACM* / ttyUSB* / ttyS2 / ttyNextionDriver. |
+| Nextion Layout (G4KLX / ON7LDS L2 / L3 / L3 HS) | `[Nextion] ScreenLayout` | `display.nextion_layout` | done | Setup tab — shown only when type = Nextion. |
+| HD44780 geometry + I2C wiring | `[HD44780] Rows` / `Columns` / `I2CAddress` | `display.hd44780_rows` / `_cols` / `_i2c_addr` | done | Setup tab — shown only when type = HD44780. I2C is the PCF8574 `I2CAddress` (hex); MMDVM-Host has no separate I2C-bus key, GPIO wiring is the alternative `Pins` list (rendered as a constant). |
 
 ### General Configuration panel
 

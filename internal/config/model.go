@@ -21,6 +21,7 @@ import (
 type Model struct {
 	General  General      `json:"general"`
 	Modem    Modem        `json:"modem"`
+	Display  Display      `json:"display"`
 	DMR      DMR          `json:"dmr"`
 	DMRNet   DMRNet       `json:"dmrnet"`
 	Modes    Modes        `json:"modes"`
@@ -170,6 +171,32 @@ type YSFGateway struct {
 	UpperHostfiles    bool   `json:"upper_hostfiles"` // uppercase reflector names in the managed hostlist (fetch transform)
 }
 
+// Display is MMDVM-Host's [Display] surface: the [General] Display driver
+// selector plus the per-driver subsection ([OLED]/[Nextion]/[HD44780]/[TFT
+// Serial]/[LCDproc]) it points at. This is a WPSD-parity clone: Waypoint's own
+// node runs display-free (its forked MMDVM-Host is MQTT-era and ignores these
+// keys entirely — Conf.cpp has no [Display] parser, so they are inert on this
+// node), but a WPSD clone carries the fields so an operator on stock/pre-MQTT
+// MMDVM-Host, or one who drives a physical panel, gets working config. Every key
+// name below is verbatim from the pre-MQTT g4klx MMDVM-Host.ini (the version WPSD
+// targets); nothing is guessed.
+//
+// HD44780 note: the driver takes EITHER a GPIO 4-bit pin list ([HD44780] Pins,
+// rendered from a constant — this node wires over I2C, so the pin list is not
+// operator-edited) OR a PCF8574 I2C adapter address ([HD44780] I2CAddress, hex
+// like 0x20). There is NO separate "I2C bus" key in the [HD44780] section — the
+// bus is fixed by the driver — so I2C wiring is modeled as the single I2CAddress
+// field, not an address+bus pair.
+type Display struct {
+	Type           string `json:"type"`             // [General] Display: None | OLED | Nextion | HD44780 | TFT Serial | LCDproc
+	OLEDType       string `json:"oled_type"`        // [OLED] Type: 3 (0.96") or 6 (1.3")
+	Port           string `json:"port"`             // serial port for Nextion/TFT Serial: None | modem | /dev/tty*
+	NextionLayout  string `json:"nextion_layout"`   // [Nextion] ScreenLayout: 0 G4KLX / 2 ON7LDS L2 / 3 ON7LDS L3 / 4 ON7LDS L3 HS
+	HD44780Rows    string `json:"hd44780_rows"`     // [HD44780] Rows
+	HD44780Cols    string `json:"hd44780_cols"`     // [HD44780] Columns
+	HD44780I2CAddr string `json:"hd44780_i2c_addr"` // [HD44780] I2CAddress (PCF8574 adapter; hex, e.g. 0x20)
+}
+
 // General is station identity and top-level behaviour.
 type General struct {
 	Callsign    string `json:"callsign"`
@@ -299,6 +326,7 @@ func (m *Model) sections() map[string]any {
 	return map[string]any{
 		"general":  &m.General,
 		"modem":    &m.Modem,
+		"display":  &m.Display,
 		"dmr":      &m.DMR,
 		"dmrnet":   &m.DMRNet,
 		"modes":    &m.Modes,

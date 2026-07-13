@@ -26,6 +26,10 @@ func fixture() *Model {
 	return &Model{
 		General: General{Callsign: "KN4OQW", ID: "3180202", Duplex: true, Timeout: "240", RFModeHang: "300", NetModeHang: "300", Power: "1", Location: "Milton, EM60", URL: "https://waypoint.kn4oqw.com"},
 		Modem:   Modem{Port: "/dev/ttyAMA0", UARTSpeed: "115200", RXFreqHz: "433900000", TXFreqHz: "438900000", RXOffset: "75", TXOffset: "-40", TXInvert: true, RXInvert: false, PTTInvert: false, RXLevel: "50", TXLevel: "50"},
+		// Display fully populated with non-default values so the round-trip cannot be
+		// masked by a rendered default filling an empty field. This node drives an
+		// HD44780 over I2C (address 0x22), 4 rows × 20 cols.
+		Display: Display{Type: "HD44780", OLEDType: "6", Port: "/dev/ttyUSB0", NextionLayout: "3", HD44780Rows: "4", HD44780Cols: "20", HD44780I2CAddr: "0x22"},
 		DMR:     DMR{ColorCode: "1", ID: "3180202", EmbeddedLCOnly: true, SelfOnly: true, DumpTAData: true, Beacons: true},
 		DMRNet:  DMRNet{LocalPort: "62032", GatewayAddress: "127.0.0.1", GatewayPort: "62031", Slot1: true, Slot2: true, Jitter: "360"},
 		Modes:   Modes{DStar: false, DMR: true, YSF: true, P25: false, NXDN: true, M17: false, POCSAG: false, FM: false},
@@ -184,6 +188,47 @@ func TestDGIdGatewaySwap(t *testing.T) {
 	back := ysfGatewayFromINI(nil, dgid)
 	if !back.EnableDGId || !back.YCSNetwork || back.Startup != "FCS00290" {
 		t.Fatalf("DGIdGateway.ini did not round-trip: %+v", back)
+	}
+}
+
+// TestDisplayRendered: the [General] Display selector and every driver
+// subsection render from the model with the confirmed pre-MQTT MMDVM-Host key
+// names. All five subsections are always present (like the stock ini) regardless
+// of which type is selected, so a clone carries them for any driver.
+func TestDisplayRendered(t *testing.T) {
+	m := fixture() // Display: HD44780, 4x20, I2C 0x22, OLED type 6, Nextion layout 3, port /dev/ttyUSB0
+	ini := m.RenderMMDVM()
+	for sec, wants := range map[string][]string{
+		"General":    {"Display=HD44780"},
+		"HD44780":    {"Rows=4", "Columns=20", "I2CAddress=0x22", "Pins=11,10,0,1,2,3"},
+		"OLED":       {"Type=6"},
+		"Nextion":    {"Port=/dev/ttyUSB0", "ScreenLayout=3"},
+		"TFT Serial": {"Port=/dev/ttyUSB0"},
+		"LCDproc":    {"Address=localhost"},
+	} {
+		got := section(ini, sec)
+		for _, w := range wants {
+			if !strings.Contains(got, w) {
+				t.Errorf("[%s] missing %q\n%s", sec, w, got)
+			}
+		}
+	}
+}
+
+// TestDisplayIsolation: changing Display settings must not alter the [DMR] or
+// [Modem] sections of MMDVM-Host.ini.
+func TestDisplayIsolation(t *testing.T) {
+	m := fixture()
+	beforeDMR, beforeModem := section(m.RenderMMDVM(), "DMR"), section(m.RenderMMDVM(), "Modem")
+
+	m.Display.Type = "OLED"
+	m.Display.HD44780I2CAddr = "0x3c"
+
+	if got := section(m.RenderMMDVM(), "DMR"); got != beforeDMR {
+		t.Errorf("changing Display altered [DMR]:\n before %q\n after %q", beforeDMR, got)
+	}
+	if got := section(m.RenderMMDVM(), "Modem"); got != beforeModem {
+		t.Errorf("changing Display altered [Modem]:\n before %q\n after %q", beforeModem, got)
 	}
 }
 
