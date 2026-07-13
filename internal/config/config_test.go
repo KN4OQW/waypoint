@@ -44,6 +44,8 @@ func fixture() *Model {
 			IRCDDBHostname: "ircv4.openquad.net", IRCDDBUsername: "KN4OQW", IRCDDBPassword: "irc-s3cret",
 			Dextra: true, DPlus: true, DPlusLogin: "KN4OQW", DCS: true, XLX: false,
 		},
+		M17:   M17{CAN: "0", SelfOnly: true, AllowEncryption: false, TXHang: "5"},
+		M17GW: M17Gateway{Suffix: "H", Startup: "M17-M17 C", Revert: true, HangTime: "240", Voice: true},
 	}
 }
 
@@ -74,7 +76,11 @@ func TestLosslessRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := fromINI(mm, dg, yg, pg, ng, xg)
+	mg, err := ParseINI(strings.NewReader(m.RenderM17Gateway()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := fromINI(mm, dg, yg, pg, ng, xg, mg)
 	if !reflect.DeepEqual(m, got) {
 		t.Fatalf("round-trip lost data:\n want %+v\n  got %+v", m, got)
 	}

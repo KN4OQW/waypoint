@@ -13,7 +13,23 @@ type View struct {
 	P25      ViewP25       `json:"p25"`
 	NXDN     ViewNXDN      `json:"nxdn"`
 	DStar    ViewDStar     `json:"dstar"`
+	M17      ViewM17       `json:"m17"`
 	ReadOnly bool          `json:"read_only"`
+}
+
+// ViewM17 is the M17 tab's read model: the mode enable, the [M17] mode params
+// (CAN, no RemoteGateway, AllowEncryption), and the gateway settings a user
+// actually sets. No secrets.
+type ViewM17 struct {
+	Enable          bool   `json:"enable"`
+	CAN             string `json:"can"`
+	SelfOnly        bool   `json:"self_only"`
+	AllowEncryption bool   `json:"allow_encryption"`
+	Suffix          string `json:"suffix"`
+	Startup         string `json:"startup"`
+	Revert          bool   `json:"revert"`
+	HangTime        string `json:"hang_time"`
+	Voice           bool   `json:"voice"`
 }
 
 // ViewDStar is the D-Star tab's read model: the mode enable, the [D-Star] mode
@@ -209,6 +225,17 @@ func (m *Model) View(storePath string) *View {
 		DPlusLogin:         m.DStarGW.DPlusLogin,
 		DCS:                m.DStarGW.DCS,
 		XLX:                m.DStarGW.XLX,
+	}
+	v.M17 = ViewM17{
+		Enable:          m.Modes.M17,
+		CAN:             m.M17.CAN,
+		SelfOnly:        m.M17.SelfOnly,
+		AllowEncryption: m.M17.AllowEncryption,
+		Suffix:          m.M17GW.Suffix,
+		Startup:         m.M17GW.Startup,
+		Revert:          m.M17GW.Revert,
+		HangTime:        m.M17GW.HangTime,
+		Voice:           m.M17GW.Voice,
 	}
 	for _, md := range modeDisplay {
 		v.Modes = append(v.Modes, ViewMode{Key: md.key, Name: md.name, Enabled: md.get(m.Modes)})
