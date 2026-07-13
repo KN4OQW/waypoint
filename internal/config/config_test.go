@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -25,16 +26,20 @@ func fixture() *Model {
 	return &Model{
 		General: General{Callsign: "KN4OQW", ID: "3180202", Duplex: true, Timeout: "240", RFModeHang: "300", NetModeHang: "300", Power: "1", Location: "Milton, EM60", URL: "https://waypoint.kn4oqw.com"},
 		Modem:   Modem{Port: "/dev/ttyAMA0", UARTSpeed: "115200", RXFreqHz: "433900000", TXFreqHz: "438900000", RXOffset: "75", TXOffset: "-40", TXInvert: true, RXInvert: false, PTTInvert: false, RXLevel: "50", TXLevel: "50"},
-		DMR:     DMR{ColorCode: "1", ID: "3180202", EmbeddedLCOnly: true, SelfOnly: false, DumpTAData: true, Beacons: true},
+		DMR:     DMR{ColorCode: "1", ID: "3180202", EmbeddedLCOnly: true, SelfOnly: true, DumpTAData: true, Beacons: true},
 		DMRNet:  DMRNet{LocalPort: "62032", GatewayAddress: "127.0.0.1", GatewayPort: "62031", Slot1: true, Slot2: true, Jitter: "360"},
 		Modes:   Modes{DStar: false, DMR: true, YSF: true, P25: false, NXDN: true, M17: false, POCSAG: false, FM: false},
 		// Routing round-trips through generated type templates, not verbatim
 		// rewrites: a primary BM (catch-all/PassAll, the TG9990 Parrot rides it),
-		// a prefixed TGIF alternate, and an XLX section network. Options carries a
-		// verbatim BM subscription string (with '=' in the value).
+		// prefixed SystemX (prefix 4) and TGIF (prefix 5) alternates, and an XLX
+		// section network. SystemX and TGIF are first-class WPSD networks (D1), each
+		// exercised here with its secret (SystemX master password, TGIF security
+		// key) so the round-trip and password preservation cover them. Options
+		// carries a verbatim BM subscription string (with '=' in the value).
 		Networks: []Network{
 			{Name: "BM_3102_United_States", Type: NetBrandmeister, Primary: true, Address: "3102.master.brandmeister.network", Port: "62031", Password: "s3cr3t", Options: "StartRef=4000;RelinkTime=15;UserLink=1;", ESSID: "01", Enabled: true},
-			{Name: "TGIF_Network", Type: NetTGIF, Address: "tgif.network", Port: "62031", Password: "hunter2", Enabled: false},
+			{Name: "TGIF_Network", Type: NetTGIF, Address: "tgif.network", Port: "62031", Password: "hunter2", ESSID: "05", Enabled: false},
+			{Name: "SystemX", Type: NetSystemX, Address: "systemx.pistar.uk", Port: "62031", Password: "sysx-key", ESSID: "02", Enabled: true},
 			{Name: "XLX", Type: NetXLX, Port: "62030", Password: "xlxpw", XLXStartup: "950", XLXModule: "E", XLXSlot: "2", Enabled: true},
 		},
 		YSF:    YSF{LowDeviation: true, SelfOnly: false, TXHang: "6", RemoteGateway: false, ModeHang: "20"},
@@ -316,6 +321,45 @@ func TestSetNetworksPreservesPasswords(t *testing.T) {
 	}
 }
 
+// SystemX and TGIF are first-class WPSD DMR networks (D1), each carrying its own
+// secret (SystemX master password, TGIF security key). Editing them without
+// resupplying the secret must keep the stored one, exactly like BrandMeister —
+// the write-only-secret rule has to hold for every typed network, not just BM.
+func TestSetNetworksPreservesSystemXTGIFSecrets(t *testing.T) {
+	s := memStore(t)
+	_ = fixture().Save(s, "seed") // TGIF (key hunter2) + SystemX (key sysx-key)
+
+	// UI toggles enables and edits ESSIDs but supplies no secrets (blank = keep).
+	// The redacted view never carried the passwords, so the merge must restore them.
+	body := `[
+		{"name":"BM_3102_United_States","type":"brandmeister","primary":true,"address":"3102.master.brandmeister.network","port":"62031","password":"","options":"StartRef=4000;RelinkTime=15;UserLink=1;","essid":"01","enabled":true},
+		{"name":"TGIF_Network","type":"tgif","address":"tgif.network","port":"62031","password":"","essid":"05","enabled":true},
+		{"name":"SystemX","type":"systemx","address":"systemx.pistar.uk","port":"62031","password":"","essid":"07","enabled":true}
+	]`
+	if err := SetNetworks(s, []byte(body), "test"); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := Load(s)
+	byName := map[string]Network{}
+	for _, n := range m.Networks {
+		byName[n.Name] = n
+	}
+	if got := byName["TGIF_Network"]; got.Password != "hunter2" || !got.Enabled || got.ESSID != "05" {
+		t.Fatalf("TGIF: blank secret should keep stored key + apply edits, got %+v", got)
+	}
+	if got := byName["SystemX"]; got.Password != "sysx-key" || got.ESSID != "07" {
+		t.Fatalf("SystemX: blank secret should keep stored key + apply edits, got %+v", got)
+	}
+
+	// A supplied secret replaces (proves the preservation is scoped to blank).
+	body2 := `[{"name":"SystemX","type":"systemx","address":"systemx.pistar.uk","port":"62031","password":"rotated","essid":"07","enabled":true}]`
+	_ = SetNetworks(s, []byte(body2), "test")
+	m2, _ := Load(s)
+	if m2.Networks[0].Password != "rotated" {
+		t.Fatalf("SystemX: new secret should replace, got %q", m2.Networks[0].Password)
+	}
+}
+
 // Editing the D-Star gateway without resupplying the ircDDB password keeps the
 // stored one; a non-blank password replaces it. Mirrors the DMR-networks rule
 // (TestSetNetworksPreservesPasswords) for the other write-only secret.
@@ -379,7 +423,7 @@ func TestViewRedactsPasswords(t *testing.T) {
 			t.Fatalf("network %s should report has_password", n.Name)
 		}
 	}
-	if strings.Contains(blob, "s3cr3t") || strings.Contains(blob, "hunter2") {
+	if strings.Contains(blob, "s3cr3t") || strings.Contains(blob, "hunter2") || strings.Contains(blob, "sysx-key") {
 		t.Fatal("password leaked into the view")
 	}
 	// The D-Star ircDDB password is a secret too: the view reports only whether
@@ -390,6 +434,24 @@ func TestViewRedactsPasswords(t *testing.T) {
 	dv := fmt.Sprintf("%+v", v.DStar)
 	if strings.Contains(dv, "irc-s3cret") {
 		t.Fatal("ircDDB password leaked into the view")
+	}
+}
+
+// TestViewSurfacesNodeLock: the DMR view carries the Node Lock bit (WPSD's
+// SelfOnly moved into the DMR panel) so the UI can read/write it, and it
+// serializes under the "self_only" key the settings page binds to.
+func TestViewSurfacesNodeLock(t *testing.T) {
+	m := fixture() // DMR.SelfOnly = true (Node Lock = Private)
+	v := m.View("/tmp/config.db")
+	if !v.DMR.SelfOnly {
+		t.Fatal("DMR view should surface SelfOnly (Node Lock) from the model")
+	}
+	blob, err := json.Marshal(v.DMR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(blob), `"self_only":true`) {
+		t.Fatalf("DMR view JSON missing self_only: %s", blob)
 	}
 }
 

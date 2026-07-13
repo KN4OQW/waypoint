@@ -108,8 +108,8 @@ WPSD splits classic Pi-Star's single General panel into "General Configuration" 
 | Gateway Country | `[Info]` (location) | — | pending | not modeled. |
 | Gateway URL (Auto / Manual) | `[Info] URL` | `general.url` | partial | free text; no auto/manual mode. |
 | RF Power | `[Info] Power` | `general.power` | done | |
-| Node Lock (Public / Private) *(WPSD: in DMR panel)* | per-mode `SelfOnly` | `dmr.self_only`, … | partial | no single Public/Private control; each mode has Self-Only. |
-| DMR IDs (allow other IDs) *(WPSD: in DMR panel)* | `[DMR] SelfOnly` (inverse) | `dmr.self_only` | partial | |
+| Node Lock (Public / Private) *(WPSD: in DMR panel)* | `[DMR] SelfOnly` | `dmr.self_only` | done | now a PRIVATE / PUBLIC control in the DMR panel — see the DMR panel table below. Other modes keep their own per-mode Self-Only. |
+| DMR IDs (allow other IDs) *(WPSD: in DMR panel)* | `[DMR] SelfOnly` (inverse) | `dmr.self_only` | done | see the DMR panel table below (same bit as Node Lock). |
 | APRS Host Enable / APRS Gateway | gateway `[APRS]` | `ysfgw.aprs` | partial | YSF APRS beacon only; no general APRS-IS host. |
 | System TimeZone | `timedatectl` (host) | — | pending | host/OS domain. |
 | Dashboard Language | dashboard | — | pending | dashboard domain. |
@@ -143,8 +143,8 @@ first-class networks.
 | BrandMeister Password *(BM Hotspot Security)* | `[DMR Network N] Password` | `networks[].password` (bm) | done | write-only; blank keeps stored. |
 | BrandMeister Extended ID | `[DMR Network N] Id` (suffix) | `networks[].essid` (bm) | done | "01".."99" appended to DMR ID. |
 | BrandMeister Network Enable | `[DMR Network N] Enabled` | `networks[].enabled` (bm) | done | |
-| BrandMeister Dashboards *(link)* | — | — | pending | external link; cosmetic. |
-| Brandmeister Manager *(WPSD new)* | — | — | pending | BM API/SelfCare integration. |
+| BrandMeister Dashboards *(link)* | — | — | done | external link to brandmeister.network; UI affordance only. |
+| Brandmeister Manager *(WPSD new)* | — | — | done | external link to the BM hotspot/static-TG manager; UI affordance only (no BM-API daemon config). |
 | DMR+ / FreeDMR / HBlink Master | `[DMR Network N] Address` | `networks[].address` (dmrplus) | done | unified DMR+/FreeDMR/HBlink type. |
 | DMR+ / FreeDMR / HBlink Network *(options)* | `[DMR Network N] Options` | `networks[].options` (dmrplus) | done | StartRef=… etc., sent at login. |
 | DMR+ / FreeDMR / HBlink Extended ID | `[DMR Network N] Id` (suffix) | `networks[].essid` (dmrplus) | done | |
@@ -157,7 +157,7 @@ first-class networks.
 | TGIF Security Key *(D1)* | `[DMR Network N] Password` | `networks[].password` (tgif) | done | rewrite prefix 5; fixed master tgif.network. |
 | TGIF Extended ID *(D1)* | `[DMR Network N] Id` (suffix) | `networks[].essid` (tgif) | done | |
 | TGIF Network Enable *(D1)* | `[DMR Network N] Enabled` | `networks[].enabled` (tgif) | done | |
-| TGIF Dashboards *(link)* | — | — | pending | external link; cosmetic. |
+| TGIF Dashboards *(link)* | — | — | done | external link to tgif.network; UI affordance only. |
 | XLX Master | `[XLX Network] File` / host | `networks[].address` (xlx) | done | XLX uses its own `[XLX Network]` section. |
 | XLX Startup TG | `[XLX Network] Startup` | `networks[].xlx_startup` | done | |
 | XLX Startup Module override | `[XLX Network] Module` | `networks[].xlx_module` | done | |
@@ -167,8 +167,8 @@ first-class networks.
 | DMR Color Code | `[DMR] ColorCode` | `dmr.color_code` | done | 0..15 select. |
 | DMR EmbeddedLCOnly | `[DMR] EmbeddedLCOnly` | `dmr.embedded_lc_only` | done | |
 | DMR DumpTAData | `[DMR] DumpTAData` | `dmr.dump_ta_data` | done | |
-| Node Lock *(WPSD: moved into DMR panel)* | `[DMR] SelfOnly` | `dmr.self_only` | partial | modeled + rendered; not labeled "Node Lock" in UI. |
-| DMR IDs (allow other IDs) *(WPSD: moved here)* | `[DMR] SelfOnly` (inverse) | `dmr.self_only` | partial | |
+| Node Lock *(WPSD: moved into DMR panel)* | `[DMR] SelfOnly` | `dmr.self_only` | done | PRIVATE / PUBLIC toggle in the DMR panel (General DMR Settings + DMR Settings tab). PRIVATE = `SelfOnly=1`. |
+| DMR IDs (allow other IDs) *(WPSD: moved here)* | `[DMR] SelfOnly` (inverse) | `dmr.self_only` | done | Same bit as Node Lock, inverse framing (PUBLIC = allow other IDs). MMDVM-Host has no multi-ID allowlist, so Waypoint models one field, not a dead per-ID key. |
 | *(Waypoint-only)* Time Slot 1 / 2 Enabled | `[DMR Network] Slot1` / `Slot2` | `dmrnet.slot1` / `slot2` | done | implicit in WPSD; explicit toggles here. |
 | *(Waypoint-only)* Talkgroup routing override | `[DMR Network N] TGRewrite` | `routes[].slot/tg/network` | done | "tie a dialed TG to a gateway"; wins over primary. |
 | DMR JitterBuffer *(Pi-Star classic only)* | `[DMR Network] JitterBuffer` | — | N/A | removed in WPSD; Waypoint omits (matches WPSD). |

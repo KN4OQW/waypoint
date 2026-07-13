@@ -124,7 +124,13 @@ type ViewDMR struct {
 	EmbeddedLCOnly bool   `json:"embedded_lc_only"`
 	DumpTAData     bool   `json:"dump_ta_data"`
 	Beacons        bool   `json:"beacons"`
-	ID             string `json:"id"`
+	// SelfOnly is WPSD's "Node Lock" moved into the DMR panel: Private (locked to
+	// this node's own DMR ID) when true, Public (allows other DMR IDs) when false.
+	// It is the single [DMR] SelfOnly bit — the "Node Lock" and "allow other DMR
+	// IDs" controls are two framings of the same setting (MMDVM-Host has no
+	// multi-ID allowlist), so Waypoint models one field and never a dead key.
+	SelfOnly bool   `json:"self_only"`
+	ID       string `json:"id"`
 }
 
 type ViewMode struct {
@@ -203,6 +209,7 @@ func (m *Model) View(storePath string) *View {
 			EmbeddedLCOnly: m.DMR.EmbeddedLCOnly,
 			DumpTAData:     m.DMR.DumpTAData,
 			Beacons:        m.DMR.Beacons,
+			SelfOnly:       m.DMR.SelfOnly,
 			ID:             m.DMR.ID,
 		},
 	}

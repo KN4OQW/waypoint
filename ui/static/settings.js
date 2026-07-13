@@ -47,7 +47,7 @@ function buildEdit(c) {
   edit = {
     general: { callsign: g.callsign, id: g.dmr_id, duplex: !!g.duplex, power: g.power, location: g.location, url: g.url },
     modem:   { rx_freq_hz: g.rx_freq_hz, tx_freq_hz: g.tx_freq_hz, port: g.modem_port, rx_offset: g.rx_offset, tx_offset: g.tx_offset },
-    dmr:     { color_code: d.color_code, id: d.id, embedded_lc_only: !!d.embedded_lc_only, dump_ta_data: !!d.dump_ta_data, beacons: !!d.beacons },
+    dmr:     { color_code: d.color_code, id: d.id, embedded_lc_only: !!d.embedded_lc_only, dump_ta_data: !!d.dump_ta_data, beacons: !!d.beacons, self_only: !!d.self_only },
     dmrnet:  { slot1: !!d.slot1, slot2: !!d.slot2 },
     modes:   Object.fromEntries((c.modes || []).map((m) => [m.key, !!m.enabled])),
     // password starts blank (blank = keep the stored one); has_password drives the placeholder.
@@ -205,6 +205,17 @@ function toggleRow(sec, key, name) {
   return `<div class="toggle-row"><span class="name">${esc(name)}</span><span class="pill ${on ? "on" : "off"}" data-toggle="${esc(sec)}.${esc(key)}" style="cursor:pointer;">${on ? "ON" : "OFF"}</span></div>`;
 }
 function note(html) { return `<div class="note">${html}</div>`; }
+// extLink renders an external dashboard/manager link — a pure UI affordance (no
+// daemon config), matching WPSD's BrandMeister/TGIF/SystemX links.
+function extLink(href, text) { return `<a class="ext" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(text)} ↗</a>`; }
+// nodeLockRow is WPSD's "Node Lock", moved into the DMR panel: PRIVATE = [DMR]
+// SelfOnly on (TX locked to this node's own DMR ID), PUBLIC = off (other DMR IDs
+// allowed). It is one control over one bit — WPSD's separate "Node Lock" and
+// "allow other DMR IDs" fields are two framings of the same setting.
+function nodeLockRow() {
+  const on = !!(edit.dmr || {}).self_only;
+  return `<div class="toggle-row"><span class="name">Node Lock (Private / Public)</span><span class="pill ${on ? "on" : "off"}" data-toggle="dmr.self_only" style="cursor:pointer;">${on ? "PRIVATE" : "PUBLIC"}</span></div>`;
+}
 
 // --- panels --------------------------------------------------------------
 function panelGeneral() {
@@ -233,7 +244,8 @@ function panelDmr() {
   const slots = card("TIME SLOTS & ADVANCED",
     toggleRow("dmrnet", "slot1", "Time Slot 1 Enabled") +
     toggleRow("dmrnet", "slot2", "Time Slot 2 Enabled") +
-    toggleRow("dmr", "embedded_lc_only", "Embedded LC Only"));
+    toggleRow("dmr", "embedded_lc_only", "Embedded LC Only") +
+    nodeLockRow());
   return `<div class="grid2">${master}${slots}</div>`;
 }
 
@@ -317,7 +329,7 @@ function panelBrandmeister() {
   const d = edit.dmr || (edit.dmr = {});
   const bm = netOf("brandmeister"), dp = netOf("dmrplus"), sx = netOf("systemx"), tg = netOf("tgif"), xl = netOf("xlx");
   const primaryType = ((edit.networks || []).find((n) => n.primary) || {}).type || "brandmeister";
-  const masterSel = [["brandmeister", "Brandmeister"], ["dmrplus", "DMR+ / FreeDMR / ADN / HBlink Network"], ["systemx", "SystemX"], ["tgif", "TGIF"]]
+  const masterSel = [["brandmeister", "Brandmeister"], ["dmrplus", "DMR+ / FreeDMR / HBlink Network"], ["systemx", "SystemX"], ["tgif", "TGIF"]]
     .map(([v, l]) => `<option value="${v}"${v === primaryType ? " selected" : ""}>${l}</option>`).join("");
 
   const master = `<section class="card">
@@ -330,10 +342,12 @@ function panelBrandmeister() {
       ${row("BrandMeister Master", masterSelect("brandmeister", "brandmeister", bm))}
       ${row("BM Hotspot Security", `<input data-netf="brandmeister" data-nkey="password" type="password" value="${esc(bm ? bm.password || "" : "")}" placeholder="${bm && bm.has_password ? "•••••• unchanged" : ""}">`)}
       ${row("BrandMeister Network ESSID", essidSelect("brandmeister", bm))}
+      ${row("BrandMeister Manager", extLink("https://brandmeister.network/?page=hotspots", "Manage hotspot & static TGs"))}
+      ${row("BrandMeister Dashboards", extLink("https://brandmeister.network/", "Open dashboard"))}
     </section>`;
 
   const dpSec = `<section class="card">
-      ${sectionHead("DMR+ / FreeDMR / ADN / HBlink Network Settings", "dmrplus", dp)}
+      ${sectionHead("DMR+ / FreeDMR / HBlink Network Settings", "dmrplus", dp)}
       ${row("DMR Master", masterSelect("dmrplus", "dmrplus", dp))}
       ${row("Network Options", netField("dmrplus", "options", dp, ""))}
       ${row("ESSID", essidSelect("dmrplus", dp))}
@@ -344,12 +358,15 @@ function panelBrandmeister() {
       ${row("SystemX Master", masterSelect("systemx", "systemx", sx))}
       ${row("Network Options", netField("systemx", "options", sx, ""))}
       ${row("ESSID", essidSelect("systemx", sx))}
+      ${note("Dial SystemX talkgroups with the <b>4</b> prefix (e.g. TG 3021 → <b>4</b>003021 on TS2); routing is generated on the node.")}
     </section>`;
 
   const tgSec = `<section class="card">
       ${sectionHead("TGIF Network Settings", "tgif", tg)}
       ${row("TGIF Security Key", `<input data-netf="tgif" data-nkey="password" type="password" value="${esc(tg ? tg.password || "" : "")}" placeholder="${tg && tg.has_password ? "•••••• unchanged" : ""}">`)}
       ${row("ESSID", essidSelect("tgif", tg))}
+      ${row("TGIF Dashboards", extLink("https://tgif.network/", "Open dashboard"))}
+      ${note("Dial TGIF talkgroups with the <b>5</b> prefix (e.g. TG 31665 → <b>5</b>031665 on TS2).")}
     </section>`;
 
   const xlSec = `<section class="card">
@@ -368,6 +385,8 @@ function panelBrandmeister() {
       ${row("DMR Color Code", `<select data-sec="dmr" data-key="color_code">${ccOpts}</select>`)}
       <div class="toggle-row"><span class="name">DMR EmbeddedLCOnly</span><span class="pill ${d.embedded_lc_only ? "on" : "off"}" data-toggle="dmr.embedded_lc_only" style="cursor:pointer;">${d.embedded_lc_only ? "ON" : "OFF"}</span></div>
       <div class="toggle-row"><span class="name">DMR DumpTAData</span><span class="pill ${d.dump_ta_data ? "on" : "off"}" data-toggle="dmr.dump_ta_data" style="cursor:pointer;">${d.dump_ta_data ? "ON" : "OFF"}</span></div>
+      ${nodeLockRow()}
+      ${note("<b>Private</b> locks TX to this node's own DMR ID; <b>Public</b> allows other DMR IDs through the hotspot.")}
     </section>`;
 
   return `<div class="stack">${master}${bmSec}${dpSec}${sxSec}${tgSec}${xlSec}${general}</div>${routingTable()}`;
