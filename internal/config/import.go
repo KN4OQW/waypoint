@@ -58,6 +58,7 @@ func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg *INI) *Model {
 			RXLevel:   orDefault(mm.Get("Modem", "RXLevel"), "50"),
 			TXLevel:   orDefault(mm.Get("Modem", "TXLevel"), "50"),
 		},
+		Display: displayFromINI(mm),
 		DMR: DMR{
 			ColorCode:      orDefault(mm.Get("DMR", "ColorCode"), "1"),
 			ID:             firstNonEmpty(mm.Get("DMR", "Id"), mm.Get("General", "Id")),
@@ -123,6 +124,36 @@ func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg *INI) *Model {
 		M17GW: m17GatewayFromINI(mg),
 	}
 	return m
+}
+
+// DefaultDisplay is the display-free default matching Waypoint's own node:
+// Display=None (status is served over MQTT, not a physical panel). The per-driver
+// fields carry the stock MMDVM-Host.ini defaults so a clone that switches the
+// type on gets sane values — HD44780 2×16 over the conventional 0x20 PCF8574 I2C
+// address, OLED type 3, Nextion on the G4KLX layout, port on the modem. Used to
+// seed a fresh store and to backfill the section on a store created before the
+// Display surface existed.
+func DefaultDisplay() Display {
+	return Display{
+		Type: "None", OLEDType: "3", Port: "modem", NextionLayout: "0",
+		HD44780Rows: "2", HD44780Cols: "16", HD44780I2CAddr: "0x20",
+	}
+}
+
+// displayFromINI reconstructs the Display section from an MMDVM-Host INI. The
+// per-driver subsections are always present in a Waypoint-rendered file, so each
+// field reads directly; a hand-written file missing a key falls back to the
+// display-free default for that field.
+func displayFromINI(mm *INI) Display {
+	return Display{
+		Type:           orDefault(mm.Get("General", "Display"), "None"),
+		OLEDType:       orDefault(mm.Get("OLED", "Type"), "3"),
+		Port:           orDefault(mm.Get("Nextion", "Port"), "modem"),
+		NextionLayout:  orDefault(mm.Get("Nextion", "ScreenLayout"), "0"),
+		HD44780Rows:    orDefault(mm.Get("HD44780", "Rows"), "2"),
+		HD44780Cols:    orDefault(mm.Get("HD44780", "Columns"), "16"),
+		HD44780I2CAddr: orDefault(mm.Get("HD44780", "I2CAddress"), "0x20"),
+	}
 }
 
 // DefaultM17 is the MMDVM-Host [M17] default: CAN 0 (Channel Access Number,

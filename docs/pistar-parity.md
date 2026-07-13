@@ -34,8 +34,8 @@ above WPSD parity · `partial` — present but diverging or incomplete/not surfa
 `dmr`, `dmrnet`, `modes`, and `networks` are **done**. Every other mode's own
 parameters and its gateway configuration are **pending** acceptance — the
 store/renderer/UI scaffolding present on the `dmr-pistar-ui` branch is exactly
-what this checklist gates. Host/OS, Display, cross-mode, POCSAG, and FM config are
-not modeled at all.
+what this checklist gates. Host/OS, cross-mode, POCSAG, and FM config are
+not modeled at all. Display is modeled (store section `display`, Setup tab).
 
 ---
 
@@ -51,10 +51,11 @@ place Waypoint deliberately differs from both. Prompt 10 verifies these.
 | D3 | **M17 Callsign Suffix** — WPSD adds the node-type letter (H hotspot / R repeater) appended to the callsign; classic Pi-Star has only host + CAN | Follow **WPSD** | M17 panel — `m17gw.suffix` → `M17Gateway.ini [General] Suffix` |
 | Δ1 | **D-Star runs DStarGateway (MQTT era), not ircDDBGateway.** WPSD/Pi-Star expose ircDDBGateway fields (RPT1/RPT2 Callsign, Remote Password, Default Reflector, No DExtra, Callsign Routing…). Waypoint maps the same operator intent onto DStarGateway's `[Repeater 1]` / `[IRCDDB 1]` / protocol sections — a **functional** map, not a label clone | **Deliberate** difference | D-Star panel — see the two D-Star tables below |
 
-A second deliberate simplification (not a parity target): Waypoint is
-**display-free** (`[General] Display=None`, dashboard over MQTT), so WPSD's
-*Display Type / Port / Nextion Layout* controls have **no** Waypoint equivalent by
-design — see the Control Software table.
+Waypoint's own node runs **display-free** (`[General] Display=None`, dashboard
+over MQTT; its forked MQTT-era MMDVM-Host has no `[Display]` parser and ignores
+the keys). But as a WPSD clone Waypoint still **models** the full Display surface
+(store section `display`, Setup tab) so a clone on stock/pre-MQTT MMDVM-Host, or
+one driving a physical panel, gets working config — see the Setup / Display table.
 
 ---
 
@@ -66,8 +67,8 @@ WPSD `<h2>` "Control Software".
 
 | WPSD field label | INI key | store `section.key` | status | notes |
 |---|---|---|---|---|
-| Radio Control Software (DStarRepeater / MMDVMHost) | — | — | done (fixed) | Waypoint is MMDVMHost-only by design; no selector. |
-| TRX Mode (Simplex Node / Duplex Repeater) | `[General] Duplex` | `general.duplex` | done | UI toggle DUPLEX / SIMPLEX. |
+| Radio Control Software (DStarRepeater / MMDVMHost) | — | — | done (fixed) | Waypoint is MMDVMHost-only by design; no selector — Setup tab shows a read-only `MMDVMHost`. |
+| TRX Mode (Simplex Node / Duplex Repeater) | `[General] Duplex` | `general.duplex` | done | Setup tab — labelled Simplex/Duplex selector (also the DUPLEX/SIMPLEX toggle on General). |
 
 ### MMDVMHost Configuration panel — mode toggles + Display
 
@@ -84,8 +85,10 @@ WPSD `<h2>` "MMDVMHost Configuration" (mode enables, then Display Type).
 | POCSAG Mode | `[POCSAG] Enable` | `modes.pocsag` | done | enable only; DAPNET config pending. |
 | FM Mode | `[FM] Enable` | `modes.fm` | done | *Waypoint-only toggle* — Pi-Star/WPSD edit FM via the expert INI editor. |
 | YSF2DMR / YSF2NXDN / YSF2P25 / DMR2YSF / DMR2NXDN Mode | per cross-mode daemon | — | pending | cross-mode bridges; "Gateways" tab is a stub. |
-| Display Type (None / OLED3 / OLED6 / Nextion / HD44780 / TFT Serial / LCDproc) | `[General] Display` | — | N/A (by design) | display-free: `Display=None`, `DisplayLevel=0`, status over MQTT. |
-| Display Port / Nextion Layout (G4KLX / ON7LDS L2 / L3 / L3 HS) | `[General]` display keys | — | N/A (by design) | no physical display. |
+| Display Type (None / OLED3 / OLED6 / Nextion / HD44780 / TFT Serial / LCDproc) | `[General] Display` (+ `[OLED] Type`) | `display.type` / `display.oled_type` | done | Setup tab. Node stays `DisplayLevel=0` (status over MQTT); the driver subsections render for clone parity. |
+| Display Port | `[Nextion]` / `[TFT Serial]` `Port` | `display.port` | done | Setup tab — None / modem / ttyACM* / ttyUSB* / ttyS2 / ttyNextionDriver. |
+| Nextion Layout (G4KLX / ON7LDS L2 / L3 / L3 HS) | `[Nextion] ScreenLayout` | `display.nextion_layout` | done | Setup tab — shown only when type = Nextion. |
+| HD44780 geometry + I2C wiring | `[HD44780] Rows` / `Columns` / `I2CAddress` | `display.hd44780_rows` / `_cols` / `_i2c_addr` | done | Setup tab — shown only when type = HD44780. I2C is the PCF8574 `I2CAddress` (hex); MMDVM-Host has no separate I2C-bus key, GPIO wiring is the alternative `Pins` list (rendered as a constant). |
 
 ### General Configuration panel
 
@@ -108,8 +111,8 @@ WPSD splits classic Pi-Star's single General panel into "General Configuration" 
 | Gateway Country | `[Info]` (location) | — | pending | not modeled. |
 | Gateway URL (Auto / Manual) | `[Info] URL` | `general.url` | partial | free text; no auto/manual mode. |
 | RF Power | `[Info] Power` | `general.power` | done | |
-| Node Lock (Public / Private) *(WPSD: in DMR panel)* | per-mode `SelfOnly` | `dmr.self_only`, … | partial | no single Public/Private control; each mode has Self-Only. |
-| DMR IDs (allow other IDs) *(WPSD: in DMR panel)* | `[DMR] SelfOnly` (inverse) | `dmr.self_only` | partial | |
+| Node Lock (Public / Private) *(WPSD: in DMR panel)* | `[DMR] SelfOnly` | `dmr.self_only` | done | now a PRIVATE / PUBLIC control in the DMR panel — see the DMR panel table below. Other modes keep their own per-mode Self-Only. |
+| DMR IDs (allow other IDs) *(WPSD: in DMR panel)* | `[DMR] SelfOnly` (inverse) | `dmr.self_only` | done | see the DMR panel table below (same bit as Node Lock). |
 | APRS Host Enable / APRS Gateway | gateway `[APRS]` | `ysfgw.aprs` | partial | YSF APRS beacon only; no general APRS-IS host. |
 | System TimeZone | `timedatectl` (host) | — | pending | host/OS domain. |
 | Dashboard Language | dashboard | — | pending | dashboard domain. |
@@ -143,8 +146,8 @@ first-class networks.
 | BrandMeister Password *(BM Hotspot Security)* | `[DMR Network N] Password` | `networks[].password` (bm) | done | write-only; blank keeps stored. |
 | BrandMeister Extended ID | `[DMR Network N] Id` (suffix) | `networks[].essid` (bm) | done | "01".."99" appended to DMR ID. |
 | BrandMeister Network Enable | `[DMR Network N] Enabled` | `networks[].enabled` (bm) | done | |
-| BrandMeister Dashboards *(link)* | — | — | pending | external link; cosmetic. |
-| Brandmeister Manager *(WPSD new)* | — | — | pending | BM API/SelfCare integration. |
+| BrandMeister Dashboards *(link)* | — | — | done | external link to brandmeister.network; UI affordance only. |
+| Brandmeister Manager *(WPSD new)* | — | — | done | external link to the BM hotspot/static-TG manager; UI affordance only (no BM-API daemon config). |
 | DMR+ / FreeDMR / HBlink Master | `[DMR Network N] Address` | `networks[].address` (dmrplus) | done | unified DMR+/FreeDMR/HBlink type. |
 | DMR+ / FreeDMR / HBlink Network *(options)* | `[DMR Network N] Options` | `networks[].options` (dmrplus) | done | StartRef=… etc., sent at login. |
 | DMR+ / FreeDMR / HBlink Extended ID | `[DMR Network N] Id` (suffix) | `networks[].essid` (dmrplus) | done | |
@@ -157,7 +160,7 @@ first-class networks.
 | TGIF Security Key *(D1)* | `[DMR Network N] Password` | `networks[].password` (tgif) | done | rewrite prefix 5; fixed master tgif.network. |
 | TGIF Extended ID *(D1)* | `[DMR Network N] Id` (suffix) | `networks[].essid` (tgif) | done | |
 | TGIF Network Enable *(D1)* | `[DMR Network N] Enabled` | `networks[].enabled` (tgif) | done | |
-| TGIF Dashboards *(link)* | — | — | pending | external link; cosmetic. |
+| TGIF Dashboards *(link)* | — | — | done | external link to tgif.network; UI affordance only. |
 | XLX Master | `[XLX Network] File` / host | `networks[].address` (xlx) | done | XLX uses its own `[XLX Network]` section. |
 | XLX Startup TG | `[XLX Network] Startup` | `networks[].xlx_startup` | done | |
 | XLX Startup Module override | `[XLX Network] Module` | `networks[].xlx_module` | done | |
@@ -167,48 +170,57 @@ first-class networks.
 | DMR Color Code | `[DMR] ColorCode` | `dmr.color_code` | done | 0..15 select. |
 | DMR EmbeddedLCOnly | `[DMR] EmbeddedLCOnly` | `dmr.embedded_lc_only` | done | |
 | DMR DumpTAData | `[DMR] DumpTAData` | `dmr.dump_ta_data` | done | |
-| Node Lock *(WPSD: moved into DMR panel)* | `[DMR] SelfOnly` | `dmr.self_only` | partial | modeled + rendered; not labeled "Node Lock" in UI. |
-| DMR IDs (allow other IDs) *(WPSD: moved here)* | `[DMR] SelfOnly` (inverse) | `dmr.self_only` | partial | |
+| Node Lock *(WPSD: moved into DMR panel)* | `[DMR] SelfOnly` | `dmr.self_only` | done | PRIVATE / PUBLIC toggle in the DMR panel (General DMR Settings + DMR Settings tab). PRIVATE = `SelfOnly=1`. |
+| DMR IDs (allow other IDs) *(WPSD: moved here)* | `[DMR] SelfOnly` (inverse) | `dmr.self_only` | done | Same bit as Node Lock, inverse framing (PUBLIC = allow other IDs). MMDVM-Host has no multi-ID allowlist, so Waypoint models one field, not a dead per-ID key. |
 | *(Waypoint-only)* Time Slot 1 / 2 Enabled | `[DMR Network] Slot1` / `Slot2` | `dmrnet.slot1` / `slot2` | done | implicit in WPSD; explicit toggles here. |
 | *(Waypoint-only)* Talkgroup routing override | `[DMR Network N] TGRewrite` | `routes[].slot/tg/network` | done | "tie a dialed TG to a gateway"; wins over primary. |
 | DMR JitterBuffer *(Pi-Star classic only)* | `[DMR Network] JitterBuffer` | — | N/A | removed in WPSD; Waypoint omits (matches WPSD). |
 
 ---
 
-## D-Star panel  ·  status: **pending** (deliberate functional map — Δ1)
+## D-Star panel  ·  status: **done** (deliberate functional map — Δ1)
 
 WPSD/Pi-Star expose **ircDDBGateway** fields. Waypoint runs **DStarGateway**
 (MQTT era): MMDVM-Host `[D-Star]` / `[D-Star Network]`, gateway
 `dstargateway.cfg`. The tables below give (a) each WPSD ircDDBGateway field and how
 Waypoint covers its intent, then (b) the DStarGateway fields with no WPSD label.
 
+There is **no RPT1/RPT2 concept** here (Δ1): the repeater callsign comes from the
+station identity (`general.callsign`) and the module is a single band letter
+(`dstar.module`) that the renderer mirrors into the gateway `[Repeater 1] Band` —
+so the two files can never disagree on the module. The ircDDB password is a
+write-only secret handled exactly like the DMR-network passwords: redacted from
+the API View (`has_ircddb_password` reports only whether one is set) and preserved
+on a blank write, both UI-side (`cleanDstargw` omits it) and server-side
+(`SetDStarGateway`).
+
 ### WPSD ircDDBGateway fields → Waypoint
 
 | WPSD field label | Waypoint INI key | store `section.key` | status | notes |
 |---|---|---|---|---|
-| RPT1 Callsign (callsign + module) | `[D-Star] Module` + `[General] Callsign` | `dstar.module` (+ `general.callsign`) | pending | Δ1: callsign from station identity, module from `dstar.module`; renderer mirrors module into gateway `[Repeater 1] Band`. |
+| RPT1 Callsign (callsign + module) | `[D-Star] Module` + `[General] Callsign` | `dstar.module` (+ `general.callsign`) | done | Δ1: callsign from station identity, module from `dstar.module`; renderer mirrors module into gateway `[Repeater 1] Band`. |
 | RPT2 Callsign (callsign + "G") | gateway callsign (auto) | — | N/A | gateway callsign derived; not a separate field. |
-| Remote Password (ircDDBGateway remote control) | `[Remote Commands] Enabled=0` | — | pending | Waypoint disables remote commands; no equivalent field. |
-| Default Reflector (reflector + module + startup + auto-connect) | `[Repeater 1] Reflector` + `ReflectorAtStartup` | `dstargw.reflector` | pending | e.g. "REF001 C"; empty = none. |
+| Remote Password (ircDDBGateway remote control) | `[Remote Commands] Enabled=0` | — | N/A | Waypoint disables remote commands; no equivalent field. |
+| Default Reflector (reflector + module + startup + auto-connect) | `[Repeater 1] Reflector` + `ReflectorAtStartup` | `dstargw.reflector` | done | e.g. "REF001 C"; empty = none; auto-connect derived — `ReflectorAtStartup=1` iff a reflector is set. |
 | ircDDBGateway Language | — | — | pending | no dashboard/gateway language. |
 | Time Announce | — | — | pending | not modeled. |
-| Callsign Routing | `[IRCDDB 1]` login | `dstargw.ircddb_*` | pending | Δ1: Waypoint always runs ircDDB for routing (see next table). |
-| No DExtra | `[Dextra] Enabled` (inverse) | `dstargw.dextra` | pending | |
+| Callsign Routing | `[IRCDDB 1]` login | `dstargw.ircddb_*` | done | Δ1: Waypoint always runs ircDDB for routing (see next table). |
+| No DExtra | `[Dextra] Enabled` (inverse) | `dstargw.dextra` | done | Waypoint models the enable directly (not the inverse "No" toggle). |
 
 ### Waypoint DStarGateway fields (no direct WPSD label — Δ1)
 
 | Waypoint field | INI key | store `section.key` | status | notes |
 |---|---|---|---|---|
-| Reflector reconnect | `[Repeater 1] ReflectorReconnect` | `dstargw.reflector_reconnect` | pending | enum Never/Fixed/5..180; clamped. |
-| ircDDB host | `[IRCDDB 1] Hostname` | `dstargw.ircddb_hostname` | pending | default ircv4.openquad.net. |
-| ircDDB username | `[IRCDDB 1] Username` | `dstargw.ircddb_username` | pending | blank = station callsign. |
-| ircDDB password | `[IRCDDB 1] Password` | `dstargw.ircddb_password` | pending | secret; write-only; blank = anonymous. |
-| D-Plus (REF) enable | `[D-Plus] Enabled` | `dstargw.dplus` | pending | force-disabled upstream if Login empty. |
-| D-Plus login | `[D-Plus] Login` | `dstargw.dplus_login` | pending | blank = station callsign; needs US-Trust registration. |
-| DCS enable | `[DCS] Enabled` | `dstargw.dcs` | pending | |
-| XLX enable | `[XLX] Enabled` | `dstargw.xlx` | pending | |
-| Self Only | `[D-Star] SelfOnly` | `dstar.self_only` | pending | |
-| Remote Gateway | `[D-Star] RemoteGateway` | `dstar.remote_gateway` | pending | off for a local DStarGateway. |
+| Reflector reconnect | `[Repeater 1] ReflectorReconnect` | `dstargw.reflector_reconnect` | done | enum Never/Fixed/5..180; clamped so a bad value can't render an unstartable config. |
+| ircDDB host | `[IRCDDB 1] Hostname` | `dstargw.ircddb_hostname` | done | default ircv4.openquad.net. |
+| ircDDB username | `[IRCDDB 1] Username` | `dstargw.ircddb_username` | done | blank = station callsign. |
+| ircDDB password | `[IRCDDB 1] Password` | `dstargw.ircddb_password` | done | secret; write-only; redacted in view; preserved on blank write; blank = anonymous. |
+| D-Plus (REF) enable | `[D-Plus] Enabled` | `dstargw.dplus` | done | force-disabled upstream if Login empty. |
+| D-Plus login | `[D-Plus] Login` | `dstargw.dplus_login` | done | blank = station callsign; needs US-Trust registration. |
+| DCS enable | `[DCS] Enabled` | `dstargw.dcs` | done | |
+| XLX enable | `[XLX] Enabled` | `dstargw.xlx` | done | |
+| Self Only | `[D-Star] SelfOnly` | `dstar.self_only` | done | |
+| Remote Gateway | `[D-Star] RemoteGateway` | `dstar.remote_gateway` | done | off for a local DStarGateway. |
 
 ---
 

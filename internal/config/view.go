@@ -6,6 +6,7 @@ package config
 type View struct {
 	Sources  Sources       `json:"sources"`
 	General  ViewGeneral   `json:"general"`
+	Display  ViewDisplay   `json:"display"`
 	DMR      ViewDMR       `json:"dmr"`
 	Modes    []ViewMode    `json:"modes"`
 	Networks []ViewNetwork `json:"networks"`
@@ -98,6 +99,20 @@ type ViewYSF struct {
 	UpperHostfiles    bool   `json:"upper_hostfiles"`
 }
 
+// ViewDisplay is the Setup tab's Display card: the driver type, the shared
+// serial port, and the per-driver sub-fields (OLED type, Nextion layout, HD44780
+// geometry + I2C address). No secrets. TRX Mode (Simplex/Duplex) is not here — it
+// is general.duplex, surfaced by the Setup tab's Control Software card.
+type ViewDisplay struct {
+	Type           string `json:"type"`
+	OLEDType       string `json:"oled_type"`
+	Port           string `json:"port"`
+	NextionLayout  string `json:"nextion_layout"`
+	HD44780Rows    string `json:"hd44780_rows"`
+	HD44780Cols    string `json:"hd44780_cols"`
+	HD44780I2CAddr string `json:"hd44780_i2c_addr"`
+}
+
 type Sources struct {
 	Store string `json:"store"`
 }
@@ -124,7 +139,13 @@ type ViewDMR struct {
 	EmbeddedLCOnly bool   `json:"embedded_lc_only"`
 	DumpTAData     bool   `json:"dump_ta_data"`
 	Beacons        bool   `json:"beacons"`
-	ID             string `json:"id"`
+	// SelfOnly is WPSD's "Node Lock" moved into the DMR panel: Private (locked to
+	// this node's own DMR ID) when true, Public (allows other DMR IDs) when false.
+	// It is the single [DMR] SelfOnly bit — the "Node Lock" and "allow other DMR
+	// IDs" controls are two framings of the same setting (MMDVM-Host has no
+	// multi-ID allowlist), so Waypoint models one field and never a dead key.
+	SelfOnly bool   `json:"self_only"`
+	ID       string `json:"id"`
 }
 
 type ViewMode struct {
@@ -203,8 +224,18 @@ func (m *Model) View(storePath string) *View {
 			EmbeddedLCOnly: m.DMR.EmbeddedLCOnly,
 			DumpTAData:     m.DMR.DumpTAData,
 			Beacons:        m.DMR.Beacons,
+			SelfOnly:       m.DMR.SelfOnly,
 			ID:             m.DMR.ID,
 		},
+	}
+	v.Display = ViewDisplay{
+		Type:           m.Display.Type,
+		OLEDType:       m.Display.OLEDType,
+		Port:           m.Display.Port,
+		NextionLayout:  m.Display.NextionLayout,
+		HD44780Rows:    m.Display.HD44780Rows,
+		HD44780Cols:    m.Display.HD44780Cols,
+		HD44780I2CAddr: m.Display.HD44780I2CAddr,
 	}
 	v.YSF = ViewYSF{
 		Enable:            m.Modes.YSF,

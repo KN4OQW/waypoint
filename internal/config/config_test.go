@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -25,16 +26,24 @@ func fixture() *Model {
 	return &Model{
 		General: General{Callsign: "KN4OQW", ID: "3180202", Duplex: true, Timeout: "240", RFModeHang: "300", NetModeHang: "300", Power: "1", Location: "Milton, EM60", URL: "https://waypoint.kn4oqw.com"},
 		Modem:   Modem{Port: "/dev/ttyAMA0", UARTSpeed: "115200", RXFreqHz: "433900000", TXFreqHz: "438900000", RXOffset: "75", TXOffset: "-40", TXInvert: true, RXInvert: false, PTTInvert: false, RXLevel: "50", TXLevel: "50"},
-		DMR:     DMR{ColorCode: "1", ID: "3180202", EmbeddedLCOnly: true, SelfOnly: false, DumpTAData: true, Beacons: true},
+		// Display fully populated with non-default values so the round-trip cannot be
+		// masked by a rendered default filling an empty field. This node drives an
+		// HD44780 over I2C (address 0x22), 4 rows × 20 cols.
+		Display: Display{Type: "HD44780", OLEDType: "6", Port: "/dev/ttyUSB0", NextionLayout: "3", HD44780Rows: "4", HD44780Cols: "20", HD44780I2CAddr: "0x22"},
+		DMR:     DMR{ColorCode: "1", ID: "3180202", EmbeddedLCOnly: true, SelfOnly: true, DumpTAData: true, Beacons: true},
 		DMRNet:  DMRNet{LocalPort: "62032", GatewayAddress: "127.0.0.1", GatewayPort: "62031", Slot1: true, Slot2: true, Jitter: "360"},
 		Modes:   Modes{DStar: false, DMR: true, YSF: true, P25: false, NXDN: true, M17: false, POCSAG: false, FM: false},
 		// Routing round-trips through generated type templates, not verbatim
 		// rewrites: a primary BM (catch-all/PassAll, the TG9990 Parrot rides it),
-		// a prefixed TGIF alternate, and an XLX section network. Options carries a
-		// verbatim BM subscription string (with '=' in the value).
+		// prefixed SystemX (prefix 4) and TGIF (prefix 5) alternates, and an XLX
+		// section network. SystemX and TGIF are first-class WPSD networks (D1), each
+		// exercised here with its secret (SystemX master password, TGIF security
+		// key) so the round-trip and password preservation cover them. Options
+		// carries a verbatim BM subscription string (with '=' in the value).
 		Networks: []Network{
 			{Name: "BM_3102_United_States", Type: NetBrandmeister, Primary: true, Address: "3102.master.brandmeister.network", Port: "62031", Password: "s3cr3t", Options: "StartRef=4000;RelinkTime=15;UserLink=1;", ESSID: "01", Enabled: true},
-			{Name: "TGIF_Network", Type: NetTGIF, Address: "tgif.network", Port: "62031", Password: "hunter2", Enabled: false},
+			{Name: "TGIF_Network", Type: NetTGIF, Address: "tgif.network", Port: "62031", Password: "hunter2", ESSID: "05", Enabled: false},
+			{Name: "SystemX", Type: NetSystemX, Address: "systemx.pistar.uk", Port: "62031", Password: "sysx-key", ESSID: "02", Enabled: true},
 			{Name: "XLX", Type: NetXLX, Port: "62030", Password: "xlxpw", XLXStartup: "950", XLXModule: "E", XLXSlot: "2", Enabled: true},
 		},
 		YSF:    YSF{LowDeviation: true, SelfOnly: false, TXHang: "6", RemoteGateway: false, ModeHang: "20"},
@@ -182,6 +191,47 @@ func TestDGIdGatewaySwap(t *testing.T) {
 	}
 }
 
+// TestDisplayRendered: the [General] Display selector and every driver
+// subsection render from the model with the confirmed pre-MQTT MMDVM-Host key
+// names. All five subsections are always present (like the stock ini) regardless
+// of which type is selected, so a clone carries them for any driver.
+func TestDisplayRendered(t *testing.T) {
+	m := fixture() // Display: HD44780, 4x20, I2C 0x22, OLED type 6, Nextion layout 3, port /dev/ttyUSB0
+	ini := m.RenderMMDVM()
+	for sec, wants := range map[string][]string{
+		"General":    {"Display=HD44780"},
+		"HD44780":    {"Rows=4", "Columns=20", "I2CAddress=0x22", "Pins=11,10,0,1,2,3"},
+		"OLED":       {"Type=6"},
+		"Nextion":    {"Port=/dev/ttyUSB0", "ScreenLayout=3"},
+		"TFT Serial": {"Port=/dev/ttyUSB0"},
+		"LCDproc":    {"Address=localhost"},
+	} {
+		got := section(ini, sec)
+		for _, w := range wants {
+			if !strings.Contains(got, w) {
+				t.Errorf("[%s] missing %q\n%s", sec, w, got)
+			}
+		}
+	}
+}
+
+// TestDisplayIsolation: changing Display settings must not alter the [DMR] or
+// [Modem] sections of MMDVM-Host.ini.
+func TestDisplayIsolation(t *testing.T) {
+	m := fixture()
+	beforeDMR, beforeModem := section(m.RenderMMDVM(), "DMR"), section(m.RenderMMDVM(), "Modem")
+
+	m.Display.Type = "OLED"
+	m.Display.HD44780I2CAddr = "0x3c"
+
+	if got := section(m.RenderMMDVM(), "DMR"); got != beforeDMR {
+		t.Errorf("changing Display altered [DMR]:\n before %q\n after %q", beforeDMR, got)
+	}
+	if got := section(m.RenderMMDVM(), "Modem"); got != beforeModem {
+		t.Errorf("changing Display altered [Modem]:\n before %q\n after %q", beforeModem, got)
+	}
+}
+
 // TestYSFIsolation: changing System Fusion settings (mode params, gateway, or the
 // DG-ID swap) must not alter the [DMR] or [Modem] sections of MMDVM-Host.ini.
 func TestYSFIsolation(t *testing.T) {
@@ -316,6 +366,99 @@ func TestSetNetworksPreservesPasswords(t *testing.T) {
 	}
 }
 
+// SystemX and TGIF are first-class WPSD DMR networks (D1), each carrying its own
+// secret (SystemX master password, TGIF security key). Editing them without
+// resupplying the secret must keep the stored one, exactly like BrandMeister —
+// the write-only-secret rule has to hold for every typed network, not just BM.
+func TestSetNetworksPreservesSystemXTGIFSecrets(t *testing.T) {
+	s := memStore(t)
+	_ = fixture().Save(s, "seed") // TGIF (key hunter2) + SystemX (key sysx-key)
+
+	// UI toggles enables and edits ESSIDs but supplies no secrets (blank = keep).
+	// The redacted view never carried the passwords, so the merge must restore them.
+	body := `[
+		{"name":"BM_3102_United_States","type":"brandmeister","primary":true,"address":"3102.master.brandmeister.network","port":"62031","password":"","options":"StartRef=4000;RelinkTime=15;UserLink=1;","essid":"01","enabled":true},
+		{"name":"TGIF_Network","type":"tgif","address":"tgif.network","port":"62031","password":"","essid":"05","enabled":true},
+		{"name":"SystemX","type":"systemx","address":"systemx.pistar.uk","port":"62031","password":"","essid":"07","enabled":true}
+	]`
+	if err := SetNetworks(s, []byte(body), "test"); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := Load(s)
+	byName := map[string]Network{}
+	for _, n := range m.Networks {
+		byName[n.Name] = n
+	}
+	if got := byName["TGIF_Network"]; got.Password != "hunter2" || !got.Enabled || got.ESSID != "05" {
+		t.Fatalf("TGIF: blank secret should keep stored key + apply edits, got %+v", got)
+	}
+	if got := byName["SystemX"]; got.Password != "sysx-key" || got.ESSID != "07" {
+		t.Fatalf("SystemX: blank secret should keep stored key + apply edits, got %+v", got)
+	}
+
+	// A supplied secret replaces (proves the preservation is scoped to blank).
+	body2 := `[{"name":"SystemX","type":"systemx","address":"systemx.pistar.uk","port":"62031","password":"rotated","essid":"07","enabled":true}]`
+	_ = SetNetworks(s, []byte(body2), "test")
+	m2, _ := Load(s)
+	if m2.Networks[0].Password != "rotated" {
+		t.Fatalf("SystemX: new secret should replace, got %q", m2.Networks[0].Password)
+	}
+}
+
+// Editing the D-Star gateway without resupplying the ircDDB password keeps the
+// stored one; a non-blank password replaces it. Mirrors the DMR-networks rule
+// (TestSetNetworksPreservesPasswords) for the other write-only secret.
+func TestSetDStarGatewayPreservesPassword(t *testing.T) {
+	s := memStore(t)
+	_ = fixture().Save(s, "seed") // ircDDB password irc-s3cret
+
+	// UI edits the startup reflector, supplies no password (blank = keep stored),
+	// and sends only the fields the panel manages — the merge must keep the rest.
+	body := `{"reflector":"DCS006 B","ircddb_username":"KN4OQW","ircddb_password":""}`
+	if err := SetDStarGateway(s, []byte(body), "test"); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := Load(s)
+	if m.DStarGW.Reflector != "DCS006 B" {
+		t.Fatalf("reflector not updated: %q", m.DStarGW.Reflector)
+	}
+	if m.DStarGW.IRCDDBPassword != "irc-s3cret" {
+		t.Fatalf("blank password should have kept the stored one, got %q", m.DStarGW.IRCDDBPassword)
+	}
+	// An unspecified field (Hostname) survives the merge.
+	if m.DStarGW.IRCDDBHostname != "ircv4.openquad.net" {
+		t.Fatalf("unspecified field lost on merge: %q", m.DStarGW.IRCDDBHostname)
+	}
+
+	// Now supply a new password — it replaces.
+	if err := SetDStarGateway(s, []byte(`{"ircddb_password":"newirc"}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	m2, _ := Load(s)
+	if m2.DStarGW.IRCDDBPassword != "newirc" {
+		t.Fatalf("new password should replace, got %q", m2.DStarGW.IRCDDBPassword)
+	}
+}
+
+// TestDStarIsolation: changing D-Star settings (mode params or the gateway
+// secret/reflector) must not alter the [DMR] or [Modem] sections of
+// MMDVM-Host.ini — the gateway fields render into dstargateway.cfg only.
+func TestDStarIsolation(t *testing.T) {
+	m := fixture()
+	beforeDMR, beforeModem := section(m.RenderMMDVM(), "DMR"), section(m.RenderMMDVM(), "Modem")
+
+	m.DStar.SelfOnly = !m.DStar.SelfOnly
+	m.DStarGW.Reflector = "DCS006 B"
+	m.DStarGW.IRCDDBPassword = "changed" // gateway-only; never touches MMDVM
+
+	if got := section(m.RenderMMDVM(), "DMR"); got != beforeDMR {
+		t.Errorf("changing D-Star altered [DMR]:\n before %q\n after %q", beforeDMR, got)
+	}
+	if got := section(m.RenderMMDVM(), "Modem"); got != beforeModem {
+		t.Errorf("changing D-Star altered [Modem]:\n before %q\n after %q", beforeModem, got)
+	}
+}
+
 func TestViewRedactsPasswords(t *testing.T) {
 	v := fixture().View("/tmp/config.db")
 	blob := ""
@@ -325,7 +468,7 @@ func TestViewRedactsPasswords(t *testing.T) {
 			t.Fatalf("network %s should report has_password", n.Name)
 		}
 	}
-	if strings.Contains(blob, "s3cr3t") || strings.Contains(blob, "hunter2") {
+	if strings.Contains(blob, "s3cr3t") || strings.Contains(blob, "hunter2") || strings.Contains(blob, "sysx-key") {
 		t.Fatal("password leaked into the view")
 	}
 	// The D-Star ircDDB password is a secret too: the view reports only whether
@@ -336,6 +479,24 @@ func TestViewRedactsPasswords(t *testing.T) {
 	dv := fmt.Sprintf("%+v", v.DStar)
 	if strings.Contains(dv, "irc-s3cret") {
 		t.Fatal("ircDDB password leaked into the view")
+	}
+}
+
+// TestViewSurfacesNodeLock: the DMR view carries the Node Lock bit (WPSD's
+// SelfOnly moved into the DMR panel) so the UI can read/write it, and it
+// serializes under the "self_only" key the settings page binds to.
+func TestViewSurfacesNodeLock(t *testing.T) {
+	m := fixture() // DMR.SelfOnly = true (Node Lock = Private)
+	v := m.View("/tmp/config.db")
+	if !v.DMR.SelfOnly {
+		t.Fatal("DMR view should surface SelfOnly (Node Lock) from the model")
+	}
+	blob, err := json.Marshal(v.DMR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(blob), `"self_only":true`) {
+		t.Fatalf("DMR view JSON missing self_only: %s", blob)
 	}
 }
 

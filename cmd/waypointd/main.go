@@ -153,6 +153,16 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// The D-Star gateway carries the ircDDB password, the same write-only secret
+	// rule: a blank field keeps the stored one (see SetDStarGateway).
+	if section == "dstargw" {
+		if err := config.SetDStarGateway(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	known, err := config.SetSection(s.store, section, body, "api")
 	if !known {
 		http.Error(w, "unknown config section: "+section, http.StatusNotFound)
@@ -329,6 +339,17 @@ func (s *server) backfillDefaults() error {
 			return err
 		}
 		log.Printf("config store: backfilled m17gw defaults")
+	}
+	// Display arrived after M17: a store seeded before the Display surface lacks
+	// the section, so backfill the display-free default (Display=None).
+	if _, ok, err := s.store.Get("display"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("display", config.DefaultDisplay(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled display defaults")
 	}
 	return nil
 }
