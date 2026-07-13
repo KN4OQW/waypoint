@@ -10,7 +10,7 @@ import (
 // WriteFiles renders the model and writes both INI files atomically (write to a
 // temp file in the same directory, then rename). A crash mid-apply therefore
 // never leaves a daemon reading a half-written config.
-func (m *Model) WriteFiles(mmdvmPath, dmrgatewayPath, ysfgatewayPath, p25gatewayPath, nxdngatewayPath string) error {
+func (m *Model) WriteFiles(mmdvmPath, dmrgatewayPath, ysfgatewayPath, p25gatewayPath, nxdngatewayPath, dstargatewayPath string) error {
 	if err := writeAtomic(mmdvmPath, m.RenderMMDVM()); err != nil {
 		return err
 	}
@@ -23,7 +23,10 @@ func (m *Model) WriteFiles(mmdvmPath, dmrgatewayPath, ysfgatewayPath, p25gateway
 	if err := writeAtomic(p25gatewayPath, m.RenderP25Gateway()); err != nil {
 		return err
 	}
-	return writeAtomic(nxdngatewayPath, m.RenderNXDNGateway())
+	if err := writeAtomic(nxdngatewayPath, m.RenderNXDNGateway()); err != nil {
+		return err
+	}
+	return writeAtomic(dstargatewayPath, m.RenderDStarGateway())
 }
 
 func writeAtomic(path, content string) error {
@@ -106,7 +109,18 @@ func (m *Model) RenderMMDVM() string {
 		kv("RSSIMappingFile", "/usr/local/etc/RSSI.dat"),
 	)
 
-	modeSect(&b, "D-Star", m.Modes.DStar)
+	// [D-Star] Module is the band letter appended to the D-Star callsign; it must
+	// match the gateway repeater Band. Ack/error replies use MMDVM-Host's own
+	// defaults (AckReply=1, AckMessage=0/BER, ErrorReply=1 — Conf.cpp:165-168).
+	sect(&b, "D-Star",
+		kb("Enable", m.Modes.DStar),
+		kv("Module", def(m.DStar.Module, "B")),
+		kb("SelfOnly", m.DStar.SelfOnly),
+		kv("AckReply", "1"),
+		kv("AckMessage", "0"),
+		kv("ErrorReply", "1"),
+		kb("RemoteGateway", m.DStar.RemoteGateway),
+	)
 	sect(&b, "DMR",
 		kb("Enable", m.Modes.DMR),
 		kv("ColorCode", def(m.DMR.ColorCode, "1")),
@@ -152,6 +166,17 @@ func (m *Model) RenderMMDVM() string {
 		kb("Slot1", m.DMRNet.Slot1),
 		kb("Slot2", m.DMRNet.Slot2),
 	)
+	// The D-Star network talks to DStarGateway on the fixed 20010/20011 pair
+	// (MMDVM-Host [D-Star Network] already uses the modern GatewayAddress/
+	// GatewayPort/LocalPort names — no Address→GatewayAddress rename here).
+	sect(&b, "D-Star Network",
+		kb("Enable", m.Modes.DStar),
+		kv("GatewayAddress", "127.0.0.1"),
+		kv("GatewayPort", dstarMMDVMGatewayPort),
+		kv("LocalAddress", "127.0.0.1"),
+		kv("LocalPort", dstarMMDVMLocalPort),
+		kv("Debug", "0"),
+	)
 	// The System Fusion network talks to YSFGateway on the fixed 3200/4200 pair.
 	sect(&b, "System Fusion Network",
 		kb("Enable", m.Modes.YSF),
@@ -194,6 +219,9 @@ const (
 
 	nxdnMMDVMLocalPort   = "14021" // MMDVM-Host listens here; NXDNGateway RptPort
 	nxdnMMDVMGatewayPort = "14020" // NXDNGateway listens here; MMDVM-Host sends here
+
+	dstarMMDVMLocalPort   = "20011" // MMDVM-Host listens here; DStarGateway [Repeater 1] Port
+	dstarMMDVMGatewayPort = "20010" // DStarGateway [General] HBPort; MMDVM-Host sends here
 )
 
 // RenderYSFGateway renders a complete YSFGateway.ini from the model. Callsign,
@@ -212,7 +240,8 @@ func (m *Model) RenderYSFGateway() string {
 		kv("LocalAddress", "127.0.0.1"),
 		kv("LocalPort", ysfMMDVMGatewayPort),
 		kb("WiresXCommandPassthrough", m.YSFGW.WiresXPassthrough),
-		kb("WiresXMakeUpper", m.YSFGW.WiresXMakeUpper),
+		// NB: this pinned YSFGateway (2b480aa) does not parse WiresXMakeUpper —
+		// not emitted (would be a dead key). Re-add if a future pin honors it.
 		kv("Daemon", "0"),
 	)
 	sect(&b, "Info",
@@ -234,7 +263,9 @@ func (m *Model) RenderYSFGateway() string {
 	)
 	sect(&b, "Network",
 		kv("Startup", m.YSFGW.Startup),
-		kb("Reconnect", m.YSFGW.Reconnect),
+		// NB: [Network] Reconnect is NOT parsed by this pinned YSFGateway (only
+		// Startup/Options/InactivityTimeout/Revert are) — omitted to avoid a
+		// dead key. Inactivity behaviour is driven by Revert + InactivityTimeout.
 		kb("Revert", m.YSFGW.Revert),
 		kv("InactivityTimeout", def(m.YSFGW.InactivityTimeout, "30")),
 		kv("Debug", "0"),
@@ -404,6 +435,114 @@ func (m *Model) RenderNXDNGateway() string {
 	)
 	sect(&b, "Remote Commands",
 		kv("Enable", "0"),
+	)
+	return b.String()
+}
+
+// Managed paths for DStarGateway. Unlike the other gateways, DStarGateway reads
+// a single DStar_Hosts.json ({"reflectors":[{name,reflector_type,ipv4,…}]},
+// HostsFilesManager.cpp) from the HostsFiles *directory*, and there is no live
+// download URL upstream — waypointd caches the pinned bundled file here. Data is
+// the audio-clip dir; a missing dir only disables voice, it is not fatal
+// (loadPaths only records the path). CustomHostsfiles must differ from the data
+// dir, so it points at a sibling overrides directory.
+const (
+	dstarHostsDir      = "/home/pi-star/waypoint/etc/"                    // holds DStar_Hosts.json
+	dstarDataDir       = "/home/pi-star/waypoint/etc/dstar/"              // audio clips (optional)
+	dstarCustomHostDir = "/home/pi-star/waypoint/etc/dstar-hostsfiles.d/" // local host overrides
+)
+
+// RenderDStarGateway renders a complete dstargateway.cfg from the model.
+// Callsign comes from the shared station config; the module letter is
+// m.DStar.Module (the single source of truth, mirrored into [Repeater 1] Band);
+// the ircDDB login, startup reflector, and protocol enables come from the D-Star
+// gateway section. IRCDDBUsername and D-Plus Login fall back to the station
+// callsign, matching DStarGateway's own defaults (DStarGatewayConfig.cpp:298/128).
+func (m *Model) RenderDStarGateway() string {
+	var b strings.Builder
+	b.WriteString(generatedHeader)
+
+	// Foreground: systemd manages the process (Daemon=0) — a forking daemon would
+	// look dead to the unit.
+	sect(&b, "Daemon",
+		kv("Daemon", "0"),
+	)
+	// Type=Repeater is DStarGateway's own default and matches the homebrew (HB)
+	// repeater MMDVM-Host presents; HBPort is where the gateway listens for
+	// MMDVM-Host (the 20010 loopback).
+	sect(&b, "General",
+		kv("Callsign", m.General.Callsign),
+		kv("Type", "Repeater"),
+		kv("Address", "0.0.0.0"),
+		kv("HBAddress", "127.0.0.1"),
+		kv("HBPort", dstarMMDVMGatewayPort),
+		kv("Latitude", "0.0"),
+		kv("Longitude", "0.0"),
+	)
+	// ircDDB does the callsign→gateway routing lookups. Username defaults to the
+	// station callsign; a blank password connects anonymously.
+	sect(&b, "IRCDDB 1",
+		kv("Enabled", "1"),
+		kv("Hostname", def(m.DStarGW.IRCDDBHostname, "ircv4.openquad.net")),
+		kv("Username", firstNonEmpty(m.DStarGW.IRCDDBUsername, m.General.Callsign)),
+		kv("Password", m.DStarGW.IRCDDBPassword),
+	)
+	// The single D-Star module. Band must equal MMDVM-Host [D-Star] Module. Type
+	// HB = homebrew (MMDVM-Host). Port 20011 is where the gateway sends to
+	// MMDVM-Host. ReflectorAtStartup is derived: link the startup reflector only
+	// when one is set (mirrors DStarGatewayConfig.cpp:239).
+	sect(&b, "Repeater 1",
+		kv("Enabled", "1"),
+		kv("Band", def(m.DStar.Module, "B")),
+		kv("Address", "127.0.0.1"),
+		kv("Port", dstarMMDVMLocalPort),
+		kv("Type", "HB"),
+		kv("Reflector", m.DStarGW.Reflector),
+		kb("ReflectorAtStartup", strings.TrimSpace(m.DStarGW.Reflector) != ""),
+		kv("ReflectorReconnect", def(m.DStarGW.ReflectorReconnect, "Never")),
+	)
+	// Reflector protocols. D-Plus Login defaults to the callsign; upstream
+	// force-disables D-Plus when Login is empty (DStarGatewayConfig.cpp:130), and
+	// REF linking additionally needs the callsign registered with DPlus/US-Trust.
+	sect(&b, "Dextra",
+		kb("Enabled", m.DStarGW.Dextra),
+	)
+	sect(&b, "D-Plus",
+		kb("Enabled", m.DStarGW.DPlus),
+		kv("Login", firstNonEmpty(m.DStarGW.DPlusLogin, m.General.Callsign)),
+	)
+	sect(&b, "DCS",
+		kb("Enabled", m.DStarGW.DCS),
+	)
+	sect(&b, "XLX",
+		kb("Enabled", m.DStarGW.XLX),
+	)
+	sect(&b, "APRS",
+		kv("Enabled", "0"),
+	)
+	sect(&b, "Log",
+		kv("MQTTLevel", "1"),
+		kv("DisplayLevel", "0"),
+	)
+	// DStarGateway's [MQTT] key is Authenticate (not Auth like the other
+	// gateways); Name is the topic prefix (<name>/json status, <name>/log).
+	sect(&b, "MQTT",
+		kv("Address", "127.0.0.1"),
+		kv("Port", "1883"),
+		kv("Keepalive", "60"),
+		kv("Authenticate", "0"),
+		kv("Name", "dstar-gateway"),
+	)
+	sect(&b, "Paths",
+		kv("Data", dstarDataDir),
+	)
+	// HostsFiles is a directory; the gateway reads DStar_Hosts.json inside it.
+	sect(&b, "Hosts Files",
+		kv("HostsFiles", dstarHostsDir),
+		kv("CustomHostsfiles", dstarCustomHostDir),
+	)
+	sect(&b, "Remote Commands",
+		kv("Enabled", "0"),
 	)
 	return b.String()
 }

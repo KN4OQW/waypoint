@@ -8,6 +8,7 @@ const TABS = [
   { id: "general",      tag: "RF", label: "General",      sub: "Radio & Station",     crumb: "SYSTEM / GENERAL",        title: "General Configuration", desc: "Station identity, operating frequencies and modem hardware for this hotspot node." },
   { id: "brandmeister", tag: "BM", label: "BrandMeister", sub: "Network & Security",   crumb: "NETWORKS / BRANDMEISTER", title: "DMR Networks",          desc: "Master servers this node bridges DMR traffic to. Passwords are stored on the node and never shown." },
   { id: "dmr",          tag: "DM", label: "DMR",          sub: "Master & Slots",       crumb: "MODES / DMR",             title: "DMR Settings",          desc: "Color code and per-slot behaviour for Digital Mobile Radio." },
+  { id: "dstar",        tag: "DS", label: "D-Star",        sub: "ircDDB & reflectors",  crumb: "MODES / D-STAR",          title: "D-Star",                desc: "D-Star gateway: module band letter, ircDDB callsign routing, startup reflector, and which reflector protocols are on." },
   { id: "ysf",          tag: "YS", label: "System Fusion", sub: "YSF / FCS reflectors", crumb: "MODES / SYSTEM FUSION",   title: "System Fusion (YSF)",   desc: "C4FM gateway: startup reflector or FCS room, Wires-X, and which reflector networks are on." },
   { id: "p25",          tag: "25", label: "P25",          sub: "NAC & Talkgroups",     crumb: "MODES / P25",             title: "P25 (Phase 1)",         desc: "APCO P25 gateway: network access code, startup talkgroups, and gateway behaviour." },
   { id: "nxdn",         tag: "NX", label: "NXDN",         sub: "RAN & Talkgroups",     crumb: "MODES / NXDN",            title: "NXDN",                  desc: "NXDN gateway: radio access number, startup talkgroups, and gateway behaviour." },
@@ -30,6 +31,7 @@ let applying = false;
 let ysfRefs = [];           // cached YSF reflector list for the startup picker
 let p25Refs = [];           // cached P25 talkgroup list for the startup-TG picker
 let nxdnRefs = [];          // cached NXDN talkgroup list for the startup-TG picker
+let dstarRefs = [];         // cached D-Star reflector list for the startup picker
 
 const el = (t, cls, html) => { const e = document.createElement(t); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -53,16 +55,41 @@ function buildEdit(c) {
     p25gw: p25gwFrom(c.p25 || {}),
     nxdn: nxdnFrom(c.nxdn || {}),
     nxdngw: nxdngwFrom(c.nxdn || {}),
+    dstar: dstarFrom(c.dstar || {}),
+    dstargw: dstargwFrom(c.dstar || {}),
   };
   dirty = new Set();
   refreshActions();
 }
 
+// The D-Star view is flat (mode params + gateway settings); it splits back into
+// two store sections: "dstar" (MMDVM-Host [D-Star] params) and "dstargw"
+// (dstargateway.cfg). The Module band letter must match on both sides — it lives
+// in the "dstar" section and the renderer mirrors it into the gateway Band.
+function dstarFrom(d) {
+  return {
+    module: d.module || "B", self_only: !!d.self_only, remote_gateway: !!d.remote_gateway,
+  };
+}
+// ircddb_password starts blank; blank means "keep the stored one" (the store
+// merge preserves fields the payload omits — apply() drops the blank password).
+// has_ircddb_password drives the placeholder.
+function dstargwFrom(d) {
+  return {
+    reflector: d.reflector || "", reflector_reconnect: d.reflector_reconnect || "Never",
+    ircddb_hostname: d.ircddb_hostname || "ircv4.openquad.net",
+    ircddb_username: d.ircddb_username || "", ircddb_password: "",
+    has_ircddb_password: !!d.has_ircddb_password,
+    dextra: d.dextra !== false, dplus: d.dplus !== false, dplus_login: d.dplus_login || "",
+    dcs: d.dcs !== false, xlx: d.xlx !== false,
+  };
+}
+
 function ysfgwFrom(y) {
   return {
     suffix: y.suffix || "RPT", startup: y.startup || "",
-    wiresx_passthrough: !!y.wiresx_passthrough, wiresx_make_upper: !!y.wiresx_make_upper,
-    reconnect: !!y.reconnect, revert: !!y.revert, inactivity_timeout: y.inactivity_timeout || "30",
+    wiresx_passthrough: !!y.wiresx_passthrough,
+    revert: !!y.revert, inactivity_timeout: y.inactivity_timeout || "30",
     ysf_network: !!y.ysf_network, fcs_network: !!y.fcs_network, aprs: !!y.aprs,
   };
 }
@@ -101,6 +128,20 @@ function nxdngwFrom(n) {
 // unknown fields). A blank password means "keep the stored one".
 function cleanNet(n) {
   return { name: n.name, address: n.address, port: n.port, enabled: !!n.enabled, password: n.password || "", rewrites: n.rewrites || [] };
+}
+
+// cleanDstargw strips the UI-only has_ircddb_password flag (the store rejects
+// unknown fields) and omits ircddb_password when blank, so the merge keeps the
+// stored secret. A supplied password replaces it.
+function cleanDstargw(d) {
+  const out = {
+    reflector: d.reflector || "", reflector_reconnect: d.reflector_reconnect || "Never",
+    ircddb_hostname: d.ircddb_hostname || "", ircddb_username: d.ircddb_username || "",
+    dextra: !!d.dextra, dplus: !!d.dplus, dplus_login: d.dplus_login || "",
+    dcs: !!d.dcs, xlx: !!d.xlx,
+  };
+  if (d.ircddb_password) out.ircddb_password = d.ircddb_password;
+  return out;
 }
 
 function setField(sec, key, val) {
@@ -226,9 +267,7 @@ function panelYSF() {
     input("ysfgw", "inactivity_timeout", { label: "Inactivity revert", unit: "min" }));
   const behaviour = card("BEHAVIOUR",
     toggleRow("ysfgw", "wiresx_passthrough", "Wires-X passthrough (advanced — leave off for local control)") +
-    toggleRow("ysfgw", "wiresx_make_upper", "Wires-X uppercase") +
-    toggleRow("ysfgw", "revert", "Revert to startup on inactivity") +
-    toggleRow("ysfgw", "reconnect", "Reconnect on link loss"));
+    toggleRow("ysfgw", "revert", "Revert to startup on inactivity"));
   const networks = card("REFLECTOR NETWORKS",
     toggleRow("ysfgw", "ysf_network", "YSF reflector network") +
     toggleRow("ysfgw", "fcs_network", "FCS room network") +
@@ -278,12 +317,43 @@ function panelNXDN() {
   return `<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
 }
 
+function panelDStar() {
+  // Startup reflector picker: a datalist over the fetched hostlist so the user
+  // can type-filter reflectors (REF/XRF/DCS) while still allowing a raw value.
+  // The gateway wants "name module", e.g. "REF001 C", so the datalist offers
+  // names the user completes with a band letter.
+  const opts = dstarRefs.map((r) => `<option value="${esc(r.name)} ">${esc(r.type)}</option>`).join("");
+  const gw = edit.dstargw || {};
+  const reflector = gw.reflector || "";
+  const gateway = card("GATEWAY",
+    toggle("modes", "dstar", "D-Star", "ENABLED", "DISABLED") +
+    input("dstar", "module", { label: "Module (band letter)", accent: true }) +
+    row("Startup reflector", `<input data-sec="dstargw" data-key="reflector" list="dstar-refs" value="${esc(reflector)}" placeholder="e.g. REF001 C — blank for none"><datalist id="dstar-refs">${opts}</datalist>`) +
+    input("dstargw", "reflector_reconnect", { label: "Reflector reconnect (min / Never / Fixed)" }));
+  const ircddb = card("ircDDB (CALLSIGN ROUTING)",
+    input("dstargw", "ircddb_hostname", { label: "ircDDB host" }) +
+    input("dstargw", "ircddb_username", { label: "Username (blank = callsign)" }) +
+    row("Password", `<input data-sec="dstargw" data-key="ircddb_password" type="password" value="${esc(gw.ircddb_password || "")}" placeholder="${gw.has_ircddb_password ? "•••••• unchanged" : "blank = anonymous"}">`));
+  const behaviour = card("RF BEHAVIOUR",
+    toggleRow("dstar", "self_only", "Self only (accept only my callsign)") +
+    toggleRow("dstar", "remote_gateway", "Remote gateway (advanced — leave off for local control)"));
+  const protocols = card("REFLECTOR PROTOCOLS",
+    toggleRow("dstargw", "dextra", "DExtra (XRF)") +
+    toggleRow("dstargw", "dplus", "D-Plus (REF — needs a registered callsign)") +
+    row("D-Plus login", `<input data-sec="dstargw" data-key="dplus_login" value="${esc(gw.dplus_login || "")}" placeholder="registered callsign (blank = station callsign)">`) +
+    toggleRow("dstargw", "dcs", "DCS") +
+    toggleRow("dstargw", "xlx", "XLX"));
+  const hint = dstarRefs.length ? "" : note("Reflector list not loaded yet (fetched from the pinned D-Star register on a schedule). You can still type a reflector above.");
+  return `<div class="grid2"><div class="stack">${gateway}${ircddb}</div><div class="stack">${behaviour}${protocols}</div></div>${hint}`;
+}
+
 function renderPanel() {
   const c = state.config || {};
   const box = document.getElementById("panels");
   switch (state.tab) {
     case "general":      box.innerHTML = panelGeneral(); break;
     case "dmr":          box.innerHTML = panelDmr(); break;
+    case "dstar":        box.innerHTML = panelDStar(); break;
     case "ysf":          box.innerHTML = panelYSF(); break;
     case "p25":          box.innerHTML = panelP25(); break;
     case "nxdn":         box.innerHTML = panelNXDN(); break;
@@ -330,7 +400,9 @@ async function apply() {
   refreshActions();
   try {
     for (const sec of dirty) {
-      const payload = sec === "networks" ? edit.networks.map(cleanNet) : edit[sec];
+      const payload = sec === "networks" ? edit.networks.map(cleanNet)
+        : sec === "dstargw" ? cleanDstargw(edit.dstargw)
+        : edit[sec];
       const r = await fetch("/api/config/" + sec, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!r.ok) throw new Error(sec + ": " + (await r.text()).trim());
     }
@@ -439,6 +511,10 @@ async function load() {
     nxdnRefs = await fetch("/api/nxdn/reflectors").then((r) => r.json());
     if (state.tab === "nxdn") renderPanel();
   } catch { /* offline — the picker still accepts a typed TG */ }
+  try {
+    dstarRefs = await fetch("/api/dstar/reflectors").then((r) => r.json());
+    if (state.tab === "dstar") renderPanel();
+  } catch { /* offline — the picker still accepts a typed reflector */ }
 }
 
 // text edits update the working copy; toggles flip a bool and re-render.

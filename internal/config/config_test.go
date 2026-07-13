@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -32,11 +33,17 @@ func fixture() *Model {
 			{Name: "TGIF_Network", Address: "tgif.network", Port: "62031", Password: "hunter2", Enabled: false, Rewrites: nil},
 		},
 		YSF:    YSF{LowDeviation: true, SelfOnly: false, TXHang: "6", RemoteGateway: false, ModeHang: "20"},
-		YSFGW:  YSFGateway{Suffix: "RPT", WiresXPassthrough: true, WiresXMakeUpper: true, Startup: "FCS00290", Reconnect: true, Revert: true, InactivityTimeout: "30", YSFNetwork: true, FCSNetwork: true, APRS: false},
+		YSFGW:  YSFGateway{Suffix: "RPT", WiresXPassthrough: true, Startup: "FCS00290", Revert: true, InactivityTimeout: "30", YSFNetwork: true, FCSNetwork: true, APRS: false},
 		P25:    P25{NAC: "293", SelfOnly: true, OverrideUIDCheck: false, RemoteGateway: false, TXHang: "5"},
 		P25GW:  P25Gateway{Static: "10100,10200", Voice: true, RFHangTime: "120", NetHangTime: "60"},
 		NXDN:   NXDN{RAN: "1", SelfOnly: true, RemoteGateway: false, TXHang: "5"},
 		NXDNGW: NXDNGateway{Static: "10200,65000", Voice: true, RFHangTime: "120", NetHangTime: "60"},
+		DStar:  DStar{Module: "B", SelfOnly: true, RemoteGateway: false},
+		DStarGW: DStarGateway{
+			Reflector: "REF001 C", ReflectorReconnect: "Never",
+			IRCDDBHostname: "ircv4.openquad.net", IRCDDBUsername: "KN4OQW", IRCDDBPassword: "irc-s3cret",
+			Dextra: true, DPlus: true, DPlusLogin: "KN4OQW", DCS: true, XLX: false,
+		},
 	}
 }
 
@@ -63,7 +70,11 @@ func TestLosslessRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := fromINI(mm, dg, yg, pg, ng)
+	xg, err := ParseINI(strings.NewReader(m.RenderDStarGateway()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := fromINI(mm, dg, yg, pg, ng, xg)
 	if !reflect.DeepEqual(m, got) {
 		t.Fatalf("round-trip lost data:\n want %+v\n  got %+v", m, got)
 	}
@@ -196,6 +207,15 @@ func TestViewRedactsPasswords(t *testing.T) {
 	}
 	if strings.Contains(blob, "s3cr3t") || strings.Contains(blob, "hunter2") {
 		t.Fatal("password leaked into the view")
+	}
+	// The D-Star ircDDB password is a secret too: the view reports only whether
+	// one is set, never the value.
+	if !v.DStar.HasIRCDDBPassword {
+		t.Fatal("D-Star view should report has_ircddb_password")
+	}
+	dv := fmt.Sprintf("%+v", v.DStar)
+	if strings.Contains(dv, "irc-s3cret") {
+		t.Fatal("ircDDB password leaked into the view")
 	}
 }
 

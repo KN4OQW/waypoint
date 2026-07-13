@@ -19,18 +19,50 @@ import (
 // keys render from constants (render.go) until the model grows to cover them
 // before the live node is cut over to store-rendered files.
 type Model struct {
-	General  General     `json:"general"`
-	Modem    Modem       `json:"modem"`
-	DMR      DMR         `json:"dmr"`
-	DMRNet   DMRNet      `json:"dmrnet"`
-	Modes    Modes       `json:"modes"`
-	Networks []Network   `json:"networks"`
-	YSF      YSF         `json:"ysf"`
-	YSFGW    YSFGateway  `json:"ysfgw"`
-	P25      P25         `json:"p25"`
-	P25GW    P25Gateway  `json:"p25gw"`
-	NXDN     NXDN        `json:"nxdn"`
-	NXDNGW   NXDNGateway `json:"nxdngw"`
+	General  General      `json:"general"`
+	Modem    Modem        `json:"modem"`
+	DMR      DMR          `json:"dmr"`
+	DMRNet   DMRNet       `json:"dmrnet"`
+	Modes    Modes        `json:"modes"`
+	Networks []Network    `json:"networks"`
+	YSF      YSF          `json:"ysf"`
+	YSFGW    YSFGateway   `json:"ysfgw"`
+	P25      P25          `json:"p25"`
+	P25GW    P25Gateway   `json:"p25gw"`
+	NXDN     NXDN         `json:"nxdn"`
+	NXDNGW   NXDNGateway  `json:"nxdngw"`
+	DStar    DStar        `json:"dstar"`
+	DStarGW  DStarGateway `json:"dstargw"`
+}
+
+// DStar holds MMDVM-Host's [D-Star] mode parameters (its enable flag is in
+// Modes, like the other modes). Module is the single band letter for this
+// hotspot's D-Star module; it is appended as the 8th char of the D-Star
+// callsign (DStarControl.cpp) and MUST match the gateway repeater Band, so it is
+// the single source of truth rendered into both files.
+type DStar struct {
+	Module        string `json:"module"`         // band letter, e.g. B (upstream default is C; must match the gateway Band)
+	SelfOnly      bool   `json:"self_only"`      // accept only this station's own callsign
+	RemoteGateway bool   `json:"remote_gateway"` // hand network control to a remote gateway (off for a local DStarGateway)
+}
+
+// DStarGateway is the D-Star gateway (dstargateway.cfg): the ircDDB login used
+// for callsign routing, the startup reflector, and which reflector protocols
+// (DExtra/DPlus/DCS/XLX) are on. IRCDDBPassword is a secret (redacted in the API
+// view, preserved on blank). DPlus is force-disabled upstream when its Login is
+// empty (DStarGatewayConfig.cpp:130) and needs DPlus/US-Trust registration to
+// link REF reflectors — DPlusLogin defaults to the station callsign when blank.
+type DStarGateway struct {
+	Reflector          string `json:"reflector"`           // startup reflector, e.g. "REF001 C" / "DCS006 B"; empty = none
+	ReflectorReconnect string `json:"reflector_reconnect"` // Never / Fixed / 5..180 (minutes)
+	IRCDDBHostname     string `json:"ircddb_hostname"`     // ircDDB network, e.g. ircv4.openquad.net
+	IRCDDBUsername     string `json:"ircddb_username"`     // ircDDB login; defaults to the station callsign when blank
+	IRCDDBPassword     string `json:"ircddb_password"`     // ircDDB password (secret); blank connects anonymously
+	Dextra             bool   `json:"dextra"`              // DExtra (XRF) reflector protocol
+	DPlus              bool   `json:"dplus"`               // D-Plus (REF) reflector protocol; needs DPlusLogin registered
+	DPlusLogin         string `json:"dplus_login"`         // registered callsign for D-Plus; defaults to the station callsign when blank
+	DCS                bool   `json:"dcs"`                 // DCS reflector protocol
+	XLX                bool   `json:"xlx"`                 // XLX reflector protocol
 }
 
 // NXDN holds MMDVM-Host's [NXDN] mode parameters (its enable flag is in Modes,
@@ -86,9 +118,7 @@ type YSF struct {
 type YSFGateway struct {
 	Suffix            string `json:"suffix"`             // RPT (duplex) / ND (simplex) / a letter
 	WiresXPassthrough bool   `json:"wiresx_passthrough"` // let the radio's Wires-X buttons drive the gateway
-	WiresXMakeUpper   bool   `json:"wiresx_make_upper"`
-	Startup           string `json:"startup"` // startup reflector/room id, e.g. FCS00290
-	Reconnect         bool   `json:"reconnect"`
+	Startup           string `json:"startup"`            // startup reflector/room id, e.g. FCS00290
 	Revert            bool   `json:"revert"`             // revert to Startup after inactivity
 	InactivityTimeout string `json:"inactivity_timeout"` // minutes
 	YSFNetwork        bool   `json:"ysf_network"`
@@ -185,6 +215,8 @@ func (m *Model) sections() map[string]any {
 		"p25gw":    &m.P25GW,
 		"nxdn":     &m.NXDN,
 		"nxdngw":   &m.NXDNGW,
+		"dstar":    &m.DStar,
+		"dstargw":  &m.DStarGW,
 	}
 }
 
