@@ -19,12 +19,39 @@ import (
 // keys render from constants (render.go) until the model grows to cover them
 // before the live node is cut over to store-rendered files.
 type Model struct {
-	General  General   `json:"general"`
-	Modem    Modem     `json:"modem"`
-	DMR      DMR       `json:"dmr"`
-	DMRNet   DMRNet    `json:"dmrnet"`
-	Modes    Modes     `json:"modes"`
-	Networks []Network `json:"networks"`
+	General  General    `json:"general"`
+	Modem    Modem      `json:"modem"`
+	DMR      DMR        `json:"dmr"`
+	DMRNet   DMRNet     `json:"dmrnet"`
+	Modes    Modes      `json:"modes"`
+	Networks []Network  `json:"networks"`
+	YSF      YSF        `json:"ysf"`
+	YSFGW    YSFGateway `json:"ysfgw"`
+}
+
+// YSF holds MMDVM-Host's [System Fusion] mode parameters (its enable flag is in
+// Modes, like the other modes).
+type YSF struct {
+	LowDeviation  bool   `json:"low_deviation"`
+	SelfOnly      bool   `json:"self_only"`
+	TXHang        string `json:"tx_hang"`
+	RemoteGateway bool   `json:"remote_gateway"`
+	ModeHang      string `json:"mode_hang"`
+}
+
+// YSFGateway is the System Fusion gateway (YSFGateway.ini): reflector/room
+// connection, Wires-X behaviour, and which of the YSF/FCS networks are on.
+type YSFGateway struct {
+	Suffix            string `json:"suffix"`             // RPT (duplex) / ND (simplex) / a letter
+	WiresXPassthrough bool   `json:"wiresx_passthrough"` // let the radio's Wires-X buttons drive the gateway
+	WiresXMakeUpper   bool   `json:"wiresx_make_upper"`
+	Startup           string `json:"startup"` // startup reflector/room id, e.g. FCS00290
+	Reconnect         bool   `json:"reconnect"`
+	Revert            bool   `json:"revert"`             // revert to Startup after inactivity
+	InactivityTimeout string `json:"inactivity_timeout"` // minutes
+	YSFNetwork        bool   `json:"ysf_network"`
+	FCSNetwork        bool   `json:"fcs_network"`
+	APRS              bool   `json:"aprs"`
 }
 
 // General is station identity and top-level behaviour.
@@ -110,6 +137,8 @@ func (m *Model) sections() map[string]any {
 		"dmrnet":   &m.DMRNet,
 		"modes":    &m.Modes,
 		"networks": &m.Networks,
+		"ysf":      &m.YSF,
+		"ysfgw":    &m.YSFGW,
 	}
 }
 

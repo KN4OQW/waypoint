@@ -22,6 +22,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/hub"
 	"github.com/KN4OQW/waypoint/internal/mqtt"
 	"github.com/KN4OQW/waypoint/internal/store"
+	"github.com/KN4OQW/waypoint/internal/ysfhosts"
 	"github.com/KN4OQW/waypoint/ui"
 )
 
@@ -36,7 +37,21 @@ type server struct {
 	storePath string
 	mmdvmINI  string // render target: the file MMDVM-Host reads
 	dmrgwINI  string // render target: the file DMRGateway reads
+	ysfgwINI  string // render target: the file YSFGateway reads
+	ysfHosts  string // cached YSF reflector hostlist (JSON)
 	units     []string
+}
+
+// ysfReflectors serves the cached YSF reflector hostlist for the settings-page
+// startup-reflector picker (GET /api/ysf/reflectors).
+func (s *server) ysfReflectors(w http.ResponseWriter, _ *http.Request) {
+	refs, err := ysfhosts.Reflectors(s.ysfHosts)
+	if err != nil {
+		// No cache yet (offline / first boot) → empty list, not an error.
+		refs = []ysfhosts.Reflector{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(refs)
 }
 
 // configView serves the node's configuration for the settings page from the
@@ -94,7 +109,7 @@ func (s *server) configApply(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := m.WriteFiles(s.mmdvmINI, s.dmrgwINI); err != nil {
+	if err := m.WriteFiles(s.mmdvmINI, s.dmrgwINI, s.ysfgwINI); err != nil {
 		http.Error(w, "render: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -137,6 +152,20 @@ func (s *server) seedStore() error {
 		return err
 	}
 	log.Printf("config store seeded from %s + %s", s.mmdvmINI, s.dmrgwINI)
+	return nil
+}
+
+// backfillDefaults writes defaults for sections added after this store was first
+// seeded (a store created before YSF has no ysfgw row). It only fills absent
+// sections, so it never overwrites a user's settings.
+func (s *server) backfillDefaults() error {
+	if _, ok, err := s.store.Get("ysfgw"); err != nil || ok {
+		return err
+	}
+	if err := s.store.Set("ysfgw", config.DefaultYSFGateway(), "backfill"); err != nil {
+		return err
+	}
+	log.Printf("config store: backfilled ysfgw defaults")
 	return nil
 }
 
@@ -223,8 +252,11 @@ func main() {
 	mqttPass := flag.String("mqtt-pass", "", "MQTT password (optional)")
 	mmdvmINI := flag.String("mmdvm-ini", "/home/pi-star/waypoint/etc/MMDVM-Host.ini", "MMDVM-Host.ini render target (the file the daemon reads)")
 	dmrgwINI := flag.String("dmrgateway-ini", "/home/pi-star/waypoint/etc/DMRGateway.ini", "DMRGateway.ini render target")
+	ysfgwINI := flag.String("ysfgateway-ini", "/home/pi-star/waypoint/etc/YSFGateway.ini", "YSFGateway.ini render target")
+	ysfHosts := flag.String("ysf-hosts", "/home/pi-star/waypoint/etc/YSFHosts.json", "cached YSF reflector hostlist path")
+	ysfHostsURL := flag.String("ysf-hosts-url", ysfhosts.DefaultURL, "YSF reflector hostlist source URL")
 	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
-	units := flag.String("units", "waypoint-mmdvm.service,waypoint-dmrgateway.service", "comma-separated systemd units to restart on apply")
+	units := flag.String("units", "waypoint-mmdvm.service,waypoint-dmrgateway.service,waypoint-ysfgateway.service", "comma-separated systemd units to restart on apply")
 	flag.Parse()
 
 	st, err := store.Open(*storePath)
@@ -236,11 +268,15 @@ func main() {
 	s := &server{
 		hub: hub.New(), demo: *demoMode, started: time.Now(),
 		store: st, storePath: *storePath,
-		mmdvmINI: *mmdvmINI, dmrgwINI: *dmrgwINI,
-		units: strings.Split(*units, ","),
+		mmdvmINI: *mmdvmINI, dmrgwINI: *dmrgwINI, ysfgwINI: *ysfgwINI,
+		ysfHosts: *ysfHosts,
+		units:    strings.Split(*units, ","),
 	}
 	if err := s.seedStore(); err != nil {
 		log.Printf("config store seed skipped: %v", err)
+	}
+	if err := s.backfillDefaults(); err != nil {
+		log.Printf("config store backfill skipped: %v", err)
 	}
 
 	if *demoMode {
@@ -256,6 +292,8 @@ func main() {
 				log.Printf("mqtt bridge stopped: %v", err)
 			}
 		}()
+		// Keep the YSF reflector hostlist fresh for the gateway + picker.
+		go ysfhosts.Run(context.Background(), *ysfHostsURL, *ysfHosts, 6*time.Hour)
 	}
 
 	mux := http.NewServeMux()
@@ -264,6 +302,7 @@ func main() {
 	mux.HandleFunc("/api/config", s.configView)
 	mux.HandleFunc("/api/config/apply", s.configApply)
 	mux.HandleFunc("/api/config/", s.configView) // PUT /api/config/{section}
+	mux.HandleFunc("/api/ysf/reflectors", s.ysfReflectors)
 	mux.Handle("/", http.FileServerFS(ui.FS()))
 
 	mode := "live, mqtt " + *broker

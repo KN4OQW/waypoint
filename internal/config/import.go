@@ -19,12 +19,15 @@ func Import(mmdvmPath, dmrgatewayPath string) (*Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", dmrgatewayPath, err)
 	}
-	return fromINI(mm, dg), nil
+	// No YSFGateway.ini exists at seed time (waypointd creates it); YSFGW gets
+	// defaults. yg is non-nil only in the round-trip harness.
+	return fromINI(mm, dg, nil), nil
 }
 
 // fromINI builds a Model from already-parsed INIs. Shared by Import (from disk)
-// and the round-trip harness (render → parse → fromINI, all in memory).
-func fromINI(mm, dg *INI) *Model {
+// and the round-trip harness (render → parse → fromINI, all in memory). yg (the
+// YSFGateway INI) may be nil, in which case YSFGW takes its defaults.
+func fromINI(mm, dg, yg *INI) *Model {
 	m := &Model{
 		General: General{
 			Callsign:    mm.Get("General", "Callsign"),
@@ -76,8 +79,50 @@ func fromINI(mm, dg *INI) *Model {
 			FM:     mm.Bool("FM", "Enable"),
 		},
 		Networks: importNetworks(dg),
+		YSF: YSF{
+			LowDeviation:  mm.Bool("System Fusion", "LowDeviation"),
+			SelfOnly:      mm.Bool("System Fusion", "SelfOnly"),
+			TXHang:        orDefault(mm.Get("System Fusion", "TXHang"), "4"),
+			RemoteGateway: mm.Bool("System Fusion", "RemoteGateway"),
+			ModeHang:      orDefault(mm.Get("System Fusion", "ModeHang"), "20"),
+		},
+		YSFGW: ysfGatewayFromINI(yg),
 	}
 	return m
+}
+
+// DefaultYSFGateway is the sane duplex default (suffix RPT, both reflector
+// networks on, no startup room). Used to seed a fresh store and to backfill the
+// section on a store created before YSF existed.
+func DefaultYSFGateway() YSFGateway {
+	return YSFGateway{
+		// WiresXPassthrough MUST default off: with it on, YSFGateway does not
+		// handle the radio's Wires-X commands locally (browse/connect all
+		// return NONE), so the radio gets no response. Passthrough is the
+		// advanced "hand Wires-X to the network reflector" mode.
+		Suffix: "RPT", WiresXPassthrough: false, WiresXMakeUpper: true,
+		Reconnect: true, Revert: true, InactivityTimeout: "30",
+		YSFNetwork: true, FCSNetwork: true, APRS: false,
+	}
+}
+
+// ysfGatewayFromINI reads a YSFGateway.ini, or returns the defaults when yg is nil.
+func ysfGatewayFromINI(yg *INI) YSFGateway {
+	if yg == nil {
+		return DefaultYSFGateway()
+	}
+	return YSFGateway{
+		Suffix:            orDefault(yg.Get("General", "Suffix"), "RPT"),
+		WiresXPassthrough: yg.Bool("General", "WiresXCommandPassthrough"),
+		WiresXMakeUpper:   yg.Bool("General", "WiresXMakeUpper"),
+		Startup:           yg.Get("Network", "Startup"),
+		Reconnect:         yg.Bool("Network", "Reconnect"),
+		Revert:            yg.Bool("Network", "Revert"),
+		InactivityTimeout: orDefault(yg.Get("Network", "InactivityTimeout"), "30"),
+		YSFNetwork:        yg.Bool("YSF Network", "Enable"),
+		FCSNetwork:        yg.Bool("FCS Network", "Enable"),
+		APRS:              yg.Bool("APRS", "Enable"),
+	}
 }
 
 func importNetworks(dg *INI) []Network {

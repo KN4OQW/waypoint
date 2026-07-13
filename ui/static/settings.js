@@ -8,6 +8,7 @@ const TABS = [
   { id: "general",      tag: "RF", label: "General",      sub: "Radio & Station",     crumb: "SYSTEM / GENERAL",        title: "General Configuration", desc: "Station identity, operating frequencies and modem hardware for this hotspot node." },
   { id: "brandmeister", tag: "BM", label: "BrandMeister", sub: "Network & Security",   crumb: "NETWORKS / BRANDMEISTER", title: "DMR Networks",          desc: "Master servers this node bridges DMR traffic to. Passwords are stored on the node and never shown." },
   { id: "dmr",          tag: "DM", label: "DMR",          sub: "Master & Slots",       crumb: "MODES / DMR",             title: "DMR Settings",          desc: "Color code and per-slot behaviour for Digital Mobile Radio." },
+  { id: "ysf",          tag: "YS", label: "System Fusion", sub: "YSF / FCS reflectors", crumb: "MODES / SYSTEM FUSION",   title: "System Fusion (YSF)",   desc: "C4FM gateway: startup reflector or FCS room, Wires-X, and which reflector networks are on." },
   { id: "modes",        tag: "MD", label: "Modes",        sub: "Digital Modes",        crumb: "MODES / DIGITAL",         title: "Digital Mode Control",  desc: "Which digital voice / data modes MMDVM-Host handles. Toggling one restarts the stack on Apply." },
   { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Bridges",   crumb: "BRIDGES / GATEWAYS",      title: "Cross-Mode Gateways",   desc: "Transcoding bridges between digital voice modes." },
   { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "SYSTEM / NETWORK",        title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
@@ -24,6 +25,7 @@ let state = { tab: "general", config: null, health: null };
 let edit = {};              // section -> {field: value} working copy
 let dirty = new Set();      // sections with unsaved changes
 let applying = false;
+let ysfRefs = [];           // cached YSF reflector list for the startup picker
 
 const el = (t, cls, html) => { const e = document.createElement(t); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -42,9 +44,19 @@ function buildEdit(c) {
     modes:   Object.fromEntries((c.modes || []).map((m) => [m.key, !!m.enabled])),
     // password starts blank (blank = keep the stored one); has_password drives the placeholder.
     networks: (c.networks || []).map((n) => ({ name: n.name, address: n.address, port: n.port, enabled: !!n.enabled, password: "", rewrites: (n.rewrites || []).slice(), has_password: !!n.has_password })),
+    ysfgw: ysfgwFrom(c.ysf || {}),
   };
   dirty = new Set();
   refreshActions();
+}
+
+function ysfgwFrom(y) {
+  return {
+    suffix: y.suffix || "RPT", startup: y.startup || "",
+    wiresx_passthrough: !!y.wiresx_passthrough, wiresx_make_upper: !!y.wiresx_make_upper,
+    reconnect: !!y.reconnect, revert: !!y.revert, inactivity_timeout: y.inactivity_timeout || "30",
+    ysf_network: !!y.ysf_network, fcs_network: !!y.fcs_network, aprs: !!y.aprs,
+  };
 }
 
 // cleanNet strips UI-only fields before sending to the store (which rejects
@@ -164,12 +176,36 @@ function panelPending(what) {
   return note(`<b>${esc(what)}</b> settings aren't wired yet — a later slice of the configuration store (<a href="https://github.com/KN4OQW/waypoint/issues/1">waypoint#1</a>).`);
 }
 
+function panelYSF() {
+  // Startup reflector picker: a datalist over the fetched hostlist so the user
+  // can type-filter YSF reflectors / FCS rooms while still allowing a raw id.
+  const opts = ysfRefs.map((r) => `<option value="${esc(r.name)}">${esc([r.country, r.description].filter(Boolean).join(" · "))}</option>`).join("");
+  const startup = (edit.ysfgw || {}).startup || "";
+  const gateway = card("GATEWAY",
+    toggle("modes", "ysf", "System Fusion", "ENABLED", "DISABLED") +
+    input("ysfgw", "suffix", { label: "Suffix (RPT/ND)" }) +
+    row("Startup reflector", `<input data-sec="ysfgw" data-key="startup" list="ysf-refs" value="${esc(startup)}" placeholder="e.g. FCS00290 or a YSF reflector"><datalist id="ysf-refs">${opts}</datalist>`) +
+    input("ysfgw", "inactivity_timeout", { label: "Inactivity revert", unit: "min" }));
+  const behaviour = card("BEHAVIOUR",
+    toggleRow("ysfgw", "wiresx_passthrough", "Wires-X passthrough (advanced — leave off for local control)") +
+    toggleRow("ysfgw", "wiresx_make_upper", "Wires-X uppercase") +
+    toggleRow("ysfgw", "revert", "Revert to startup on inactivity") +
+    toggleRow("ysfgw", "reconnect", "Reconnect on link loss"));
+  const networks = card("REFLECTOR NETWORKS",
+    toggleRow("ysfgw", "ysf_network", "YSF reflector network") +
+    toggleRow("ysfgw", "fcs_network", "FCS room network") +
+    toggleRow("ysfgw", "aprs", "APRS position beacon"));
+  const hint = ysfRefs.length ? "" : note("Reflector list not loaded yet (fetched from the YSF register on a schedule). You can still type a reflector id above.");
+  return `<div class="grid2">${gateway}<div class="stack">${behaviour}${networks}</div></div>${hint}`;
+}
+
 function renderPanel() {
   const c = state.config || {};
   const box = document.getElementById("panels");
   switch (state.tab) {
     case "general":      box.innerHTML = panelGeneral(); break;
     case "dmr":          box.innerHTML = panelDmr(); break;
+    case "ysf":          box.innerHTML = panelYSF(); break;
     case "modes":        box.innerHTML = panelModes(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
@@ -309,6 +345,11 @@ async function load() {
   buildEdit(state.config);
   renderStatus();
   renderPanel();
+  // Reflector list loads lazily; refresh the YSF panel if it's showing.
+  try {
+    ysfRefs = await fetch("/api/ysf/reflectors").then((r) => r.json());
+    if (state.tab === "ysf") renderPanel();
+  } catch { /* offline — the picker still accepts a typed id */ }
 }
 
 // text edits update the working copy; toggles flip a bool and re-render.
