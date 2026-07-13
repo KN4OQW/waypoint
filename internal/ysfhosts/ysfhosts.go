@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -31,9 +32,38 @@ type hostsDoc struct {
 	Reflectors []Reflector `json:"reflectors"`
 }
 
+// upperNames uppercases each reflector's "name" while preserving every other
+// field of the record (designator, ipv4, port, …) so the gateways still get a
+// complete hostlist. This is the WPSD "UPPERCASE Hostfiles" transform — a
+// fetch-time rewrite, not a daemon INI key. A parse failure returns the bytes
+// unchanged: never corrupt the cached list over a cosmetic option.
+func upperNames(body []byte) []byte {
+	var doc map[string]any
+	if json.Unmarshal(body, &doc) != nil {
+		return body
+	}
+	refs, ok := doc["reflectors"].([]any)
+	if !ok {
+		return body
+	}
+	for _, r := range refs {
+		if m, ok := r.(map[string]any); ok {
+			if n, ok := m["name"].(string); ok {
+				m["name"] = strings.ToUpper(n)
+			}
+		}
+	}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
 // Fetch downloads the hostlist to path atomically (temp + rename). A failed
-// fetch leaves any previously-cached file intact.
-func Fetch(ctx context.Context, url, path string) error {
+// fetch leaves any previously-cached file intact. When upper is set the
+// reflector names are uppercased before caching (WPSD "UPPERCASE Hostfiles").
+func Fetch(ctx context.Context, url, path string, upper bool) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -50,6 +80,9 @@ func Fetch(ctx context.Context, url, path string) error {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
 		return err
+	}
+	if upper {
+		body = upperNames(body)
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".ysfhosts-*.tmp")
 	if err != nil {
@@ -92,10 +125,13 @@ func Reflectors(path string) ([]Reflector, error) {
 
 // Run fetches the hostlist once at startup and then every interval until ctx is
 // canceled. Fetch failures are logged, not fatal — a hotspot may be briefly
-// offline, and the cached file keeps working.
-func Run(ctx context.Context, url, path string, interval time.Duration) {
+// offline, and the cached file keeps working. upper is read each cycle so
+// toggling "UPPERCASE Hostfiles" takes effect on the next refresh; nil means
+// never uppercase.
+func Run(ctx context.Context, url, path string, interval time.Duration, upper func() bool) {
 	fetch := func() {
-		if err := Fetch(ctx, url, path); err != nil {
+		up := upper != nil && upper()
+		if err := Fetch(ctx, url, path, up); err != nil {
 			log.Printf("ysfhosts: fetch failed (using cached list if present): %v", err)
 		} else {
 			log.Printf("ysfhosts: updated %s", path)

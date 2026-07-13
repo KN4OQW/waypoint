@@ -96,6 +96,8 @@ function ysfgwFrom(y) {
     wiresx_passthrough: !!y.wiresx_passthrough,
     revert: !!y.revert, inactivity_timeout: y.inactivity_timeout || "30",
     ysf_network: !!y.ysf_network, fcs_network: !!y.fcs_network, aprs: !!y.aprs,
+    enable_dgid: !!y.enable_dgid, ycs_network: !!y.ycs_network,
+    upper_hostfiles: !!y.upper_hostfiles,
   };
 }
 
@@ -423,8 +425,15 @@ function panelYSF() {
     toggleRow("ysfgw", "ysf_network", "YSF reflector network") +
     toggleRow("ysfgw", "fcs_network", "FCS room network") +
     toggleRow("ysfgw", "aprs", "APRS position beacon"));
+  // DG-ID gateway: swaps YSFGateway for DGIdGateway (mutually exclusive daemons).
+  // With it on, the startup reflector links via a DG-ID (YCS network) and the
+  // radio's Wires-X gateway sits on DG-ID 0.
+  const dgid = card("DG-ID GATEWAY",
+    toggleRow("ysfgw", "enable_dgid", "Use DGIdGateway (DG-ID addressed) instead of YSFGateway") +
+    toggleRow("ysfgw", "ycs_network", "Link the startup reflector as a DG-ID network (YCS)") +
+    toggleRow("ysfgw", "upper_hostfiles", "UPPERCASE reflector names in the hostlist"));
   const hint = ysfRefs.length ? "" : note("Reflector list not loaded yet (fetched from the YSF register on a schedule). You can still type a reflector id above.");
-  return `<div class="grid2">${gateway}<div class="stack">${behaviour}${networks}</div></div>${hint}`;
+  return `<div class="grid2">${gateway}<div class="stack">${behaviour}${networks}${dgid}</div></div>${hint}`;
 }
 
 function panelP25() {

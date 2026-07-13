@@ -7,29 +7,78 @@ import (
 	"strings"
 )
 
-// WriteFiles renders the model and writes both INI files atomically (write to a
+// Paths locates where each daemon reads its generated INI. The server wires
+// these from flags and hands them to RenderTargets. A new mode adds a field
+// here and one entry in RenderTargets — the apply path never changes (issue
+// #21 gateway-plugin seam).
+type Paths struct {
+	MMDVM        string
+	DMRGateway   string
+	YSFGateway   string
+	DGIdGateway  string // alternative YSF gateway; rendered here only when YSFGW.EnableDGId
+	P25Gateway   string
+	NXDNGateway  string
+	DStarGateway string
+	M17Gateway   string
+}
+
+// systemd units restarted when a target's file changes. Each render target
+// owns its unit name, so adding a mode does not touch the apply code.
+const (
+	unitMMDVM        = "waypoint-mmdvm.service"
+	unitDMRGateway   = "waypoint-dmrgateway.service"
+	unitYSFGateway   = "waypoint-ysfgateway.service"
+	unitDGIdGateway  = "waypoint-dgidgateway.service" // mutually exclusive with YSFGateway (systemd Conflicts=)
+	unitP25Gateway   = "waypoint-p25gateway.service"
+	unitNXDNGateway  = "waypoint-nxdngateway.service"
+	unitDStarGateway = "waypoint-dstargateway.service"
+	unitM17Gateway   = "waypoint-m17gateway.service"
+)
+
+// RenderTarget ties one generated INI to the daemon unit that consumes it and
+// the pure function that produces it. A mode contributes its own target rather
+// than editing the apply loop — this is issue #21's gateway-plugin seam.
+type RenderTarget struct {
+	Path   string              // where the daemon reads its INI
+	Unit   string              // systemd unit to restart when this file changes
+	Render func(*Model) string // pure renderer for this file
+}
+
+// RenderTargets is the ordered registry of every generated file. MMDVM-Host and
+// DMRGateway lead; each later mode appends its own entry. The order fixes both
+// the write order and the restart order, so it must not change casually.
+//
+// The System Fusion slot is the one conditional target: YSFGateway and
+// DGIdGateway share MMDVM-Host's 3200/4200 loopback and cannot run at once, so
+// EnableDGId swaps the whole target — file, unit, and renderer — rather than
+// adding a second one. The apply loop then restarts exactly one YSF unit; the
+// deploy's systemd Conflicts= between the two units stops the other daemon.
+func (m *Model) RenderTargets(paths Paths) []RenderTarget {
+	ysf := RenderTarget{Path: paths.YSFGateway, Unit: unitYSFGateway, Render: (*Model).RenderYSFGateway}
+	if m.YSFGW.EnableDGId {
+		ysf = RenderTarget{Path: paths.DGIdGateway, Unit: unitDGIdGateway, Render: (*Model).RenderDGIdGateway}
+	}
+	return []RenderTarget{
+		{Path: paths.MMDVM, Unit: unitMMDVM, Render: (*Model).RenderMMDVM},
+		{Path: paths.DMRGateway, Unit: unitDMRGateway, Render: (*Model).RenderDMRGateway},
+		ysf,
+		{Path: paths.P25Gateway, Unit: unitP25Gateway, Render: (*Model).RenderP25Gateway},
+		{Path: paths.NXDNGateway, Unit: unitNXDNGateway, Render: (*Model).RenderNXDNGateway},
+		{Path: paths.DStarGateway, Unit: unitDStarGateway, Render: (*Model).RenderDStarGateway},
+		{Path: paths.M17Gateway, Unit: unitM17Gateway, Render: (*Model).RenderM17Gateway},
+	}
+}
+
+// WriteFiles renders every target and writes its INI atomically (write to a
 // temp file in the same directory, then rename). A crash mid-apply therefore
 // never leaves a daemon reading a half-written config.
-func (m *Model) WriteFiles(mmdvmPath, dmrgatewayPath, ysfgatewayPath, p25gatewayPath, nxdngatewayPath, dstargatewayPath, m17gatewayPath string) error {
-	if err := writeAtomic(mmdvmPath, m.RenderMMDVM()); err != nil {
-		return err
+func (m *Model) WriteFiles(paths Paths) error {
+	for _, t := range m.RenderTargets(paths) {
+		if err := writeAtomic(t.Path, t.Render(m)); err != nil {
+			return err
+		}
 	}
-	if err := writeAtomic(dmrgatewayPath, m.RenderDMRGateway()); err != nil {
-		return err
-	}
-	if err := writeAtomic(ysfgatewayPath, m.RenderYSFGateway()); err != nil {
-		return err
-	}
-	if err := writeAtomic(p25gatewayPath, m.RenderP25Gateway()); err != nil {
-		return err
-	}
-	if err := writeAtomic(nxdngatewayPath, m.RenderNXDNGateway()); err != nil {
-		return err
-	}
-	if err := writeAtomic(dstargatewayPath, m.RenderDStarGateway()); err != nil {
-		return err
-	}
-	return writeAtomic(m17gatewayPath, m.RenderM17Gateway())
+	return nil
 }
 
 func writeAtomic(path, content string) error {
@@ -335,6 +384,127 @@ const (
 	ysfHostsPath = "/home/pi-star/waypoint/etc/YSFHosts.json"
 	fcsRoomsPath = "/home/pi-star/waypoint/etc/FCSRooms.txt"
 )
+
+// DGIdGateway-internal loopback ports for its per-DG-ID network blocks (from the
+// pinned DGIdGateway.ini sample). These are private to DGIdGateway and only bind
+// while it runs (YSFGateway is stopped then), so they never clash. DG-ID 0 MUST
+// be the local Wires-X gateway or the radio's Wires-X buttons return NONE.
+const (
+	dgidGatewayPort  = "42025" // [DGId=0] Type=Gateway (Wires-X) remote port
+	dgidGatewayLocal = "42026" // [DGId=0] local port
+	dgidParrotPort   = "42012" // [DGId=1] Type=Parrot (local echo) remote port
+	dgidParrotLocal  = "42013" // [DGId=1] local port
+	dgidStartupDGId  = "5"     // [DGId=5] the auto-linked startup reflector (YCSNetwork)
+	dgidStartupLocal = "42030" // [DGId=5] local port
+)
+
+// ysfStartupType classifies a startup reflector/room id for a DGIdGateway network
+// block: an FCS room (e.g. FCS00290) is Type=FCS, anything else Type=YSF (the
+// YCS/networked-reflector case). Mirrors how YSFGateway itself dispatches Startup.
+func ysfStartupType(startup string) string {
+	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(startup)), "FCS") {
+		return "FCS"
+	}
+	return "YSF"
+}
+
+// RenderDGIdGateway renders a complete DGIdGateway.ini from the model. DGIdGateway
+// is the DG-ID-addressed alternative to YSFGateway (WPSD "DG-ID Gateway"): it
+// binds MMDVM-Host's same 3200/4200 loopback (so it is rendered only when
+// EnableDGId, replacing the YSFGateway target). It is MQTT-era like YSFGateway
+// (Name=dgid-gateway on the data plane). Callsign/frequencies come from the
+// shared station config; the reflector hostlist is the same managed YSFHosts.json.
+//
+// The DG-ID table is generated, not hand-edited: DG-ID 0 is the local Wires-X
+// gateway (required), DG-ID 1 the local Parrot, and — when YCSNetwork is on and a
+// startup reflector is set — DG-ID 5 auto-links that reflector/room. Every key
+// here is one the pinned DGIdGateway Conf.cpp (@ 2b480aa) actually parses.
+func (m *Model) RenderDGIdGateway() string {
+	var b strings.Builder
+	b.WriteString(generatedHeader)
+
+	sect(&b, "General",
+		kv("Callsign", m.General.Callsign),
+		kv("Suffix", def(m.YSFGW.Suffix, "RPT")),
+		kv("Id", m.General.ID),
+		kv("RptAddress", "127.0.0.1"),
+		kv("RptPort", ysfMMDVMLocalPort),
+		kv("LocalAddress", "127.0.0.1"),
+		kv("LocalPort", ysfMMDVMGatewayPort),
+		kv("RFHangTime", "120"),
+		kv("NetHangTime", "120"),
+		kv("Bleep", "1"),
+		kv("Debug", "0"),
+		kv("Daemon", "0"),
+	)
+	sect(&b, "Info",
+		kv("RXFrequency", m.Modem.RXFreqHz),
+		kv("TXFrequency", m.Modem.TXFreqHz),
+		kv("Power", def(m.General.Power, "1")),
+		kv("Description", def(m.General.Location, "Waypoint")),
+	)
+	sect(&b, "Log",
+		kv("MQTTLevel", "1"),
+		kv("DisplayLevel", "0"),
+	)
+	sect(&b, "APRS",
+		kb("Enable", m.YSFGW.APRS),
+		kv("Suffix", "Y"),
+	)
+	sect(&b, "MQTT",
+		kv("Address", "127.0.0.1"),
+		kv("Port", "1883"),
+		kv("Keepalive", "60"),
+		kv("Auth", "0"),
+		kv("Name", "dgid-gateway"),
+	)
+	// [YSF Network] carries the shared hostlist; [FCS Network] has no room-file
+	// key (DGIdGateway resolves FCS rooms by Name in the DG-ID blocks below).
+	sect(&b, "YSF Network",
+		kv("Hosts", ysfHostsPath),
+		kv("RFHangTime", "120"),
+		kv("NetHangTime", "60"),
+		kv("Debug", "0"),
+	)
+	sect(&b, "FCS Network",
+		kv("RFHangTime", "120"),
+		kv("NetHangTime", "60"),
+		kv("Debug", "0"),
+	)
+	// DG-ID 0: the local Wires-X gateway (mandatory). DG-ID 1: local Parrot echo.
+	sect(&b, "DGId=0",
+		kv("Type", "Gateway"),
+		kv("Static", "1"),
+		kv("Address", "127.0.0.1"),
+		kv("Port", dgidGatewayPort),
+		kv("Local", dgidGatewayLocal),
+		kv("Debug", "0"),
+	)
+	sect(&b, "DGId=1",
+		kv("Type", "Parrot"),
+		kv("Static", "0"),
+		kv("Address", "127.0.0.1"),
+		kv("Port", dgidParrotPort),
+		kv("Local", dgidParrotLocal),
+		kv("Debug", "0"),
+	)
+	// YCSNetwork: bind the startup reflector/room to a static DG-ID so the node
+	// auto-links it. Type follows the id (FCS room vs YSF/YCS reflector); the
+	// daemon resolves Address/Port from the hostlist, so only Name/Local are set.
+	if m.YSFGW.YCSNetwork && strings.TrimSpace(m.YSFGW.Startup) != "" {
+		sect(&b, "DGId="+dgidStartupDGId,
+			kv("Type", ysfStartupType(m.YSFGW.Startup)),
+			kv("Static", "1"),
+			kv("Name", m.YSFGW.Startup),
+			kv("Local", dgidStartupLocal),
+			kv("Debug", "0"),
+		)
+	}
+	sect(&b, "GPSD",
+		kv("Enable", "0"),
+	)
+	return b.String()
+}
 
 // Managed paths for P25Gateway. The pinned P25Gateway parses P25Hosts as JSON
 // (data["reflectors"], each with designator/port/ipv4). Audio holds the spoken

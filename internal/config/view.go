@@ -93,6 +93,9 @@ type ViewYSF struct {
 	YSFNetwork        bool   `json:"ysf_network"`
 	FCSNetwork        bool   `json:"fcs_network"`
 	APRS              bool   `json:"aprs"`
+	EnableDGId        bool   `json:"enable_dgid"`
+	YCSNetwork        bool   `json:"ycs_network"`
+	UpperHostfiles    bool   `json:"upper_hostfiles"`
 }
 
 type Sources struct {
@@ -213,6 +216,9 @@ func (m *Model) View(storePath string) *View {
 		YSFNetwork:        m.YSFGW.YSFNetwork,
 		FCSNetwork:        m.YSFGW.FCSNetwork,
 		APRS:              m.YSFGW.APRS,
+		EnableDGId:        m.YSFGW.EnableDGId,
+		YCSNetwork:        m.YSFGW.YCSNetwork,
+		UpperHostfiles:    m.YSFGW.UpperHostfiles,
 	}
 	v.P25 = ViewP25{
 		Enable:           m.Modes.P25,

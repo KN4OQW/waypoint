@@ -20,18 +20,19 @@ func Import(mmdvmPath, dmrgatewayPath string) (*Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", dmrgatewayPath, err)
 	}
-	// No YSFGateway/P25Gateway/NXDNGateway/dstargateway.cfg/M17Gateway.ini exists
-	// at seed time (waypointd creates them); those sections get defaults.
-	// yg/pg/ng/xg/mg are non-nil only in the round-trip harness.
-	return fromINI(mm, dg, nil, nil, nil, nil, nil), nil
+	// No YSFGateway/DGIdGateway/P25Gateway/NXDNGateway/dstargateway.cfg/M17Gateway.ini
+	// exists at seed time (waypointd creates them); those sections get defaults.
+	// yg/dgid/pg/ng/xg/mg are non-nil only in the round-trip harness.
+	return fromINI(mm, dg, nil, nil, nil, nil, nil, nil), nil
 }
 
 // fromINI builds a Model from already-parsed INIs. Shared by Import (from disk)
 // and the round-trip harness (render → parse → fromINI, all in memory). The
-// gateway INIs yg (YSFGateway), pg (P25Gateway), ng (NXDNGateway), xg
-// (dstargateway.cfg) and mg (M17Gateway) may be nil, in which case their
-// sections take their defaults.
-func fromINI(mm, dg, yg, pg, ng, xg, mg *INI) *Model {
+// gateway INIs yg (YSFGateway), dgid (DGIdGateway), pg (P25Gateway), ng
+// (NXDNGateway), xg (dstargateway.cfg) and mg (M17Gateway) may be nil, in which
+// case their sections take their defaults. When dgid is non-nil the System
+// Fusion config is read from it (the DG-ID daemon) instead of yg.
+func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg *INI) *Model {
 	m := &Model{
 		General: General{
 			Callsign:    mm.Get("General", "Callsign"),
@@ -91,7 +92,7 @@ func fromINI(mm, dg, yg, pg, ng, xg, mg *INI) *Model {
 			RemoteGateway: mm.Bool("System Fusion", "RemoteGateway"),
 			ModeHang:      orDefault(mm.Get("System Fusion", "ModeHang"), "20"),
 		},
-		YSFGW: ysfGatewayFromINI(yg),
+		YSFGW: ysfGatewayFromINI(yg, dgid),
 		P25: P25{
 			NAC:              orDefault(mm.Get("P25", "NAC"), "293"),
 			SelfOnly:         mm.Bool("P25", "SelfOnly"),
@@ -160,7 +161,8 @@ func m17GatewayFromINI(mg *INI) M17Gateway {
 
 // DefaultYSFGateway is the sane duplex default (suffix RPT, both reflector
 // networks on, no startup room). Used to seed a fresh store and to backfill the
-// section on a store created before YSF existed.
+// section on a store created before YSF existed. The DG-ID additions default off
+// (run the classic YSFGateway, no DG-ID daemon, no hostlist uppercasing).
 func DefaultYSFGateway() YSFGateway {
 	return YSFGateway{
 		// WiresXPassthrough MUST default off: with it on, YSFGateway does not
@@ -170,11 +172,17 @@ func DefaultYSFGateway() YSFGateway {
 		Suffix: "RPT", WiresXPassthrough: false,
 		Revert: true, InactivityTimeout: "30",
 		YSFNetwork: true, FCSNetwork: true, APRS: false,
+		EnableDGId: false, YCSNetwork: false, UpperHostfiles: false,
 	}
 }
 
-// ysfGatewayFromINI reads a YSFGateway.ini, or returns the defaults when yg is nil.
-func ysfGatewayFromINI(yg *INI) YSFGateway {
+// ysfGatewayFromINI reads the System Fusion gateway config. When dgid is non-nil
+// the node runs the DG-ID daemon, so it is read from DGIdGateway.ini; otherwise
+// from YSFGateway.ini (yg), or the defaults when both are nil.
+func ysfGatewayFromINI(yg, dgid *INI) YSFGateway {
+	if dgid != nil {
+		return dgidGatewayFromINI(dgid)
+	}
 	if yg == nil {
 		return DefaultYSFGateway()
 	}
@@ -188,6 +196,25 @@ func ysfGatewayFromINI(yg *INI) YSFGateway {
 		FCSNetwork:        yg.Bool("FCS Network", "Enable"),
 		APRS:              yg.Bool("APRS", "Enable"),
 	}
+}
+
+// dgidGatewayFromINI reconstructs the YSFGateway section from a DGIdGateway.ini:
+// EnableDGId is implied by the daemon's presence, and the startup reflector +
+// YCSNetwork flag are recovered from the generated static DG-ID network block
+// (DGId=5). DGIdGateway.ini does not carry the YSFGateway-only knobs
+// (WiresXPassthrough, Revert/InactivityTimeout, the YSF/FCS network enables), so
+// those keep their store defaults — the store, not the file, is authoritative for
+// the inactive daemon's settings (RFC-0001).
+func dgidGatewayFromINI(d *INI) YSFGateway {
+	g := DefaultYSFGateway()
+	g.EnableDGId = true
+	g.Suffix = orDefault(d.Get("General", "Suffix"), "RPT")
+	g.APRS = d.Bool("APRS", "Enable")
+	if name := d.Get("DGId="+dgidStartupDGId, "Name"); name != "" {
+		g.Startup = name
+		g.YCSNetwork = true
+	}
+	return g
 }
 
 // DefaultP25 is the MMDVM-Host [P25] default: NAC 293 (the common hex default),
