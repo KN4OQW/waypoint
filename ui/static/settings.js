@@ -274,7 +274,9 @@ function netOf(type) { return (edit.networks || []).find((n) => n.type === type)
 function ensureNet(type) {
   let n = netOf(type);
   if (!n) {
-    n = { name: type, type, address: "", port: type === "xlx" ? "62030" : "62031", primary: false,
+    // TGIF has a single fixed master (no dropdown); default its address.
+    const addr = type === "tgif" ? "tgif.network" : "";
+    n = { name: type, type, address: addr, port: type === "xlx" ? "62030" : "62031", primary: false,
           options: "", essid: "", enabled: false, password: "", has_password: false,
           auto_rewrite: type === "custom", tg_list_file: "", xlx_startup: "", xlx_module: "", xlx_slot: "2", rewrites: [] };
     (edit.networks = edit.networks || []).push(n);
@@ -311,61 +313,47 @@ function sectionHead(title, type, n) {
 
 function panelBrandmeister() {
   const d = edit.dmr || (edit.dmr = {});
-  const bm = netOf("brandmeister"), dp = netOf("dmrplus"), cu = netOf("custom"), sx = netOf("systemx"), tg = netOf("tgif"), xl = netOf("xlx");
+  const bm = netOf("brandmeister"), dp = netOf("dmrplus"), sx = netOf("systemx"), tg = netOf("tgif"), xl = netOf("xlx");
   const primaryType = ((edit.networks || []).find((n) => n.primary) || {}).type || "brandmeister";
-  const masterSel = [["brandmeister", "Brandmeister"], ["dmrplus", "DMR+ / FreeDMR / ADN / HBlink"], ["systemx", "SystemX"], ["tgif", "TGIF"]]
+  const masterSel = [["brandmeister", "Brandmeister"], ["dmrplus", "DMR+ / FreeDMR / ADN / HBlink Network"], ["systemx", "SystemX"], ["tgif", "TGIF"]]
     .map(([v, l]) => `<option value="${v}"${v === primaryType ? " selected" : ""}>${l}</option>`).join("");
 
   const master = `<section class="card">
-      <div class="card-head"><span class="sq"></span><span class="t">DMR MASTER</span></div>
+      <div class="card-head"><span class="sq"></span><span class="t">DMR Master</span></div>
       ${row("DMR Master", `<select data-dmrprimary>${masterSel}</select>`)}
-      ${note("Your primary DMR network — the catch-all with no dial prefix. Alternate networks below are reached by their prefix (BM 2, DMR+ 8, SystemX 4, TGIF 5).")}
     </section>`;
 
   const bmSec = `<section class="card">
-      ${sectionHead("BRANDMEISTER NETWORK", "brandmeister", bm)}
+      ${sectionHead("BrandMeister Network Settings", "brandmeister", bm)}
       ${row("BrandMeister Master", masterSelect("brandmeister", "brandmeister", bm))}
-      ${row("BM Hotspot Security", `<input data-netf="brandmeister" data-nkey="password" type="password" value="${esc(bm ? bm.password || "" : "")}" placeholder="${bm && bm.has_password ? "•••••• unchanged" : "BM Self Care password"}">`)}
-      ${row("ESSID", essidSelect("brandmeister", bm))}
+      ${row("BM Hotspot Security", `<input data-netf="brandmeister" data-nkey="password" type="password" value="${esc(bm ? bm.password || "" : "")}" placeholder="${bm && bm.has_password ? "•••••• unchanged" : ""}">`)}
+      ${row("BrandMeister Network ESSID", essidSelect("brandmeister", bm))}
     </section>`;
 
   const dpSec = `<section class="card">
-      ${sectionHead("DMR+ / FreeDMR / ADN / HBlink", "dmrplus", dp)}
+      ${sectionHead("DMR+ / FreeDMR / ADN / HBlink Network Settings", "dmrplus", dp)}
       ${row("DMR Master", masterSelect("dmrplus", "dmrplus", dp))}
-      ${row("Network Options", netField("dmrplus", "options", dp, "Options= for this host"))}
+      ${row("Network Options", netField("dmrplus", "options", dp, ""))}
       ${row("ESSID", essidSelect("dmrplus", dp))}
     </section>`;
 
-  const cuSec = `<section class="card">
-      ${sectionHead("CUSTOM DMR NETWORK", "custom", cu)}
-      ${row("Server Name", netField("custom", "name", cu, "readable name"))}
-      ${row("Server Address", netField("custom", "address", cu, "host or IP"))}
-      ${row("Port", netField("custom", "port", cu, "62031"))}
-      ${row("Password", `<input data-netf="custom" data-nkey="password" type="password" value="${esc(cu ? cu.password || "" : "")}" placeholder="${cu && cu.has_password ? "•••••• unchanged" : "network password"}">`)}
-      ${row("ESSID", essidSelect("custom", cu))}
-      ${row("Network Options", netField("custom", "options", cu, "Options= for this host"))}
-      ${row("TG List File", netField("custom", "tg_list_file", cu, "auto (leave blank)"))}
-      <div class="toggle-row"><span class="name">Automatic Rewrite Rules</span><span class="pill ${cu && cu.auto_rewrite ? "on" : "off"}" data-netbool="custom" data-nbkey="auto_rewrite" style="cursor:pointer;">${cu && cu.auto_rewrite ? "ON" : "OFF"}</span></div>
-    </section>`;
-
   const sxSec = `<section class="card">
-      ${sectionHead("SYSTEMX NETWORK", "systemx", sx)}
+      ${sectionHead("SystemX Network Settings", "systemx", sx)}
       ${row("SystemX Master", masterSelect("systemx", "systemx", sx))}
-      ${row("Network Options", netField("systemx", "options", sx, "Options= for this host"))}
+      ${row("Network Options", netField("systemx", "options", sx, ""))}
       ${row("ESSID", essidSelect("systemx", sx))}
     </section>`;
 
   const tgSec = `<section class="card">
-      ${sectionHead("TGIF NETWORK", "tgif", tg)}
-      ${row("TGIF Master", masterSelect("tgif", "tgif", tg))}
-      ${row("TGIF Security Key", `<input data-netf="tgif" data-nkey="password" type="password" value="${esc(tg ? tg.password || "" : "")}" placeholder="${tg && tg.has_password ? "•••••• unchanged" : "TGIF Self Care key"}">`)}
+      ${sectionHead("TGIF Network Settings", "tgif", tg)}
+      ${row("TGIF Security Key", `<input data-netf="tgif" data-nkey="password" type="password" value="${esc(tg ? tg.password || "" : "")}" placeholder="${tg && tg.has_password ? "•••••• unchanged" : ""}">`)}
       ${row("ESSID", essidSelect("tgif", tg))}
     </section>`;
 
   const xlSec = `<section class="card">
-      ${sectionHead("XLX NETWORK", "xlx", xl)}
-      ${row("XLX Startup TG", netField("xlx", "xlx_startup", xl, "reflector number, e.g. 950"))}
-      ${row("XLX Startup Module", netField("xlx", "xlx_module", xl, "A–Z (blank = host default)"))}
+      ${sectionHead("XLX Network Settings", "xlx", xl)}
+      ${row("XLX Startup TG", netField("xlx", "xlx_startup", xl, ""))}
+      ${row("XLX Startup Module", netField("xlx", "xlx_module", xl, ""))}
       ${row("Time Slot", slotSelect(xl && xl.xlx_slot, `data-netf="xlx" data-nkey="xlx_slot"`))}
     </section>`;
 
@@ -373,15 +361,14 @@ function panelBrandmeister() {
   let ccOpts = "";
   for (let i = 0; i <= 15; i++) ccOpts += `<option value="${i}"${String(i) === String(cc) ? " selected" : ""}>${i}</option>`;
   const general = `<section class="card">
-      <div class="card-head"><span class="sq"></span><span class="t">GENERAL DMR SETTINGS</span></div>
-      ${row("DMR Color Code", `<select data-sec="dmr" data-key="color_code">${ccOpts}</select>`)}
+      <div class="card-head"><span class="sq"></span><span class="t">General DMR Settings</span></div>
       <div class="toggle-row"><span class="name">DMR Roaming Beacon</span><span class="pill ${d.beacons ? "on" : "off"}" data-toggle="dmr.beacons" style="cursor:pointer;">${d.beacons ? "ON" : "OFF"}</span></div>
+      ${row("DMR Color Code", `<select data-sec="dmr" data-key="color_code">${ccOpts}</select>`)}
       <div class="toggle-row"><span class="name">DMR EmbeddedLCOnly</span><span class="pill ${d.embedded_lc_only ? "on" : "off"}" data-toggle="dmr.embedded_lc_only" style="cursor:pointer;">${d.embedded_lc_only ? "ON" : "OFF"}</span></div>
       <div class="toggle-row"><span class="name">DMR DumpTAData</span><span class="pill ${d.dump_ta_data ? "on" : "off"}" data-toggle="dmr.dump_ta_data" style="cursor:pointer;">${d.dump_ta_data ? "ON" : "OFF"}</span></div>
     </section>`;
 
-  const intro = note("<b>DMR Configuration</b> — mirrors the Pi-Star layout. Enable the networks you use; routing is generated on the node. The <b>DMR Master</b> is your primary (no prefix) catch-all — this is what makes the 9990 Parrot echo.");
-  return `${intro}<div class="stack">${master}${bmSec}${dpSec}${cuSec}${sxSec}${tgSec}${xlSec}${general}</div>${routingTable()}`;
+  return `<div class="stack">${master}${bmSec}${dpSec}${sxSec}${tgSec}${xlSec}${general}</div>${routingTable()}`;
 }
 
 // The talkgroup routing override table — "tie this dialed TG to this gateway".
@@ -403,7 +390,6 @@ function routingTable() {
   return `
     <div class="card" style="margin-top:16px;">
       <div class="route-title">TALKGROUP ROUTING</div>
-      ${note("Optional. Send a specific dialed talkgroup to a specific enabled network, overriding prefix/primary routing.")}
       ${body}
       <button class="btn ghost mini-btn" id="route-add"${nets.length ? "" : " disabled"}>+ ADD ROUTE</button>
     </div>`;
