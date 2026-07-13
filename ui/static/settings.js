@@ -150,6 +150,7 @@ function selectTab(id) {
 
 function renderThemes() {
   const box = document.getElementById("swatches");
+  box.innerHTML = ""; // re-render replaces the swatches instead of appending
   const cur = localStorage.getItem("wp-theme") || "phosphor";
   applyTheme(cur);
   THEMES.forEach((th) => {
