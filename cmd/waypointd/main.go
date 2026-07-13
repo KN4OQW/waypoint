@@ -16,6 +16,7 @@ import (
 
 	"github.com/KN4OQW/waypoint/internal/demo"
 	"github.com/KN4OQW/waypoint/internal/hub"
+	"github.com/KN4OQW/waypoint/internal/mqtt"
 	"github.com/KN4OQW/waypoint/ui"
 )
 
@@ -105,12 +106,27 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8073", "listen address for the API and UI")
 	demoMode := flag.Bool("demo", false, "publish synthetic traffic (no radio required); always labeled in /api/health")
+	broker := flag.String("mqtt-broker", "127.0.0.1:1883", "MMDVM-Host MQTT broker host:port (live mode)")
+	mqttName := flag.String("mqtt-name", "mmdvm", "MMDVM-Host [MQTT] Name (topic prefix)")
+	mqttUser := flag.String("mqtt-user", "", "MQTT username (optional)")
+	mqttPass := flag.String("mqtt-pass", "", "MQTT password (optional)")
 	flag.Parse()
 
 	s := &server{hub: hub.New(), demo: *demoMode, started: time.Now()}
 
 	if *demoMode {
 		go demo.Run(context.Background(), s.hub)
+	} else {
+		go func() {
+			if err := mqtt.Run(context.Background(), s.hub, mqtt.Options{
+				Broker:   *broker,
+				Name:     *mqttName,
+				Username: *mqttUser,
+				Password: *mqttPass,
+			}); err != nil {
+				log.Printf("mqtt bridge stopped: %v", err)
+			}
+		}()
 	}
 
 	mux := http.NewServeMux()
@@ -118,7 +134,7 @@ func main() {
 	mux.HandleFunc("/api/events", s.events)
 	mux.Handle("/", http.FileServerFS(ui.FS()))
 
-	mode := "live"
+	mode := "live, mqtt " + *broker
 	if *demoMode {
 		mode = "demo"
 	}
