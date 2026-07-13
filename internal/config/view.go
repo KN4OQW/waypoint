@@ -9,6 +9,7 @@ type View struct {
 	DMR      ViewDMR       `json:"dmr"`
 	Modes    []ViewMode    `json:"modes"`
 	Networks []ViewNetwork `json:"networks"`
+	Routes   []ViewRoute   `json:"routes"`
 	YSF      ViewYSF       `json:"ysf"`
 	P25      ViewP25       `json:"p25"`
 	NXDN     ViewNXDN      `json:"nxdn"`
@@ -127,13 +128,27 @@ type ViewMode struct {
 	Enabled bool   `json:"enabled"`
 }
 
+// ViewNetwork is the DMR-networks tab's read model. Routing is derived from
+// Type + Primary (WPSD-style generation), so no raw rewrite lines are exposed —
+// except Rewrites, which is populated only for a "custom" network (the advanced
+// escape hatch) and empty otherwise.
 type ViewNetwork struct {
-	Name        string   `json:"name"`
-	Address     string   `json:"address"`
-	Port        string   `json:"port"`
-	Enabled     bool     `json:"enabled"`
-	HasPassword bool     `json:"has_password"`
-	Rewrites    []string `json:"rewrites"` // not secret; editable
+	Name        string      `json:"name"`
+	Type        NetworkType `json:"type"`
+	Address     string      `json:"address"`
+	Port        string      `json:"port"`
+	Primary     bool        `json:"primary"`
+	Options     string      `json:"options"`
+	Enabled     bool        `json:"enabled"`
+	HasPassword bool        `json:"has_password"`
+	Rewrites    []string    `json:"rewrites"` // custom type only; not secret; editable
+}
+
+// ViewRoute is one row of the "tie this talkgroup to this gateway" table.
+type ViewRoute struct {
+	Slot    string `json:"slot"`
+	TG      string `json:"tg"`
+	Network string `json:"network"`
 }
 
 // modeDisplay maps a mode key to its display name and its Modes-struct value.
@@ -241,14 +256,23 @@ func (m *Model) View(storePath string) *View {
 		v.Modes = append(v.Modes, ViewMode{Key: md.key, Name: md.name, Enabled: md.get(m.Modes)})
 	}
 	for _, n := range m.Networks {
-		v.Networks = append(v.Networks, ViewNetwork{
+		vn := ViewNetwork{
 			Name:        n.Name,
+			Type:        n.Type,
 			Address:     n.Address,
 			Port:        n.Port,
+			Primary:     n.Primary,
+			Options:     n.Options,
 			Enabled:     n.Enabled,
 			HasPassword: n.Password != "",
-			Rewrites:    n.Rewrites,
-		})
+		}
+		if n.Type == NetCustom {
+			vn.Rewrites = n.Rewrites // raw lines only surface for the custom escape hatch
+		}
+		v.Networks = append(v.Networks, vn)
+	}
+	for _, r := range m.Routes {
+		v.Routes = append(v.Routes, ViewRoute{Slot: r.Slot, TG: r.TG, Network: r.Network})
 	}
 	return v
 }

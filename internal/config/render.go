@@ -688,18 +688,50 @@ func (m *Model) RenderDMRGateway() string {
 		kv("Name", "dmr-gateway"),
 	)
 
-	for i, n := range m.Networks {
-		lines := []string{
-			kv("Name", n.Name),
-			kv("Address", n.Address),
-			kv("Port", def(n.Port, "62031")),
-			kv("Password", n.Password),
-			kv("Id", m.DMR.ID),
-			kb("Enabled", n.Enabled),
-			kb("Debug", false),
+	dmrID := firstNonEmpty(m.DMR.ID, m.General.ID)
+	n := 0
+	for _, net := range m.Networks {
+		if net.Type == NetXLX {
+			// XLX talks over a dedicated [XLX Network] section, not a DMR Network
+			// block. Address holds the startup reflector number, Options the
+			// startup module letter (see the model doc). WPSD template values.
+			sect(&b, "XLX Network",
+				kb("Enabled", net.Enabled),
+				kv("Startup", net.Address),
+				kv("File", "/usr/local/etc/XLXHosts.txt"),
+				kv("Port", def(net.Port, "62030")),
+				kv("Password", net.Password),
+				kv("ReloadTime", "60"),
+				kv("Slot", "2"),
+				kv("TG", "6"),
+				kv("Base", "64000"),
+				kv("Relink", "60"),
+				kb("Debug", false),
+				kv("Id", dmrID),
+				kv("UserControl", "1"),
+				kv("Module", def(net.Options, "A")),
+			)
+			continue
 		}
-		lines = append(lines, n.Rewrites...) // rewrites preserved verbatim, sorted at import
-		sect(&b, fmt.Sprintf("DMR Network %d", i+1), lines...)
+		n++
+		lines := []string{
+			kv("Name", net.Name),
+			kv("Address", net.Address),
+			kv("Port", def(net.Port, "62031")),
+			kv("Password", net.Password),
+			kv("Id", dmrID),
+		}
+		if strings.TrimSpace(net.Options) != "" {
+			lines = append(lines, kv("Options", net.Options))
+		}
+		if net.Primary {
+			lines = append(lines, kv("Location", "1"))
+		}
+		lines = append(lines, kb("Enabled", net.Enabled), kb("Debug", false))
+		// Routing generated from Type + Primary (mirrors WPSD); custom renders
+		// the operator's verbatim lines. DMRRoute overrides append as TGRewrites.
+		lines = append(lines, networkRewrites(net, m.Routes)...)
+		sect(&b, fmt.Sprintf("DMR Network %d", n), lines...)
 	}
 	return b.String()
 }

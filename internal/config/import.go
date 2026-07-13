@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -295,6 +296,13 @@ func dstarGatewayFromINI(xg *INI) DStarGateway {
 	}
 }
 
+// importNetworks seeds the network list from an existing DMRGateway.ini (one
+// time; the store is authoritative afterward). It classifies each network by
+// address/name and adopts the clean WPSD type only when the file's routing
+// already matches what Waypoint would regenerate — otherwise the operator's
+// verbatim lines are preserved as a "custom" network so no hand-tuned routing is
+// lost (best-effort + preserve). Per-TG DMRRoute overrides are a Waypoint-native
+// concept and are not reverse-engineered from the file.
 func importNetworks(dg *INI) []Network {
 	var nets []Network
 	for n := 1; n <= 8; n++ {
@@ -303,16 +311,90 @@ func importNetworks(dg *INI) []Network {
 		if addr == "" {
 			continue
 		}
-		nets = append(nets, Network{
-			Name:     firstNonEmpty(dg.Get(sec, "Name"), sec),
+		name := firstNonEmpty(dg.Get(sec, "Name"), sec)
+		raw := dg.Matching(sec, "Rewrite", "PassAll")
+		net := Network{
+			Name:     name,
 			Address:  addr,
 			Port:     orDefault(dg.Get(sec, "Port"), "62031"),
 			Password: dg.Get(sec, "Password"),
+			Options:  dg.Get(sec, "Options"),
 			Enabled:  dg.Get(sec, "Enabled") != "0",
-			Rewrites: dg.Matching(sec, "Rewrite", "PassAll"),
-		})
+			Primary:  len(dg.Matching(sec, "PassAll")) > 0,
+		}
+		if t := classifyNetwork(name, addr); t != NetCustom &&
+			sameRewrites(raw, networkRewrites(Network{Type: t, Primary: net.Primary}, nil)) {
+			net.Type = t // clean, standard routing → store as a typed network
+		} else {
+			net.Type = NetCustom // unrecognized or hand-tuned → preserve verbatim
+			net.Rewrites = raw
+		}
+		nets = append(nets, net)
+	}
+	if xlx := importXLX(dg); xlx != nil {
+		nets = append(nets, *xlx)
 	}
 	return nets
+}
+
+// classifyNetwork guesses a network's WPSD type from its name and address.
+// Custom hosts (FreeDMR/HB-Link and other DMR+-family servers) fold into
+// NetDMRPlus per the WPSD prefix table. NetCustom means "could not classify".
+func classifyNetwork(name, addr string) NetworkType {
+	s := strings.ToLower(name + " " + addr)
+	switch {
+	case strings.Contains(s, "brandmeister") || strings.Contains(s, "bm_"):
+		return NetBrandmeister
+	case strings.Contains(s, "tgif"):
+		return NetTGIF
+	case strings.Contains(s, "systemx") || strings.Contains(s, "system-x") || strings.Contains(s, "system_x"):
+		return NetSystemX
+	case strings.Contains(s, "dmr2ysf") || strings.Contains(s, "dmr2nxdn") || strings.Contains(s, "cross-over") || strings.Contains(s, "crossover"):
+		return NetDMR2YSF
+	case strings.Contains(s, "freedmr") || strings.Contains(s, "hblink") || strings.Contains(s, "hb-link") ||
+		strings.Contains(s, "dmrplus") || strings.Contains(s, "dmr+") || strings.Contains(s, "phoenix"):
+		return NetDMRPlus
+	default:
+		return NetCustom
+	}
+}
+
+// sameRewrites reports whether two rewrite-line sets are equal ignoring order
+// (dg.Matching returns them sorted; the generator returns them in template
+// order), so a standard file is recognized as its clean type.
+func sameRewrites(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	as := append([]string(nil), a...)
+	bs := append([]string(nil), b...)
+	sort.Strings(as)
+	sort.Strings(bs)
+	for i := range as {
+		if as[i] != bs[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// importXLX seeds an XLX network from the dedicated [XLX Network] section, if
+// present. The startup reflector number maps to Address, the module letter to
+// Options — the inverse of RenderDMRGateway's XLX block.
+func importXLX(dg *INI) *Network {
+	sec := "XLX Network"
+	if dg.Get(sec, "Startup") == "" && dg.Get(sec, "Module") == "" && dg.Get(sec, "Enabled") == "" {
+		return nil
+	}
+	return &Network{
+		Name:     "XLX",
+		Type:     NetXLX,
+		Address:  dg.Get(sec, "Startup"),
+		Port:     orDefault(dg.Get(sec, "Port"), "62030"),
+		Password: dg.Get(sec, "Password"),
+		Options:  dg.Get(sec, "Module"),
+		Enabled:  dg.Get(sec, "Enabled") != "0",
+	}
 }
 
 func orDefault(v, def string) string {
