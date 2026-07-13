@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/demo"
 	"github.com/KN4OQW/waypoint/internal/hub"
 	"github.com/KN4OQW/waypoint/internal/mqtt"
@@ -24,9 +25,19 @@ import (
 var Version = "dev"
 
 type server struct {
-	hub     *hub.Hub
-	demo    bool
-	started time.Time
+	hub      *hub.Hub
+	demo     bool
+	started  time.Time
+	mmdvmINI string
+	dmrgwINI string
+}
+
+// configView serves the node's real configuration for the settings page,
+// parsed live from the daemons' INI files. Read-only for now (see the
+// read_only flag) — the write path lands with the configuration store.
+func (s *server) configView(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(config.Read(s.mmdvmINI, s.dmrgwINI))
 }
 
 type healthResponse struct {
@@ -110,9 +121,11 @@ func main() {
 	mqttName := flag.String("mqtt-name", "mmdvm", "MMDVM-Host [MQTT] Name (topic prefix)")
 	mqttUser := flag.String("mqtt-user", "", "MQTT username (optional)")
 	mqttPass := flag.String("mqtt-pass", "", "MQTT password (optional)")
+	mmdvmINI := flag.String("mmdvm-ini", "/home/pi-star/waypoint/etc/MMDVM-Host.ini", "path to MMDVM-Host.ini (settings page reads it)")
+	dmrgwINI := flag.String("dmrgateway-ini", "/home/pi-star/waypoint/etc/DMRGateway.ini", "path to DMRGateway.ini (settings page reads it)")
 	flag.Parse()
 
-	s := &server{hub: hub.New(), demo: *demoMode, started: time.Now()}
+	s := &server{hub: hub.New(), demo: *demoMode, started: time.Now(), mmdvmINI: *mmdvmINI, dmrgwINI: *dmrgwINI}
 
 	if *demoMode {
 		go demo.Run(context.Background(), s.hub)
@@ -132,6 +145,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", s.health)
 	mux.HandleFunc("/api/events", s.events)
+	mux.HandleFunc("/api/config", s.configView)
 	mux.Handle("/", http.FileServerFS(ui.FS()))
 
 	mode := "live, mqtt " + *broker
