@@ -1,12 +1,14 @@
-// Waypoint settings page. Every value shown is read live from /api/config and
-// /api/health — nothing is hard-coded. The page is read-only for now: the write
-// path (regenerate INI, validate, restart) lands with the configuration store.
+// Waypoint settings page. Reads the node's config from /api/config (served from
+// the store) and writes edits back: PUT /api/config/{section} merges the changed
+// fields into the store, then POST /api/config/apply regenerates the daemons'
+// INIs and restarts them. Values are never hard-coded and never patched into
+// INIs — the store is authoritative (RFC-0001).
 
 const TABS = [
   { id: "general",      tag: "RF", label: "General",      sub: "Radio & Station",     crumb: "SYSTEM / GENERAL",        title: "General Configuration", desc: "Station identity, operating frequencies and modem hardware for this hotspot node." },
   { id: "brandmeister", tag: "BM", label: "BrandMeister", sub: "Network & Security",   crumb: "NETWORKS / BRANDMEISTER", title: "DMR Networks",          desc: "Master servers this node bridges DMR traffic to. Passwords are stored on the node and never shown." },
   { id: "dmr",          tag: "DM", label: "DMR",          sub: "Master & Slots",       crumb: "MODES / DMR",             title: "DMR Settings",          desc: "Color code and per-slot behaviour for Digital Mobile Radio." },
-  { id: "modes",        tag: "MD", label: "Modes",        sub: "Digital Modes",        crumb: "MODES / DIGITAL",         title: "Digital Mode Control",  desc: "Which digital voice / data modes MMDVM-Host is handling." },
+  { id: "modes",        tag: "MD", label: "Modes",        sub: "Digital Modes",        crumb: "MODES / DIGITAL",         title: "Digital Mode Control",  desc: "Which digital voice / data modes MMDVM-Host handles. Toggling one restarts the stack on Apply." },
   { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Bridges",   crumb: "BRIDGES / GATEWAYS",      title: "Cross-Mode Gateways",   desc: "Transcoding bridges between digital voice modes." },
   { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "SYSTEM / NETWORK",        title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
   { id: "expert",       tag: "SY", label: "Expert",       sub: "System & Config",      crumb: "SYSTEM / EXPERT",         title: "Expert & System",       desc: "Firmware versions and low-level configuration." },
@@ -19,111 +21,222 @@ const THEMES = [
 ];
 
 let state = { tab: "general", config: null, health: null };
+let edit = {};              // section -> {field: value} working copy
+let dirty = new Set();      // sections with unsaved changes
+let applying = false;
 
 const el = (t, cls, html) => { const e = document.createElement(t); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const mhz = (hz) => (hz ? (Number(hz) / 1e6).toFixed(6) : "");
 
-// --- field builders ------------------------------------------------------
+// --- edit state ----------------------------------------------------------
+// Built from the redacted view; fields map to the store's typed sections. The
+// General tab spans two sections (general + modem), so edits route accordingly.
+function buildEdit(c) {
+  const g = c.general || {}, d = c.dmr || {};
+  edit = {
+    general: { callsign: g.callsign, id: g.dmr_id, duplex: !!g.duplex, power: g.power, location: g.location, url: g.url },
+    modem:   { rx_freq_hz: g.rx_freq_hz, tx_freq_hz: g.tx_freq_hz, port: g.modem_port, rx_offset: g.rx_offset, tx_offset: g.tx_offset },
+    dmr:     { color_code: d.color_code, id: d.id, embedded_lc_only: !!d.embedded_lc_only },
+    dmrnet:  { slot1: !!d.slot1, slot2: !!d.slot2 },
+    modes:   Object.fromEntries((c.modes || []).map((m) => [m.key, !!m.enabled])),
+    // password starts blank (blank = keep the stored one); has_password drives the placeholder.
+    networks: (c.networks || []).map((n) => ({ name: n.name, address: n.address, port: n.port, enabled: !!n.enabled, password: "", rewrites: (n.rewrites || []).slice(), has_password: !!n.has_password })),
+  };
+  dirty = new Set();
+  refreshActions();
+}
+
+// cleanNet strips UI-only fields before sending to the store (which rejects
+// unknown fields). A blank password means "keep the stored one".
+function cleanNet(n) {
+  return { name: n.name, address: n.address, port: n.port, enabled: !!n.enabled, password: n.password || "", rewrites: n.rewrites || [] };
+}
+
+function setField(sec, key, val) {
+  if (!edit[sec]) edit[sec] = {};
+  edit[sec][key] = val;
+  dirty.add(sec);
+  refreshActions();
+}
+
+// --- field builders (editable) -------------------------------------------
 function card(title, rowsHTML) {
   return `<div class="card"><div class="card-head"><span class="sq"></span><span class="t">${esc(title)}</span></div>${rowsHTML}</div>`;
 }
-function textRow(label, value, opts = {}) {
-  const cls = opts.accent ? "accent" : "";
-  return `<div class="row"><label>${esc(label)}</label><input class="${cls}" value="${esc(value)}" readonly></div>`;
+function row(label, inner) {
+  return `<div class="row"><label>${esc(label)}</label>${inner}</div>`;
 }
-function unitRow(label, value, unit, opts = {}) {
+function input(sec, key, opts = {}) {
+  const raw = (edit[sec] || {})[key];
+  const disp = opts.kind === "mhz" ? mhz(raw) : (raw == null ? "" : raw);
   const cls = opts.accent ? "accent" : "";
-  return `<div class="row"><label>${esc(label)}</label><div class="unit"><input class="${cls}" value="${esc(value)}" readonly><span class="u">${esc(unit)}</span></div></div>`;
+  const inp = `<input class="${cls}" data-sec="${esc(sec)}" data-key="${esc(key)}" data-kind="${opts.kind || "str"}" value="${esc(disp)}">`;
+  if (opts.unit) return row(opts.label, `<div class="unit">${inp}<span class="u">${esc(opts.unit)}</span></div>`);
+  return row(opts.label, inp);
 }
-function toggleRow(name, on) {
-  return `<div class="toggle-row"><span class="name">${esc(name)}</span><span class="pill ${on ? "on" : "off"}">${on ? "ON" : "OFF"}</span></div>`;
+function toggle(sec, key, label, onTxt, offTxt) {
+  const on = !!(edit[sec] || {})[key];
+  const pill = `<span class="pill ${on ? "on" : "off"}" data-toggle="${esc(sec)}.${esc(key)}" style="cursor:pointer;">${on ? esc(onTxt || "ON") : esc(offTxt || "OFF")}</span>`;
+  return row(label, pill);
+}
+function toggleRow(sec, key, name) {
+  const on = !!(edit[sec] || {})[key];
+  return `<div class="toggle-row"><span class="name">${esc(name)}</span><span class="pill ${on ? "on" : "off"}" data-toggle="${esc(sec)}.${esc(key)}" style="cursor:pointer;">${on ? "ON" : "OFF"}</span></div>`;
 }
 function note(html) { return `<div class="note">${html}</div>`; }
 
-const mhz = (hz) => (hz ? (Number(hz) / 1e6).toFixed(6) : "");
-
-// --- per-tab panels ------------------------------------------------------
-function panelGeneral(c) {
-  const g = c.general || {};
+// --- panels --------------------------------------------------------------
+function panelGeneral() {
   const left = card("STATION IDENTITY",
-    textRow("Callsign", g.callsign) +
-    textRow("DMR ID", g.dmr_id) +
-    textRow("Location", g.location) +
-    textRow("Dashboard URL", g.url));
+    input("general", "callsign", { label: "Callsign" }) +
+    input("general", "id", { label: "DMR ID" }) +
+    input("general", "location", { label: "Location" }) +
+    input("general", "url", { label: "Dashboard URL" }));
   const radio = card("RADIO / FREQUENCY",
-    unitRow("RX Frequency", mhz(g.rx_freq_hz), "MHz", { accent: true }) +
-    unitRow("TX Frequency", mhz(g.tx_freq_hz), "MHz", { accent: true }) +
-    textRow("Modem Port", g.modem_port) +
-    unitRow("RF Power", g.power, "") +
-    `<div class="row"><label>Duplex</label><span class="pill ${g.duplex ? "on" : "off"}">${g.duplex ? "DUPLEX" : "SIMPLEX"}</span></div>`);
+    input("modem", "rx_freq_hz", { label: "RX Frequency", kind: "mhz", unit: "MHz", accent: true }) +
+    input("modem", "tx_freq_hz", { label: "TX Frequency", kind: "mhz", unit: "MHz", accent: true }) +
+    input("modem", "port", { label: "Modem Port" }) +
+    input("general", "power", { label: "RF Power", unit: "" }) +
+    toggle("general", "duplex", "Duplex", "DUPLEX", "SIMPLEX"));
   const cal = card("CALIBRATION",
-    textRow("RX Offset", g.rx_offset) +
-    textRow("TX Offset", g.tx_offset));
+    input("modem", "rx_offset", { label: "RX Offset" }) +
+    input("modem", "tx_offset", { label: "TX Offset" }));
   return `<div class="grid2">${left}<div class="stack">${radio}${cal}</div></div>`;
 }
 
-function panelBrandmeister(c) {
-  const nets = c.networks || [];
-  if (!nets.length) return note("No DMR networks found in the DMRGateway config.");
-  const cards = nets.map((n) => card(n.name,
-    `<div class="row"><label>State</label><span class="pill ${n.enabled ? "on" : "off"}">${n.enabled ? "ENABLED" : "DISABLED"}</span></div>` +
-    textRow("Server Address", n.address) +
-    textRow("Port", n.port) +
-    `<div class="row"><label>Password</label><input value="${n.has_password ? "••••••••••••" : ""}" readonly style="letter-spacing:2px;"></div>`)).join("");
-  return `<div class="grid2">${cards}</div>`;
-}
-
-function panelDmr(c) {
-  const d = c.dmr || {};
+function panelDmr() {
   const master = card("DMR MASTER",
-    `<div class="row"><label>Enabled</label><span class="pill ${d.enable ? "on" : "off"}">${d.enable ? "ON" : "OFF"}</span></div>` +
-    textRow("Color Code", d.color_code, { accent: true }) +
-    textRow("DMR ID", d.id));
+    toggle("modes", "dmr", "Enabled") +
+    input("dmr", "color_code", { label: "Color Code", accent: true }) +
+    input("dmr", "id", { label: "DMR ID" }));
   const slots = card("TIME SLOTS & ADVANCED",
-    toggleRow("Time Slot 1 Enabled", d.slot1) +
-    toggleRow("Time Slot 2 Enabled", d.slot2) +
-    toggleRow("Embedded LC Only", d.embedded_lc_only));
+    toggleRow("dmrnet", "slot1", "Time Slot 1 Enabled") +
+    toggleRow("dmrnet", "slot2", "Time Slot 2 Enabled") +
+    toggleRow("dmr", "embedded_lc_only", "Embedded LC Only"));
   return `<div class="grid2">${master}${slots}</div>`;
 }
 
-function panelModes(c) {
-  const modes = c.modes || [];
-  const cards = modes.map((m) => `
-    <div class="mode-card ${m.enabled ? "on" : ""}">
+function panelModes() {
+  const order = ["dstar", "dmr", "ysf", "p25", "nxdn", "m17", "pocsag", "fm"];
+  const names = { dstar: "D-Star", dmr: "DMR", ysf: "System Fusion", p25: "P25", nxdn: "NXDN", m17: "M17", pocsag: "POCSAG", fm: "FM" };
+  const cards = order.map((k) => {
+    const on = !!(edit.modes || {})[k];
+    return `
+    <div class="mode-card ${on ? "on" : ""}" data-toggle="modes.${k}" style="cursor:pointer;">
       <div class="mode-top">
-        <div><div class="mode-name">${esc(m.name)}</div><div class="mode-desc">${esc(m.key.toUpperCase())}</div></div>
+        <div><div class="mode-name">${esc(names[k])}</div><div class="mode-desc">${esc(k.toUpperCase())}</div></div>
         <div class="track"><div class="knob"></div></div>
       </div>
-      <div class="mode-foot"><span class="d"></span><span class="s">${m.enabled ? "ENABLED" : "DISABLED"}</span></div>
-    </div>`).join("");
+      <div class="mode-foot"><span class="d"></span><span class="s">${on ? "ENABLED" : "DISABLED"}</span></div>
+    </div>`;
+  }).join("");
   return `<div class="modes-grid">${cards}</div>`;
+}
+
+function panelBrandmeister() {
+  const nets = edit.networks || [];
+  const cards = nets.map((n, i) => `
+    <div class="card">
+      <div class="card-head">
+        <span class="sq"></span>
+        <input class="netname" data-net="${i}" data-nkey="name" value="${esc(n.name)}" placeholder="Network name">
+        <span class="pill ${n.enabled ? "on" : "off"}" data-nettoggle="${i}" style="cursor:pointer;">${n.enabled ? "ENABLED" : "DISABLED"}</span>
+        <button class="netdel" data-netdel="${i}" title="Remove network">✕</button>
+      </div>
+      ${row("Server Address", `<input data-net="${i}" data-nkey="address" value="${esc(n.address)}">`)}
+      ${row("Port", `<input data-net="${i}" data-nkey="port" value="${esc(n.port)}">`)}
+      ${row("Password", `<input data-net="${i}" data-nkey="password" type="password" value="${esc(n.password || "")}" placeholder="${n.has_password ? "•••••• unchanged" : "set password"}">`)}
+      ${row("Rewrites", `<textarea class="rewrites" data-net="${i}" data-nkey="rewrites" rows="4" placeholder="TGRewrite0=2,9,2,9,1">${esc((n.rewrites || []).join("\n"))}</textarea>`)}
+    </div>`).join("");
+  const empty = nets.length ? "" : note("No DMR networks. Add one to bridge this hotspot to BrandMeister, TGIF, FreeDMR, or an HBLink server.");
+  return `<div class="grid2">${cards}</div>${empty}<button class="btn ghost" id="net-add" style="margin-top:16px;">+ ADD NETWORK</button>`;
 }
 
 function panelExpert(c, h) {
   const rows = card("VERSIONS",
-    textRow("Dashboard (waypointd)", (h && h.version) || "—") +
-    textRow("MMDVM config", (c.sources && c.sources.mmdvm) || "—") +
-    textRow("DMRGateway config", (c.sources && c.sources.dmrgateway) || "—"));
-  return `<div class="grid2">${rows}${note("Raw INI editing, firmware, and power controls land with the configuration store. The store owns the schema so hand-editing keys (and its footguns) go away — <a href='https://github.com/KN4OQW/waypoint/issues/29'>waypoint#29</a>.")}</div>`;
+    `<div class="row"><label>Dashboard (waypointd)</label><input value="${esc((h && h.version) || "—")}" readonly></div>` +
+    `<div class="row"><label>Config store</label><input value="${esc((c.sources && c.sources.store) || "—")}" readonly></div>`);
+  return `<div class="grid2">${rows}${note("Raw INI editing and power controls land in a later slice. Config now lives in the store; the INIs are regenerated on Apply — <a href='https://github.com/KN4OQW/waypoint/issues/29'>waypoint#29</a>.")}</div>`;
 }
 
 function panelPending(what) {
-  return note(`<b>${esc(what)}</b> settings aren't wired yet. This tab lands with the configuration store — a schema-versioned model of every setting, with the INI files as compiled outputs. Tracked in <a href="https://github.com/KN4OQW/waypoint/issues/1">waypoint#1</a> and <a href="https://github.com/KN4OQW/waypoint/issues/29">waypoint#29</a>.`);
+  return note(`<b>${esc(what)}</b> settings aren't wired yet — a later slice of the configuration store (<a href="https://github.com/KN4OQW/waypoint/issues/1">waypoint#1</a>).`);
 }
 
 function renderPanel() {
   const c = state.config || {};
   const box = document.getElementById("panels");
   switch (state.tab) {
-    case "general":      box.innerHTML = panelGeneral(c); break;
-    case "brandmeister": box.innerHTML = panelBrandmeister(c); break;
-    case "dmr":          box.innerHTML = panelDmr(c); break;
-    case "modes":        box.innerHTML = panelModes(c); break;
+    case "general":      box.innerHTML = panelGeneral(); break;
+    case "dmr":          box.innerHTML = panelDmr(); break;
+    case "modes":        box.innerHTML = panelModes(); break;
+    case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
     case "gateways":     box.innerHTML = panelPending("Cross-mode gateway"); break;
     case "network":      box.innerHTML = panelPending("Network & Wi-Fi"); break;
     default:             box.innerHTML = "";
   }
+}
+
+// --- apply / reset -------------------------------------------------------
+function refreshActions() {
+  const has = dirty.size > 0 && !applying;
+  document.getElementById("btn-apply").disabled = !has;
+  document.getElementById("btn-reset").disabled = !has;
+  const badge = document.getElementById("ro-badge");
+  badge.textContent = dirty.size ? dirty.size + " UNSAVED" : "";
+  badge.classList.toggle("hide", dirty.size === 0);
+  badge.style.color = "var(--warn)";
+}
+
+function banner(msg, kind) {
+  let b = document.getElementById("save-banner");
+  if (!b) {
+    b = el("div");
+    b.id = "save-banner";
+    b.style.cssText = "margin:0 0 18px; padding:11px 14px; border-radius:8px; font-family:var(--mono); font-size:12px;";
+    document.getElementById("panels").before(b);
+  }
+  b.textContent = msg;
+  b.style.background = kind === "bad" ? "rgba(255,107,107,0.08)" : "var(--accent-soft)";
+  b.style.color = kind === "bad" ? "var(--bad)" : "var(--accent)";
+  b.style.border = "1px solid " + (kind === "bad" ? "rgba(255,107,107,0.4)" : "var(--accent)");
+  b.hidden = false;
+}
+
+async function apply() {
+  if (!dirty.size || applying) return;
+  applying = true;
+  const btn = document.getElementById("btn-apply");
+  btn.textContent = "APPLYING…";
+  refreshActions();
+  try {
+    for (const sec of dirty) {
+      const payload = sec === "networks" ? edit.networks.map(cleanNet) : edit[sec];
+      const r = await fetch("/api/config/" + sec, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!r.ok) throw new Error(sec + ": " + (await r.text()).trim());
+    }
+    const r = await fetch("/api/config/apply", { method: "POST" });
+    if (!r.ok) throw new Error("apply: " + (await r.text()).trim());
+    const j = await r.json();
+    applying = false;
+    await load();
+    banner("Applied — restarted " + ((j.restarted || []).join(", ") || "nothing"), "ok");
+  } catch (err) {
+    applying = false;
+    banner(String(err.message || err), "bad");
+    refreshActions();
+  } finally {
+    btn.textContent = "APPLY CHANGES";
+  }
+}
+
+function reset() {
+  banner("", "ok");
+  document.getElementById("save-banner") && (document.getElementById("save-banner").hidden = true);
+  buildEdit(state.config);
+  renderPanel();
 }
 
 // --- chrome --------------------------------------------------------------
@@ -139,8 +252,10 @@ function renderNav() {
 }
 
 function selectTab(id) {
+  if (!TABS.some((x) => x.id === id)) id = TABS[0].id;
   state.tab = id;
-  const t = TABS.find((x) => x.id === id) || TABS[0];
+  const t = TABS.find((x) => x.id === id);
+  if (location.hash !== "#" + id) history.replaceState(null, "", "#" + id);
   document.getElementById("crumb").textContent = t.crumb;
   document.getElementById("title").textContent = t.title;
   document.getElementById("desc").textContent = t.desc;
@@ -168,12 +283,11 @@ function applyTheme(key) {
 }
 
 function renderStatus() {
-  const h = state.health || {};
+  const h = state.health || {}, c = state.config || {};
   document.getElementById("st-version").textContent = h.version || "—";
   document.getElementById("st-mode").textContent = h.demo ? "demo" : "live";
   document.getElementById("st-uptime").textContent = h.uptime || "—";
   document.getElementById("st-feed").textContent = h.demo ? "synthetic" : "MMDVM-Host";
-  const c = state.config || {};
   document.getElementById("side-callsign").textContent = (c.general && c.general.callsign) || "—";
   const leds = document.getElementById("leds");
   leds.innerHTML = "";
@@ -183,7 +297,6 @@ function renderStatus() {
     d.innerHTML = `<span class="d"></span><span class="a">${esc(m.key.toUpperCase())}</span>`;
     leds.appendChild(d);
   });
-  if (c.read_only) document.getElementById("ro-badge").classList.remove("hide");
 }
 
 async function load() {
@@ -193,11 +306,51 @@ async function load() {
   ]);
   state.config = cfg.status === "fulfilled" ? cfg.value : {};
   state.health = hlth.status === "fulfilled" ? hlth.value : {};
+  buildEdit(state.config);
   renderStatus();
   renderPanel();
 }
 
+// text edits update the working copy; toggles flip a bool and re-render.
+document.getElementById("panels").addEventListener("input", (e) => {
+  const t = e.target;
+  if (!t.dataset) return;
+  if (t.dataset.sec) {
+    let v = t.value;
+    if (t.dataset.kind === "mhz") { const f = parseFloat(v); v = isNaN(f) ? "" : String(Math.round(f * 1e6)); }
+    setField(t.dataset.sec, t.dataset.key, v);
+    return;
+  }
+  if (t.dataset.net != null) {
+    const i = +t.dataset.net, key = t.dataset.nkey;
+    let v = t.value;
+    if (key === "rewrites") v = v.split("\n").map((s) => s.trim()).filter(Boolean);
+    edit.networks[i][key] = v;
+    dirty.add("networks");
+    refreshActions();
+  }
+});
+document.getElementById("panels").addEventListener("click", (e) => {
+  const tg = e.target.closest("[data-toggle]");
+  if (tg) {
+    const [sec, key] = tg.dataset.toggle.split(".");
+    setField(sec, key, !(edit[sec] || {})[key]);
+    renderPanel();
+    return;
+  }
+  const nt = e.target.closest("[data-nettoggle]");
+  if (nt) { const i = +nt.dataset.nettoggle; edit.networks[i].enabled = !edit.networks[i].enabled; dirty.add("networks"); renderPanel(); refreshActions(); return; }
+  const nd = e.target.closest("[data-netdel]");
+  if (nd) { edit.networks.splice(+nd.dataset.netdel, 1); dirty.add("networks"); renderPanel(); refreshActions(); return; }
+  if (e.target.id === "net-add") {
+    edit.networks.push({ name: "New Network", address: "", port: "62031", enabled: false, password: "", rewrites: [], has_password: false });
+    dirty.add("networks"); renderPanel(); refreshActions();
+  }
+});
+document.getElementById("btn-apply").onclick = apply;
+document.getElementById("btn-reset").onclick = reset;
+
 renderNav();
 renderThemes();
-selectTab("general");
+selectTab((location.hash || "").slice(1) || "general");
 load();

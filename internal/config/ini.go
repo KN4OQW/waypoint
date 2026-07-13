@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"io"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -91,6 +92,24 @@ func (i *INI) Bool(section, key string) bool {
 // Has reports whether a section exists.
 func (i *INI) Has(section string) bool {
 	return i.section(section) != nil
+}
+
+// Prefixed returns every "Key=Value" line in a section whose key contains
+// substr, sorted by key. Used to preserve the DMRGateway rewrite lines
+// (TGRewrite0, PCRewrite0, …) verbatim without modelling each rule.
+func (i *INI) Prefixed(section, substr string) []string {
+	s := i.section(section)
+	if s == nil {
+		return nil
+	}
+	var out []string
+	for k, v := range s {
+		if strings.Contains(k, substr) {
+			out = append(out, k+"="+v)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (i *INI) section(name string) map[string]string {

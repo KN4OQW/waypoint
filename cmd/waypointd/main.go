@@ -10,14 +10,18 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/demo"
 	"github.com/KN4OQW/waypoint/internal/hub"
 	"github.com/KN4OQW/waypoint/internal/mqtt"
+	"github.com/KN4OQW/waypoint/internal/store"
 	"github.com/KN4OQW/waypoint/ui"
 )
 
@@ -25,19 +29,115 @@ import (
 var Version = "dev"
 
 type server struct {
-	hub      *hub.Hub
-	demo     bool
-	started  time.Time
-	mmdvmINI string
-	dmrgwINI string
+	hub       *hub.Hub
+	demo      bool
+	started   time.Time
+	store     *store.Store
+	storePath string
+	mmdvmINI  string // render target: the file MMDVM-Host reads
+	dmrgwINI  string // render target: the file DMRGateway reads
+	units     []string
 }
 
-// configView serves the node's real configuration for the settings page,
-// parsed live from the daemons' INI files. Read-only for now (see the
-// read_only flag) — the write path lands with the configuration store.
-func (s *server) configView(w http.ResponseWriter, _ *http.Request) {
+// configView serves the node's configuration for the settings page from the
+// authoritative store (RFC-0001) — the store is the read model, not the INIs.
+func (s *server) configView(w http.ResponseWriter, r *http.Request) {
+	// PUT /api/config/{section} writes one section; GET returns the view.
+	if r.Method == http.MethodPut {
+		s.configPut(w, r)
+		return
+	}
+	m, err := config.Load(s.store)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(config.Read(s.mmdvmINI, s.dmrgwINI))
+	_ = json.NewEncoder(w).Encode(m.View(s.storePath))
+}
+
+// configPut writes a single config section (PUT /api/config/{section}).
+func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
+	section := strings.TrimPrefix(r.URL.Path, "/api/config/")
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Networks are an array with secrets: use the password-preserving merge.
+	if section == "networks" {
+		if err := config.SetNetworks(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	known, err := config.SetSection(s.store, section, body, "api")
+	if !known {
+		http.Error(w, "unknown config section: "+section, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// configApply renders the store to the daemons' INI files and restarts the
+// affected units (POST /api/config/apply). This is the store made authoritative:
+// the files are regenerated wholesale from the model, never patched in place.
+func (s *server) configApply(w http.ResponseWriter, _ *http.Request) {
+	m, err := config.Load(s.store)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := m.WriteFiles(s.mmdvmINI, s.dmrgwINI); err != nil {
+		http.Error(w, "render: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	restarted, err := s.restartUnits()
+	if err != nil {
+		http.Error(w, "restart: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = s.store.RecordApply("api", map[string]any{"restarted": restarted})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"applied": true, "restarted": restarted})
+}
+
+func (s *server) restartUnits() ([]string, error) {
+	var done []string
+	for _, u := range s.units {
+		if u == "" {
+			continue
+		}
+		if out, err := exec.Command("systemctl", "restart", u).CombinedOutput(); err != nil {
+			return done, fmt.Errorf("%s: %v: %s", u, err, strings.TrimSpace(string(out)))
+		}
+		done = append(done, u)
+	}
+	return done, nil
+}
+
+// seedStore imports the existing INI files into a fresh store on first run, so
+// the store starts as an exact picture of what the node is already running.
+func (s *server) seedStore() error {
+	empty, err := s.store.IsEmpty()
+	if err != nil || !empty {
+		return err
+	}
+	m, err := config.Import(s.mmdvmINI, s.dmrgwINI)
+	if err != nil {
+		return fmt.Errorf("seed import: %w", err)
+	}
+	if err := m.Save(s.store, "seed"); err != nil {
+		return err
+	}
+	log.Printf("config store seeded from %s + %s", s.mmdvmINI, s.dmrgwINI)
+	return nil
 }
 
 type healthResponse struct {
@@ -121,11 +221,27 @@ func main() {
 	mqttName := flag.String("mqtt-name", "mmdvm", "MMDVM-Host [MQTT] Name (topic prefix)")
 	mqttUser := flag.String("mqtt-user", "", "MQTT username (optional)")
 	mqttPass := flag.String("mqtt-pass", "", "MQTT password (optional)")
-	mmdvmINI := flag.String("mmdvm-ini", "/home/pi-star/waypoint/etc/MMDVM-Host.ini", "path to MMDVM-Host.ini (settings page reads it)")
-	dmrgwINI := flag.String("dmrgateway-ini", "/home/pi-star/waypoint/etc/DMRGateway.ini", "path to DMRGateway.ini (settings page reads it)")
+	mmdvmINI := flag.String("mmdvm-ini", "/home/pi-star/waypoint/etc/MMDVM-Host.ini", "MMDVM-Host.ini render target (the file the daemon reads)")
+	dmrgwINI := flag.String("dmrgateway-ini", "/home/pi-star/waypoint/etc/DMRGateway.ini", "DMRGateway.ini render target")
+	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
+	units := flag.String("units", "waypoint-mmdvm.service,waypoint-dmrgateway.service", "comma-separated systemd units to restart on apply")
 	flag.Parse()
 
-	s := &server{hub: hub.New(), demo: *demoMode, started: time.Now(), mmdvmINI: *mmdvmINI, dmrgwINI: *dmrgwINI}
+	st, err := store.Open(*storePath)
+	if err != nil {
+		log.Fatalf("config store: %v", err)
+	}
+	defer st.Close()
+
+	s := &server{
+		hub: hub.New(), demo: *demoMode, started: time.Now(),
+		store: st, storePath: *storePath,
+		mmdvmINI: *mmdvmINI, dmrgwINI: *dmrgwINI,
+		units: strings.Split(*units, ","),
+	}
+	if err := s.seedStore(); err != nil {
+		log.Printf("config store seed skipped: %v", err)
+	}
 
 	if *demoMode {
 		go demo.Run(context.Background(), s.hub)
@@ -146,6 +262,8 @@ func main() {
 	mux.HandleFunc("/api/health", s.health)
 	mux.HandleFunc("/api/events", s.events)
 	mux.HandleFunc("/api/config", s.configView)
+	mux.HandleFunc("/api/config/apply", s.configApply)
+	mux.HandleFunc("/api/config/", s.configView) // PUT /api/config/{section}
 	mux.Handle("/", http.FileServerFS(ui.FS()))
 
 	mode := "live, mqtt " + *broker
