@@ -1,5 +1,6 @@
-/* Waypoint dashboard: a plain-JS consumer of the public API.
-   Everything renders from /api/health + the /api/events SSE stream. */
+/* Waypoint dashboard: a plain-JS consumer of the public API. Everything renders
+   from /api/health + the /api/events SSE stream. Shares the settings page's
+   Nocturne shell and theme (localStorage "wp-theme") so the two read as one app. */
 "use strict";
 
 const $ = (sel) => document.querySelector(sel);
@@ -9,6 +10,30 @@ const state = {
   lastheard: new Map(),  // callsign -> latest end event
   networks: new Map(),   // network name -> state string
 };
+
+// Theme is shared with the settings page via localStorage "wp-theme".
+const THEMES = [
+  { key: "phosphor", color: "#35d07f", attr: "" },
+  { key: "amber",    color: "#f0a935", attr: "amber" },
+  { key: "ice",      color: "#4db8ff", attr: "ice" },
+];
+function applyTheme(key) {
+  const th = THEMES.find((t) => t.key === key) || THEMES[0];
+  if (th.attr) document.documentElement.setAttribute("data-theme", th.attr);
+  else document.documentElement.removeAttribute("data-theme");
+}
+function renderThemes() {
+  const box = $("#swatches");
+  box.innerHTML = "";
+  const cur = localStorage.getItem("wp-theme") || "phosphor";
+  THEMES.forEach((th) => {
+    const s = document.createElement("button");
+    s.className = "swatch" + (th.key === cur ? " on" : "");
+    s.innerHTML = `<span class="dot" style="background:${th.color}"></span>`;
+    s.onclick = () => { applyTheme(th.key); localStorage.setItem("wp-theme", th.key); renderThemes(); };
+    box.appendChild(s);
+  });
+}
 
 function fmtTime(iso) {
   return new Date(iso).toLocaleTimeString([], { hour12: false });
@@ -22,10 +47,10 @@ function ago(iso) {
 
 async function loadHealth() {
   try {
-    const r = await fetch("/api/health");
-    const h = await r.json();
-    $("#pill-version").textContent = "waypointd " + h.version;
+    const h = await (await fetch("/api/health")).json();
+    $("#st-version").textContent = h.version;
     $("#foot-version").textContent = "waypointd " + h.version;
+    $("#st-feed").textContent = h.demo ? "demo" : "live";
     $("#demo-badge").hidden = !h.demo;
     setConn(true);
   } catch {
@@ -33,14 +58,24 @@ async function loadHealth() {
   }
 }
 
+// The callsign chip mirrors the settings sidebar; sourced from the config API.
+async function loadCallsign() {
+  try {
+    const c = await (await fetch("/api/config")).json();
+    const cs = (c.general && c.general.callsign) || "";
+    if (cs) $("#side-callsign").textContent = cs;
+  } catch { /* offline — leave the placeholder */ }
+}
+
 function setConn(up) {
-  const p = $("#pill-conn");
-  p.dataset.state = up ? "up" : "down";
-  p.textContent = up ? "connected" : "disconnected";
+  $("#conn-led").className = "conn-led " + (up ? "up" : "down");
+  $("#conn-txt").textContent = up ? "connected" : "disconnected";
+  $("#side-led").className = "led" + (up ? "" : " down");
+  $("#side-online").textContent = up ? "ONLINE" : "OFFLINE";
 }
 
 function setMode(mode) {
-  $("#pill-mode").textContent = "mode " + (mode || "—");
+  $("#st-mode").textContent = mode || "—";
 }
 
 function renderOnAir() {
@@ -96,7 +131,7 @@ function logEvent(e) {
     default:               text = e.detail || e.type;
   }
   const row = document.createElement("tr");
-  row.innerHTML = `<td>${fmtTime(e.time)}</td><td><span class="${cls}">${esc(text)}</span></td>`;
+  row.innerHTML = `<td class="num" style="text-align:left">${fmtTime(e.time)}</td><td><span class="${cls}">${esc(text)}</span></td>`;
   tbody.prepend(row);
   while (tbody.children.length > 100) tbody.lastChild.remove();
 }
@@ -134,6 +169,9 @@ function connect() {
   es.onmessage = (m) => handle(JSON.parse(m.data));
 }
 
+applyTheme(localStorage.getItem("wp-theme") || "phosphor");
+renderThemes();
 loadHealth();
+loadCallsign();
 connect();
 setInterval(renderLastHeard, 15000); // keep "ago" fresh

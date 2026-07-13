@@ -3,65 +3,215 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Waypoint</title>
-<link rel="stylesheet" href="style.css">
+<title>Waypoint · Dashboard</title>
+<style>
+  /* Waypoint dashboard — shares the settings page's "Nocturne" phosphor theme so
+     the two pages read as one app. Self-contained and offline-safe: no external
+     font/CDN, since a hotspot may have no internet. */
+  :root {
+    --accent: #35d07f; --accent-soft: rgba(53,208,127,0.13); --accent-glow: rgba(53,208,127,0.4);
+    --bg: #06070a; --panel: #0f1218; --panel-line: #1c222c; --field: #0a0d12; --field-line: #262c38;
+    --side: #0b0d12; --side-line: #14181f; --row-line: #171b23;
+    --ink: #e4ebf4; --ink-head: #eef2f7; --ink-body: #c7cfdb; --label: #8a94a6; --muted: #7f8a99; --dim: #5a6472; --faint: #4a5361;
+    --bad: #ff6b6b; --warn: #ff9f45;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", "Cascadia Code", Consolas, Menlo, monospace;
+    --sans: "Space Grotesk", system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  }
+  :root[data-theme="amber"] { --accent: #f0a935; --accent-soft: rgba(240,169,53,0.13); --accent-glow: rgba(240,169,53,0.45); }
+  :root[data-theme="ice"]   { --accent: #4db8ff; --accent-soft: rgba(77,184,255,0.13); --accent-glow: rgba(77,184,255,0.45); }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: radial-gradient(ellipse 90% 60% at 78% -10%, var(--accent-soft), transparent 55%), var(--bg);
+    color: var(--ink-body); font-family: var(--sans); min-height: 100vh;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ::selection { background: var(--accent-soft); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: #0a0c10; }
+  ::-webkit-scrollbar-thumb { background: #232a35; border-radius: 6px; border: 2px solid #0a0c10; }
+  @keyframes wpblink { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+  .app { min-height: 100vh; display: grid; grid-template-columns: 264px 1fr; }
+
+  /* sidebar — identical to settings */
+  aside { border-right: 1px solid var(--side-line); background: linear-gradient(180deg, var(--side), #08090d); display: flex; flex-direction: column; min-height: 100vh; }
+  .brand { padding: 22px 22px 20px; border-bottom: 1px solid var(--side-line); }
+  .brand-row { display: flex; align-items: center; gap: 11px; }
+  .brand-name { font-size: 16px; font-weight: 700; letter-spacing: 2.5px; color: var(--ink-head); }
+  .brand-sub { font-family: var(--mono); font-size: 9.5px; letter-spacing: 2px; color: var(--dim); margin-top: 1px; }
+  .callsign-chip { margin-top: 16px; display: flex; align-items: center; justify-content: space-between; background: #0c0f15; border: 1px solid #1a1f28; border-radius: 7px; padding: 8px 11px; }
+  .chip-k { font-family: var(--mono); font-size: 9px; letter-spacing: 1.5px; color: var(--dim); }
+  .chip-v { font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--accent); letter-spacing: 1px; }
+  .online { display: flex; align-items: center; gap: 6px; }
+  .online .led { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); animation: wpblink 2.4s ease-in-out infinite; }
+  .online .led.down { background: var(--bad); box-shadow: 0 0 8px rgba(255,107,107,.5); animation: none; }
+  .online .txt { font-family: var(--mono); font-size: 9px; letter-spacing: 1px; color: var(--muted); }
+
+  nav { padding: 14px 12px; flex: 1; }
+  .nav-head { font-family: var(--mono); font-size: 9px; letter-spacing: 2px; color: var(--faint); padding: 0 10px 10px; }
+  .nav-item { display: flex; align-items: center; gap: 12px; padding: 10px; margin: 2px 0; border-radius: 8px; cursor: pointer; position: relative; background: transparent; border: 0; width: 100%; text-align: left; }
+  .nav-item:hover { background: rgba(255,255,255,0.02); text-decoration: none; }
+  .nav-item .bar { position: absolute; left: -12px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: transparent; }
+  .nav-item .tag { flex: none; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 7px; font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: .5px; border: 1px solid var(--field-line); color: var(--muted); background: #0c0f15; }
+  .nav-item .label { font-size: 13.5px; font-weight: 500; color: var(--ink-body); letter-spacing: .2px; }
+  .nav-item .sub { font-family: var(--mono); font-size: 9.5px; letter-spacing: .5px; color: var(--dim); margin-top: 1px; }
+  .nav-item.on { background: var(--accent-soft); }
+  .nav-item.on .bar { background: var(--accent); }
+  .nav-item.on .tag { border-color: var(--accent); color: var(--accent); background: rgba(0,0,0,.25); }
+  .nav-item.on .label { color: var(--ink-head); font-weight: 600; }
+
+  .theme-pick { padding: 14px 18px 18px; border-top: 1px solid var(--side-line); }
+  .theme-head { font-family: var(--mono); font-size: 9px; letter-spacing: 2px; color: var(--faint); margin-bottom: 9px; }
+  .swatches { display: flex; gap: 7px; }
+  .swatch { flex: 1; display: flex; align-items: center; justify-content: center; padding: 9px 0; border-radius: 7px; cursor: pointer; background: #0b0e13; border: 1px solid #1a1f28; }
+  .swatch .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .swatch.on { background: #12161d; }
+
+  /* main — identical shell to settings */
+  main { min-width: 0; display: flex; flex-direction: column; max-height: 100vh; overflow: hidden; }
+  .statusbar { border-bottom: 1px solid var(--side-line); background: rgba(9,11,15,.72); backdrop-filter: blur(6px); padding: 13px 30px; display: flex; align-items: center; gap: 28px; flex-wrap: wrap; }
+  .stat { display: flex; flex-direction: column; gap: 2px; }
+  .stat .k { font-family: var(--mono); font-size: 9px; letter-spacing: 1.5px; color: #525c6a; }
+  .stat .v { font-family: var(--mono); font-size: 13px; font-weight: 600; color: #dfe6f0; }
+  .stat .v.accent { color: var(--accent); }
+  .conn-led { margin-left: auto; display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 9.5px; letter-spacing: 1px; color: var(--muted); }
+  .conn-led .d { width: 8px; height: 8px; border-radius: 50%; background: #252b34; }
+  .conn-led.up .d { background: var(--accent); box-shadow: 0 0 7px var(--accent-glow); }
+  .conn-led.down .d { background: var(--bad); box-shadow: 0 0 7px rgba(255,107,107,.5); }
+
+  .scroll { flex: 1; overflow-y: auto; padding: 30px 34px 60px; }
+  .pagehead { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 26px; }
+  .crumb { font-family: var(--mono); font-size: 10px; letter-spacing: 2.5px; color: var(--accent); margin-bottom: 7px; }
+  .pagehead h1 { margin: 0; font-size: 27px; font-weight: 600; letter-spacing: -.3px; color: var(--ink-head); }
+  .pagehead p { margin: 7px 0 0; font-size: 13.5px; color: var(--muted); max-width: 560px; line-height: 1.5; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .app { grid-template-columns: 1fr; } aside { min-height: auto; } .grid2 { grid-template-columns: 1fr; } }
+
+  .card { background: var(--panel); border: 1px solid var(--panel-line); border-radius: 11px; padding: 6px 22px 18px; margin-bottom: 20px; }
+  .card-head { display: flex; align-items: center; gap: 8px; padding: 16px 0 6px; }
+  .card-head .sq { width: 6px; height: 6px; background: var(--accent); border-radius: 1px; }
+  .card-head .t { font-family: var(--mono); font-size: 11px; letter-spacing: 2px; color: #aeb7c4; }
+  .empty { font-family: var(--mono); font-size: 12px; color: var(--dim); padding: 6px 0 10px; }
+
+  /* on air */
+  .onair { display: flex; align-items: center; gap: 16px; padding: 14px 0 6px; min-height: 42px; }
+  .onair.idle .onair-idle { font-family: var(--mono); font-size: 13px; color: var(--dim); }
+  .onair .dir { font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: 1px; color: var(--bg); background: var(--accent); border-radius: 5px; padding: 5px 10px; box-shadow: 0 0 14px var(--accent-soft); }
+  .onair .who { display: block; font-size: 18px; font-weight: 600; color: var(--ink-head); }
+  .onair .who .arrow { color: var(--dim); margin: 0 9px; }
+  .onair .meta { display: block; font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 3px; letter-spacing: .5px; }
+
+  /* tables */
+  table { width: 100%; border-collapse: collapse; }
+  thead th { font-family: var(--mono); font-size: 9px; letter-spacing: 1.5px; color: var(--faint); text-align: left; font-weight: 500; padding: 4px 10px 8px; border-bottom: 1px solid var(--row-line); }
+  tbody td { font-size: 12.5px; color: var(--ink-body); padding: 8px 10px; border-bottom: 1px solid var(--row-line); }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num { font-family: var(--mono); font-size: 11.5px; color: var(--muted); text-align: right; }
+  .call, td .call { font-family: var(--mono); font-weight: 600; color: var(--accent); letter-spacing: .5px; }
+  .loglimit { max-height: 320px; overflow-y: auto; }
+  .ev-rf { color: var(--ink-head); }
+  .ev-net { color: var(--accent); }
+
+  /* networks */
+  .netlist { list-style: none; margin: 8px 0 4px; padding: 0; }
+  .netlist li { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-body); padding: 9px 0; border-bottom: 1px solid var(--row-line); }
+  .netlist li:last-child { border-bottom: 0; }
+  .netlist .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 7px var(--accent-glow); flex: none; }
+  .netlist .state { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--muted); letter-spacing: .5px; }
+
+  .foot { padding: 18px 34px 30px; font-family: var(--mono); font-size: 10px; color: var(--faint); letter-spacing: .3px; }
+  .foot code { color: var(--dim); }
+  .badge.demo { font-family: var(--mono); font-size: 9px; letter-spacing: 1px; color: var(--warn); border: 1px solid rgba(255,159,69,.35); border-radius: 4px; padding: 3px 7px; }
+</style>
 </head>
 <body>
-<header>
-  <div class="brand">
-    <span class="mark" aria-hidden="true">◈</span>
-    <h1>Waypoint</h1>
-    <span id="demo-badge" class="badge demo" hidden>demo feed</span>
-  </div>
-  <div class="pills" role="status">
-    <span class="pill" id="pill-conn" data-state="down">connecting…</span>
-    <span class="pill" id="pill-mode">mode —</span>
-    <span class="pill" id="pill-version">—</span>
-    <a class="pill" href="settings.html">settings ⚙</a>
-  </div>
-</header>
-
-<main>
-  <section class="panel" aria-labelledby="h-now">
-    <h2 id="h-now">On air</h2>
-    <div id="onair" class="onair idle">
-      <p class="onair-idle">Listening — no active transmission</p>
-    </div>
-  </section>
-
-  <div class="cols">
-    <section class="panel" aria-labelledby="h-lastheard">
-      <h2 id="h-lastheard">Last heard</h2>
-      <div class="tablewrap">
-        <table id="lastheard">
-          <thead><tr><th scope="col">Station</th><th scope="col">Dest</th><th scope="col">Mode</th><th scope="col">Dur</th><th scope="col">BER</th><th scope="col">When</th></tr></thead>
-          <tbody></tbody>
-        </table>
+<div class="app">
+  <aside>
+    <div class="brand">
+      <div class="brand-row">
+        <svg width="26" height="26" viewBox="0 0 24 24" style="flex:none;"><rect x="12" y="1.5" width="14.85" height="14.85" rx="2.4" transform="rotate(45 12 12)" fill="none" stroke="var(--accent)" stroke-width="1.6"></rect><circle cx="12" cy="12" r="2.4" fill="var(--accent)"></circle></svg>
+        <div>
+          <div class="brand-name">WAYPOINT</div>
+          <div class="brand-sub">HOTSPOT CONTROL</div>
+        </div>
       </div>
-      <p class="empty" id="lastheard-empty">Nothing heard yet.</p>
-    </section>
-
-    <section class="panel" aria-labelledby="h-networks">
-      <h2 id="h-networks">Networks</h2>
-      <ul id="networks" class="netlist"></ul>
-      <p class="empty" id="networks-empty">No network links reported.</p>
-    </section>
-  </div>
-
-  <section class="panel" aria-labelledby="h-log">
-    <h2 id="h-log">Event log</h2>
-    <div class="tablewrap loglimit">
-      <table id="eventlog">
-        <thead><tr><th scope="col">Time</th><th scope="col">Event</th></tr></thead>
-        <tbody></tbody>
-      </table>
+      <div class="callsign-chip">
+        <div>
+          <div class="chip-k">CALLSIGN</div>
+          <div class="chip-v" id="side-callsign">—</div>
+        </div>
+        <div class="online"><span class="led" id="side-led"></span><span class="txt" id="side-online">CONNECTING</span></div>
+      </div>
     </div>
-  </section>
-</main>
+    <nav>
+      <div class="nav-head">OVERVIEW</div>
+      <a class="nav-item on" href="/"><span class="bar"></span><span class="tag">DB</span><span><span class="label">Dashboard</span><span class="sub">LIVE STATUS</span></span></a>
+      <a class="nav-item" href="settings.html"><span class="bar"></span><span class="tag">⚙</span><span><span class="label">Settings</span><span class="sub">CONFIGURE NODE</span></span></a>
+    </nav>
+    <div class="theme-pick">
+      <div class="theme-head">DISPLAY THEME</div>
+      <div class="swatches" id="swatches"></div>
+    </div>
+  </aside>
 
-<footer>
-  <span id="foot-version">waypointd</span> · <a href="https://github.com/KN4OQW/waypoint">source</a> · every event on this page arrived over <code>/api/events</code> — no log scraping
-</footer>
+  <main>
+    <div class="statusbar">
+      <div class="stat"><span class="k">MODE</span><span class="v accent" id="st-mode">—</span></div>
+      <div class="stat"><span class="k">VERSION</span><span class="v" id="st-version">—</span></div>
+      <div class="stat"><span class="k">FEED</span><span class="v" id="st-feed">live</span></div>
+      <span id="demo-badge" class="badge demo" hidden>demo feed</span>
+      <div class="conn-led down" id="conn-led"><span class="d"></span><span id="conn-txt">connecting…</span></div>
+    </div>
+
+    <div class="scroll">
+      <div class="pagehead">
+        <div>
+          <div class="crumb">STATUS / LIVE</div>
+          <h1>Dashboard</h1>
+          <p>Live activity for this node. Every row arrives over <code>/api/events</code> — no log scraping.</p>
+        </div>
+      </div>
+
+      <section class="card">
+        <div class="card-head"><span class="sq"></span><span class="t">ON AIR</span></div>
+        <div id="onair" class="onair idle"><p class="onair-idle">Listening — no active transmission</p></div>
+      </section>
+
+      <div class="grid2">
+        <section class="card">
+          <div class="card-head"><span class="sq"></span><span class="t">LAST HEARD</span></div>
+          <table id="lastheard">
+            <thead><tr><th>Station</th><th>Dest</th><th>Mode</th><th>Dur</th><th>BER</th><th>When</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <p class="empty" id="lastheard-empty">Nothing heard yet.</p>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><span class="sq"></span><span class="t">NETWORKS</span></div>
+          <ul id="networks" class="netlist"></ul>
+          <p class="empty" id="networks-empty">No network links reported.</p>
+        </section>
+      </div>
+
+      <section class="card">
+        <div class="card-head"><span class="sq"></span><span class="t">EVENT LOG</span></div>
+        <div class="loglimit">
+          <table id="eventlog">
+            <thead><tr><th>Time</th><th>Event</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <div class="foot"><span id="foot-version">waypointd</span> · <a href="https://github.com/KN4OQW/waypoint">source</a></div>
+    </div>
+  </main>
+</div>
 
 <script src="app.js"></script>
 </body>
