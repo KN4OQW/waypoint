@@ -12,7 +12,7 @@ on:
     types: [opened]
 
 permissions:
-  contents: read
+  contents: write
   issues: write
   pull-requests: write
   id-token: write
@@ -28,6 +28,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # For @claude comments on PR threads, check out the PR head —
+          # not main — so the action can see and diff the PR's files.
+          ref: ${{ github.event.issue.pull_request && format('refs/pull/{0}/head', github.event.issue.number) || github.ref }}
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
