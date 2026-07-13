@@ -9,6 +9,7 @@ const TABS = [
   { id: "brandmeister", tag: "BM", label: "BrandMeister", sub: "Network & Security",   crumb: "NETWORKS / BRANDMEISTER", title: "DMR Networks",          desc: "Master servers this node bridges DMR traffic to. Passwords are stored on the node and never shown." },
   { id: "dmr",          tag: "DM", label: "DMR",          sub: "Master & Slots",       crumb: "MODES / DMR",             title: "DMR Settings",          desc: "Color code and per-slot behaviour for Digital Mobile Radio." },
   { id: "ysf",          tag: "YS", label: "System Fusion", sub: "YSF / FCS reflectors", crumb: "MODES / SYSTEM FUSION",   title: "System Fusion (YSF)",   desc: "C4FM gateway: startup reflector or FCS room, Wires-X, and which reflector networks are on." },
+  { id: "p25",          tag: "25", label: "P25",          sub: "NAC & Talkgroups",     crumb: "MODES / P25",             title: "P25 (Phase 1)",         desc: "APCO P25 gateway: network access code, startup talkgroups, and gateway behaviour." },
   { id: "modes",        tag: "MD", label: "Modes",        sub: "Digital Modes",        crumb: "MODES / DIGITAL",         title: "Digital Mode Control",  desc: "Which digital voice / data modes MMDVM-Host handles. Toggling one restarts the stack on Apply." },
   { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Bridges",   crumb: "BRIDGES / GATEWAYS",      title: "Cross-Mode Gateways",   desc: "Transcoding bridges between digital voice modes." },
   { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "SYSTEM / NETWORK",        title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
@@ -26,6 +27,7 @@ let edit = {};              // section -> {field: value} working copy
 let dirty = new Set();      // sections with unsaved changes
 let applying = false;
 let ysfRefs = [];           // cached YSF reflector list for the startup picker
+let p25Refs = [];           // cached P25 talkgroup list for the startup-TG picker
 
 const el = (t, cls, html) => { const e = document.createElement(t); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -45,6 +47,8 @@ function buildEdit(c) {
     // password starts blank (blank = keep the stored one); has_password drives the placeholder.
     networks: (c.networks || []).map((n) => ({ name: n.name, address: n.address, port: n.port, enabled: !!n.enabled, password: "", rewrites: (n.rewrites || []).slice(), has_password: !!n.has_password })),
     ysfgw: ysfgwFrom(c.ysf || {}),
+    p25: p25From(c.p25 || {}),
+    p25gw: p25gwFrom(c.p25 || {}),
   };
   dirty = new Set();
   refreshActions();
@@ -56,6 +60,21 @@ function ysfgwFrom(y) {
     wiresx_passthrough: !!y.wiresx_passthrough, wiresx_make_upper: !!y.wiresx_make_upper,
     reconnect: !!y.reconnect, revert: !!y.revert, inactivity_timeout: y.inactivity_timeout || "30",
     ysf_network: !!y.ysf_network, fcs_network: !!y.fcs_network, aprs: !!y.aprs,
+  };
+}
+
+// The P25 view is flat (mode params + gateway settings); it splits back into two
+// store sections: "p25" (MMDVM-Host [P25] params) and "p25gw" (P25Gateway.ini).
+function p25From(p) {
+  return {
+    nac: p.nac || "293", self_only: !!p.self_only,
+    override_uid_check: !!p.override_uid_check, remote_gateway: !!p.remote_gateway,
+  };
+}
+function p25gwFrom(p) {
+  return {
+    static: p.static || "", voice: p.voice !== false,
+    rf_hang_time: p.rf_hang_time || "120", net_hang_time: p.net_hang_time || "60",
   };
 }
 
@@ -199,6 +218,27 @@ function panelYSF() {
   return `<div class="grid2">${gateway}<div class="stack">${behaviour}${networks}</div></div>${hint}`;
 }
 
+function panelP25() {
+  // Startup-TG picker: a datalist over the fetched talkgroup list. Static is a
+  // comma-separated list, so the datalist is a reference the user types from.
+  const opts = p25Refs.map((r) => `<option value="${esc(r.designator)}">${esc([r.name, r.country, r.sponsor].filter(Boolean).join(" · "))}</option>`).join("");
+  const stat = (edit.p25gw || {}).static || "";
+  const gateway = card("GATEWAY",
+    toggle("modes", "p25", "P25", "ENABLED", "DISABLED") +
+    input("p25", "nac", { label: "NAC (hex)", accent: true }) +
+    row("Startup talkgroups", `<input data-sec="p25gw" data-key="static" list="p25-refs" value="${esc(stat)}" placeholder="comma-separated TGs, e.g. 10100,10200"><datalist id="p25-refs">${opts}</datalist>`) +
+    toggleRow("p25gw", "voice", "Voice announcements"));
+  const behaviour = card("BEHAVIOUR",
+    toggleRow("p25", "self_only", "Self only (accept only my ID)") +
+    toggleRow("p25", "override_uid_check", "Override UID check") +
+    toggleRow("p25", "remote_gateway", "Remote gateway (advanced — leave off for local control)"));
+  const timers = card("HANG TIMERS",
+    input("p25gw", "rf_hang_time", { label: "RF hang", unit: "sec" }) +
+    input("p25gw", "net_hang_time", { label: "Network hang", unit: "sec" }));
+  const hint = p25Refs.length ? "" : note("Talkgroup list not loaded yet (fetched from the P25 register on a schedule). You can still type talkgroup numbers above.");
+  return `<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
+}
+
 function renderPanel() {
   const c = state.config || {};
   const box = document.getElementById("panels");
@@ -206,6 +246,7 @@ function renderPanel() {
     case "general":      box.innerHTML = panelGeneral(); break;
     case "dmr":          box.innerHTML = panelDmr(); break;
     case "ysf":          box.innerHTML = panelYSF(); break;
+    case "p25":          box.innerHTML = panelP25(); break;
     case "modes":        box.innerHTML = panelModes(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
@@ -345,11 +386,15 @@ async function load() {
   buildEdit(state.config);
   renderStatus();
   renderPanel();
-  // Reflector list loads lazily; refresh the YSF panel if it's showing.
+  // Reflector lists load lazily; refresh the relevant panel if it's showing.
   try {
     ysfRefs = await fetch("/api/ysf/reflectors").then((r) => r.json());
     if (state.tab === "ysf") renderPanel();
   } catch { /* offline — the picker still accepts a typed id */ }
+  try {
+    p25Refs = await fetch("/api/p25/reflectors").then((r) => r.json());
+    if (state.tab === "p25") renderPanel();
+  } catch { /* offline — the picker still accepts a typed TG */ }
 }
 
 // text edits update the working copy; toggles flip a bool and re-render.

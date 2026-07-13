@@ -33,6 +33,8 @@ func fixture() *Model {
 		},
 		YSF:   YSF{LowDeviation: true, SelfOnly: false, TXHang: "6", RemoteGateway: false, ModeHang: "20"},
 		YSFGW: YSFGateway{Suffix: "RPT", WiresXPassthrough: true, WiresXMakeUpper: true, Startup: "FCS00290", Reconnect: true, Revert: true, InactivityTimeout: "30", YSFNetwork: true, FCSNetwork: true, APRS: false},
+		P25:   P25{NAC: "293", SelfOnly: true, OverrideUIDCheck: false, RemoteGateway: false, TXHang: "5"},
+		P25GW: P25Gateway{Static: "10100,10200", Voice: true, RFHangTime: "120", NetHangTime: "60"},
 	}
 }
 
@@ -51,7 +53,11 @@ func TestLosslessRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := fromINI(mm, dg, yg)
+	pg, err := ParseINI(strings.NewReader(m.RenderP25Gateway()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := fromINI(mm, dg, yg, pg)
 	if !reflect.DeepEqual(m, got) {
 		t.Fatalf("round-trip lost data:\n want %+v\n  got %+v", m, got)
 	}

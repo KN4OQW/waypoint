@@ -10,14 +10,17 @@ import (
 // WriteFiles renders the model and writes both INI files atomically (write to a
 // temp file in the same directory, then rename). A crash mid-apply therefore
 // never leaves a daemon reading a half-written config.
-func (m *Model) WriteFiles(mmdvmPath, dmrgatewayPath, ysfgatewayPath string) error {
+func (m *Model) WriteFiles(mmdvmPath, dmrgatewayPath, ysfgatewayPath, p25gatewayPath string) error {
 	if err := writeAtomic(mmdvmPath, m.RenderMMDVM()); err != nil {
 		return err
 	}
 	if err := writeAtomic(dmrgatewayPath, m.RenderDMRGateway()); err != nil {
 		return err
 	}
-	return writeAtomic(ysfgatewayPath, m.RenderYSFGateway())
+	if err := writeAtomic(ysfgatewayPath, m.RenderYSFGateway()); err != nil {
+		return err
+	}
+	return writeAtomic(p25gatewayPath, m.RenderP25Gateway())
 }
 
 func writeAtomic(path, content string) error {
@@ -117,7 +120,14 @@ func (m *Model) RenderMMDVM() string {
 		kb("RemoteGateway", m.YSF.RemoteGateway),
 		kv("ModeHang", def(m.YSF.ModeHang, "20")),
 	)
-	modeSect(&b, "P25", m.Modes.P25)
+	sect(&b, "P25",
+		kb("Enable", m.Modes.P25),
+		kv("NAC", def(m.P25.NAC, "293")),
+		kb("SelfOnly", m.P25.SelfOnly),
+		kb("OverrideUIDCheck", m.P25.OverrideUIDCheck),
+		kb("RemoteGateway", m.P25.RemoteGateway),
+		kv("TXHang", def(m.P25.TXHang, "5")),
+	)
 	modeSect(&b, "NXDN", m.Modes.NXDN)
 	modeSect(&b, "M17", m.Modes.M17)
 	modeSect(&b, "POCSAG", m.Modes.POCSAG)
@@ -142,13 +152,25 @@ func (m *Model) RenderMMDVM() string {
 		kv("GatewayPort", ysfMMDVMGatewayPort),
 		kv("ModeHang", def(m.YSF.ModeHang, "20")),
 	)
+	// The P25 network talks to P25Gateway on the fixed 32010/42020 pair.
+	sect(&b, "P25 Network",
+		kb("Enable", m.Modes.P25),
+		kv("LocalAddress", "127.0.0.1"),
+		kv("LocalPort", p25MMDVMLocalPort),
+		kv("GatewayAddress", "127.0.0.1"),
+		kv("GatewayPort", p25MMDVMGatewayPort),
+		kv("Debug", "0"),
+	)
 	return b.String()
 }
 
-// Fixed loopback ports between MMDVM-Host and YSFGateway (the g4klx convention).
+// Fixed loopback ports between MMDVM-Host and its gateways (the g4klx convention).
 const (
 	ysfMMDVMLocalPort   = "3200" // MMDVM-Host listens here; YSFGateway RptPort
 	ysfMMDVMGatewayPort = "4200" // YSFGateway listens here; MMDVM-Host sends here
+
+	p25MMDVMLocalPort   = "32010" // MMDVM-Host listens here; P25Gateway RptPort
+	p25MMDVMGatewayPort = "42020" // P25Gateway listens here; MMDVM-Host sends here
 )
 
 // RenderYSFGateway renders a complete YSFGateway.ini from the model. Callsign,
@@ -220,6 +242,72 @@ const (
 	ysfHostsPath = "/home/pi-star/waypoint/etc/YSFHosts.json"
 	fcsRoomsPath = "/home/pi-star/waypoint/etc/FCSRooms.txt"
 )
+
+// Managed paths for P25Gateway. The pinned P25Gateway parses P25Hosts as JSON
+// (data["reflectors"], each with designator/port/ipv4). Audio holds the spoken
+// announcement clips; a missing directory only disables voice, it is not fatal.
+const (
+	p25HostsPath = "/home/pi-star/waypoint/etc/P25Hosts.json"
+	p25AudioDir  = "/home/pi-star/waypoint/etc/P25Audio"
+)
+
+// RenderP25Gateway renders a complete P25Gateway.ini from the model. Callsign
+// and frequencies come from the shared station config; the rest from the P25
+// mode/gateway sections. The reflector hostlist is a managed JSON file on disk.
+func (m *Model) RenderP25Gateway() string {
+	var b strings.Builder
+	b.WriteString(generatedHeader)
+
+	sect(&b, "General",
+		kv("Callsign", m.General.Callsign),
+		kv("RptAddress", "127.0.0.1"),
+		kv("RptPort", p25MMDVMLocalPort),
+		kv("LocalPort", p25MMDVMGatewayPort),
+		kv("Debug", "0"),
+		kv("Daemon", "0"),
+	)
+	sect(&b, "Id Lookup",
+		kv("Name", "/usr/local/etc/DMRIds.dat"),
+		kv("Time", "24"),
+	)
+	sect(&b, "Voice",
+		kb("Enabled", m.P25GW.Voice),
+		kv("Language", "en_GB"),
+		kv("Directory", p25AudioDir),
+	)
+	sect(&b, "Log",
+		kv("MQTTLevel", "1"),
+		kv("DisplayLevel", "0"),
+	)
+	sect(&b, "MQTT",
+		kv("Address", "127.0.0.1"),
+		kv("Port", "1883"),
+		kv("Keepalive", "60"),
+		kv("Auth", "0"),
+		kv("Name", "p25-gateway"),
+	)
+	// Parrot (local echo, TG9990-style) runs on 42011; P252DMR is omitted so no
+	// dead cross-mode TG is advertised. Static holds any startup/auto-link TGs.
+	sect(&b, "Network",
+		kv("Port", "42010"),
+		kv("HostsFile1", p25HostsPath),
+		// HostsFile2 is the optional local/private TG list. We keep it as an empty
+		// source (/dev/null) so P25Gateway's unconditional parseHosts() call opens
+		// cleanly instead of logging "Unable to open the Hosts file".
+		kv("HostsFile2", "/dev/null"),
+		kv("ReloadTime", "60"),
+		kv("ParrotAddress", "127.0.0.1"),
+		kv("ParrotPort", "42011"),
+		kv("Static", m.P25GW.Static),
+		kv("RFHangTime", def(m.P25GW.RFHangTime, "120")),
+		kv("NetHangTime", def(m.P25GW.NetHangTime, "60")),
+		kv("Debug", "0"),
+	)
+	sect(&b, "Remote Commands",
+		kv("Enable", "0"),
+	)
+	return b.String()
+}
 
 // RenderDMRGateway renders a complete DMRGateway.ini from the model.
 func (m *Model) RenderDMRGateway() string {

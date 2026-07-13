@@ -27,6 +27,27 @@ type Model struct {
 	Networks []Network  `json:"networks"`
 	YSF      YSF        `json:"ysf"`
 	YSFGW    YSFGateway `json:"ysfgw"`
+	P25      P25        `json:"p25"`
+	P25GW    P25Gateway `json:"p25gw"`
+}
+
+// P25 holds MMDVM-Host's [P25] mode parameters (its enable flag is in Modes,
+// like the other modes).
+type P25 struct {
+	NAC              string `json:"nac"`                // Network Access Code, hex (293 = the common default)
+	SelfOnly         bool   `json:"self_only"`          // accept only this station's own ID
+	OverrideUIDCheck bool   `json:"override_uid_check"` // skip the source-ID (UID) validity check
+	RemoteGateway    bool   `json:"remote_gateway"`     // hand network control to a remote gateway (off for a local P25Gateway)
+	TXHang           string `json:"tx_hang"`
+}
+
+// P25Gateway is the P25 gateway (P25Gateway.ini): which reflector talkgroups to
+// link on startup, voice announcements, and the RF/net hang timers.
+type P25Gateway struct {
+	Static      string `json:"static"`        // comma-separated startup/static TGs, e.g. "10100,10200"
+	Voice       bool   `json:"voice"`         // spoken link-status announcements
+	RFHangTime  string `json:"rf_hang_time"`  // seconds RF holds a talkgroup
+	NetHangTime string `json:"net_hang_time"` // seconds a network talkgroup is held
 }
 
 // YSF holds MMDVM-Host's [System Fusion] mode parameters (its enable flag is in
@@ -139,6 +160,8 @@ func (m *Model) sections() map[string]any {
 		"networks": &m.Networks,
 		"ysf":      &m.YSF,
 		"ysfgw":    &m.YSFGW,
+		"p25":      &m.P25,
+		"p25gw":    &m.P25GW,
 	}
 }
 

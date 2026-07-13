@@ -10,7 +10,22 @@ type View struct {
 	Modes    []ViewMode    `json:"modes"`
 	Networks []ViewNetwork `json:"networks"`
 	YSF      ViewYSF       `json:"ysf"`
+	P25      ViewP25       `json:"p25"`
 	ReadOnly bool          `json:"read_only"`
+}
+
+// ViewP25 is the P25 tab's read model: the mode enable, the [P25] mode params,
+// and the gateway settings a user actually sets. No secrets.
+type ViewP25 struct {
+	Enable           bool   `json:"enable"`
+	NAC              string `json:"nac"`
+	SelfOnly         bool   `json:"self_only"`
+	OverrideUIDCheck bool   `json:"override_uid_check"`
+	RemoteGateway    bool   `json:"remote_gateway"`
+	Static           string `json:"static"`
+	Voice            bool   `json:"voice"`
+	RFHangTime       string `json:"rf_hang_time"`
+	NetHangTime      string `json:"net_hang_time"`
 }
 
 // ViewYSF is the System Fusion tab's read model: the mode enable plus the
@@ -125,6 +140,17 @@ func (m *Model) View(storePath string) *View {
 		YSFNetwork:        m.YSFGW.YSFNetwork,
 		FCSNetwork:        m.YSFGW.FCSNetwork,
 		APRS:              m.YSFGW.APRS,
+	}
+	v.P25 = ViewP25{
+		Enable:           m.Modes.P25,
+		NAC:              m.P25.NAC,
+		SelfOnly:         m.P25.SelfOnly,
+		OverrideUIDCheck: m.P25.OverrideUIDCheck,
+		RemoteGateway:    m.P25.RemoteGateway,
+		Static:           m.P25GW.Static,
+		Voice:            m.P25GW.Voice,
+		RFHangTime:       m.P25GW.RFHangTime,
+		NetHangTime:      m.P25GW.NetHangTime,
 	}
 	for _, md := range modeDisplay {
 		v.Modes = append(v.Modes, ViewMode{Key: md.key, Name: md.name, Enabled: md.get(m.Modes)})
