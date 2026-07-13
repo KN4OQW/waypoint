@@ -25,6 +25,7 @@ type Model struct {
 	DMRNet   DMRNet       `json:"dmrnet"`
 	Modes    Modes        `json:"modes"`
 	Networks []Network    `json:"networks"`
+	Routes   []DMRRoute   `json:"routes"`
 	YSF      YSF          `json:"ysf"`
 	YSFGW    YSFGateway   `json:"ysfgw"`
 	P25      P25          `json:"p25"`
@@ -215,16 +216,54 @@ type Modes struct {
 	FM     bool `json:"fm"`
 }
 
+// NetworkType selects a network's DMRGateway rewrite template and dial prefix,
+// mirroring WPSD. The routing rules are generated from the type (render.go)
+// rather than hand-written, so the operator never edits raw rewrite lines. The
+// one exception is NetCustom, which renders the verbatim Rewrites escape hatch.
+type NetworkType string
+
+const (
+	NetBrandmeister NetworkType = "brandmeister" // prefix 2 (when not primary)
+	NetDMRPlus      NetworkType = "dmrplus"       // DMR+/FreeDMR/HB-Link, prefix 8
+	NetDMR2YSF      NetworkType = "dmr2ysf"       // DMR2YSF/DMR2NXDN, prefix 7
+	NetTGIF         NetworkType = "tgif"          // prefix 5
+	NetSystemX      NetworkType = "systemx"       // prefix 4
+	NetXLX          NetworkType = "xlx"           // prefix 6
+	NetCustom       NetworkType = "custom"        // raw Rewrites, no generation
+)
+
 // Network is one DMRGateway upstream (BrandMeister, TGIF, …). Password is a
-// secret: it is stored, but the API View never serializes it. Rewrites are the
-// verbatim TG/PC/Src rewrite lines, preserved so routing is not lost.
+// secret: it is stored, but the API View never serializes it.
+//
+// Routing is generated from Type + Primary (render.go), the WPSD model: exactly
+// one network is Primary (no dial prefix, catches everything not claimed by a
+// prefix rule via PassAllTG/PassAllPC on both slots — this is what makes the
+// TG9990 Parrot echo without any config); every other network is reached by its
+// type's dial prefix. Options is the verbatim per-network options string sent at
+// login (BrandMeister TG subscriptions, DMR+ StartRef=…, …); empty omits it.
+// Rewrites is used only when Type is NetCustom (or preserved by import for a
+// network Waypoint could not classify), where it renders verbatim.
 type Network struct {
-	Name     string   `json:"name"`
-	Address  string   `json:"address"`
-	Port     string   `json:"port"`
-	Password string   `json:"password"`
-	Enabled  bool     `json:"enabled"`
-	Rewrites []string `json:"rewrites"`
+	Name     string      `json:"name"`
+	Type     NetworkType `json:"type"`
+	Address  string      `json:"address"`
+	Port     string      `json:"port"`
+	Password string      `json:"password"`
+	Options  string      `json:"options"`
+	Primary  bool        `json:"primary"`
+	Enabled  bool        `json:"enabled"`
+	Rewrites []string    `json:"rewrites"`
+}
+
+// DMRRoute ties one dialed talkgroup on one slot to a specific network by Name,
+// overriding prefix/primary routing — the "tie this channel to this gateway"
+// table. It renders as a direct TGRewrite on the target network; because
+// DMRGateway evaluates every network's explicit rewrites before any PassAll
+// (DMRGateway.cpp), a route always wins over the primary's catch-all.
+type DMRRoute struct {
+	Slot    string `json:"slot"`    // "1" or "2"
+	TG      string `json:"tg"`      // dialed talkgroup
+	Network string `json:"network"` // target Network.Name
 }
 
 // sections maps a store key to the field pointer, in one place so load and save
@@ -237,6 +276,7 @@ func (m *Model) sections() map[string]any {
 		"dmrnet":   &m.DMRNet,
 		"modes":    &m.Modes,
 		"networks": &m.Networks,
+		"routes":   &m.Routes,
 		"ysf":      &m.YSF,
 		"ysfgw":    &m.YSFGW,
 		"p25":      &m.P25,

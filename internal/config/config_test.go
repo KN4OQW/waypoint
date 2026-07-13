@@ -28,9 +28,14 @@ func fixture() *Model {
 		DMR:     DMR{ColorCode: "1", ID: "3180202", EmbeddedLCOnly: true, SelfOnly: false, DumpTAData: true},
 		DMRNet:  DMRNet{LocalPort: "62032", GatewayAddress: "127.0.0.1", GatewayPort: "62031", Slot1: true, Slot2: true, Jitter: "360"},
 		Modes:   Modes{DStar: false, DMR: true, YSF: true, P25: false, NXDN: true, M17: false, POCSAG: false, FM: false},
+		// Routing round-trips through generated type templates, not verbatim
+		// rewrites: a primary BM (catch-all/PassAll, the TG9990 Parrot rides it),
+		// a prefixed TGIF alternate, and an XLX section network. Options carries a
+		// verbatim BM subscription string (with '=' in the value).
 		Networks: []Network{
-			{Name: "BM_3102_United_States", Address: "3102.master.brandmeister.network", Port: "62031", Password: "s3cr3t", Enabled: true, Rewrites: []string{"PCRewrite0=2,94000,2,4000,1001", "TGRewrite0=2,9,2,9,1"}},
-			{Name: "TGIF_Network", Address: "tgif.network", Port: "62031", Password: "hunter2", Enabled: false, Rewrites: nil},
+			{Name: "BM_3102_United_States", Type: NetBrandmeister, Primary: true, Address: "3102.master.brandmeister.network", Port: "62031", Password: "s3cr3t", Options: "StartRef=4000;RelinkTime=15;UserLink=1;", Enabled: true},
+			{Name: "TGIF_Network", Type: NetTGIF, Address: "tgif.network", Port: "62031", Password: "hunter2", Enabled: false},
+			{Name: "XLX", Type: NetXLX, Address: "950", Port: "62030", Password: "xlxpw", Options: "E", Enabled: true},
 		},
 		YSF:    YSF{LowDeviation: true, SelfOnly: false, TXHang: "6", RemoteGateway: false, ModeHang: "20"},
 		YSFGW:  YSFGateway{Suffix: "RPT", WiresXPassthrough: true, Startup: "FCS00290", Revert: true, InactivityTimeout: "30", YSFNetwork: true, FCSNetwork: true, APRS: false},
@@ -248,4 +253,110 @@ func section(ini, name string) string {
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+// TestParrotRoutingGenerated is the regression for the original bug: a primary
+// network must emit the TG9990 group→private TypeRewrite and PassAll on both
+// slots, so the Parrot echoes without any hand-written routing.
+func TestParrotRoutingGenerated(t *testing.T) {
+	m := &Model{
+		DMR: DMR{ID: "3180202"},
+		Networks: []Network{
+			{Name: "BM", Type: NetBrandmeister, Primary: true, Address: "bm.example", Enabled: true},
+		},
+	}
+	got := section(m.RenderDMRGateway(), "DMR Network 1")
+	for _, want := range []string{
+		"TypeRewrite0=2,9990,2,9990", // group→private Parrot conversion
+		"PassAllTG0=1", "PassAllTG1=2", "PassAllPC0=1", "PassAllPC1=2",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("primary network missing %q\n%s", want, got)
+		}
+	}
+}
+
+// TestPrefixRoutingGenerated checks a non-primary network is reached by its
+// WPSD dial prefix (DMR+ = 8): dialing 8000321 on TS2 strips to TG 321.
+func TestPrefixRoutingGenerated(t *testing.T) {
+	m := &Model{
+		DMR:      DMR{ID: "1"},
+		Networks: []Network{{Name: "DMRPlus", Type: NetDMRPlus, Address: "dmrplus.example", Enabled: true}},
+	}
+	got := section(m.RenderDMRGateway(), "DMR Network 1")
+	for _, want := range []string{
+		"TGRewrite0=2,8,2,9,1",            // single-digit local shortcut
+		"TGRewrite2=2,8000001,2,1,999999", // prefix strip on TS2
+		"PCRewrite0=2,84000,2,4000,1001",  // reflector-control range
+		"TypeRewrite2=2,8009990,2,9990",   // Parrot on the alternate
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("DMR+ network missing %q\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "PassAll") {
+		t.Errorf("non-primary network must not emit PassAll\n%s", got)
+	}
+}
+
+// TestDMRRouteOverride: a route ties a dialed TG to a specific gateway, rendered
+// as a direct TGRewrite indexed past the template so it beats the primary.
+func TestDMRRouteOverride(t *testing.T) {
+	m := &Model{
+		DMR: DMR{ID: "1"},
+		Networks: []Network{
+			{Name: "BM", Type: NetBrandmeister, Primary: true, Address: "bm.example", Enabled: true},
+			{Name: "TGIF", Type: NetTGIF, Address: "tgif.network", Enabled: true},
+		},
+		Routes: []DMRRoute{{Slot: "2", TG: "31665", Network: "TGIF"}},
+	}
+	tgif := section(m.RenderDMRGateway(), "DMR Network 2")
+	if !strings.Contains(tgif, "TGRewrite3=2,31665,2,31665,1") {
+		t.Errorf("route override not appended to TGIF (expected TGRewrite3)\n%s", tgif)
+	}
+	// The route must not have leaked onto the primary.
+	if bm := section(m.RenderDMRGateway(), "DMR Network 1"); strings.Contains(bm, "31665") {
+		t.Errorf("route leaked onto primary\n%s", bm)
+	}
+}
+
+// TestImportClassifies: a standard generated block imports as its clean type
+// (no raw rewrites); a hand-tuned block is preserved verbatim as custom.
+func TestImportClassifies(t *testing.T) {
+	clean := "[DMR Network 1]\nName=BM_Master\nAddress=bm.example\n" +
+		strings.Join(primaryRewrites(), "\n") + "\n"
+	dg, err := ParseINI(strings.NewReader(clean))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nets := importNetworks(dg)
+	if len(nets) != 1 || nets[0].Type != NetBrandmeister || !nets[0].Primary || len(nets[0].Rewrites) != 0 {
+		t.Fatalf("standard BM block should import as primary brandmeister w/ no raw rewrites: %+v", nets)
+	}
+
+	tweaked := "[DMR Network 1]\nName=BM_Master\nAddress=bm.example\nTGRewrite0=2,1234,2,5678,1\n"
+	dg2, _ := ParseINI(strings.NewReader(tweaked))
+	nets2 := importNetworks(dg2)
+	if len(nets2) != 1 || nets2[0].Type != NetCustom || len(nets2[0].Rewrites) != 1 {
+		t.Fatalf("hand-tuned block should be preserved as custom: %+v", nets2)
+	}
+}
+
+// TestLegacyUntypedNetworkPreserved: a network from a store predating typed
+// routing (Type == "") must render its stored rewrites verbatim, so upgrading
+// the binary never wipes DMR routing before the operator re-picks a type.
+func TestLegacyUntypedNetworkPreserved(t *testing.T) {
+	m := &Model{
+		DMR: DMR{ID: "1"},
+		Networks: []Network{{
+			Name: "BM", Address: "bm.example", Enabled: true,
+			Rewrites: []string{"TGRewrite0=2,9,2,9,1", "PassAllTG=2", "PassAllPC=2"},
+		}},
+	}
+	got := section(m.RenderDMRGateway(), "DMR Network 1")
+	for _, want := range []string{"TGRewrite0=2,9,2,9,1", "PassAllTG=2", "PassAllPC=2"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("legacy untyped network dropped %q\n%s", want, got)
+		}
+	}
 }
