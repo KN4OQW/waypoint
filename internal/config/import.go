@@ -19,18 +19,18 @@ func Import(mmdvmPath, dmrgatewayPath string) (*Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", dmrgatewayPath, err)
 	}
-	// No YSFGateway/P25Gateway/NXDNGateway/dstargateway.cfg exists at seed time
-	// (waypointd creates them); those sections get defaults. yg/pg/ng/xg are
-	// non-nil only in the round-trip harness.
-	return fromINI(mm, dg, nil, nil, nil, nil), nil
+	// No YSFGateway/P25Gateway/NXDNGateway/dstargateway.cfg/M17Gateway.ini exists
+	// at seed time (waypointd creates them); those sections get defaults.
+	// yg/pg/ng/xg/mg are non-nil only in the round-trip harness.
+	return fromINI(mm, dg, nil, nil, nil, nil, nil), nil
 }
 
 // fromINI builds a Model from already-parsed INIs. Shared by Import (from disk)
 // and the round-trip harness (render → parse → fromINI, all in memory). The
-// gateway INIs yg (YSFGateway), pg (P25Gateway), ng (NXDNGateway) and xg
-// (dstargateway.cfg) may be nil, in which case their sections take their
-// defaults.
-func fromINI(mm, dg, yg, pg, ng, xg *INI) *Model {
+// gateway INIs yg (YSFGateway), pg (P25Gateway), ng (NXDNGateway), xg
+// (dstargateway.cfg) and mg (M17Gateway) may be nil, in which case their
+// sections take their defaults.
+func fromINI(mm, dg, yg, pg, ng, xg, mg *INI) *Model {
 	m := &Model{
 		General: General{
 			Callsign:    mm.Get("General", "Callsign"),
@@ -111,8 +111,49 @@ func fromINI(mm, dg, yg, pg, ng, xg *INI) *Model {
 			RemoteGateway: mm.Bool("D-Star", "RemoteGateway"),
 		},
 		DStarGW: dstarGatewayFromINI(xg),
+		M17: M17{
+			CAN:             orDefault(mm.Get("M17", "CAN"), "0"),
+			SelfOnly:        mm.Bool("M17", "SelfOnly"),
+			AllowEncryption: mm.Bool("M17", "AllowEncryption"),
+			TXHang:          orDefault(mm.Get("M17", "TXHang"), "5"),
+		},
+		M17GW: m17GatewayFromINI(mg),
 	}
 	return m
+}
+
+// DefaultM17 is the MMDVM-Host [M17] default: CAN 0 (Channel Access Number,
+// decimal), TXHang 5, and the restrictive/advanced flags off — matching the
+// forked MMDVM-Host's own member initializers (Conf.cpp: m_m17CAN(0U),
+// m_m17SelfOnly(false), m_m17AllowEncryption(false), m_m17TXHang(5U)). M17 has no
+// RemoteGateway. Used to backfill a store seeded before M17.
+func DefaultM17() M17 {
+	return M17{CAN: "0", SelfOnly: false, AllowEncryption: false, TXHang: "5"}
+}
+
+// DefaultM17Gateway is the sane hotspot default: node-type suffix H (hotspot; the
+// M17Gateway.ini offers H for hotspots, R for repeaters), no startup reflector
+// (don't auto-link on boot), voice announcements on, upstream network hang. Used
+// to seed a fresh store and to backfill the section on a store created before
+// M17 existed.
+func DefaultM17Gateway() M17Gateway {
+	return M17Gateway{
+		Suffix: "H", Startup: "", Revert: true, HangTime: "240", Voice: true,
+	}
+}
+
+// m17GatewayFromINI reads an M17Gateway.ini, or returns the defaults when mg is nil.
+func m17GatewayFromINI(mg *INI) M17Gateway {
+	if mg == nil {
+		return DefaultM17Gateway()
+	}
+	return M17Gateway{
+		Suffix:   orDefault(mg.Get("General", "Suffix"), "H"),
+		Startup:  mg.Get("Network", "Startup"),
+		Revert:   mg.Bool("Network", "Revert"),
+		HangTime: orDefault(mg.Get("Network", "HangTime"), "240"),
+		Voice:    mg.Bool("Voice", "Enabled"),
+	}
 }
 
 // DefaultYSFGateway is the sane duplex default (suffix RPT, both reflector

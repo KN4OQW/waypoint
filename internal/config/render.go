@@ -10,7 +10,7 @@ import (
 // WriteFiles renders the model and writes both INI files atomically (write to a
 // temp file in the same directory, then rename). A crash mid-apply therefore
 // never leaves a daemon reading a half-written config.
-func (m *Model) WriteFiles(mmdvmPath, dmrgatewayPath, ysfgatewayPath, p25gatewayPath, nxdngatewayPath, dstargatewayPath string) error {
+func (m *Model) WriteFiles(mmdvmPath, dmrgatewayPath, ysfgatewayPath, p25gatewayPath, nxdngatewayPath, dstargatewayPath, m17gatewayPath string) error {
 	if err := writeAtomic(mmdvmPath, m.RenderMMDVM()); err != nil {
 		return err
 	}
@@ -26,7 +26,10 @@ func (m *Model) WriteFiles(mmdvmPath, dmrgatewayPath, ysfgatewayPath, p25gateway
 	if err := writeAtomic(nxdngatewayPath, m.RenderNXDNGateway()); err != nil {
 		return err
 	}
-	return writeAtomic(dstargatewayPath, m.RenderDStarGateway())
+	if err := writeAtomic(dstargatewayPath, m.RenderDStarGateway()); err != nil {
+		return err
+	}
+	return writeAtomic(m17gatewayPath, m.RenderM17Gateway())
 }
 
 func writeAtomic(path, content string) error {
@@ -152,7 +155,15 @@ func (m *Model) RenderMMDVM() string {
 		kb("RemoteGateway", m.NXDN.RemoteGateway),
 		kv("TXHang", def(m.NXDN.TXHang, "5")),
 	)
-	modeSect(&b, "M17", m.Modes.M17)
+	// M17 uses a decimal CAN (Channel Access Number, like DMR's color code), has
+	// no RemoteGateway key, and adds AllowEncryption (pass encrypted M17 frames).
+	sect(&b, "M17",
+		kb("Enable", m.Modes.M17),
+		kv("CAN", def(m.M17.CAN, "0")),
+		kb("SelfOnly", m.M17.SelfOnly),
+		kb("AllowEncryption", m.M17.AllowEncryption),
+		kv("TXHang", def(m.M17.TXHang, "5")),
+	)
 	modeSect(&b, "POCSAG", m.Modes.POCSAG)
 	modeSect(&b, "FM", m.Modes.FM)
 
@@ -206,7 +217,31 @@ func (m *Model) RenderMMDVM() string {
 		kv("GatewayPort", nxdnMMDVMGatewayPort),
 		kv("Debug", "0"),
 	)
+	// The M17 network talks to M17Gateway on the fixed 17011/17010 pair. Unlike
+	// NXDN there is no Protocol key (M17Gateway speaks the MMDVM M17 transport
+	// directly).
+	sect(&b, "M17 Network",
+		kb("Enable", m.Modes.M17),
+		kv("LocalAddress", "127.0.0.1"),
+		kv("LocalPort", m17MMDVMLocalPort),
+		kv("GatewayAddress", "127.0.0.1"),
+		kv("GatewayPort", m17MMDVMGatewayPort),
+		kv("Debug", "0"),
+	)
 	return b.String()
+}
+
+// DStarReconnectValues is DStarGateway's allowed [Repeater] ReflectorReconnect
+// set (DStarGatewayConfig.cpp:242). Any other value fails the whole config load.
+var DStarReconnectValues = []string{"Never", "Fixed", "5", "10", "15", "20", "25", "30", "60", "90", "120", "180"}
+
+func clampReflectorReconnect(v string) string {
+	for _, ok := range DStarReconnectValues {
+		if v == ok {
+			return v
+		}
+	}
+	return "Never"
 }
 
 // Fixed loopback ports between MMDVM-Host and its gateways (the g4klx convention).
@@ -222,6 +257,9 @@ const (
 
 	dstarMMDVMLocalPort   = "20011" // MMDVM-Host listens here; DStarGateway [Repeater 1] Port
 	dstarMMDVMGatewayPort = "20010" // DStarGateway [General] HBPort; MMDVM-Host sends here
+
+	m17MMDVMLocalPort   = "17011" // MMDVM-Host listens here; M17Gateway RptPort
+	m17MMDVMGatewayPort = "17010" // M17Gateway listens here (LocalPort); MMDVM-Host sends here
 )
 
 // RenderYSFGateway renders a complete YSFGateway.ini from the model. Callsign,
@@ -499,7 +537,10 @@ func (m *Model) RenderDStarGateway() string {
 		kv("Type", "HB"),
 		kv("Reflector", m.DStarGW.Reflector),
 		kb("ReflectorAtStartup", strings.TrimSpace(m.DStarGW.Reflector) != ""),
-		kv("ReflectorReconnect", def(m.DStarGW.ReflectorReconnect, "Never")),
+		// ReflectorReconnect is enum-validated upstream; an out-of-set value makes
+		// DStarGateway's config load fail and the daemon abort. Clamp so a bad
+		// store value can never render an unstartable config.
+		kv("ReflectorReconnect", clampReflectorReconnect(m.DStarGW.ReflectorReconnect)),
 	)
 	// Reflector protocols. D-Plus Login defaults to the callsign; upstream
 	// force-disables D-Plus when Login is empty (DStarGatewayConfig.cpp:130), and
@@ -543,6 +584,81 @@ func (m *Model) RenderDStarGateway() string {
 	)
 	sect(&b, "Remote Commands",
 		kv("Enabled", "0"),
+	)
+	return b.String()
+}
+
+// Managed paths for M17Gateway. Unlike the other reflector daemons M17Gateway
+// parses M17Hosts as SPACE/TAB-delimited text (Reflectors.cpp strtok on
+// " \t\r\n": name, address, port) — NOT JSON. Audio holds the spoken
+// announcement clips; a missing directory only nulls voice, it is not fatal.
+const (
+	m17HostsPath = "/home/pi-star/waypoint/etc/M17Hosts.txt"
+	m17AudioDir  = "/home/pi-star/waypoint/etc/M17Audio"
+)
+
+// RenderM17Gateway renders a complete M17Gateway.ini from the model. This gateway
+// is PRE-MQTT (the pinned g4klx/M17Gateway has no libmosquitto): it logs to the
+// console/journal instead of publishing over MQTT, so unlike the YSF/P25/NXDN
+// gateways there is no [MQTT] section and DisplayLevel is 1 (foreground →
+// systemd journal) rather than 0. Callsign/frequencies come from the shared
+// station config; the rest from the M17 gateway section. The reflector hostlist
+// is a managed space/tab text file on disk.
+func (m *Model) RenderM17Gateway() string {
+	var b strings.Builder
+	b.WriteString(generatedHeader)
+
+	// Suffix is the node-type character appended to the callsign (H hotspot / R
+	// repeater). RptPort 17011 is where the gateway sends to MMDVM-Host; LocalPort
+	// 17010 is where it listens for MMDVM-Host.
+	sect(&b, "General",
+		kv("Callsign", m.General.Callsign),
+		kv("Suffix", def(m.M17GW.Suffix, "H")),
+		kv("RptAddress", "127.0.0.1"),
+		kv("RptPort", m17MMDVMLocalPort),
+		kv("LocalPort", m17MMDVMGatewayPort),
+		kv("Debug", "0"),
+		kv("Daemon", "0"),
+	)
+	sect(&b, "Info",
+		kv("RXFrequency", m.Modem.RXFreqHz),
+		kv("TXFrequency", m.Modem.TXFreqHz),
+		kv("Power", def(m.General.Power, "1")),
+		kv("Name", def(m.General.Location, "Waypoint")),
+	)
+	// Pre-MQTT gateway: log to the console at level 1 so the systemd journal
+	// captures startup/link events; no separate log file (FileLevel 0).
+	sect(&b, "Log",
+		kv("DisplayLevel", "1"),
+		kv("FileLevel", "0"),
+		kv("FilePath", "/tmp"),
+		kv("FileRoot", "M17Gateway"),
+		kv("FileRotate", "0"),
+	)
+	sect(&b, "Voice",
+		kb("Enabled", m.M17GW.Voice),
+		kv("Language", "en_GB"),
+		kv("Directory", m17AudioDir),
+	)
+	sect(&b, "APRS",
+		kv("Enable", "0"),
+	)
+	// Port 17000 is the M17 reflector network (outbound to reflectors). HostsFile2
+	// is the optional local/private list; /dev/null so the unconditional fopen
+	// returns EOF cleanly instead of logging an error. Startup is a reflector name
+	// whose trailing letter is the module (empty = don't auto-link on boot).
+	sect(&b, "Network",
+		kv("Port", "17000"),
+		kv("HostsFile1", m17HostsPath),
+		kv("HostsFile2", "/dev/null"),
+		kv("ReloadTime", "60"),
+		kv("Startup", m.M17GW.Startup),
+		kb("Revert", m.M17GW.Revert),
+		kv("HangTime", def(m.M17GW.HangTime, "240")),
+		kv("Debug", "0"),
+	)
+	sect(&b, "Remote Commands",
+		kv("Enable", "0"),
 	)
 	return b.String()
 }

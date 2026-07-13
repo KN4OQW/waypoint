@@ -33,6 +33,34 @@ type Model struct {
 	NXDNGW   NXDNGateway  `json:"nxdngw"`
 	DStar    DStar        `json:"dstar"`
 	DStarGW  DStarGateway `json:"dstargw"`
+	M17      M17          `json:"m17"`
+	M17GW    M17Gateway   `json:"m17gw"`
+}
+
+// M17 holds MMDVM-Host's [M17] mode parameters (its enable flag is in Modes,
+// like the other modes). M17 diverges from YSF/P25/NXDN: it has no RemoteGateway
+// key, and instead of a RAN/NAC it uses a CAN (Channel Access Number, a plain
+// decimal 0..15 like DMR's color code). It adds AllowEncryption — whether the
+// host passes encrypted M17 frames through. (Host support is Waypoint's fork of
+// MMDVM-Host; upstream removed M17 in commit 1e2e0c74.)
+type M17 struct {
+	CAN             string `json:"can"`              // Channel Access Number, decimal 0..15 (0 = the common default)
+	SelfOnly        bool   `json:"self_only"`        // accept only this station's own callsign
+	AllowEncryption bool   `json:"allow_encryption"` // pass encrypted M17 frames (off by default)
+	TXHang          string `json:"tx_hang"`
+}
+
+// M17Gateway is the M17 gateway (M17Gateway.ini): the startup reflector+module,
+// the node-type suffix, voice announcements, and the single network hang timer.
+// Unlike the YSF/P25/NXDN gateways this daemon is pre-MQTT (file/console
+// logging), so its own status is not on the dashboard data plane. Startup is an
+// M17 reflector name whose trailing letter is the module, e.g. "M17-M17 C".
+type M17Gateway struct {
+	Suffix   string `json:"suffix"`    // node type appended to the callsign: H (hotspot) or R (repeater)
+	Startup  string `json:"startup"`   // startup reflector+module (empty = don't auto-link on boot)
+	Revert   bool   `json:"revert"`    // revert to Startup after inactivity
+	HangTime string `json:"hang_time"` // seconds a network reflector is held
+	Voice    bool   `json:"voice"`     // spoken link-status announcements
 }
 
 // DStar holds MMDVM-Host's [D-Star] mode parameters (its enable flag is in
@@ -217,6 +245,8 @@ func (m *Model) sections() map[string]any {
 		"nxdngw":   &m.NXDNGW,
 		"dstar":    &m.DStar,
 		"dstargw":  &m.DStarGW,
+		"m17":      &m.M17,
+		"m17gw":    &m.M17GW,
 	}
 }
 

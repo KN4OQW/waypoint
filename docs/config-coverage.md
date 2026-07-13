@@ -46,7 +46,7 @@ behind the gateway-plugin model ([#21]); DMR + YSF are the MVP ([#17]).
 | D-Star | `[D-Star]` + `[D-Star Network]` | DStarGateway (ircDDB, MQTT era) | module ✅ · ircDDB login ✅ · startup reflector ✅ · DExtra/DPlus/DCS/XLX ✅ | ✅ |
 | P25 | `[P25]` | P25Gateway | P25 reflector network, TG list, NAC | ⬜ |
 | NXDN | `[NXDN]` | NXDNGateway | NXDN reflectors, TG list, RAN | ⬜ |
-| M17 | `[M17]` | M17Gateway | M17 reflectors/modules | ⬜ |
+| M17 | `[M17]` *(via fork)* | M17Gateway | CAN ✅ · startup reflector+module ✅ · suffix/voice/hang ✅ | ✅ |
 | POCSAG | `[POCSAG]` | DAPNETGateway | DAPNET auth (callsign, key), paging freq | ⬜ |
 | FM | `[FM]` | analog (+ optional FM network) | CTCSS, timeout, kerchunk, audio levels, access mode | ⬜ |
 
@@ -54,6 +54,33 @@ Each entry becomes: a store section (`mode.<name>` + `gateway.<name>`), a
 renderer for that gateway's INI, a systemd unit, and a dashboard tab. The
 per-mode *enable* already flips the MMDVM-Host section; what's missing is the
 gateway daemon config + reflector selection for every mode except DMR.
+
+### M17 required a host fork (upstream removed it)
+
+M17 could not be built on the *pinned g4klx* MMDVM-Host: upstream **removed M17
+(and AX.25) entirely** in commit `1e2e0c74` ("M17 and AX.25 removal cleanups.",
+2025-08-27) after deleting the M17 source files in `9720c7a` ("Make space for
+dPMR."). Our pinned `43edd65` (2026-05-29) is post-removal — no `M17*.cpp/.h`,
+no `[M17]`/`[M17 Network]` sections, no `MODE_M17`. With no host support the
+radio never keys M17 and `M17Gateway` has nothing to link to.
+
+Rather than drop the mode, Waypoint carries a **fork of MMDVM-Host** that
+restores M17 on top of the pinned SHA: revert both removal commits, then
+reconcile against ~9 months of drift (the `MMDVMHost*` → `MMDVM-Host*` rename,
+the deleted display subsystem, the MQTT era). M17 is restored **display-free and
+JSON-less** (M17 predates MMDVM-Host's JSON reporting; a follow-up can add
+`writeJSON` to `CM17Control` for dashboard RF-activity parity with the other
+modes). AX.25 rode along in the same removal commits but its source files are
+gone from the tree, so it stays disabled (`USE_AX25` undefined). The fork is
+pinned in waypoint-stack; the gateway is the still-current g4klx/M17Gateway,
+which is **pre-MQTT** (file/console logging, so its own status is not on the
+dashboard data plane — RF activity still surfaces via MMDVM-Host).
+
+Bench-validated: the forked MMDVM-Host loads `M17: enabled`, its modem-capability
+line reads `Modes: D-Star DMR YSF P25 NXDN M17 POCSAG`, and it opens the `[M17
+Network]` loopback (17011). M17Gateway loads 224 reflectors from the space/tab
+`M17Hosts.txt`, opens its Rpt port to MMDVM-Host (17010), and links to a live
+reflector (`Linked to M17-M17 C`, ACKN received). Both units stable, NRestarts=0.
 
 ## 3. Cross-mode gateways  → [#21]
 

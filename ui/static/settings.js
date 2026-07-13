@@ -12,6 +12,7 @@ const TABS = [
   { id: "ysf",          tag: "YS", label: "System Fusion", sub: "YSF / FCS reflectors", crumb: "MODES / SYSTEM FUSION",   title: "System Fusion (YSF)",   desc: "C4FM gateway: startup reflector or FCS room, Wires-X, and which reflector networks are on." },
   { id: "p25",          tag: "25", label: "P25",          sub: "NAC & Talkgroups",     crumb: "MODES / P25",             title: "P25 (Phase 1)",         desc: "APCO P25 gateway: network access code, startup talkgroups, and gateway behaviour." },
   { id: "nxdn",         tag: "NX", label: "NXDN",         sub: "RAN & Talkgroups",     crumb: "MODES / NXDN",            title: "NXDN",                  desc: "NXDN gateway: radio access number, startup talkgroups, and gateway behaviour." },
+  { id: "m17",          tag: "17", label: "M17",          sub: "CAN & Reflectors",     crumb: "MODES / M17",             title: "M17",                   desc: "M17 gateway: channel access number, startup reflector + module, and gateway behaviour." },
   { id: "modes",        tag: "MD", label: "Modes",        sub: "Digital Modes",        crumb: "MODES / DIGITAL",         title: "Digital Mode Control",  desc: "Which digital voice / data modes MMDVM-Host handles. Toggling one restarts the stack on Apply." },
   { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Bridges",   crumb: "BRIDGES / GATEWAYS",      title: "Cross-Mode Gateways",   desc: "Transcoding bridges between digital voice modes." },
   { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "SYSTEM / NETWORK",        title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
@@ -32,6 +33,7 @@ let ysfRefs = [];           // cached YSF reflector list for the startup picker
 let p25Refs = [];           // cached P25 talkgroup list for the startup-TG picker
 let nxdnRefs = [];          // cached NXDN talkgroup list for the startup-TG picker
 let dstarRefs = [];         // cached D-Star reflector list for the startup picker
+let m17Refs = [];           // cached M17 reflector list for the startup picker
 
 const el = (t, cls, html) => { const e = document.createElement(t); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -57,6 +59,8 @@ function buildEdit(c) {
     nxdngw: nxdngwFrom(c.nxdn || {}),
     dstar: dstarFrom(c.dstar || {}),
     dstargw: dstargwFrom(c.dstar || {}),
+    m17: m17From(c.m17 || {}),
+    m17gw: m17gwFrom(c.m17 || {}),
   };
   dirty = new Set();
   refreshActions();
@@ -117,6 +121,21 @@ function nxdnFrom(n) {
     ran: n.ran || "1", self_only: !!n.self_only, remote_gateway: !!n.remote_gateway,
   };
 }
+// The M17 view is flat too; it splits back into "m17" (MMDVM-Host [M17] params)
+// and "m17gw" (M17Gateway.ini). CAN is a decimal Channel Access Number; M17 has
+// no remote-gateway toggle but adds AllowEncryption.
+function m17From(n) {
+  return {
+    can: n.can || "0", self_only: !!n.self_only, allow_encryption: !!n.allow_encryption,
+  };
+}
+function m17gwFrom(n) {
+  return {
+    suffix: n.suffix || "H", startup: n.startup || "", revert: n.revert !== false,
+    hang_time: n.hang_time || "240", voice: n.voice !== false,
+  };
+}
+
 function nxdngwFrom(n) {
   return {
     static: n.static || "", voice: n.voice !== false,
@@ -347,6 +366,28 @@ function panelDStar() {
   return `<div class="grid2"><div class="stack">${gateway}${ircddb}</div><div class="stack">${behaviour}${protocols}</div></div>${hint}`;
 }
 
+function panelM17() {
+  const opts = m17Refs.map((r) => `<option value="${esc(r.name)} ">${esc(r.address)}</option>`).join("");
+  const gw = edit.m17gw || {};
+  const suffix = (gw.suffix || "H").toUpperCase();
+  const suffixSel = `<select data-sec="m17gw" data-key="suffix">` +
+    ["H", "R"].map((v) => `<option value="${v}"${v === suffix ? " selected" : ""}>${v === "H" ? "H — hotspot" : "R — repeater"}</option>`).join("") + `</select>`;
+  const gateway = card("GATEWAY",
+    toggle("modes", "m17", "M17", "ENABLED", "DISABLED") +
+    input("m17", "can", { label: "CAN", accent: true }) +
+    row("Startup reflector", `<input data-sec="m17gw" data-key="startup" list="m17-refs" value="${esc(gw.startup || "")}" placeholder="e.g. M17-M17 C — blank for none"><datalist id="m17-refs">${opts}</datalist>`) +
+    row("Node suffix", suffixSel) +
+    toggleRow("m17gw", "voice", "Voice announcements"));
+  const behaviour = card("BEHAVIOUR",
+    toggleRow("m17", "self_only", "Self only (accept only my callsign)") +
+    toggleRow("m17", "allow_encryption", "Allow encrypted M17 frames") +
+    toggleRow("m17gw", "revert", "Revert to startup reflector after inactivity"));
+  const timers = card("HANG TIMER",
+    input("m17gw", "hang_time", { label: "Network hang", unit: "sec" }));
+  const hint = m17Refs.length ? "" : note("Reflector list not loaded yet (fetched from the M17 register on a schedule). You can still type a reflector above.");
+  return `<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
+}
+
 function renderPanel() {
   const c = state.config || {};
   const box = document.getElementById("panels");
@@ -357,6 +398,7 @@ function renderPanel() {
     case "ysf":          box.innerHTML = panelYSF(); break;
     case "p25":          box.innerHTML = panelP25(); break;
     case "nxdn":         box.innerHTML = panelNXDN(); break;
+    case "m17":          box.innerHTML = panelM17(); break;
     case "modes":        box.innerHTML = panelModes(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
@@ -514,6 +556,10 @@ async function load() {
   try {
     dstarRefs = await fetch("/api/dstar/reflectors").then((r) => r.json());
     if (state.tab === "dstar") renderPanel();
+  } catch { /* offline — the picker still accepts a typed reflector */ }
+  try {
+    m17Refs = await fetch("/api/m17/reflectors").then((r) => r.json());
+    if (state.tab === "m17") renderPanel();
   } catch { /* offline — the picker still accepts a typed reflector */ }
 }
 
