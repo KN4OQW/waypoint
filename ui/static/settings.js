@@ -47,11 +47,11 @@ function buildEdit(c) {
   edit = {
     general: { callsign: g.callsign, id: g.dmr_id, duplex: !!g.duplex, power: g.power, location: g.location, url: g.url },
     modem:   { rx_freq_hz: g.rx_freq_hz, tx_freq_hz: g.tx_freq_hz, port: g.modem_port, rx_offset: g.rx_offset, tx_offset: g.tx_offset },
-    dmr:     { color_code: d.color_code, id: d.id, embedded_lc_only: !!d.embedded_lc_only },
+    dmr:     { color_code: d.color_code, id: d.id, embedded_lc_only: !!d.embedded_lc_only, dump_ta_data: !!d.dump_ta_data, beacons: !!d.beacons },
     dmrnet:  { slot1: !!d.slot1, slot2: !!d.slot2 },
     modes:   Object.fromEntries((c.modes || []).map((m) => [m.key, !!m.enabled])),
     // password starts blank (blank = keep the stored one); has_password drives the placeholder.
-    networks: (c.networks || []).map((n) => ({ name: n.name, type: n.type || "custom", address: n.address, port: n.port, primary: !!n.primary, options: n.options || "", enabled: !!n.enabled, password: "", rewrites: (n.rewrites || []).slice(), has_password: !!n.has_password })),
+    networks: (c.networks || []).map((n) => ({ name: n.name, type: n.type || "custom", address: n.address, port: n.port, primary: !!n.primary, options: n.options || "", essid: n.essid || "", enabled: !!n.enabled, password: "", has_password: !!n.has_password, auto_rewrite: !!n.auto_rewrite, tg_list_file: n.tg_list_file || "", xlx_startup: n.xlx_startup || "", xlx_module: n.xlx_module || "", xlx_slot: n.xlx_slot || "2", rewrites: (n.rewrites || []).slice() })),
     routes: (c.routes || []).map((r) => ({ slot: r.slot || "2", tg: r.tg || "", network: r.network || "" })),
     ysfgw: ysfgwFrom(c.ysf || {}),
     p25: p25From(c.p25 || {}),
@@ -150,8 +150,10 @@ function nxdngwFrom(n) {
 function cleanNet(n) {
   return {
     name: n.name, type: n.type || "custom", address: n.address, port: n.port,
-    primary: !!n.primary, options: n.options || "", enabled: !!n.enabled,
-    password: n.password || "", rewrites: n.type === "custom" ? (n.rewrites || []) : [],
+    primary: !!n.primary, options: n.options || "", essid: n.essid || "", enabled: !!n.enabled,
+    password: n.password || "", auto_rewrite: !!n.auto_rewrite, tg_list_file: n.tg_list_file || "",
+    xlx_startup: n.xlx_startup || "", xlx_module: n.xlx_module || "", xlx_slot: n.xlx_slot || "2",
+    rewrites: n.type === "custom" && !n.auto_rewrite ? (n.rewrites || []) : [],
   };
 }
 
@@ -256,67 +258,137 @@ function panelModes() {
 // is the primary catch-all (no prefix — this is what makes the TG9990 Parrot
 // echo). The only routing table is the optional "tie a talkgroup to a gateway"
 // override. A "custom" network keeps a raw-rules escape hatch.
-const NET_TYPES = [
-  ["brandmeister", "BrandMeister"],
-  ["dmrplus", "DMR+ / FreeDMR / HBLink"],
-  ["tgif", "TGIF"],
-  ["systemx", "SystemX"],
-  ["dmr2ysf", "DMR2YSF / DMR2NXDN"],
-  ["xlx", "XLX"],
-  ["custom", "Custom (raw rules)"],
-];
+// Fixed per-network sections mirroring Pi-Star's "DMR Configuration" body: a DMR
+// Master (primary) selector, then BrandMeister / DMR+ / Custom / SystemX / TGIF
+// / XLX blocks, then General DMR Settings and the talkgroup-routing override.
+// Each section binds to the single network of its type in edit.networks, created
+// on demand when its master/enable is set. Routing itself is generated on the
+// node from type + primary — no hand-written rewrites.
+let dmrMasters = []; // cached /api/dmr/masters, for the master dropdowns
 
-function typeSelect(i, sel) {
-  const opts = NET_TYPES.map(([v, label]) => `<option value="${v}"${v === sel ? " selected" : ""}>${label}</option>`).join("");
-  return `<select data-nettype="${i}">${opts}</select>`;
-}
 const slotSelect = (sel, attrs) =>
   `<select class="mini" ${attrs}><option value="1"${String(sel) === "1" ? " selected" : ""}>TS1</option><option value="2"${String(sel) !== "1" ? " selected" : ""}>TS2</option></select>`;
 
-// One network card. XLX repurposes Address as the startup reflector number and
-// Options as the module letter (matching the renderer's [XLX Network] block).
-function networkCard(n, i) {
-  const isXLX = n.type === "xlx";
-  const isCustom = n.type === "custom";
-  const addrLabel = isXLX ? "Startup reflector" : "Server address";
-  const optsRow = isXLX
-    ? row("Module", `<input data-net="${i}" data-nkey="options" value="${esc(n.options || "")}" placeholder="A">`)
-    : (isCustom ? "" : row("Options", `<input data-net="${i}" data-nkey="options" value="${esc(n.options || "")}" placeholder="optional login options string">`));
-  const primaryRow = isXLX ? "" : `
-    <div class="toggle-row" style="margin-top:12px;">
-      <span class="name">Primary — catch every talkgroup not claimed by another network</span>
-      <span class="pill ${n.primary ? "on" : "off"}" data-netprimary="${i}" style="cursor:pointer;">${n.primary ? "PRIMARY" : "OFF"}</span>
-    </div>`;
-  const raw = isCustom ? `
-    <div class="route-block">
-      <div class="route-title">RAW DMRGATEWAY RULES</div>
-      <textarea class="rewrites" data-rawnet="${i}" rows="4" placeholder="TGRewrite0=2,9,2,9,1&#10;PassAllTG=2&#10;PassAllPC=2">${esc((n.rewrites || []).join("\n"))}</textarea>
-    </div>` : "";
-  return `
-    <div class="card">
-      <div class="card-head">
-        <span class="sq"></span>
-        <input class="netname" data-net="${i}" data-nkey="name" value="${esc(n.name)}" placeholder="Network name">
-        <span class="pill ${n.enabled ? "on" : "off"}" data-nettoggle="${i}" style="cursor:pointer;">${n.enabled ? "ENABLED" : "DISABLED"}</span>
-        <button class="netdel" data-netdel="${i}" title="Remove network">✕</button>
-      </div>
-      ${row("Type", typeSelect(i, n.type))}
-      ${row(addrLabel, `<input data-net="${i}" data-nkey="address" value="${esc(n.address)}">`)}
-      ${row("Port", `<input data-net="${i}" data-nkey="port" value="${esc(n.port)}">`)}
-      ${row("Password", `<input data-net="${i}" data-nkey="password" type="password" value="${esc(n.password || "")}" placeholder="${n.has_password ? "•••••• unchanged" : "set password"}">`)}
-      ${optsRow}
-      ${primaryRow}
-      ${raw}
-    </div>`;
+function netOf(type) { return (edit.networks || []).find((n) => n.type === type); }
+// ensureNet returns the network of a type, creating a disabled one if absent.
+function ensureNet(type) {
+  let n = netOf(type);
+  if (!n) {
+    n = { name: type, type, address: "", port: type === "xlx" ? "62030" : "62031", primary: false,
+          options: "", essid: "", enabled: false, password: "", has_password: false,
+          auto_rewrite: type === "custom", tg_list_file: "", xlx_startup: "", xlx_module: "", xlx_slot: "2", rewrites: [] };
+    (edit.networks = edit.networks || []).push(n);
+  }
+  return n;
+}
+
+const enPill = (type, n) => `<span class="pill ${n && n.enabled ? "on" : "off"}" data-neten="${type}" style="cursor:pointer;">${n && n.enabled ? "ENABLED" : "DISABLED"}</span>`;
+const netField = (type, key, n, ph, pw) =>
+  `<input data-netf="${type}" data-nkey="${key}"${pw ? ' type="password"' : ""} value="${esc(n ? (n[key] || "") : "")}" placeholder="${esc(ph || "")}">`;
+
+// masterSelect renders the DMR_Hosts.txt masters for a category; picking one
+// fills the network's address/name/port on the node side.
+function masterSelect(type, cat, n) {
+  const list = dmrMasters.filter((m) => m.category === cat);
+  const cur = (n && n.address) || "";
+  const opts = ['<option value="">— select master —</option>']
+    .concat(list.map((m) => `<option value="${esc(m.address)}"${m.address === cur ? " selected" : ""}>${esc(m.name)}</option>`))
+    .join("");
+  return `<select data-dmrmaster="${type}">${opts}</select>${list.length ? "" : " <small style='color:var(--dim)'>host list loading…</small>"}`;
+}
+
+// essidSelect: None / 01..99 extended-ID suffix, per Pi-Star.
+function essidSelect(type, n) {
+  const cur = (n && n.essid) || "";
+  let opts = `<option value=""${cur === "" ? " selected" : ""}>None</option>`;
+  for (let i = 1; i <= 99; i++) { const v = String(i).padStart(2, "0"); opts += `<option value="${v}"${v === cur ? " selected" : ""}>${v}</option>`; }
+  return `<select data-netf="${type}" data-nkey="essid">${opts}</select>`;
+}
+
+function sectionHead(title, type, n) {
+  return `<div class="card-head"><span class="sq"></span><span class="t">${title}</span>${enPill(type, n)}</div>`;
+}
+
+function panelBrandmeister() {
+  const d = edit.dmr || (edit.dmr = {});
+  const bm = netOf("brandmeister"), dp = netOf("dmrplus"), cu = netOf("custom"), sx = netOf("systemx"), tg = netOf("tgif"), xl = netOf("xlx");
+  const primaryType = ((edit.networks || []).find((n) => n.primary) || {}).type || "brandmeister";
+  const masterSel = [["brandmeister", "Brandmeister"], ["dmrplus", "DMR+ / FreeDMR / ADN / HBlink"], ["systemx", "SystemX"], ["tgif", "TGIF"]]
+    .map(([v, l]) => `<option value="${v}"${v === primaryType ? " selected" : ""}>${l}</option>`).join("");
+
+  const master = `<section class="card">
+      <div class="card-head"><span class="sq"></span><span class="t">DMR MASTER</span></div>
+      ${row("DMR Master", `<select data-dmrprimary>${masterSel}</select>`)}
+      ${note("Your primary DMR network — the catch-all with no dial prefix. Alternate networks below are reached by their prefix (BM 2, DMR+ 8, SystemX 4, TGIF 5).")}
+    </section>`;
+
+  const bmSec = `<section class="card">
+      ${sectionHead("BRANDMEISTER NETWORK", "brandmeister", bm)}
+      ${row("BrandMeister Master", masterSelect("brandmeister", "brandmeister", bm))}
+      ${row("BM Hotspot Security", `<input data-netf="brandmeister" data-nkey="password" type="password" value="${esc(bm ? bm.password || "" : "")}" placeholder="${bm && bm.has_password ? "•••••• unchanged" : "BM Self Care password"}">`)}
+      ${row("ESSID", essidSelect("brandmeister", bm))}
+    </section>`;
+
+  const dpSec = `<section class="card">
+      ${sectionHead("DMR+ / FreeDMR / ADN / HBlink", "dmrplus", dp)}
+      ${row("DMR Master", masterSelect("dmrplus", "dmrplus", dp))}
+      ${row("Network Options", netField("dmrplus", "options", dp, "Options= for this host"))}
+      ${row("ESSID", essidSelect("dmrplus", dp))}
+    </section>`;
+
+  const cuSec = `<section class="card">
+      ${sectionHead("CUSTOM DMR NETWORK", "custom", cu)}
+      ${row("Server Name", netField("custom", "name", cu, "readable name"))}
+      ${row("Server Address", netField("custom", "address", cu, "host or IP"))}
+      ${row("Port", netField("custom", "port", cu, "62031"))}
+      ${row("Password", `<input data-netf="custom" data-nkey="password" type="password" value="${esc(cu ? cu.password || "" : "")}" placeholder="${cu && cu.has_password ? "•••••• unchanged" : "network password"}">`)}
+      ${row("ESSID", essidSelect("custom", cu))}
+      ${row("Network Options", netField("custom", "options", cu, "Options= for this host"))}
+      ${row("TG List File", netField("custom", "tg_list_file", cu, "auto (leave blank)"))}
+      <div class="toggle-row"><span class="name">Automatic Rewrite Rules</span><span class="pill ${cu && cu.auto_rewrite ? "on" : "off"}" data-netbool="custom" data-nbkey="auto_rewrite" style="cursor:pointer;">${cu && cu.auto_rewrite ? "ON" : "OFF"}</span></div>
+    </section>`;
+
+  const sxSec = `<section class="card">
+      ${sectionHead("SYSTEMX NETWORK", "systemx", sx)}
+      ${row("SystemX Master", masterSelect("systemx", "systemx", sx))}
+      ${row("Network Options", netField("systemx", "options", sx, "Options= for this host"))}
+      ${row("ESSID", essidSelect("systemx", sx))}
+    </section>`;
+
+  const tgSec = `<section class="card">
+      ${sectionHead("TGIF NETWORK", "tgif", tg)}
+      ${row("TGIF Master", masterSelect("tgif", "tgif", tg))}
+      ${row("TGIF Security Key", `<input data-netf="tgif" data-nkey="password" type="password" value="${esc(tg ? tg.password || "" : "")}" placeholder="${tg && tg.has_password ? "•••••• unchanged" : "TGIF Self Care key"}">`)}
+      ${row("ESSID", essidSelect("tgif", tg))}
+    </section>`;
+
+  const xlSec = `<section class="card">
+      ${sectionHead("XLX NETWORK", "xlx", xl)}
+      ${row("XLX Startup TG", netField("xlx", "xlx_startup", xl, "reflector number, e.g. 950"))}
+      ${row("XLX Startup Module", netField("xlx", "xlx_module", xl, "A–Z (blank = host default)"))}
+      ${row("Time Slot", slotSelect(xl && xl.xlx_slot, `data-netf="xlx" data-nkey="xlx_slot"`))}
+    </section>`;
+
+  const cc = d.color_code || "1";
+  let ccOpts = "";
+  for (let i = 0; i <= 15; i++) ccOpts += `<option value="${i}"${String(i) === String(cc) ? " selected" : ""}>${i}</option>`;
+  const general = `<section class="card">
+      <div class="card-head"><span class="sq"></span><span class="t">GENERAL DMR SETTINGS</span></div>
+      ${row("DMR Color Code", `<select data-sec="dmr" data-key="color_code">${ccOpts}</select>`)}
+      <div class="toggle-row"><span class="name">DMR Roaming Beacon</span><span class="pill ${d.beacons ? "on" : "off"}" data-toggle="dmr.beacons" style="cursor:pointer;">${d.beacons ? "ON" : "OFF"}</span></div>
+      <div class="toggle-row"><span class="name">DMR EmbeddedLCOnly</span><span class="pill ${d.embedded_lc_only ? "on" : "off"}" data-toggle="dmr.embedded_lc_only" style="cursor:pointer;">${d.embedded_lc_only ? "ON" : "OFF"}</span></div>
+      <div class="toggle-row"><span class="name">DMR DumpTAData</span><span class="pill ${d.dump_ta_data ? "on" : "off"}" data-toggle="dmr.dump_ta_data" style="cursor:pointer;">${d.dump_ta_data ? "ON" : "OFF"}</span></div>
+    </section>`;
+
+  const intro = note("<b>DMR Configuration</b> — mirrors the Pi-Star layout. Enable the networks you use; routing is generated on the node. The <b>DMR Master</b> is your primary (no prefix) catch-all — this is what makes the 9990 Parrot echo.");
+  return `${intro}<div class="stack">${master}${bmSec}${dpSec}${cuSec}${sxSec}${tgSec}${xlSec}${general}</div>${routingTable()}`;
 }
 
 // The talkgroup routing override table — "tie this dialed TG to this gateway".
-// A route renders as a direct rewrite on the target network, which beats the
-// primary's catch-all; leave empty for normal prefix/primary routing.
 function routingTable() {
-  const nets = edit.networks || [];
+  const nets = (edit.networks || []).filter((n) => n.enabled);
   const routes = edit.routes || [];
-  const netOpts = (sel) => nets.map((n) => `<option value="${esc(n.name)}"${n.name === sel ? " selected" : ""}>${esc(n.name)}</option>`).join("");
+  const netOpts = (sel) => nets.map((n) => `<option value="${esc(n.name)}"${n.name === sel ? " selected" : ""}>${esc(n.name)} (${esc(n.type)})</option>`).join("");
   const rows = routes.map((r, j) => `
     <div class="route-row">
       ${slotSelect(r.slot, `data-rtslot="${j}"`)}
@@ -331,18 +403,10 @@ function routingTable() {
   return `
     <div class="card" style="margin-top:16px;">
       <div class="route-title">TALKGROUP ROUTING</div>
-      ${note("Optional. Send a specific dialed talkgroup to a specific network, overriding prefix/primary routing.")}
+      ${note("Optional. Send a specific dialed talkgroup to a specific enabled network, overriding prefix/primary routing.")}
       ${body}
       <button class="btn ghost mini-btn" id="route-add"${nets.length ? "" : " disabled"}>+ ADD ROUTE</button>
     </div>`;
-}
-
-function panelBrandmeister() {
-  const nets = edit.networks || [];
-  const cards = nets.map((n, i) => networkCard(n, i)).join("");
-  const empty = nets.length ? "" : note("No DMR networks. Add one to bridge this hotspot to BrandMeister, TGIF, FreeDMR/HBLink, SystemX, or XLX.");
-  const intro = note("Pick each network's <b>type</b> and the node generates the DMRGateway routing for you. Mark one network <b>primary</b> — it catches every talkgroup you dial that isn't claimed by another network's prefix (this is what makes the 9990 Parrot echo). Alternate networks are reached by their dial prefix.");
-  return `${intro}<div class="grid2">${cards}</div>${empty}<button class="btn ghost" id="net-add" style="margin-top:16px;">+ ADD NETWORK</button>${routingTable()}`;
 }
 
 function panelExpert(c, h) {
@@ -644,6 +708,10 @@ async function load() {
     m17Refs = await fetch("/api/m17/reflectors").then((r) => r.json());
     if (state.tab === "m17") renderPanel();
   } catch { /* offline — the picker still accepts a typed reflector */ }
+  try {
+    dmrMasters = await fetch("/api/dmr/masters").then((r) => r.json()) || [];
+    if (state.tab === "brandmeister") renderPanel();
+  } catch { /* offline — the master dropdowns show what's cached (may be empty) */ }
 }
 
 // text edits update the working copy; toggles flip a bool and re-render.
@@ -656,33 +724,30 @@ document.getElementById("panels").addEventListener("input", (e) => {
     setField(t.dataset.sec, t.dataset.key, v);
     return;
   }
-  // network type dropdown — routing is regenerated on the node from the type.
-  if (t.dataset.nettype != null) {
-    const i = +t.dataset.nettype;
-    edit.networks[i].type = t.value;
-    if (t.value === "xlx") edit.networks[i].primary = false; // XLX has its own section
-    dirty.add("networks");
-    renderPanel();
-    refreshActions();
+  // DMR Master (primary) selector — the primary is the no-prefix catch-all.
+  if (t.dataset.dmrprimary != null) {
+    const type = t.value, n = ensureNet(type);
+    n.primary = true; n.enabled = true;
+    (edit.networks || []).forEach((x) => { x.primary = x.type === type; });
+    dirty.add("networks"); renderPanel(); refreshActions();
+    return;
+  }
+  // Master dropdown: apply the chosen DMR_Hosts.txt master to the network.
+  if (t.dataset.dmrmaster != null) {
+    const type = t.dataset.dmrmaster, m = dmrMasters.find((x) => x.address === t.value), n = ensureNet(type);
+    if (m) { n.address = m.address; n.port = m.port || n.port; if (!n.name || n.name === type) n.name = m.name; }
+    else { n.address = t.value; }
+    dirty.add("networks"); renderPanel(); refreshActions();
     return;
   }
   // talkgroup routing table: slot / dialed TG / target gateway.
   if (t.dataset.rtslot != null) { edit.routes[+t.dataset.rtslot].slot = t.value; dirty.add("routes"); refreshActions(); return; }
   if (t.dataset.rttg != null) { edit.routes[+t.dataset.rttg].tg = t.value; dirty.add("routes"); refreshActions(); return; }
   if (t.dataset.rtnet != null) { edit.routes[+t.dataset.rtnet].network = t.value; dirty.add("routes"); refreshActions(); return; }
-  // custom network: the raw-rules textarea (verbatim DMRGateway lines).
-  if (t.dataset.rawnet != null) {
-    const i = +t.dataset.rawnet;
-    edit.networks[i].rewrites = t.value.split("\n").map((s) => s.trim()).filter(Boolean);
-    dirty.add("networks");
-    refreshActions();
-    return;
-  }
-  if (t.dataset.net != null) {
-    const i = +t.dataset.net, key = t.dataset.nkey;
-    edit.networks[i][key] = t.value;
-    dirty.add("networks");
-    refreshActions();
+  // per-network field, bound by network type (created on demand).
+  if (t.dataset.netf != null) {
+    ensureNet(t.dataset.netf)[t.dataset.nkey] = t.value;
+    dirty.add("networks"); refreshActions();
   }
 });
 document.getElementById("panels").addEventListener("click", (e) => {
@@ -693,23 +758,18 @@ document.getElementById("panels").addEventListener("click", (e) => {
     renderPanel();
     return;
   }
-  const nt = e.target.closest("[data-nettoggle]");
-  if (nt) { const i = +nt.dataset.nettoggle; edit.networks[i].enabled = !edit.networks[i].enabled; dirty.add("networks"); renderPanel(); refreshActions(); return; }
-  const nd = e.target.closest("[data-netdel]");
-  if (nd) { edit.networks.splice(+nd.dataset.netdel, 1); dirty.add("networks"); renderPanel(); refreshActions(); return; }
-  // primary is exclusive: turning one on clears the rest (single catch-all).
-  const np = e.target.closest("[data-netprimary]");
-  if (np) { const i = +np.dataset.netprimary; const on = !edit.networks[i].primary; edit.networks.forEach((n, k) => { n.primary = on && k === i; }); dirty.add("networks"); renderPanel(); refreshActions(); return; }
+  // per-network Enable toggle, bound by type (creates the network on demand).
+  const en = e.target.closest("[data-neten]");
+  if (en) { const n = ensureNet(en.dataset.neten); n.enabled = !n.enabled; if (!n.enabled) n.primary = false; dirty.add("networks"); renderPanel(); refreshActions(); return; }
+  // per-network boolean toggle (e.g. custom Automatic Rewrite Rules).
+  const nb = e.target.closest("[data-netbool]");
+  if (nb) { const n = ensureNet(nb.dataset.netbool); n[nb.dataset.nbkey] = !n[nb.dataset.nbkey]; dirty.add("networks"); renderPanel(); refreshActions(); return; }
   const rtd = e.target.closest("[data-rtdel]");
   if (rtd) { edit.routes.splice(+rtd.dataset.rtdel, 1); dirty.add("routes"); renderPanel(); refreshActions(); return; }
   if (e.target.id === "route-add") {
-    (edit.routes = edit.routes || []).push({ slot: "2", tg: "", network: (edit.networks[0] || {}).name || "" });
+    const firstEnabled = (edit.networks || []).find((n) => n.enabled) || {};
+    (edit.routes = edit.routes || []).push({ slot: "2", tg: "", network: firstEnabled.name || "" });
     dirty.add("routes"); renderPanel(); refreshActions();
-  }
-  if (e.target.id === "net-add") {
-    // First network defaults to primary — a lone hotspot just wants a catch-all.
-    edit.networks.push({ name: "New Network", type: "brandmeister", address: "", port: "62031", primary: edit.networks.length === 0, options: "", enabled: false, password: "", rewrites: [], has_password: false });
-    dirty.add("networks"); renderPanel(); refreshActions();
   }
 });
 document.getElementById("btn-apply").onclick = apply;
