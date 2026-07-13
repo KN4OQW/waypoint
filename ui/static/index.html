@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Waypoint</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="mark" aria-hidden="true">◈</span>
+    <h1>Waypoint</h1>
+    <span id="demo-badge" class="badge demo" hidden>demo feed</span>
+  </div>
+  <div class="pills" role="status">
+    <span class="pill" id="pill-conn" data-state="down">connecting…</span>
+    <span class="pill" id="pill-mode">mode —</span>
+    <span class="pill" id="pill-version">—</span>
+  </div>
+</header>
+
+<main>
+  <section class="panel" aria-labelledby="h-now">
+    <h2 id="h-now">On air</h2>
+    <div id="onair" class="onair idle">
+      <p class="onair-idle">Listening — no active transmission</p>
+    </div>
+  </section>
+
+  <div class="cols">
+    <section class="panel" aria-labelledby="h-lastheard">
+      <h2 id="h-lastheard">Last heard</h2>
+      <div class="tablewrap">
+        <table id="lastheard">
+          <thead><tr><th scope="col">Station</th><th scope="col">Dest</th><th scope="col">Mode</th><th scope="col">Dur</th><th scope="col">BER</th><th scope="col">When</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty" id="lastheard-empty">Nothing heard yet.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="h-networks">
+      <h2 id="h-networks">Networks</h2>
+      <ul id="networks" class="netlist"></ul>
+      <p class="empty" id="networks-empty">No network links reported.</p>
+    </section>
+  </div>
+
+  <section class="panel" aria-labelledby="h-log">
+    <h2 id="h-log">Event log</h2>
+    <div class="tablewrap loglimit">
+      <table id="eventlog">
+        <thead><tr><th scope="col">Time</th><th scope="col">Event</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span id="foot-version">waypointd</span> · <a href="https://github.com/KN4OQW/waypoint">source</a> · every event on this page arrived over <code>/api/events</code> — no log scraping
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
