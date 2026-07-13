@@ -144,6 +144,18 @@ type YSF struct {
 
 // YSFGateway is the System Fusion gateway (YSFGateway.ini): reflector/room
 // connection, Wires-X behaviour, and which of the YSF/FCS networks are on.
+//
+// The last three fields are the WPSD "DG-ID Gateway" additions. DGIdGateway is
+// an *alternative* YSF gateway daemon (also from the pinned YSFClients tree) that
+// shares MMDVM-Host's fixed 3200/4200 loopback with YSFGateway — the two are
+// mutually exclusive, so EnableDGId swaps the rendered YSF file/unit from
+// YSFGateway.ini to DGIdGateway.ini (render.go RenderTargets). It brings DG-ID
+// addressing: one connection, many rooms selected by DG-ID, and the local
+// Wires-X gateway on DG-ID 0. YCSNetwork adds the startup reflector as a static
+// DG-ID network block (the YCS/networked-reflector path). UpperHostfiles is a
+// hostlist-fetch transform (uppercase the managed reflector names) consumed by
+// the ysfhosts fetcher — NOT a daemon INI key: neither pinned binary
+// (YSFGateway/DGIdGateway @ 2b480aa) parses WiresXMakeUpper.
 type YSFGateway struct {
 	Suffix            string `json:"suffix"`             // RPT (duplex) / ND (simplex) / a letter
 	WiresXPassthrough bool   `json:"wiresx_passthrough"` // let the radio's Wires-X buttons drive the gateway
@@ -153,6 +165,9 @@ type YSFGateway struct {
 	YSFNetwork        bool   `json:"ysf_network"`
 	FCSNetwork        bool   `json:"fcs_network"`
 	APRS              bool   `json:"aprs"`
+	EnableDGId        bool   `json:"enable_dgid"`     // run DGIdGateway instead of YSFGateway on the 3200/4200 pair
+	YCSNetwork        bool   `json:"ycs_network"`     // (DG-ID) add the startup reflector as a static DG-ID network
+	UpperHostfiles    bool   `json:"upper_hostfiles"` // uppercase reflector names in the managed hostlist (fetch transform)
 }
 
 // General is station identity and top-level behaviour.

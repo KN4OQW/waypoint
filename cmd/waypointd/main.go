@@ -40,20 +40,13 @@ type server struct {
 	started    time.Time
 	store      *store.Store
 	storePath  string
-	mmdvmINI   string // render target: the file MMDVM-Host reads
-	dmrgwINI   string // render target: the file DMRGateway reads
-	ysfgwINI   string // render target: the file YSFGateway reads
-	p25gwINI   string // render target: the file P25Gateway reads
-	nxdngwINI  string // render target: the file NXDNGateway reads
-	dstargwINI string // render target: the file DStarGateway reads (dstargateway.cfg)
-	m17gwINI   string // render target: the file M17Gateway reads (M17Gateway.ini)
-	ysfHosts   string // cached YSF reflector hostlist (JSON)
-	p25Hosts   string // cached P25 reflector (talkgroup) hostlist (JSON)
-	nxdnHosts  string // cached NXDN reflector (talkgroup) hostlist (JSON)
-	dstarHosts string // cached D-Star reflector hostlist (JSON)
-	m17Hosts   string // cached M17 reflector hostlist (space/tab text)
-	dmrHosts   string // cached DMR master hostlist (DMR_Hosts.txt, space/tab text)
-	units      []string
+	paths      config.Paths // where each daemon reads its generated INI (render targets)
+	ysfHosts   string       // cached YSF reflector hostlist (JSON)
+	p25Hosts   string       // cached P25 reflector (talkgroup) hostlist (JSON)
+	nxdnHosts  string       // cached NXDN reflector (talkgroup) hostlist (JSON)
+	dstarHosts string       // cached D-Star reflector hostlist (JSON)
+	m17Hosts   string       // cached M17 reflector hostlist (space/tab text)
+	dmrHosts   string       // cached DMR master hostlist (DMR_Hosts.txt, space/tab text)
 }
 
 // m17Reflectors serves the cached M17 reflector hostlist for the settings-page
@@ -181,11 +174,12 @@ func (s *server) configApply(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := m.WriteFiles(s.mmdvmINI, s.dmrgwINI, s.ysfgwINI, s.p25gwINI, s.nxdngwINI, s.dstargwINI, s.m17gwINI); err != nil {
+	targets := m.RenderTargets(s.paths)
+	if err := m.WriteFiles(s.paths); err != nil {
 		http.Error(w, "render: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	restarted, err := s.restartUnits()
+	restarted, err := s.restartUnits(restartSet(targets))
 	if err != nil {
 		http.Error(w, "restart: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -195,9 +189,24 @@ func (s *server) configApply(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"applied": true, "restarted": restarted})
 }
 
-func (s *server) restartUnits() ([]string, error) {
+// restartSet is the deduped, ordered list of units to restart for a set of
+// render targets. Two modes sharing a unit collapse to one restart.
+func restartSet(targets []config.RenderTarget) []string {
+	seen := map[string]bool{}
+	var units []string
+	for _, t := range targets {
+		if t.Unit == "" || seen[t.Unit] {
+			continue
+		}
+		seen[t.Unit] = true
+		units = append(units, t.Unit)
+	}
+	return units
+}
+
+func (s *server) restartUnits(units []string) ([]string, error) {
 	var done []string
-	for _, u := range s.units {
+	for _, u := range units {
 		if u == "" {
 			continue
 		}
@@ -216,14 +225,14 @@ func (s *server) seedStore() error {
 	if err != nil || !empty {
 		return err
 	}
-	m, err := config.Import(s.mmdvmINI, s.dmrgwINI)
+	m, err := config.Import(s.paths.MMDVM, s.paths.DMRGateway)
 	if err != nil {
 		return fmt.Errorf("seed import: %w", err)
 	}
 	if err := m.Save(s.store, "seed"); err != nil {
 		return err
 	}
-	log.Printf("config store seeded from %s + %s", s.mmdvmINI, s.dmrgwINI)
+	log.Printf("config store seeded from %s + %s", s.paths.MMDVM, s.paths.DMRGateway)
 	return nil
 }
 
@@ -408,6 +417,7 @@ func main() {
 	mmdvmINI := flag.String("mmdvm-ini", "/home/pi-star/waypoint/etc/MMDVM-Host.ini", "MMDVM-Host.ini render target (the file the daemon reads)")
 	dmrgwINI := flag.String("dmrgateway-ini", "/home/pi-star/waypoint/etc/DMRGateway.ini", "DMRGateway.ini render target")
 	ysfgwINI := flag.String("ysfgateway-ini", "/home/pi-star/waypoint/etc/YSFGateway.ini", "YSFGateway.ini render target")
+	dgidgwINI := flag.String("dgidgateway-ini", "/home/pi-star/waypoint/etc/DGIdGateway.ini", "DGIdGateway.ini render target (used when DG-ID gateway is enabled)")
 	p25gwINI := flag.String("p25gateway-ini", "/home/pi-star/waypoint/etc/P25Gateway.ini", "P25Gateway.ini render target")
 	nxdngwINI := flag.String("nxdngateway-ini", "/home/pi-star/waypoint/etc/NXDNGateway.ini", "NXDNGateway.ini render target")
 	dstargwINI := flag.String("dstargateway-ini", "/home/pi-star/waypoint/etc/dstargateway.cfg", "dstargateway.cfg render target")
@@ -427,7 +437,6 @@ func main() {
 	dmrHosts := flag.String("dmr-hosts", "/usr/local/etc/DMR_Hosts.txt", "cached DMR master hostlist path (DMR_Hosts.txt)")
 	dmrHostsURL := flag.String("dmr-hosts-url", dmrhosts.DefaultURL, "DMR master hostlist source URL")
 	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
-	units := flag.String("units", "waypoint-mmdvm.service,waypoint-dmrgateway.service,waypoint-ysfgateway.service,waypoint-p25gateway.service,waypoint-nxdngateway.service,waypoint-dstargateway.service,waypoint-m17gateway.service", "comma-separated systemd units to restart on apply")
 	flag.Parse()
 
 	st, err := store.Open(*storePath)
@@ -439,9 +448,11 @@ func main() {
 	s := &server{
 		hub: hub.New(), demo: *demoMode, started: time.Now(),
 		store: st, storePath: *storePath,
-		mmdvmINI: *mmdvmINI, dmrgwINI: *dmrgwINI, ysfgwINI: *ysfgwINI, p25gwINI: *p25gwINI, nxdngwINI: *nxdngwINI, dstargwINI: *dstargwINI, m17gwINI: *m17gwINI,
+		paths: config.Paths{
+			MMDVM: *mmdvmINI, DMRGateway: *dmrgwINI, YSFGateway: *ysfgwINI, DGIdGateway: *dgidgwINI,
+			P25Gateway: *p25gwINI, NXDNGateway: *nxdngwINI, DStarGateway: *dstargwINI, M17Gateway: *m17gwINI,
+		},
 		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts,
-		units: strings.Split(*units, ","),
 	}
 	if err := s.seedStore(); err != nil {
 		log.Printf("config store seed skipped: %v", err)
@@ -463,8 +474,16 @@ func main() {
 				log.Printf("mqtt bridge stopped: %v", err)
 			}
 		}()
-		// Keep the reflector hostlists fresh for the gateways + pickers.
-		go ysfhosts.Run(context.Background(), *ysfHostsURL, *ysfHosts, 6*time.Hour)
+		// Keep the reflector hostlists fresh for the gateways + pickers. The YSF
+		// list honors the "UPPERCASE Hostfiles" toggle, read from the store each
+		// refresh (both YSFGateway and DGIdGateway consume this same file).
+		go ysfhosts.Run(context.Background(), *ysfHostsURL, *ysfHosts, 6*time.Hour, func() bool {
+			var y config.YSFGateway
+			if _, err := s.store.GetInto("ysfgw", &y); err != nil {
+				return false
+			}
+			return y.UpperHostfiles
+		})
 		go p25hosts.Run(context.Background(), *p25HostsURL, *p25Hosts, 6*time.Hour)
 		go nxdnhosts.Run(context.Background(), *nxdnHostsURL, *nxdnHosts, 6*time.Hour)
 		go dstarhosts.Run(context.Background(), *dstarHostsURL, *dstarHosts, 6*time.Hour)

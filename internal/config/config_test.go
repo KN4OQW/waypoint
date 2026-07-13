@@ -54,6 +54,44 @@ func fixture() *Model {
 	}
 }
 
+// TestRenderTargetsRegistry: the target registry leads with MMDVM-Host and
+// DMRGateway, wires each path/unit through, and each target's Render matches the
+// standalone renderer byte-for-byte. This is the pattern a new mode copies to
+// join the apply loop (issue #21 gateway-plugin seam) — no apply-code edits.
+func TestRenderTargetsRegistry(t *testing.T) {
+	m := fixture() // DMR enabled
+	paths := Paths{
+		MMDVM: "/etc/MMDVM-Host.ini", DMRGateway: "/etc/DMRGateway.ini",
+		YSFGateway: "/etc/YSFGateway.ini", P25Gateway: "/etc/P25Gateway.ini",
+		NXDNGateway: "/etc/NXDNGateway.ini", DStarGateway: "/etc/dstargateway.cfg",
+		M17Gateway: "/etc/M17Gateway.ini",
+	}
+	targets := m.RenderTargets(paths)
+	if len(targets) < 2 {
+		t.Fatalf("want at least MMDVM + DMRGateway targets, got %d", len(targets))
+	}
+
+	want := []struct {
+		path, unit string
+		render     func(*Model) string
+	}{
+		{paths.MMDVM, "waypoint-mmdvm.service", (*Model).RenderMMDVM},
+		{paths.DMRGateway, "waypoint-dmrgateway.service", (*Model).RenderDMRGateway},
+	}
+	for i, w := range want {
+		got := targets[i]
+		if got.Path != w.path {
+			t.Errorf("target %d path = %q, want %q", i, got.Path, w.path)
+		}
+		if got.Unit != w.unit {
+			t.Errorf("target %d unit = %q, want %q", i, got.Unit, w.unit)
+		}
+		if got.Render(m) != w.render(m) {
+			t.Errorf("target %d Render does not match the standalone renderer", i)
+		}
+	}
+}
+
 // Property 1 — Round-trip: render → parse → model with no semantic loss.
 func TestLosslessRoundTrip(t *testing.T) {
 	m := fixture()
@@ -85,9 +123,80 @@ func TestLosslessRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := fromINI(mm, dg, yg, pg, ng, xg, mg)
+	got := fromINI(mm, dg, yg, nil, pg, ng, xg, mg) // dgid nil: fixture runs the classic YSFGateway
 	if !reflect.DeepEqual(m, got) {
 		t.Fatalf("round-trip lost data:\n want %+v\n  got %+v", m, got)
+	}
+}
+
+// TestDGIdGatewaySwap: enabling DG-ID swaps the System Fusion render target from
+// YSFGateway to DGIdGateway (they share MMDVM-Host's 3200/4200 loopback and
+// cannot co-run), and the generated DGIdGateway.ini carries the DG-ID table the
+// daemon needs — DG-ID 0 the local Wires-X gateway, DG-ID 1 the Parrot, and the
+// startup reflector as a static DG-ID network (YCS). Every asserted key is one
+// the pinned DGIdGateway Conf.cpp parses.
+func TestDGIdGatewaySwap(t *testing.T) {
+	m := fixture()
+	m.YSFGW.EnableDGId = true
+	m.YSFGW.YCSNetwork = true
+	m.YSFGW.Startup = "FCS00290"
+
+	paths := Paths{YSFGateway: "/etc/YSFGateway.ini", DGIdGateway: "/etc/DGIdGateway.ini"}
+	ysf := m.RenderTargets(paths)[2] // the System Fusion slot
+	if ysf.Path != paths.DGIdGateway || ysf.Unit != "waypoint-dgidgateway.service" {
+		t.Fatalf("DG-ID slot not swapped: path=%q unit=%q", ysf.Path, ysf.Unit)
+	}
+	// The classic YSFGateway target must NOT also be present (mutually exclusive).
+	for _, tg := range m.RenderTargets(paths) {
+		if tg.Path == paths.YSFGateway {
+			t.Fatalf("YSFGateway target still present alongside DGIdGateway")
+		}
+	}
+
+	ini := m.RenderDGIdGateway()
+	for sec, wants := range map[string][]string{
+		"General":     {"RptPort=3200", "LocalPort=4200", "Suffix=RPT"},
+		"MQTT":        {"Name=dgid-gateway"},
+		"YSF Network": {"Hosts=" + ysfHostsPath},
+		"DGId=0":      {"Type=Gateway", "Static=1"},
+		"DGId=1":      {"Type=Parrot"},
+		"DGId=5":      {"Type=FCS", "Name=FCS00290", "Static=1"},
+	} {
+		got := section(ini, sec)
+		for _, w := range wants {
+			if !strings.Contains(got, w) {
+				t.Errorf("[%s] missing %q\n%s", sec, w, got)
+			}
+		}
+	}
+
+	// Round-trip: a node running DGIdGateway imports back as DG-ID enabled with
+	// its startup reflector and YCS flag recovered from the DG-ID network block.
+	dgid, err := ParseINI(strings.NewReader(ini))
+	if err != nil {
+		t.Fatal(err)
+	}
+	back := ysfGatewayFromINI(nil, dgid)
+	if !back.EnableDGId || !back.YCSNetwork || back.Startup != "FCS00290" {
+		t.Fatalf("DGIdGateway.ini did not round-trip: %+v", back)
+	}
+}
+
+// TestYSFIsolation: changing System Fusion settings (mode params, gateway, or the
+// DG-ID swap) must not alter the [DMR] or [Modem] sections of MMDVM-Host.ini.
+func TestYSFIsolation(t *testing.T) {
+	m := fixture()
+	beforeDMR, beforeModem := section(m.RenderMMDVM(), "DMR"), section(m.RenderMMDVM(), "Modem")
+
+	m.YSF.TXHang = "99"
+	m.YSFGW.Startup = "FCS00123"
+	m.YSFGW.EnableDGId = true // affects the render target, never MMDVM's DMR/Modem
+
+	if got := section(m.RenderMMDVM(), "DMR"); got != beforeDMR {
+		t.Errorf("changing YSF altered [DMR]:\n before %q\n after %q", beforeDMR, got)
+	}
+	if got := section(m.RenderMMDVM(), "Modem"); got != beforeModem {
+		t.Errorf("changing YSF altered [Modem]:\n before %q\n after %q", beforeModem, got)
 	}
 }
 
