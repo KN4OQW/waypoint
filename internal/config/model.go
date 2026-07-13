@@ -37,6 +37,84 @@ type Model struct {
 	DStarGW  DStarGateway `json:"dstargw"`
 	M17      M17          `json:"m17"`
 	M17GW    M17Gateway   `json:"m17gw"`
+	// Cross-mode transcoding bridges (MMDVM_CM). Each is a standalone daemon with
+	// its own INI + systemd unit, gated by its Enable flag (see render.go
+	// RenderTargets). YSF2DMR and NXDN2DMR carry a DMR-master password (a secret,
+	// redacted in the view and preserved on blank, like a DMR network).
+	YSF2DMR  YSF2DMR  `json:"ysf2dmr"`
+	DMR2YSF  DMR2YSF  `json:"dmr2ysf"`
+	YSF2NXDN YSF2NXDN `json:"ysf2nxdn"`
+	DMR2NXDN DMR2NXDN `json:"dmr2nxdn"`
+	NXDN2DMR NXDN2DMR `json:"nxdn2dmr"`
+}
+
+// The cross-mode bridges are the transcoding daemons from the MMDVM_CM tree
+// (juribeparada/MMDVM_CM), the same binaries WPSD ships: each reads a source
+// digital mode from one of MMDVM-Host's gateways and re-emits it on another
+// network. WPSD exposes them as enable toggles in the MMDVM-Host panel; Waypoint
+// models each as its own store section + INI renderer + systemd unit + card.
+//
+// Enable is a Waypoint-model gate, NOT an INI key: the MMDVM_CM INIs carry no
+// [Info] Enable, so a bridge runs iff its unit is started. Enable therefore
+// decides whether the bridge contributes a render target at all (render.go), and
+// import infers it from the file's presence — the same trick ysfgw uses for
+// EnableDGId (import.go dgidGatewayFromINI).
+
+// YSF2DMR bridges System Fusion into a DMR master — the fat bridge. It logs into
+// its own DMR master (Master/Password, a secret) and lands transcoded traffic on
+// a target talkgroup (TG → [DMR Network] StartupDstId), with an optional DMR
+// options line (Options, a WPSD addition sent at login like a DMR network's).
+// Every non-fixed key here is one the MMDVM_CM YSF2DMR.ini exposes.
+type YSF2DMR struct {
+	Enable   bool   `json:"enable"`
+	DMRId    string `json:"dmr_id"`   // CCS7/DMR ID the bridge logs in with ([DMR Network] Id)
+	Master   string `json:"master"`   // DMR master address ([DMR Network] Address)
+	Password string `json:"password"` // DMR master password (secret; blank on write = keep stored)
+	Options  string `json:"options"`  // DMR options line sent at login (WPSD addition); empty omits it
+	TG       string `json:"tg"`       // target talkgroup ([DMR Network] StartupDstId)
+}
+
+// DMR2YSF bridges DMR into System Fusion: it rides the local DMRGateway's
+// 62031/62032 loopback and re-emits on the YSF side. DefaultTG is the DMR-side
+// default destination talkgroup ([DMR Network] DefaultDstTG). No secret — the
+// DMR side is the local gateway, not an upstream master.
+type DMR2YSF struct {
+	Enable    bool   `json:"enable"`
+	DMRId     string `json:"dmr_id"`     // [DMR Network] Id
+	DefaultTG string `json:"default_tg"` // default DMR-side destination TG ([DMR Network] DefaultDstTG)
+}
+
+// YSF2NXDN bridges System Fusion into NXDN. NXDNId is the NXDN network id it
+// registers with ([NXDN Network] Id); TG is the target NXDN talkgroup ([NXDN
+// Network] StartupDstId). No secret (the NXDN side is a reflector, not a
+// password-authenticated master).
+type YSF2NXDN struct {
+	Enable bool   `json:"enable"`
+	NXDNId string `json:"nxdn_id"` // [NXDN Network] Id
+	TG     string `json:"tg"`      // target NXDN talkgroup ([NXDN Network] StartupDstId)
+}
+
+// DMR2NXDN bridges DMR into NXDN, riding the local DMRGateway loopback like
+// DMR2YSF. NXDNId is the NXDN id used on the NXDN side ([NXDN Network]
+// DefaultID). No secret.
+type DMR2NXDN struct {
+	Enable bool   `json:"enable"`
+	DMRId  string `json:"dmr_id"`  // [DMR Network] Id
+	NXDNId string `json:"nxdn_id"` // NXDN-side id ([NXDN Network] DefaultID)
+}
+
+// NXDN2DMR bridges NXDN into a DMR master — the other fat bridge. Like YSF2DMR it
+// logs into its own DMR master (Master/Password, a secret) and lands on a target
+// talkgroup (TG → [DMR Network] StartupDstId) with an optional Options line;
+// NXDNTG is the NXDN-side listen talkgroup ([NXDN Network] TG).
+type NXDN2DMR struct {
+	Enable   bool   `json:"enable"`
+	DMRId    string `json:"dmr_id"`   // [DMR Network] Id
+	Master   string `json:"master"`   // DMR master address ([DMR Network] Address)
+	Password string `json:"password"` // DMR master password (secret; blank on write = keep stored)
+	Options  string `json:"options"`  // DMR options line sent at login; empty omits it
+	TG       string `json:"tg"`       // target talkgroup ([DMR Network] StartupDstId)
+	NXDNTG   string `json:"nxdn_tg"`  // NXDN-side listen talkgroup ([NXDN Network] TG)
 }
 
 // M17 holds MMDVM-Host's [M17] mode parameters (its enable flag is in Modes,
@@ -342,6 +420,11 @@ func (m *Model) sections() map[string]any {
 		"dstargw":  &m.DStarGW,
 		"m17":      &m.M17,
 		"m17gw":    &m.M17GW,
+		"ysf2dmr":  &m.YSF2DMR,
+		"dmr2ysf":  &m.DMR2YSF,
+		"ysf2nxdn": &m.YSF2NXDN,
+		"dmr2nxdn": &m.DMR2NXDN,
+		"nxdn2dmr": &m.NXDN2DMR,
 	}
 }
 

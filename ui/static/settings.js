@@ -44,7 +44,7 @@ const mhz = (hz) => (hz ? (Number(hz) / 1e6).toFixed(6) : "");
 // Built from the redacted view; fields map to the store's typed sections. The
 // General tab spans two sections (general + modem), so edits route accordingly.
 function buildEdit(c) {
-  const g = c.general || {}, d = c.dmr || {};
+  const g = c.general || {}, d = c.dmr || {}, cm = c.crossmode || {};
   edit = {
     general: { callsign: g.callsign, id: g.dmr_id, duplex: !!g.duplex, power: g.power, location: g.location, url: g.url },
     modem:   { rx_freq_hz: g.rx_freq_hz, tx_freq_hz: g.tx_freq_hz, port: g.modem_port, rx_offset: g.rx_offset, tx_offset: g.tx_offset },
@@ -64,9 +64,54 @@ function buildEdit(c) {
     dstargw: dstargwFrom(c.dstar || {}),
     m17: m17From(c.m17 || {}),
     m17gw: m17gwFrom(c.m17 || {}),
+    ysf2dmr: ysf2dmrFrom(cm.ysf2dmr || {}),
+    dmr2ysf: dmr2ysfFrom(cm.dmr2ysf || {}),
+    ysf2nxdn: ysf2nxdnFrom(cm.ysf2nxdn || {}),
+    dmr2nxdn: dmr2nxdnFrom(cm.dmr2nxdn || {}),
+    nxdn2dmr: nxdn2dmrFrom(cm.nxdn2dmr || {}),
   };
   dirty = new Set();
   refreshActions();
+}
+
+// --- cross-mode bridges --------------------------------------------------
+// Each bridge is its own store section. The two DMR-master bridges (ysf2dmr,
+// nxdn2dmr) carry a redacted password: it starts blank (blank = keep the stored
+// one) and has_password drives the placeholder, exactly like the ircDDB password.
+function ysf2dmrFrom(b) {
+  return {
+    enable: !!b.enable, dmr_id: b.dmr_id || "", master: b.master || "",
+    options: b.options || "", tg: b.tg || "", password: "", has_password: !!b.has_password,
+  };
+}
+function dmr2ysfFrom(b) {
+  return { enable: !!b.enable, dmr_id: b.dmr_id || "", default_tg: b.default_tg || "" };
+}
+function ysf2nxdnFrom(b) {
+  return { enable: !!b.enable, nxdn_id: b.nxdn_id || "", tg: b.tg || "" };
+}
+function dmr2nxdnFrom(b) {
+  return { enable: !!b.enable, dmr_id: b.dmr_id || "", nxdn_id: b.nxdn_id || "" };
+}
+function nxdn2dmrFrom(b) {
+  return {
+    enable: !!b.enable, dmr_id: b.dmr_id || "", master: b.master || "",
+    options: b.options || "", tg: b.tg || "", nxdn_tg: b.nxdn_tg || "",
+    password: "", has_password: !!b.has_password,
+  };
+}
+
+// cleanBridge strips the UI-only has_password flag (the store rejects unknown
+// fields) and omits password when blank, so the merge keeps the stored secret.
+// A supplied password replaces it. No-op for a bridge that has no password field.
+function cleanBridge(b) {
+  const out = {};
+  for (const k in b) {
+    if (k === "has_password") continue;
+    if (k === "password" && !b[k]) continue; // blank = keep stored
+    out[k] = b[k];
+  }
+  return out;
 }
 
 // The D-Star view is flat (mode params + gateway settings); it splits back into
@@ -498,6 +543,49 @@ function panelPending(what) {
   return note(`<b>${esc(what)}</b> settings aren't wired yet — a later slice of the configuration store (<a href="https://github.com/KN4OQW/waypoint/issues/1">waypoint#1</a>).`);
 }
 
+// The Gateways tab: one card per cross-mode transcoding bridge (MMDVM_CM). Each
+// card has its own Enable toggle — the bridge runs as its own daemon, so enabling
+// it renders its INI and starts its unit on Apply (render.go RenderTargets). The
+// two DMR-master bridges (YSF2DMR, NXDN2DMR) add a master + redacted password +
+// options + target TG; the others are minimal. pwRow renders a write-only-secret
+// input (blank keeps the stored one), matching the D-Star ircDDB password.
+function pwRow(sec, hasPw) {
+  const val = (edit[sec] || {}).password || "";
+  return row("DMR master password", `<input data-sec="${esc(sec)}" data-key="password" type="password" value="${esc(val)}" placeholder="${hasPw ? "•••••• unchanged" : "master password"}">`);
+}
+function panelGateways() {
+  const y2d = edit.ysf2dmr || {}, n2d = edit.nxdn2dmr || {};
+  const ysf2dmr = card("YSF2DMR — YSF → DMR",
+    toggle("ysf2dmr", "enable", "Bridge", "ENABLED", "DISABLED") +
+    input("ysf2dmr", "dmr_id", { label: "CCS7 / DMR ID" }) +
+    input("ysf2dmr", "master", { label: "DMR master (address)" }) +
+    pwRow("ysf2dmr", y2d.has_password) +
+    input("ysf2dmr", "tg", { label: "YSF2DMR talkgroup", accent: true }) +
+    input("ysf2dmr", "options", { label: "DMR options (advanced)" }));
+  const nxdn2dmr = card("NXDN2DMR — NXDN → DMR",
+    toggle("nxdn2dmr", "enable", "Bridge", "ENABLED", "DISABLED") +
+    input("nxdn2dmr", "dmr_id", { label: "CCS7 / DMR ID" }) +
+    input("nxdn2dmr", "master", { label: "DMR master (address)" }) +
+    pwRow("nxdn2dmr", n2d.has_password) +
+    input("nxdn2dmr", "tg", { label: "DMR talkgroup", accent: true }) +
+    input("nxdn2dmr", "nxdn_tg", { label: "NXDN talkgroup" }) +
+    input("nxdn2dmr", "options", { label: "DMR options (advanced)" }));
+  const dmr2ysf = card("DMR2YSF — DMR → YSF",
+    toggle("dmr2ysf", "enable", "Bridge", "ENABLED", "DISABLED") +
+    input("dmr2ysf", "dmr_id", { label: "CCS7 / DMR ID" }) +
+    input("dmr2ysf", "default_tg", { label: "Default DMR talkgroup", accent: true }));
+  const ysf2nxdn = card("YSF2NXDN — YSF → NXDN",
+    toggle("ysf2nxdn", "enable", "Bridge", "ENABLED", "DISABLED") +
+    input("ysf2nxdn", "nxdn_id", { label: "NXDN ID" }) +
+    input("ysf2nxdn", "tg", { label: "NXDN talkgroup", accent: true }));
+  const dmr2nxdn = card("DMR2NXDN — DMR → NXDN",
+    toggle("dmr2nxdn", "enable", "Bridge", "ENABLED", "DISABLED") +
+    input("dmr2nxdn", "dmr_id", { label: "CCS7 / DMR ID" }) +
+    input("dmr2nxdn", "nxdn_id", { label: "NXDN ID" }));
+  const hint = note("Each bridge is a standalone transcoding daemon. Enabling one renders its INI and starts its unit on Apply; the DMR-master bridges log into their own master (password stored on the node, never shown). A bridge and the gateway it borrows loopback ports from can't run at once.");
+  return `<div class="grid2"><div class="stack">${ysf2dmr}${nxdn2dmr}</div><div class="stack">${dmr2ysf}${ysf2nxdn}${dmr2nxdn}</div></div>${hint}`;
+}
+
 function panelYSF() {
   // Startup reflector picker: a datalist over the fetched hostlist so the user
   // can type-filter YSF reflectors / FCS rooms while still allowing a raw id.
@@ -634,7 +722,7 @@ function renderPanel() {
     case "modes":        box.innerHTML = panelModes(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
-    case "gateways":     box.innerHTML = panelPending("Cross-mode gateway"); break;
+    case "gateways":     box.innerHTML = panelGateways(); break;
     case "network":      box.innerHTML = panelPending("Network & Wi-Fi"); break;
     default:             box.innerHTML = "";
   }
@@ -677,6 +765,7 @@ async function apply() {
       const payload = sec === "networks" ? edit.networks.map(cleanNet)
         : sec === "routes" ? (edit.routes || []).filter((r) => r.tg && r.network)
         : sec === "dstargw" ? cleanDstargw(edit.dstargw)
+        : (sec === "ysf2dmr" || sec === "nxdn2dmr") ? cleanBridge(edit[sec])
         : edit[sec];
       const r = await fetch("/api/config/" + sec, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!r.ok) throw new Error(sec + ": " + (await r.text()).trim());
