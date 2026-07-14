@@ -19,6 +19,7 @@ type View struct {
 	POCSAG    ViewPOCSAG    `json:"pocsag"`
 	FM        ViewFM        `json:"fm"`
 	CrossMode ViewCrossMode `json:"crossmode"`
+	LCD       ViewLCD       `json:"lcd"`
 	ReadOnly  bool          `json:"read_only"`
 }
 
@@ -46,6 +47,26 @@ type ViewFM struct {
 	RFAudioBoost  string `json:"rf_audio_boost"`
 	ExtAudioBoost string `json:"ext_audio_boost"`
 	AccessMode    string `json:"access_mode"`
+}
+
+// ViewLCD is the LCD tab's read model: the native HD44780 driver's panel wiring
+// and its rotating pages. No secrets — a straight projection of the LCD section.
+type ViewLCD struct {
+	Enabled           bool          `json:"enabled"`
+	I2CBus            string        `json:"i2c_bus"`
+	I2CAddress        string        `json:"i2c_address"`
+	Rows              string        `json:"rows"`
+	Cols              string        `json:"cols"`
+	ScrollSpeed       string        `json:"scroll_speed"`
+	ActivityInterrupt bool          `json:"activity_interrupt"`
+	Pages             []ViewLCDPage `json:"pages"`
+}
+
+type ViewLCDPage struct {
+	Enabled  bool     `json:"enabled"`
+	Name     string   `json:"name"`
+	Duration string   `json:"duration"`
+	Lines    []string `json:"lines"`
 }
 
 // ViewCrossMode is the Gateways tab's read model: one sub-view per transcoding
@@ -444,6 +465,23 @@ func (m *Model) View(storePath string) *View {
 	}
 	for _, r := range m.Routes {
 		v.Routes = append(v.Routes, ViewRoute{Slot: r.Slot, TG: r.TG, Network: r.Network})
+	}
+	v.LCD = ViewLCD{
+		Enabled:           m.LCD.Enabled,
+		I2CBus:            m.LCD.I2CBus,
+		I2CAddress:        m.LCD.I2CAddress,
+		Rows:              m.LCD.Rows,
+		Cols:              m.LCD.Cols,
+		ScrollSpeed:       m.LCD.ScrollSpeed,
+		ActivityInterrupt: m.LCD.ActivityInterrupt,
+	}
+	for _, p := range m.LCD.Pages {
+		v.LCD.Pages = append(v.LCD.Pages, ViewLCDPage{
+			Enabled:  p.Enabled,
+			Name:     p.Name,
+			Duration: p.Duration,
+			Lines:    append([]string(nil), p.Lines...),
+		})
 	}
 	return v
 }

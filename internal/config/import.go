@@ -140,6 +140,10 @@ func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg, dpg, y2d, d2y, y2n, d2n, n2d *INI
 		YSF2NXDN: ysf2nxdnFromINI(y2n),
 		DMR2NXDN: dmr2nxdnFromINI(d2n),
 		NXDN2DMR: nxdn2dmrFromINI(n2d),
+		// LCD drives no INI, so there is nothing to import — a seeded model gets the
+		// display-free defaults (with starter pages), like the gateway sections that
+		// have no seed file. The store is authoritative from then on.
+		LCD: DefaultLCD(),
 	}
 	return m
 }
@@ -233,6 +237,37 @@ func DefaultDisplay() Display {
 	return Display{
 		Type: "None", OLEDType: "3", Port: "modem", NextionLayout: "0",
 		HD44780Rows: "2", HD44780Cols: "16", HD44780I2CAddr: "0x20",
+	}
+}
+
+// DefaultLCD is the native LCD driver's default: disabled, wired for the common
+// case (a PCF8574-backpack HD44780 at 0x27 on /dev/i2c-1, 20×4), with two starter
+// pages so a first-time operator who enables it sees something immediately. The
+// page lines use only grounded tokens (docs/design/lcd.md §5). Used to seed a
+// fresh store and to backfill a store created before the LCD driver existed.
+func DefaultLCD() LCD {
+	return LCD{
+		Enabled:           false,
+		I2CBus:            "/dev/i2c-1",
+		I2CAddress:        "0x27",
+		Rows:              "4",
+		Cols:              "20",
+		ScrollSpeed:       "300",
+		ActivityInterrupt: true,
+		Pages: []LCDPage{
+			{Enabled: true, Name: "Idle", Duration: "8", Lines: []string{
+				"{callsign}  {mode}",
+				"{status}",
+				"{modes}",
+				"{time}   up {uptime}",
+			}},
+			{Enabled: true, Name: "Last Heard", Duration: "5", Lines: []string{
+				"Last Heard",
+				"{lh_call}  {lh_tg}",
+				"{lh_mode}  BER {lh_ber}",
+				"{lh_ago} ago",
+			}},
+		},
 	}
 }
 

@@ -1,0 +1,209 @@
+# Native HD44780 LCD driver — design
+
+**Status:** design for review · not yet implemented
+**Owner decision recap:** templated-token lines · a new `lcd` store section ·
+design-doc-first (this file) before code.
+
+## 1. Why this exists (and how it differs from `display`)
+
+The `display` store section (shipped in the "Setup surface" PR) renders
+MMDVM-Host's `[Display]`/`[HD44780]` INI keys for **WPSD parity**. On Waypoint's
+own node those keys are **inert**: the forked MQTT-era MMDVM-Host has no
+`[Display]` parser and drives nothing. There has never been a physical panel on a
+Waypoint node.
+
+This feature adds a **Waypoint-native LCD driver**: a component inside `waypointd`
+that subscribes to the live status plane and paints an HD44780 itself, with pages
+the operator defines. It is the *live* driver; `display` stays the *inert parity*
+artifact. The two never share a store section (see §4).
+
+Contrast worth noting: MMDVM-Host's `[HD44780]` had **no I2C-bus key** (the bus was
+fixed by the driver). Our native driver opens the bus itself, so `lcd.i2c_bus` is
+a **real** field here — the thing that didn't exist upstream.
+
+## 2. Architecture
+
+```
+MMDVM-Host ──MQTT──▶ internal/mqtt.Consumer ──▶ internal/hub.Hub ──┬─▶ web dashboard (SSE)
+                                                                    └─▶ internal/lcd.Renderer ──▶ LCDDevice ──I2C──▶ PCF8574 ──▶ HD44780
+```
+
+- **Runs in `waypointd`, not a new daemon.** The renderer is just another
+  `hub.Subscribe()` consumer — it reuses the exact event stream the dashboard
+  uses, no extra IPC, one binary. Started from `main.go` when `lcd.enabled`.
+- **Two layers, split for testability:**
+  - `internal/lcd` — pure logic: derived state, token expansion, page render →
+    text buffer, rotation/scroll scheduling. No hardware, fully unit-tested.
+  - `LCDDevice` interface — the only hardware seam. Real impl talks I2C; a fake
+    impl captures `WriteLine` calls for tests; a `noop` impl logs and no-ops when
+    the bus can't be opened (degrade gracefully, never crash — same posture as the
+    gateway-restart failures).
+
+## 3. Data plane → derived LCD state
+
+The renderer folds the `hub.Event` stream into a small `lcdState` it can format.
+Grounded in the real event shapes (`internal/demo/demo.go`, `internal/hub`):
+
+| Event `Type` | Carries | Folds into |
+|---|---|---|
+| `mode` | `Mode` (e.g. `IDLE`, `DMR`) | `activeMode` |
+| `link` | `Network`, `Detail` | `links[Network]` up/down |
+| `rf_voice_start` / `net_voice_start` | `Mode`,`Slot`,`Source`,`Dest`,`Network` | `active` = keyed; direction RF/net |
+| `rf_voice_end` / `net_voice_end` | + `Seconds`,`BER`,`RSSI` | `active` = idle; `lastHeard` = this |
+
+Derived fields the tokens read:
+- `active` (bool) + `activeDir` (`RX`/`TX-net`) + current `Source`/`Dest`/`Mode`
+- `lastHeard`: `{call, tg, mode, ber, rssi, at}` from the last `*_voice_end`
+- `activeMode`, `links`
+
+## 4. Config schema — new `lcd` store section
+
+Modeled like every other section (`model.go` struct + `sections()` entry +
+`DefaultLCD()` seed/backfill in `main.go`, `View`/`ViewLCD` projection). No
+secrets, so the view is a straight projection.
+
+```go
+type LCD struct {
+    Enabled           bool      `json:"enabled"`
+    I2CBus            string    `json:"i2c_bus"`       // e.g. /dev/i2c-1 (native driver picks the bus)
+    I2CAddress        string    `json:"i2c_address"`   // PCF8574 backpack, hex e.g. 0x27
+    Rows              string    `json:"rows"`          // 2 or 4
+    Cols              string    `json:"cols"`          // 16 or 20
+    ScrollSpeed       string    `json:"scroll_speed"`  // ms per scroll step for over-wide lines
+    ActivityInterrupt bool      `json:"activity_interrupt"` // jump to a caller page while keyed
+    Pages             []LCDPage `json:"pages"`
+}
+
+type LCDPage struct {
+    Enabled  bool     `json:"enabled"`
+    Name     string   `json:"name"`
+    Duration string   `json:"duration"`  // seconds this page holds before rotating
+    Lines    []string `json:"lines"`     // one templated string per row; extra rows blank
+}
+```
+
+`DefaultLCD()`: `Enabled=false`, `/dev/i2c-1`, `0x27`, 20×4, `ScrollSpeed=300`,
+`ActivityInterrupt=true`, and two starter pages (Idle, Last Heard) so a
+first-time operator has something to see. Backfilled on older stores exactly like
+`display`/`m17` were.
+
+## 5. Token engine
+
+A token is `{name}`. Expansion is pure `state → string`. Grounded token set (only
+data that actually exists on the plane / in config):
+
+| Token | Source | Idle/missing fallback |
+|---|---|---|
+| `{callsign}` `{dmr_id}` | config `general.callsign` / `.id` | — |
+| `{ip}` | host lookup (**new**, small helper; first non-loopback v4) | `no-ip` |
+| `{time}` `{date}` `{uptime}` `{version}` | clock + health | — |
+| `{mode}` | `activeMode` | `IDLE` |
+| `{modes}` | enabled modes from config, joined | — |
+| `{status}` | `Listening` when idle; `RX DMR TG91 W1ABC` when keyed | `Listening` |
+| `{lh_call}` `{lh_tg}` `{lh_mode}` | `lastHeard` | `—` |
+| `{lh_ber}` `{lh_rssi}` `{lh_ago}` | `lastHeard` (`ago` = now−at) | `—` |
+
+Rules:
+- Unknown token → renders empty **and** the UI flags it on the page card (so a
+  typo is visible, never a silent blank).
+- Non-ASCII in a template is stripped/replaced (`?`) — HD44780 CGROM is not
+  UTF-8. Documented in the UI.
+- Optional later: `{lh_rssi_bar}` using HD44780 CGRAM custom glyphs for a signal
+  bar (8 programmable chars). Deferred; noted so the render buffer reserves it.
+
+## 6. Page renderer
+
+- **Render:** for page `p`, row `i` in `0..Rows-1`, expand `p.Lines[i]` (or blank),
+  then window to `Cols`: fits → left-justify; over-wide → scroll.
+- **Scroll:** an over-wide line advances one column per `ScrollSpeed` ms (wrap with
+  a gap). The render loop ticks at `ScrollSpeed`; page changes at `Duration`.
+- **Rotation:** cycle `enabled` pages in order; each holds `Duration` seconds. A
+  single enabled page just stays put.
+- **Activity interrupt:** on `*_voice_start`, if `ActivityInterrupt`, render a
+  synthesized caller page (`{status}` + last-heard-style lines) until
+  `*_voice_end` + a short linger, then resume rotation where it paused. This is
+  the "who's talking right now" behavior operators expect from Pi-Star/WPSD.
+- **Diffed writes:** keep the last text buffer; only `WriteLine` rows that
+  changed, so the bus isn't hammered every tick (HD44780 over I2C is slow).
+
+## 7. Hardware seam — `LCDDevice`
+
+```go
+type LCDDevice interface {
+    Init(rows, cols int) error
+    WriteLine(row int, text string) error // text already ≤ cols, ASCII
+    Clear() error
+    Close() error
+}
+```
+
+- **Real impl** (`internal/lcd/hd44780`): PCF8574 4-bit protocol — pack each byte
+  as two nibbles with the RS/E/backlight control bits, pulse E, over `/dev/i2c-N`
+  via `ioctl(I2C_SLAVE)` + write, using `golang.org/x/sys/unix`. **Pure Go, no
+  cgo** — matches the "nothing floats" build ethos. (`x/sys` is the one new dep;
+  pin it in `go.mod`.)
+- **Open failure is non-fatal:** log `lcd: I2C /dev/i2c-1@0x27 unavailable, disabled`,
+  fall back to `noop`, keep serving the dashboard.
+- **Fake impl** (`fakeDevice`): records `WriteLine(row,text)` for assertions.
+
+## 8. UI — LCD tab (page builder)
+
+New tab `lcd` (label "LCD", after Setup). `panelLCD()`:
+
+- **Card "PANEL"** — Enabled toggle · I2C bus · I2C address · Rows (2/4) ·
+  Columns (16/20) · Scroll speed · Activity-interrupt toggle.
+- **Card per page** (reuse the routing-table add/remove pattern):
+  ```
+  ┌ PAGE: Idle          [ENABLED]  dur [ 8 ]s   ✕ ┐
+  │ row1  [ {callsign}   {mode}                 ] │
+  │ row2  [ {status}                            ] │
+  │ row3  [ LH {lh_call} {lh_tg}                ] │
+  │ row4  [ {time}      up {uptime}             ] │
+  │ tokens: {callsign} {mode} {status} {lh_call}… │  ← click to insert
+  └───────────────────────────────────────────────┘
+  [ + ADD PAGE ]
+  ```
+  Line-input count follows Rows. A **token palette** below each page inserts at the
+  caret. A live **preview** box rendering the page against sample state is a nice
+  v1.5 (optional), not required for the first cut.
+- Edit state + PUT plumbing is identical to existing sections (`lcd` routes through
+  the generic `SetSection`; no per-field handlers beyond the page add/remove).
+
+## 9. Testing & validation
+
+- **Pure logic (full coverage, table-driven):** token expansion + fallbacks;
+  line truncation; scroll windowing; rotation scheduler; activity interrupt
+  enter/exit; diffed-write suppression. Device behind `fakeDevice`.
+- **Config:** round-trip + isolation, same properties as every other section.
+- **Hardware — off-box, honest caveat:** the PCF8574 byte protocol **cannot be
+  bench-validated here**; it needs the physical panel on the test box
+  (`pi-star@172.16.50.13`). Plan: unit-tests green in CI, then flash the box,
+  attach a 20×4 on a PCF8574, and confirm real output + tune timing. The `verify`
+  step for the pure layers runs anywhere; the device layer is marked
+  hardware-gated.
+
+## 10. Open questions (resolve before/while building)
+
+1. **Per-page enable vs delete-only** — proposed: keep an `enabled` bool (quick
+   A/B without losing a page's lines). Agree?
+2. **Backlight** — the PCF8574 backlight bit is free to toggle; auto-dim/off after
+   an idle timeout? Proposed: v1 = always on; add an idle-off timer later.
+3. **RSSI/BER bar glyphs (CGRAM)** — worth an `{lh_rssi_bar}` token, or keep it
+   numeric for v1? Proposed: numeric v1, glyphs later.
+4. **Where the driver's I2C address/geometry seeds from** — offer a "copy from the
+   `display` HD44780 fields" convenience, or fully independent? Proposed:
+   independent, with defaults; no coupling to the inert section.
+5. **New dep `golang.org/x/sys`** — acceptable to add + pin? (Pure Go, ubiquitous,
+   no cgo.)
+
+## 11. Rough build order (once approved)
+
+1. `internal/config`: `LCD`/`LCDPage` model, `DefaultLCD`, view, round-trip +
+   isolation tests. *(no hardware)*
+2. `internal/lcd`: derived state + token engine + page renderer against
+   `fakeDevice`, full unit tests. *(no hardware)*
+3. `cmd/waypointd`: start the renderer as a hub subscriber when enabled; `{ip}`
+   host helper; backfill. *(no hardware)*
+4. UI: `lcd` tab + page builder.
+5. `internal/lcd/hd44780`: real PCF8574 device (`x/sys/unix`). *(hardware-gated —
+   validate on the test box)*

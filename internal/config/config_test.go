@@ -77,6 +77,11 @@ func fixture() *Model {
 		YSF2NXDN: YSF2NXDN{Enable: true, NXDNId: "31802", TG: "1200"},
 		DMR2NXDN: DMR2NXDN{Enable: true, DMRId: "3180202", NXDNId: "65519"},
 		NXDN2DMR: NXDN2DMR{Enable: true, DMRId: "3180202", Master: "3102.master.brandmeister.network", Password: "n2d-s3cret", Options: "TS2_1=31665;", TG: "31665", NXDNTG: "20"},
+		// LCD drives no INI, so it does not participate in the INI round-trip — it is
+		// set to DefaultLCD() (the value fromINI assigns) so the render→parse→fromINI
+		// comparison stays balanced. Its own store round-trip is covered by
+		// TestLCDStoreRoundTrip.
+		LCD: DefaultLCD(),
 	}
 }
 
@@ -380,6 +385,118 @@ func TestSetSectionRejectsUnknownField(t *testing.T) {
 	}
 	if known, _ := SetSection(s, "nosuch", []byte(`{}`), "test"); known {
 		t.Fatal("unknown section should report known=false")
+	}
+}
+
+// DefaultLCD carries the documented panel defaults and two starter pages, so a
+// first-time operator who enables the driver sees something.
+func TestDefaultLCD(t *testing.T) {
+	d := DefaultLCD()
+	if d.Enabled {
+		t.Error("DefaultLCD must be disabled")
+	}
+	if d.I2CBus != "/dev/i2c-1" || d.I2CAddress != "0x27" || d.Rows != "4" || d.Cols != "20" {
+		t.Errorf("unexpected panel defaults: %+v", d)
+	}
+	if d.ScrollSpeed != "300" || !d.ActivityInterrupt {
+		t.Errorf("unexpected behaviour defaults: %+v", d)
+	}
+	if len(d.Pages) != 2 || d.Pages[0].Name != "Idle" || d.Pages[1].Name != "Last Heard" {
+		t.Fatalf("want two starter pages Idle+Last Heard: %+v", d.Pages)
+	}
+	for _, p := range d.Pages {
+		if !p.Enabled || p.Duration == "" || len(p.Lines) == 0 {
+			t.Errorf("starter page not usable: %+v", p)
+		}
+	}
+}
+
+// Property 1 for a store-only section — the LCD section round-trips through the
+// store (Save → Load) with no loss, including ragged per-page line counts. LCD
+// drives no INI, so this is its round-trip guarantee (it is deliberately absent
+// from the INI round-trip in TestLosslessRoundTrip).
+func TestLCDStoreRoundTrip(t *testing.T) {
+	s := memStore(t)
+	m := fixture()
+	m.LCD = LCD{
+		Enabled: true, I2CBus: "/dev/i2c-3", I2CAddress: "0x3f",
+		Rows: "2", Cols: "16", ScrollSpeed: "250", ActivityInterrupt: false,
+		Pages: []LCDPage{
+			{Enabled: true, Name: "Status", Duration: "10", Lines: []string{"{callsign} {mode}", "{status}"}},
+			{Enabled: false, Name: "Clock", Duration: "4", Lines: []string{"{time}"}},                        // ragged: one line
+			{Enabled: true, Name: "Net", Duration: "6", Lines: []string{"{ip}", "{lh_call}", "{lh_tg}", ""}}, // ragged: four incl. blank
+		},
+	}
+	if err := m.Save(s, "seed"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(m.LCD, got.LCD) {
+		t.Fatalf("LCD store round-trip lost data:\n want %+v\n  got %+v", m.LCD, got.LCD)
+	}
+}
+
+// Isolation: changing the LCD section never alters another section's rendered
+// output (LCD drives no INI, so RenderMMDVM must be byte-identical), and changing
+// another section never alters the stored LCD.
+func TestLCDIsolation(t *testing.T) {
+	s := memStore(t)
+	m := fixture()
+	if err := m.Save(s, "seed"); err != nil {
+		t.Fatal(err)
+	}
+	before := m.RenderMMDVM()
+
+	if _, err := SetSection(s, "lcd", []byte(`{"enabled":true,"i2c_address":"0x3f"}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := Load(s)
+	if got := after.RenderMMDVM(); got != before {
+		t.Error("changing LCD altered the rendered MMDVM-Host.ini")
+	}
+
+	// Changing an unrelated section leaves the stored LCD untouched.
+	wantLCD := after.LCD
+	if _, err := SetSection(s, "general", []byte(`{"callsign":"W1AW"}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	final, _ := Load(s)
+	if !reflect.DeepEqual(final.LCD, wantLCD) {
+		t.Fatalf("changing [general] altered stored LCD:\n want %+v\n  got %+v", wantLCD, final.LCD)
+	}
+}
+
+// The generic SetSection merge applies to LCD: a partial body updates only the
+// named fields (pages survive), a body with a pages array replaces the pages
+// wholesale, and an unknown field is rejected.
+func TestSetSectionLCDMerge(t *testing.T) {
+	s := memStore(t)
+	_ = fixture().Save(s, "seed") // LCD = DefaultLCD(), two pages
+
+	// Partial: flip enabled only — the starter pages must survive the merge.
+	if _, err := SetSection(s, "lcd", []byte(`{"enabled":true}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := Load(s)
+	if !m.LCD.Enabled || len(m.LCD.Pages) != 2 {
+		t.Fatalf("partial merge dropped pages or missed enable: %+v", m.LCD)
+	}
+
+	// Full pages array replaces (json decodes an array over the slice, truncating).
+	if _, err := SetSection(s, "lcd", []byte(`{"pages":[{"enabled":true,"name":"One","duration":"5","lines":["{callsign}"]}]}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = Load(s)
+	if len(m.LCD.Pages) != 1 || m.LCD.Pages[0].Name != "One" {
+		t.Fatalf("pages array did not replace: %+v", m.LCD.Pages)
+	}
+
+	// Unknown field rejected.
+	if _, err := SetSection(s, "lcd", []byte(`{"bogus":true}`), "test"); err == nil {
+		t.Fatal("unknown LCD field should be rejected")
 	}
 }
 

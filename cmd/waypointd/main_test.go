@@ -5,15 +5,57 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/hub"
+	"github.com/KN4OQW/waypoint/internal/store"
 )
 
 func newTestServer(demo bool) *server {
 	return &server{hub: hub.New(), demo: demo, started: time.Now()}
+}
+
+// backfillDefaults seeds the native LCD section for a store created before it
+// existed, and leaves an operator's existing LCD row untouched.
+func TestBackfillLCD(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	s := &server{store: st}
+
+	// A store with no lcd row gets DefaultLCD seeded.
+	if err := s.backfillDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	var got config.LCD
+	if found, err := st.GetInto("lcd", &got); err != nil || !found {
+		t.Fatalf("lcd not backfilled: found=%v err=%v", found, err)
+	}
+	if !reflect.DeepEqual(got, config.DefaultLCD()) {
+		t.Fatalf("backfill did not seed DefaultLCD:\n want %+v\n  got %+v", config.DefaultLCD(), got)
+	}
+
+	// An operator's existing LCD row survives a later backfill unchanged.
+	custom := config.LCD{Enabled: true, I2CBus: "/dev/i2c-9", I2CAddress: "0x20", Rows: "2", Cols: "16"}
+	if err := st.Set("lcd", custom, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.backfillDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	var after config.LCD
+	if _, err := st.GetInto("lcd", &after); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(after, custom) {
+		t.Fatalf("backfill overwrote an existing LCD row:\n want %+v\n  got %+v", custom, after)
+	}
 }
 
 func TestHealthHandler(t *testing.T) {
