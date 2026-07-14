@@ -1,6 +1,7 @@
 package lcd
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"time"
@@ -78,6 +79,51 @@ func NewRenderer(cfg config.LCD, info Info, dev LCDDevice, ip func() string) *Re
 		scroll: time.Duration(atoiDef(cfg.ScrollSpeed, 300)) * time.Millisecond,
 		linger: defaultLinger,
 		last:   make([]string, rows),
+	}
+}
+
+// Run drives the renderer until ctx is canceled: it folds events as they arrive
+// and paints a frame on every tick, closing the device on return. Before each
+// tick it drains any already-queued events, so a burst of events immediately
+// before a frame is all reflected in it. A transient device write error is not
+// fatal — the next tick retries — so a flaky panel never stops the daemon. A
+// wiring stage supplies the hub event channel and a ticker's channel.
+func (r *Renderer) Run(ctx context.Context, events <-chan hub.Event, ticks <-chan time.Time) error {
+	defer r.dev.Close()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case e, ok := <-events:
+			if !ok {
+				events = nil
+				continue
+			}
+			r.Handle(e)
+		case t, ok := <-ticks:
+			if !ok {
+				ticks = nil
+				continue
+			}
+			r.drain(events)
+			_ = r.Tick(t) // a transient device error is not fatal; the next tick retries
+		}
+	}
+}
+
+// drain folds every event already queued on the channel, without blocking, so
+// the frame about to render reflects them.
+func (r *Renderer) drain(events <-chan hub.Event) {
+	for {
+		select {
+		case e, ok := <-events:
+			if !ok {
+				return
+			}
+			r.Handle(e)
+		default:
+			return
+		}
 	}
 }
 
@@ -225,3 +271,14 @@ func clampAtLeast(v, min int) int {
 	}
 	return v
 }
+
+// NoopDevice is a headless LCDDevice: it accepts every call and does nothing. It
+// runs when no physical panel is wired — or, in a later stage, when the I2C bus
+// can't be opened — so the renderer runs harmlessly and the rest of the daemon
+// is unaffected (design §7 failure posture).
+type NoopDevice struct{}
+
+func (NoopDevice) Init(rows, cols int) error            { return nil }
+func (NoopDevice) WriteLine(row int, text string) error { return nil }
+func (NoopDevice) Clear() error                         { return nil }
+func (NoopDevice) Close() error                         { return nil }

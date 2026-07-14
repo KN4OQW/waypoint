@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -117,5 +118,63 @@ func TestEventsStreamsBacklogAndLive(t *testing.T) {
 	}
 	if e.Source != "KN4OQW" {
 		t.Errorf("unexpected live event: %+v", e)
+	}
+}
+
+// hostIPv4 returns the first non-loopback IPv4, or "no-ip" on error / none.
+func TestHostIPv4(t *testing.T) {
+	ok := func() ([]net.Addr, error) {
+		return []net.Addr{
+			&net.IPNet{IP: net.IPv6loopback},
+			&net.IPNet{IP: net.ParseIP("127.0.0.1")},
+			&net.IPNet{IP: net.ParseIP("192.168.1.42")},
+		}, nil
+	}
+	if got := hostIPv4(ok); got != "192.168.1.42" {
+		t.Errorf("hostIPv4 = %q, want 192.168.1.42", got)
+	}
+	loopbackOnly := func() ([]net.Addr, error) {
+		return []net.Addr{&net.IPAddr{IP: net.ParseIP("127.0.0.1")}}, nil
+	}
+	if got := hostIPv4(loopbackOnly); got != "no-ip" {
+		t.Errorf("loopback-only hostIPv4 = %q, want no-ip", got)
+	}
+	failing := func() ([]net.Addr, error) { return nil, net.UnknownNetworkError("boom") }
+	if got := hostIPv4(failing); got != "no-ip" {
+		t.Errorf("failing hostIPv4 = %q, want no-ip", got)
+	}
+}
+
+// lcdInfo snapshots the config-derived tokens: callsign, DMR id, enabled modes
+// (short keys), and version.
+func TestLCDInfo(t *testing.T) {
+	m := &config.Model{
+		General: config.General{Callsign: "KN4OQW", ID: "3180202"},
+		Modes:   config.Modes{DMR: true, YSF: true}, // others off
+	}
+	started := time.Now()
+	info := lcdInfo(m, "1.2.3", started)
+	if info.Callsign != "KN4OQW" || info.DMRID != "3180202" || info.Version != "1.2.3" || !info.Started.Equal(started) {
+		t.Fatalf("lcdInfo scalars: %+v", info)
+	}
+	if !reflect.DeepEqual(info.Modes, []string{"DMR", "YSF"}) {
+		t.Fatalf("lcdInfo modes = %v, want [DMR YSF]", info.Modes)
+	}
+}
+
+// startLCD starts a subscriber only when the config enables the driver.
+func TestStartLCD(t *testing.T) {
+	s := &server{hub: hub.New(), started: time.Now()}
+
+	if s.startLCD(context.Background(), &config.Model{LCD: config.LCD{Enabled: false}}) {
+		t.Fatal("startLCD started with the driver disabled")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // stop the renderer goroutine when the test ends
+	m := &config.Model{LCD: config.DefaultLCD()}
+	m.LCD.Enabled = true
+	if !s.startLCD(ctx, m) {
+		t.Fatal("startLCD did not start with the driver enabled")
 	}
 }
