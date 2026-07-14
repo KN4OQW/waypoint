@@ -401,6 +401,18 @@ func (s *server) backfillDefaults() error {
 			log.Printf("config store: backfilled %s defaults", bf.key)
 		}
 	}
+	// The native LCD driver section arrived after the cross-mode bridges: a store
+	// seeded before it lacks the row, so backfill the disabled default (with its
+	// starter pages) so Load never returns a zero LCD.
+	if _, ok, err := s.store.Get("lcd"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("lcd", config.DefaultLCD(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled lcd defaults")
+	}
 	return nil
 }
 

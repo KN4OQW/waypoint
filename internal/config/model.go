@@ -46,6 +46,8 @@ type Model struct {
 	YSF2NXDN YSF2NXDN `json:"ysf2nxdn"`
 	DMR2NXDN DMR2NXDN `json:"dmr2nxdn"`
 	NXDN2DMR NXDN2DMR `json:"nxdn2dmr"`
+	// LCD is the Waypoint-native HD44780 driver (store-only; drives no INI).
+	LCD LCD `json:"lcd"`
 }
 
 // The cross-mode bridges are the transcoding daemons from the MMDVM_CM tree
@@ -275,6 +277,38 @@ type Display struct {
 	HD44780I2CAddr string `json:"hd44780_i2c_addr"` // [HD44780] I2CAddress (PCF8574 adapter; hex, e.g. 0x20)
 }
 
+// LCD is the Waypoint-NATIVE HD44780 driver (docs/design/lcd.md), distinct from
+// the inert Display parity keys above. Waypoint's forked MMDVM-Host has no
+// [Display] parser, so nothing lights a physical panel from Display; this section
+// instead configures a driver that runs inside waypointd, subscribes to the live
+// MQTT status plane, and paints the LCD itself. It is store-only — it drives no
+// INI file — so it round-trips through the store (Save/Load), never through INI
+// render/parse, and never appears in RenderTargets.
+//
+// Because the native driver opens the bus itself, I2CBus is a real field here —
+// the thing MMDVM-Host's [HD44780] had no key for. Each page is a set of
+// templated lines (tokens like {callsign} {status} {lh_call}); pages rotate on
+// their Duration, and lines wider than Cols scroll.
+type LCD struct {
+	Enabled           bool      `json:"enabled"`
+	I2CBus            string    `json:"i2c_bus"`            // e.g. /dev/i2c-1 (the native driver picks the bus)
+	I2CAddress        string    `json:"i2c_address"`        // PCF8574 backpack address, hex e.g. 0x27
+	Rows              string    `json:"rows"`               // 2 or 4
+	Cols              string    `json:"cols"`               // 16 or 20
+	ScrollSpeed       string    `json:"scroll_speed"`       // ms per scroll step for over-wide lines
+	ActivityInterrupt bool      `json:"activity_interrupt"` // jump to a caller page while keyed, then resume rotation
+	Pages             []LCDPage `json:"pages"`
+}
+
+// LCDPage is one screen in the rotation: a name, whether it participates, how
+// long it holds, and one templated string per row (extra rows render blank).
+type LCDPage struct {
+	Enabled  bool     `json:"enabled"`
+	Name     string   `json:"name"`
+	Duration string   `json:"duration"` // seconds this page holds before rotating
+	Lines    []string `json:"lines"`    // one templated line per row
+}
+
 // General is station identity and top-level behaviour.
 type General struct {
 	Callsign    string `json:"callsign"`
@@ -425,6 +459,7 @@ func (m *Model) sections() map[string]any {
 		"ysf2nxdn": &m.YSF2NXDN,
 		"dmr2nxdn": &m.DMR2NXDN,
 		"nxdn2dmr": &m.NXDN2DMR,
+		"lcd":      &m.LCD,
 	}
 }
 
