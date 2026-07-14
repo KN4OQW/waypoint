@@ -12,8 +12,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +24,8 @@ import (
 	"github.com/KN4OQW/waypoint/internal/dmrhosts"
 	"github.com/KN4OQW/waypoint/internal/dstarhosts"
 	"github.com/KN4OQW/waypoint/internal/hub"
+	"github.com/KN4OQW/waypoint/internal/lcd"
+	"github.com/KN4OQW/waypoint/internal/lcd/hd44780"
 	"github.com/KN4OQW/waypoint/internal/m17hosts"
 	"github.com/KN4OQW/waypoint/internal/mqtt"
 	"github.com/KN4OQW/waypoint/internal/nxdnhosts"
@@ -521,6 +525,100 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// startLCD launches the native HD44780 renderer as a hub subscriber when the
+// config enables it, returning whether it started. It replays the event backlog
+// so the panel opens with current state, then drives the renderer from a ticker
+// (at the scroll cadence) until ctx is canceled. When disabled it does nothing.
+// There is no real display device yet (stage 5), so it runs against a headless
+// noop — device unavailability is never fatal to the daemon (design §7).
+func (s *server) startLCD(ctx context.Context, m *config.Model) bool {
+	if !m.LCD.Enabled {
+		return false
+	}
+	dev := newLCDDevice(m.LCD)
+	r := lcd.NewRenderer(m.LCD, lcdInfo(m, Version, s.started), dev, func() string { return hostIPv4(net.InterfaceAddrs) })
+	ch, backlog, cancel := s.hub.Subscribe()
+	for _, e := range backlog {
+		r.Handle(e)
+	}
+	go func() {
+		defer cancel()
+		ticker := time.NewTicker(tickInterval(m.LCD))
+		defer ticker.Stop()
+		_ = r.Run(ctx, ch, ticker.C)
+	}()
+	log.Printf("lcd: renderer started on %s@%s (%sx%s, %d pages)", m.LCD.I2CBus, m.LCD.I2CAddress, m.LCD.Rows, m.LCD.Cols, len(m.LCD.Pages))
+	return true
+}
+
+// newLCDDevice opens the real HD44780 over the configured PCF8574 I2C backpack,
+// falling back to a headless noop if the bus or panel is unavailable — device
+// trouble is never fatal to the daemon (design §7).
+func newLCDDevice(cfg config.LCD) lcd.LCDDevice {
+	dev, err := hd44780.Open(cfg.I2CBus, cfg.I2CAddress)
+	if err != nil {
+		log.Printf("lcd: I2C %s@%s unavailable, disabled: %v", cfg.I2CBus, cfg.I2CAddress, err)
+		return lcd.NoopDevice{}
+	}
+	return dev
+}
+
+// lcdInfo snapshots the config/health-derived tokens the renderer needs. Modes
+// are the enabled modes' short keys (DMR, YSF, …) — compact for a narrow panel.
+func lcdInfo(m *config.Model, version string, started time.Time) lcd.Info {
+	var modes []string
+	for _, md := range m.View("").Modes {
+		if md.Enabled {
+			modes = append(modes, strings.ToUpper(md.Key))
+		}
+	}
+	return lcd.Info{
+		Callsign: m.General.Callsign,
+		DMRID:    m.General.ID,
+		Modes:    modes,
+		Version:  version,
+		Started:  started,
+	}
+}
+
+// tickInterval is the renderer's frame cadence: the scroll step, so marquees
+// animate smoothly, floored so a bad value never spins the slow I2C bus too hard.
+func tickInterval(cfg config.LCD) time.Duration {
+	ms := 300
+	if v, err := strconv.Atoi(strings.TrimSpace(cfg.ScrollSpeed)); err == nil && v > 0 {
+		ms = v
+	}
+	if ms < 50 {
+		ms = 50
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+// hostIPv4 returns the node's first non-loopback IPv4 address, or "no-ip". The
+// interface lister is injected so it is testable without touching real NICs.
+func hostIPv4(list func() ([]net.Addr, error)) string {
+	addrs, err := list()
+	if err != nil {
+		return "no-ip"
+	}
+	for _, a := range addrs {
+		var ip net.IP
+		switch v := a.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip == nil || ip.IsLoopback() {
+			continue
+		}
+		if v4 := ip.To4(); v4 != nil {
+			return v4.String()
+		}
+	}
+	return "no-ip"
+}
+
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8073", "listen address for the API and UI")
 	demoMode := flag.Bool("demo", false, "publish synthetic traffic (no radio required); always labeled in /api/health")
@@ -581,6 +679,15 @@ func main() {
 	}
 	if err := s.backfillDefaults(); err != nil {
 		log.Printf("config store backfill skipped: %v", err)
+	}
+
+	// Native LCD driver: paints a physical HD44780 from the live status plane when
+	// the operator has enabled it. Disabled by default, so this is a no-op on a
+	// headless node.
+	if m, err := config.Load(s.store); err != nil {
+		log.Printf("lcd: config load failed, renderer not started: %v", err)
+	} else {
+		s.startLCD(context.Background(), m)
 	}
 
 	if *demoMode {

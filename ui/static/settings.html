@@ -163,6 +163,27 @@
   details.raw-adv summary::before { content: "▸ "; color: var(--dim); }
   details.raw-adv[open] summary::before { content: "▾ "; }
   details.raw-adv textarea { margin-top: 9px; }
+  /* LCD page builder */
+  .lcd-page { padding: 6px 20px 16px; }
+  .lcd-pagehead { gap: 10px; flex-wrap: wrap; }
+  .lcd-pagename { flex: 1; min-width: 130px; background: var(--field); border: 1px solid var(--field-line); border-radius: 6px; padding: 7px 10px; color: var(--ink); font-family: var(--mono); font-size: 12px; }
+  .lcd-dur { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 11px; color: var(--dim); }
+  .lcd-dur input { width: 52px; background: var(--field); border: 1px solid var(--field-line); border-radius: 6px; padding: 6px 8px; color: var(--ink); font-family: var(--mono); font-size: 12px; }
+  .lcd-line { display: grid; grid-template-columns: 56px 1fr; gap: 10px; align-items: center; padding: 5px 0; }
+  .lcd-linelabel { font-family: var(--mono); font-size: 11px; color: var(--label); }
+  .lcd-lineinput { width: 100%; background: var(--field); border: 1px solid var(--field-line); border-radius: 6px; padding: 8px 10px; color: var(--ink); font-family: var(--mono); font-size: 12px; }
+  .lcd-tokens { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
+  .lcd-tok { font-family: var(--mono); font-size: 10.5px; color: var(--muted); background: #0c0f15; border: 1px solid var(--field-line); border-radius: 5px; padding: 4px 7px; cursor: pointer; }
+  .lcd-tok:hover { color: var(--accent); border-color: var(--accent); }
+  .lcd-warn { margin-top: 11px; font-family: var(--mono); font-size: 11px; color: var(--warn); background: rgba(255,159,69,.08); border: 1px solid rgba(255,159,69,.3); border-radius: 8px; padding: 8px 11px; }
+  .note code { font-family: var(--mono); font-size: 11px; color: var(--accent); background: rgba(255,255,255,.04); padding: 1px 4px; border-radius: 3px; }
+  /* pill toggles rendered as real buttons (keyboard-operable) */
+  button.pill { background: transparent; cursor: pointer; }
+  /* visible focus for every interactive control */
+  button:focus-visible, .pill:focus-visible, .lcd-tok:focus-visible, .netdel:focus-visible, a:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+
   .hide { display: none; }
 </style>
 </head>

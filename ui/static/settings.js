@@ -7,6 +7,7 @@
 const TABS = [
   { id: "general",      tag: "RF", label: "General",      sub: "Radio & Station",     crumb: "SYSTEM / GENERAL",        title: "General Configuration", desc: "Station identity, operating frequencies and modem hardware for this hotspot node." },
   { id: "setup",        tag: "SU", label: "Setup",         sub: "Control & Display",    crumb: "SYSTEM / SETUP",          title: "Control Software & Display", desc: "TRX mode and the MMDVM-Host display driver. Waypoint runs display-free (status is served over MQTT); these fields are here for parity and for nodes driving a physical panel." },
+  { id: "lcd",          tag: "LC", label: "LCD",           sub: "HD44780 Panel",        crumb: "SYSTEM / LCD",            title: "LCD Display",           desc: "Drive a physical HD44780 character panel over I2C, with pages of live status that rotate. Disabled by default; the node stays headless until you turn it on." },
   { id: "brandmeister", tag: "BM", label: "BrandMeister", sub: "Network & Security",   crumb: "NETWORKS / BRANDMEISTER", title: "DMR Networks",          desc: "Master servers this node bridges DMR traffic to. Passwords are stored on the node and never shown." },
   { id: "dmr",          tag: "DM", label: "DMR",          sub: "Master & Slots",       crumb: "MODES / DMR",             title: "DMR Settings",          desc: "Color code and per-slot behaviour for Digital Mobile Radio." },
   { id: "dstar",        tag: "DS", label: "D-Star",        sub: "ircDDB & reflectors",  crumb: "MODES / D-STAR",          title: "D-Star",                desc: "D-Star gateway: module band letter, ircDDB callsign routing, startup reflector, and which reflector protocols are on." },
@@ -51,6 +52,7 @@ function buildEdit(c) {
     general: { callsign: g.callsign, id: g.dmr_id, duplex: !!g.duplex, power: g.power, location: g.location, url: g.url },
     modem:   { rx_freq_hz: g.rx_freq_hz, tx_freq_hz: g.tx_freq_hz, port: g.modem_port, rx_offset: g.rx_offset, tx_offset: g.tx_offset },
     display: displayFrom(c.display || {}),
+    lcd: lcdFrom(c.lcd || {}),
     dmr:     { color_code: d.color_code, id: d.id, embedded_lc_only: !!d.embedded_lc_only, dump_ta_data: !!d.dump_ta_data, beacons: !!d.beacons, self_only: !!d.self_only },
     dmrnet:  { slot1: !!d.slot1, slot2: !!d.slot2 },
     modes:   Object.fromEntries((c.modes || []).map((m) => [m.key, !!m.enabled])),
@@ -150,6 +152,40 @@ function displayFrom(d) {
     hd44780_rows: d.hd44780_rows || "2", hd44780_cols: d.hd44780_cols || "16",
     hd44780_i2c_addr: d.hd44780_i2c_addr || "0x20",
   };
+}
+
+// The "lcd" section drives the native HD44780 renderer (pages of live status).
+// One store section, no secrets. Pages are copied so edits don't touch state.
+function lcdFrom(l) {
+  return {
+    enabled: !!l.enabled,
+    i2c_bus: l.i2c_bus || "/dev/i2c-1",
+    i2c_address: l.i2c_address || "0x27",
+    rows: l.rows || "4",
+    cols: l.cols || "20",
+    scroll_speed: l.scroll_speed || "300",
+    activity_interrupt: l.activity_interrupt !== false,
+    pages: (l.pages || []).map((p) => ({
+      enabled: p.enabled !== false,
+      name: p.name || "",
+      duration: p.duration || "8",
+      lines: (p.lines || []).slice(),
+    })),
+  };
+}
+
+// LCD_TOKENS mirrors the renderer's grounded token set (internal/lcd/tokens.go):
+// the palette offers these, and lines are validated against them client-side.
+const LCD_TOKENS = ["callsign", "dmr_id", "ip", "time", "date", "uptime", "version", "mode", "modes", "status", "lh_call", "lh_tg", "lh_mode", "lh_ber", "lh_rssi", "lh_ago"];
+// unknownTokens returns the {tokens} in a line that aren't in LCD_TOKENS.
+function unknownTokens(line) {
+  const bad = [];
+  const re = /\{([a-z0-9_]+)\}/g;
+  let m;
+  while ((m = re.exec(String(line || ""))) !== null) {
+    if (!LCD_TOKENS.includes(m[1]) && !bad.includes(m[1])) bad.push(m[1]);
+  }
+  return bad;
 }
 
 function ysfgwFrom(y) {
@@ -417,6 +453,111 @@ function panelDisplay() {
   const display = card("DISPLAY", displayRows);
   const hint = note("This MMDVM-Host build is <b>display-free</b> — it renders status over MQTT and ignores these keys. They are carried for WPSD parity and for a clone running stock MMDVM-Host or driving a physical panel.");
   return `<div class="grid2">${control}${display}</div>${hint}`;
+}
+
+// --- LCD: native HD44780 page builder ------------------------------------
+// A PANEL card for the wiring/geometry, then one card per rotating page. Each
+// page has a name, an enable, a hold duration, and one line input per row; a
+// token palette inserts {tokens} at the caret, and lines are validated so an
+// unknown token is flagged (not silently blank). Saves go through the generic
+// PUT /api/config/lcd. All controls are real buttons/inputs so the tab is
+// keyboard-operable.
+let lcdActive = null; // {page, row} of the last-focused line input, for token insertion
+
+// lcdToggleRow renders an accessible pill toggle (a real <button>) bound to an
+// edit.lcd boolean, so Enter/Space work and state is exposed via aria-pressed.
+function lcdToggleRow(key, name, onTxt, offTxt) {
+  const on = !!(edit.lcd || {})[key];
+  return `<div class="toggle-row"><span class="name">${esc(name)}</span><button type="button" class="pill ${on ? "on" : "off"}" data-toggle="lcd.${esc(key)}" aria-pressed="${on ? "true" : "false"}">${on ? esc(onTxt) : esc(offTxt)}</button></div>`;
+}
+
+function lcdSelect(key, opts, cur, extra) {
+  const o = opts.map(([v, l]) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(l)}</option>`).join("");
+  return `<select data-lcd-dim="${esc(key)}"${extra || ""}>${o}</select>`;
+}
+
+function pageCard(p, i, rows) {
+  let lines = "";
+  const bad = [];
+  for (let j = 0; j < rows; j++) {
+    const v = p.lines[j] || "";
+    unknownTokens(v).forEach((u) => { if (!bad.includes(u)) bad.push(u); });
+    lines += `<div class="lcd-line"><label class="lcd-linelabel" for="lcd-l-${i}-${j}">Row ${j + 1}</label>` +
+      `<input id="lcd-l-${i}-${j}" class="lcd-lineinput" data-lcdline="${i}" data-lcdrow="${j}" value="${esc(v)}" placeholder="text and {tokens}" aria-label="Page ${i + 1} row ${j + 1}"></div>`;
+  }
+  const warn = `<div class="lcd-warn${bad.length ? "" : " hide"}" role="alert" data-lcdwarn="${i}">${warnText(bad)}</div>`;
+  const palette = `<div class="lcd-tokens" role="group" aria-label="Insert a token into page ${i + 1}">` +
+    LCD_TOKENS.map((tk) => `<button type="button" class="lcd-tok" data-lcdtoken="${esc(tk)}" data-lcdpageidx="${i}" title="Insert {${esc(tk)}}">{${esc(tk)}}</button>`).join("") + `</div>`;
+  return `<section class="card lcd-page">
+      <div class="card-head lcd-pagehead">
+        <span class="sq" aria-hidden="true"></span>
+        <input class="lcd-pagename" data-lcdpage="${i}" data-lcdkey="name" value="${esc(p.name || "")}" placeholder="Page name" aria-label="Page ${i + 1} name">
+        <button type="button" class="pill ${p.enabled ? "on" : "off"}" data-lcdpageen="${i}" aria-pressed="${p.enabled ? "true" : "false"}">${p.enabled ? "ENABLED" : "DISABLED"}</button>
+        <span class="lcd-dur"><input class="mini" data-lcdpage="${i}" data-lcdkey="duration" value="${esc(p.duration || "")}" inputmode="numeric" aria-label="Page ${i + 1} hold seconds"> s</span>
+        <button type="button" class="netdel" data-lcdpagedel="${i}" aria-label="Remove page ${i + 1}">✕</button>
+      </div>
+      ${lines}${warn}${palette}
+    </section>`;
+}
+
+function warnText(bad) {
+  if (!bad.length) return "";
+  return `⚠ Unknown token${bad.length > 1 ? "s" : ""}: ${bad.map((u) => esc("{" + u + "}")).join(", ")} — check spelling; unknown tokens render blank.`;
+}
+
+// updatePageWarning refreshes one page's unknown-token notice without a full
+// re-render, so typing in a line input never steals focus.
+function updatePageWarning(i) {
+  const el = document.querySelector(`[data-lcdwarn="${i}"]`);
+  if (!el) return;
+  const bad = [];
+  (edit.lcd.pages[i].lines || []).forEach((ln) => unknownTokens(ln).forEach((u) => { if (!bad.includes(u)) bad.push(u); }));
+  el.innerHTML = warnText(bad);
+  el.classList.toggle("hide", bad.length === 0);
+}
+
+function panelLCD() {
+  const l = edit.lcd || (edit.lcd = lcdFrom({}));
+  const rows = Math.max(1, parseInt(l.rows, 10) || 4);
+  const panel = card("PANEL",
+    lcdToggleRow("enabled", "Driver enabled", "ENABLED", "DISABLED") +
+    input("lcd", "i2c_bus", { label: "I2C bus" }) +
+    input("lcd", "i2c_address", { label: "I2C address", accent: true }) +
+    row("Rows", lcdSelect("rows", [["2", "2 rows"], ["4", "4 rows"]], l.rows)) +
+    row("Columns", lcdSelect("cols", [["16", "16 columns"], ["20", "20 columns"]], l.cols)) +
+    input("lcd", "scroll_speed", { label: "Scroll speed", unit: "ms" }) +
+    lcdToggleRow("activity_interrupt", "Interrupt on activity", "ON", "OFF"));
+  const help = note("Lines fill in from <b>{tokens}</b> — e.g. <code>{callsign}</code>, <code>{status}</code>, <code>{lh_call}</code>. A line wider than the panel scrolls. Characters outside plain ASCII show as <code>?</code>.");
+  const disabled = l.enabled ? "" : note("The driver is <b>disabled</b> — pages are saved but nothing is drawn until you enable it above.");
+  const pages = (l.pages || []).map((p, i) => pageCard(p, i, rows)).join("");
+  const add = `<button type="button" class="btn ghost mini-btn" id="lcd-add-page">+ ADD PAGE</button>`;
+  return `<div class="grid2">${panel}<div class="stack">${help}${disabled}</div></div>` +
+    `<div class="stack" style="margin-top:16px;">${pages || note("No pages yet — add one to show something on the panel.")}${add}</div>`;
+}
+
+// ensureLcdLine pads a page's lines array so index ri is assignable.
+function ensureLcdLine(pi, ri) {
+  const p = edit.lcd.pages[pi];
+  while (p.lines.length <= ri) p.lines.push("");
+}
+
+// insertLcdToken drops {token} at the caret of the active line input on page pi
+// (or its first row), then restores focus and caret past the inserted token.
+function insertLcdToken(pi, token) {
+  let ri = 0;
+  if (lcdActive && lcdActive.page === pi) ri = lcdActive.row;
+  ensureLcdLine(pi, ri);
+  const inputEl = document.querySelector(`input[data-lcdline="${pi}"][data-lcdrow="${ri}"]`);
+  const cur = edit.lcd.pages[pi].lines[ri] || "";
+  let pos = cur.length;
+  if (inputEl && inputEl.selectionStart != null) pos = inputEl.selectionStart;
+  const ins = "{" + token + "}";
+  edit.lcd.pages[pi].lines[ri] = cur.slice(0, pos) + ins + cur.slice(pos);
+  dirty.add("lcd");
+  renderPanel();
+  refreshActions();
+  const after = document.querySelector(`input[data-lcdline="${pi}"][data-lcdrow="${ri}"]`);
+  if (after) { after.focus(); const c = pos + ins.length; after.setSelectionRange(c, c); }
 }
 
 // --- DMR networks (WPSD-style: routing generated from network type) -------
@@ -792,6 +933,7 @@ function renderPanel() {
   switch (state.tab) {
     case "general":      box.innerHTML = panelGeneral(); break;
     case "setup":        box.innerHTML = panelDisplay(); break;
+    case "lcd":          box.innerHTML = panelLCD(); break;
     case "dmr":          box.innerHTML = panelDmr(); break;
     case "dstar":        box.innerHTML = panelDStar(); break;
     case "ysf":          box.innerHTML = panelYSF(); break;
@@ -993,6 +1135,26 @@ document.getElementById("panels").addEventListener("input", (e) => {
     renderPanel();
     return;
   }
+  // LCD rows/cols selects — rows changes the line-input count, so re-render.
+  if (t.dataset.lcdDim != null) {
+    setField("lcd", t.dataset.lcdDim, t.value);
+    if (t.dataset.lcdDim === "rows") renderPanel();
+    return;
+  }
+  // LCD page name / duration.
+  if (t.dataset.lcdpage != null) {
+    edit.lcd.pages[+t.dataset.lcdpage][t.dataset.lcdkey] = t.value;
+    dirty.add("lcd"); refreshActions();
+    return;
+  }
+  // LCD page line: update the model and refresh just this page's token warning.
+  if (t.dataset.lcdline != null) {
+    const pi = +t.dataset.lcdline, ri = +t.dataset.lcdrow;
+    ensureLcdLine(pi, ri);
+    edit.lcd.pages[pi].lines[ri] = t.value;
+    dirty.add("lcd"); updatePageWarning(pi); refreshActions();
+    return;
+  }
   // DMR Master (primary) selector — the primary is the no-prefix catch-all.
   if (t.dataset.dmrprimary != null) {
     const type = t.value, n = ensureNet(type);
@@ -1027,6 +1189,21 @@ document.getElementById("panels").addEventListener("click", (e) => {
     renderPanel();
     return;
   }
+  // LCD token palette: insert {token} at the active line's caret.
+  const tok = e.target.closest("[data-lcdtoken]");
+  if (tok) { insertLcdToken(+tok.dataset.lcdpageidx, tok.dataset.lcdtoken); return; }
+  // LCD per-page enable toggle.
+  const lpe = e.target.closest("[data-lcdpageen]");
+  if (lpe) { const p = edit.lcd.pages[+lpe.dataset.lcdpageen]; p.enabled = !p.enabled; dirty.add("lcd"); renderPanel(); refreshActions(); return; }
+  // LCD remove page.
+  const lpd = e.target.closest("[data-lcdpagedel]");
+  if (lpd) { edit.lcd.pages.splice(+lpd.dataset.lcdpagedel, 1); dirty.add("lcd"); renderPanel(); refreshActions(); return; }
+  // LCD add page.
+  if (e.target.id === "lcd-add-page") {
+    (edit.lcd.pages = edit.lcd.pages || []).push({ enabled: true, name: "Page " + (edit.lcd.pages.length + 1), duration: "8", lines: [] });
+    dirty.add("lcd"); renderPanel(); refreshActions();
+    return;
+  }
   // per-network Enable toggle, bound by type (creates the network on demand).
   const en = e.target.closest("[data-neten]");
   if (en) { const n = ensureNet(en.dataset.neten); n.enabled = !n.enabled; if (!n.enabled) n.primary = false; dirty.add("networks"); renderPanel(); refreshActions(); return; }
@@ -1040,6 +1217,12 @@ document.getElementById("panels").addEventListener("click", (e) => {
     (edit.routes = edit.routes || []).push({ slot: "2", tg: "", network: firstEnabled.name || "" });
     dirty.add("routes"); renderPanel(); refreshActions();
   }
+});
+// Track the focused LCD line input so the token palette inserts into the right
+// row even after the click moves focus to the button.
+document.getElementById("panels").addEventListener("focusin", (e) => {
+  const t = e.target;
+  if (t && t.dataset && t.dataset.lcdline != null) lcdActive = { page: +t.dataset.lcdline, row: +t.dataset.lcdrow };
 });
 document.getElementById("btn-apply").onclick = apply;
 document.getElementById("btn-reset").onclick = reset;
