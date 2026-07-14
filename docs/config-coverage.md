@@ -41,19 +41,24 @@ behind the gateway-plugin model ([#21]); DMR + YSF are the MVP ([#17]).
 
 | Mode | MMDVM-Host section | Gateway daemon | Gateway config surface | Status |
 |---|---|---|---|---|
-| DMR | `[DMR]` + `[DMR Network]` | DMRGateway | networks ✅ · static/dynamic TG (Options), TG hold, per-mode hangs ⬜ | 🟡 |
-| YSF (Fusion) | `[System Fusion]` | YSFGateway / DGIdGateway | YSF + FCS rooms, DG-ID map, Wires-X passthrough | ⬜ (P0) |
-| D-Star | `[D-Star]` + `[D-Star Network]` | DStarGateway (ircDDB, MQTT era) | module ✅ · ircDDB login ✅ · startup reflector ✅ · DExtra/DPlus/DCS/XLX ✅ | ✅ |
-| P25 | `[P25]` | P25Gateway | P25 reflector network, TG list, NAC | ⬜ |
-| NXDN | `[NXDN]` | NXDNGateway | NXDN reflectors, TG list, RAN | ⬜ |
-| M17 | `[M17]` *(via fork)* | M17Gateway | CAN ✅ · startup reflector+module ✅ · suffix/voice/hang ✅ | ✅ |
-| POCSAG | `[POCSAG]` | DAPNETGateway | DAPNET auth (callsign, key), paging freq | ⬜ |
-| FM | `[FM]` | analog (+ optional FM network) | CTCSS, timeout, kerchunk, audio levels, access mode | ⬜ |
+| DMR | `[DMR]` + `[DMR Network]` | DMRGateway | networks ✅ · static/dynamic TG (Options) ✅ · TG hold, fine-grained per-mode hangs ⬜ | 🟡 |
+| YSF (Fusion) | `[System Fusion]` | YSFGateway / DGIdGateway | YSF + FCS rooms ✅ · DG-ID map ✅ · Wires-X passthrough ✅ · daemon built | ✅ |
+| D-Star | `[D-Star]` + `[D-Star Network]` | DStarGateway (ircDDB, MQTT era) | module ✅ · ircDDB login ✅ · startup reflector ✅ · DExtra/DPlus/DCS/XLX ✅ · daemon built | ✅ |
+| P25 | `[P25]` | P25Gateway | reflector network ✅ · startup TG list ✅ · NAC ✅ · daemon built | ✅ |
+| NXDN | `[NXDN]` | NXDNGateway | reflectors ✅ · startup TG list ✅ · RAN ✅ · daemon built | ✅ |
+| M17 | `[M17]` *(via fork)* | M17Gateway | CAN ✅ · startup reflector+module ✅ · suffix/voice/hang ✅ · daemon built | ✅ |
+| POCSAG | `[POCSAG]` | DAPNETGateway | store+renderer+tab ✅ (DAPNET server/callsign/AuthKey, paging freq) · daemon: pin `DAPNETGateway` in waypoint-stack `build.sh` | ✅ (config) |
+| FM | `[FM]` | analog (no gateway) | CTCSS ✅ · timeout ✅ · kerchunk ✅ · audio levels ✅ · access mode ✅ (host-only, no daemon) | ✅ |
 
 Each entry becomes: a store section (`mode.<name>` + `gateway.<name>`), a
-renderer for that gateway's INI, a systemd unit, and a dashboard tab. The
-per-mode *enable* already flips the MMDVM-Host section; what's missing is the
-gateway daemon config + reflector selection for every mode except DMR.
+renderer for that gateway's INI, a systemd unit, and a settings tab. **Every
+mode's config layer is complete** in this repo: store section, renderer
+(`render.go`), enable-gated render target, and settings tab
+(`ui/static/settings.js` `TABS`). What remains is per-domain, not per-mode:
+DMR's fine-grained TG-hold / per-section RF-Net hang overrides (global mode-hang
+*is* modeled in `general`), and — in the separate **waypoint-stack** deploy repo
+— pinning the `DAPNETGateway` binary in `build.sh` so POCSAG's rendered INI has a
+daemon to consume it (the other seven mode daemons are already built there).
 
 ### M17 required a host fork (upstream removed it)
 
@@ -85,8 +90,13 @@ reflector (`Linked to M17-M17 C`, ACKN received). Both units stable, NRestarts=0
 ## 3. Cross-mode gateways  → [#21]
 
 Transcoding bridges, each a unit + config + card: **YSF2DMR, DMR2YSF, YSF2NXDN,
-DMR2NXDN, NXDN2DMR**. WPSD ships these as `dmr2ysf`/`ysf2dmr`/`dmr2nxdn` units.
-Status: ⬜.
+DMR2NXDN, NXDN2DMR** (the WPSD `dmr2ysf`/`ysf2dmr`/`dmr2nxdn` family). Config
+layer ✅: each has a store section (`model.go`), an INI renderer (`RenderYSF2DMR`
+… `RenderNXDN2DMR`), an **enable-gated** render target (an off bridge contributes
+no target — `render.go`), and the Gateways settings tab. Remaining: pin/build the
+`MMDVM_CM` (juribeparada) bridge binaries in waypoint-stack `build.sh` — the
+config renders but the daemons are not yet compiled there. Status: ✅ (config) ·
+🟡 (daemon builds pending in waypoint-stack).
 
 ## 4. Host / network configuration  → [#32]
 
@@ -136,11 +146,17 @@ APRS (APRSGateway), GPSD, transparent data, DAPNET beyond POCSAG.
 
 ## Sequenced next steps
 
-1. YSF end-to-end (mode section + YSFGateway config + tab) — completes MVP modes ([#17]).
+The per-mode **config** layer is complete — all eight modes and the five
+cross-mode bridges have store sections, renderers, render targets, and settings
+tabs. What's left is deploy-side (waypoint-stack) and adjacent domains:
+
+1. Pin/build the two remaining daemons in waypoint-stack `build.sh`:
+   **DAPNETGateway** (POCSAG) and the **MMDVM_CM** cross-mode bridge binaries —
+   the only mode/bridge daemons not yet compiled there.
 2. Host network config (NetworkManager renderer + confirm-or-revert apply) — [#32].
-3. Remaining modes (D-Star, P25, NXDN, M17, POCSAG, FM) via the [#21] plugin pattern.
-4. Cross-mode gateways.
-5. Full modem-calibration coverage + calibration wizard ([#20]).
+3. DMR fine-grained coverage: TG hold + per-section RF/Net hang overrides (global
+   mode-hang already modeled in `general`).
+4. Full modem-calibration coverage + calibration wizard ([#20]).
 
 [#1]: https://github.com/KN4OQW/waypoint/issues/1
 [#17]: https://github.com/KN4OQW/waypoint/issues/17

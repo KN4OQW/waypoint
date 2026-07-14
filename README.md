@@ -15,7 +15,17 @@ It exists because the amateur community deserves a hotspot platform that is:
 
 ## Status
 
-**Phase 0 — foundation.** The [requirements register](https://github.com/KN4OQW/waypoint/issues?q=is%3Aissue+label%3Atype%3Arequirement) is imported (every item carries provenance back to the community complaint or upstream issue that motivated it), the architecture is documented in [docs/architecture.md](docs/architecture.md), and the core daemon skeleton builds in CI. Nothing is usable yet — but everything is public from the first commit.
+**Active development — the config core and most of the mode stack are in place.** The [requirements register](https://github.com/KN4OQW/waypoint/issues?q=is%3Aissue+label%3Atype%3Arequirement) is imported (every item carries provenance back to the community complaint or upstream issue that motivated it), the architecture is documented in [docs/architecture.md](docs/architecture.md), and the stack builds in public CI. Everything is public from the first commit.
+
+What's built today:
+
+- **Config store + generators** for all eight modes (DMR, YSF, D-Star, P25, NXDN, M17, POCSAG, FM) and the five cross-mode bridges (YSF2DMR, DMR2YSF, YSF2NXDN, DMR2NXDN, NXDN2DMR). A schema-versioned store compiles `MMDVM-Host.ini` plus each gateway's INI as deterministic outputs; see [docs/config-coverage.md](docs/config-coverage.md).
+- **Settings UI** with per-mode tabs (DMR mirrors the Pi-Star/WPSD field set), plus config import.
+- **Gateway daemons** pinned and reproducibly built for four architectures (amd64, arm64, armhf, armv6hf) in [waypoint-stack](https://github.com/KN4OQW/waypoint-stack): MMDVM-Host (**forked to restore M17**, which upstream removed), DMRGateway, YSFGateway/DGIdGateway, P25Gateway, NXDNGateway, M17Gateway, and DStarGateway.
+
+Still ahead: the DAPNETGateway (POCSAG) and MMDVM_CM (cross-mode) daemon builds, host/network configuration ([#32]), first-boot device claim + TLS, the updates lifecycle, and end-to-end bench validation. Not yet a turnkey release — but no longer a skeleton.
+
+[#32]: https://github.com/KN4OQW/waypoint/issues/32
 
 Reference bench hardware: MMDVM_HS_Dual_Hat (STM32F103, dual ADF7021) on a Raspberry Pi 3, plus full-size MMDVM (STM32F4/F7) targets.
 
