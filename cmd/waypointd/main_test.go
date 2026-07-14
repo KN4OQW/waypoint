@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http/httptest"
 	"reflect"
@@ -56,6 +57,79 @@ func TestBackfillLCD(t *testing.T) {
 	}
 	if !reflect.DeepEqual(after, custom) {
 		t.Fatalf("backfill overwrote an existing LCD row:\n want %+v\n  got %+v", custom, after)
+	}
+}
+
+// TestApplyStopsRunningBridgeUnit: apply stops any retired cross-mode bridge daemon
+// (MMDVM_CM) that is still active, and leaves inactive ones alone. This closes the
+// stale-daemon-on-disable defect by construction — a bridge enabled under the old
+// surface no longer lingers once the surface is retired. The systemctl calls are
+// faked (there is no systemd under `go test`).
+func TestApplyStopsRunningBridgeUnit(t *testing.T) {
+	// Only ysf2dmr is "running"; the other four bridges are inactive.
+	active := map[string]bool{"waypoint-ysf2dmr.service": true}
+	var stops []string
+	orig := systemctlRun
+	systemctlRun = func(args ...string) ([]byte, error) {
+		switch args[0] {
+		case "is-active":
+			unit := args[len(args)-1]
+			if active[unit] {
+				return []byte("active\n"), nil
+			}
+			return []byte("inactive\n"), fmt.Errorf("exit status 3") // is-active non-zero when not active
+		case "stop":
+			stops = append(stops, args[1])
+			return nil, nil
+		default: // restart of the always-on gateway units
+			return nil, nil
+		}
+	}
+	t.Cleanup(func() { systemctlRun = orig })
+
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	dir := t.TempDir()
+	s := &server{
+		store: st,
+		paths: config.Paths{
+			MMDVM: dir + "/MMDVM-Host.ini", DMRGateway: dir + "/DMRGateway.ini",
+			YSFGateway: dir + "/YSFGateway.ini", P25Gateway: dir + "/P25Gateway.ini",
+			NXDNGateway: dir + "/NXDNGateway.ini", DStarGateway: dir + "/dstargateway.cfg",
+			M17Gateway: dir + "/M17Gateway.ini",
+		},
+	}
+
+	rec := httptest.NewRecorder()
+	s.configApply(rec, httptest.NewRequest("POST", "/api/config/apply", nil))
+	if rec.Code != 200 {
+		t.Fatalf("apply returned %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Exactly the one active bridge was stopped; the inactive ones were not.
+	if !reflect.DeepEqual(stops, []string{"waypoint-ysf2dmr.service"}) {
+		t.Fatalf("apply stopped %v, want only the active bridge waypoint-ysf2dmr.service", stops)
+	}
+
+	var body struct {
+		Applied   bool     `json:"applied"`
+		Restarted []string `json:"restarted"`
+		Stopped   []string `json:"stopped"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("apply response is not JSON: %v", err)
+	}
+	if !body.Applied || !reflect.DeepEqual(body.Stopped, []string{"waypoint-ysf2dmr.service"}) {
+		t.Fatalf("apply response should report the stopped bridge, got %+v", body)
+	}
+	// A bridge unit is never in the restart set — it is not a render target.
+	for _, u := range body.Restarted {
+		if strings.Contains(u, "ysf2dmr") || strings.Contains(u, "dmr2ysf") || strings.Contains(u, "nxdn2dmr") {
+			t.Fatalf("a retired bridge unit must never be restarted, got %v", body.Restarted)
+		}
 	}
 }
 

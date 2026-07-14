@@ -46,7 +46,9 @@ func fixture() *Model {
 			{Name: "SystemX", Type: NetSystemX, Address: "systemx.pistar.uk", Port: "62031", Password: "sysx-key", ESSID: "02", Enabled: true},
 			{Name: "XLX", Type: NetXLX, Port: "62030", Password: "xlxpw", XLXStartup: "950", XLXModule: "E", XLXSlot: "2", Enabled: true},
 		},
-		YSF:    YSF{LowDeviation: true, SelfOnly: false, TXHang: "6", RemoteGateway: false, ModeHang: "20"},
+		// Every [System Fusion] mode param is non-default so the view surfacing (parity
+		// gap G1) and the INI round-trip cannot be masked by a rendered default.
+		YSF:    YSF{LowDeviation: true, SelfOnly: true, TXHang: "6", RemoteGateway: true, ModeHang: "25"},
 		YSFGW:  YSFGateway{Suffix: "RPT", WiresXPassthrough: true, Startup: "FCS00290", Revert: true, InactivityTimeout: "30", YSFNetwork: true, FCSNetwork: true, APRS: false},
 		P25:    P25{NAC: "293", SelfOnly: true, OverrideUIDCheck: false, RemoteGateway: false, TXHang: "5"},
 		P25GW:  P25Gateway{Static: "10100,10200", Voice: true, RFHangTime: "120", NetHangTime: "60"},
@@ -162,31 +164,14 @@ func TestLosslessRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Cross-mode bridges: the fixture enables all five, so each renders and parses
-	// back. A bridge INI has no Enable key — its presence in fromINI IS its Enable
-	// (see fromINI), so passing every rendered bridge recovers Enable=true plus its
-	// fields, exactly as a running node's files would.
-	y2d, err := ParseINI(strings.NewReader(m.RenderYSF2DMR()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	d2y, err := ParseINI(strings.NewReader(m.RenderDMR2YSF()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	y2n, err := ParseINI(strings.NewReader(m.RenderYSF2NXDN()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	d2n, err := ParseINI(strings.NewReader(m.RenderDMR2NXDN()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	n2d, err := ParseINI(strings.NewReader(m.RenderNXDN2DMR()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := fromINI(mm, dg, yg, nil, pg, ng, xg, mg, dpg, y2d, d2y, y2n, d2n, n2d) // dgid nil: fixture runs the classic YSFGateway
+	got := fromINI(mm, dg, yg, nil, pg, ng, xg, mg, dpg) // dgid nil: fixture runs the classic YSFGateway
+	// The cross-mode bridges are retired (RFC-0003): they no longer render to or parse
+	// from an INI, so fromINI yields their disabled zero-value defaults regardless of
+	// the fixture's populated bridge sections. Reset the expected bridges to those
+	// defaults so the INI round-trip compares only the INI-backed sections — the
+	// bridge sections' own store round-trip is covered by TestCrossModeDormantData.
+	m.YSF2DMR, m.DMR2YSF, m.YSF2NXDN, m.DMR2NXDN, m.NXDN2DMR =
+		DefaultYSF2DMR(), DefaultDMR2YSF(), DefaultYSF2NXDN(), DefaultDMR2NXDN(), DefaultNXDN2DMR()
 	if !reflect.DeepEqual(m, got) {
 		t.Fatalf("round-trip lost data:\n want %+v\n  got %+v", m, got)
 	}
@@ -768,119 +753,79 @@ func TestPOCSAGFMIsolation(t *testing.T) {
 	}
 }
 
-// TestCrossModeBridgeRendered: the fat YSF2DMR bridge renders its DMR master,
-// password, target TG and the WPSD Options line into [DMR Network], and reads the
-// YSF side from YSFGateway's [YSF Network] Port. Every asserted key is one the
-// MMDVM_CM YSF2DMR daemon parses.
-func TestCrossModeBridgeRendered(t *testing.T) {
-	m := fixture()
-	ini := m.RenderYSF2DMR()
-	for sec, wants := range map[string][]string{
-		"YSF Network": {"DstPort=42000", "Callsign=KN4OQW"},
-		"DMR Network": {
-			"Id=3180202",
-			"Address=3102.master.brandmeister.network",
-			"Password=y2d-s3cret",
-			"StartupDstId=31665",
-			"Options=TS1_1=3100;TS2_1=31665;",
-		},
-	} {
-		got := section(ini, sec)
-		for _, w := range wants {
-			if !strings.Contains(got, w) {
-				t.Errorf("[%s] missing %q\n%s", sec, w, got)
-			}
-		}
-	}
-	// A blank Options must be omitted (like a DMR network's), not rendered empty.
-	m.YSF2DMR.Options = ""
-	if strings.Contains(section(m.RenderYSF2DMR(), "DMR Network"), "Options=") {
-		t.Error("blank Options should be omitted from [DMR Network]")
-	}
-}
-
-// TestCrossModeTargetsGated: an enabled bridge contributes a render target (INI +
-// unit); a disabled one contributes none, so apply neither writes its file nor
-// restarts its unit. The always-on MMDVM/DMRGateway targets keep the lead.
-func TestCrossModeTargetsGated(t *testing.T) {
+// TestCrossModeTargetsAbsent: the cross-mode bridges are retired (RFC-0003), so no
+// bridge ever contributes a render target — not even with every bridge enabled.
+// Apply therefore writes no bridge INI and restarts no bridge unit; the always-on
+// MMDVM/DMRGateway targets keep the lead. This is the target-registry guarantee
+// that replaces the old enable-gated bridge targets.
+func TestCrossModeTargetsAbsent(t *testing.T) {
 	paths := Paths{
 		MMDVM: "/etc/MMDVM-Host.ini", DMRGateway: "/etc/DMRGateway.ini",
 		YSFGateway: "/etc/YSFGateway.ini", P25Gateway: "/etc/P25Gateway.ini",
 		NXDNGateway: "/etc/NXDNGateway.ini", DStarGateway: "/etc/dstargateway.cfg",
-		M17Gateway: "/etc/M17Gateway.ini", YSF2DMR: "/etc/YSF2DMR.ini",
+		M17Gateway: "/etc/M17Gateway.ini",
 	}
-	m := fixture()
-	m.DMR2YSF.Enable = false
-	m.YSF2NXDN.Enable = false
-	m.DMR2NXDN.Enable = false
-	m.NXDN2DMR.Enable = false // leave only YSF2DMR enabled
-
-	has := func(targets []RenderTarget, unit string) bool {
-		for _, tg := range targets {
-			if tg.Unit == unit {
-				return true
-			}
-		}
-		return false
-	}
+	m := fixture() // fixture enables all five bridges
 	targets := m.RenderTargets(paths)
 	if targets[0].Unit != unitMMDVM || targets[1].Unit != unitDMRGateway {
-		t.Fatalf("bridges must append after the always-on gateways; got %q, %q", targets[0].Unit, targets[1].Unit)
+		t.Fatalf("always-on gateways must keep the lead; got %q, %q", targets[0].Unit, targets[1].Unit)
 	}
-	if !has(targets, unitYSF2DMR) {
-		t.Error("enabled YSF2DMR should contribute a render target")
-	}
-	if has(targets, unitDMR2YSF) {
-		t.Error("disabled DMR2YSF must not contribute a render target")
-	}
-
-	// Enable them all: all five units appear.
-	m2 := fixture()
-	all := m2.RenderTargets(paths)
-	for _, u := range []string{unitYSF2DMR, unitDMR2YSF, unitYSF2NXDN, unitDMR2NXDN, unitNXDN2DMR} {
-		if !has(all, u) {
-			t.Errorf("enabled bridge target %q missing", u)
+	for _, u := range RetiredBridgeUnits() {
+		for _, tg := range targets {
+			if tg.Unit == u {
+				t.Errorf("retired bridge unit %q must not be a render target even when enabled", u)
+			}
 		}
 	}
 }
 
-// TestCrossModeIsolation: changing a bridge section renders into that bridge's own
-// INI only — never the MMDVM-Host [DMR]/[Modem] sections, and never another
-// bridge's file.
-func TestCrossModeIsolation(t *testing.T) {
-	m := fixture()
-	beforeDMR, beforeModem := section(m.RenderMMDVM(), "DMR"), section(m.RenderMMDVM(), "Modem")
-	beforeDMR2YSF := m.RenderDMR2YSF()
-
-	m.YSF2DMR.Master = "changed.master.example"
-	m.YSF2DMR.Password = "rotated"
-	m.YSF2DMR.TG = "91"
-
-	if got := section(m.RenderMMDVM(), "DMR"); got != beforeDMR {
-		t.Errorf("changing YSF2DMR altered MMDVM [DMR]:\n before %q\n after %q", beforeDMR, got)
+// TestRetiredBridgeUnits: the retired-bridge unit list apply stops is exactly the
+// five MMDVM_CM bridge daemons, and the accessor returns a copy (callers cannot
+// mutate the registry).
+func TestRetiredBridgeUnits(t *testing.T) {
+	want := []string{
+		"waypoint-ysf2dmr.service", "waypoint-dmr2ysf.service", "waypoint-ysf2nxdn.service",
+		"waypoint-dmr2nxdn.service", "waypoint-nxdn2dmr.service",
 	}
-	if got := section(m.RenderMMDVM(), "Modem"); got != beforeModem {
-		t.Errorf("changing YSF2DMR altered MMDVM [Modem]:\n before %q\n after %q", beforeModem, got)
+	if got := RetiredBridgeUnits(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("RetiredBridgeUnits() = %v, want %v", got, want)
 	}
-	if got := m.RenderDMR2YSF(); got != beforeDMR2YSF {
-		t.Errorf("changing YSF2DMR altered DMR2YSF.ini:\n before %q\n after %q", beforeDMR2YSF, got)
+	RetiredBridgeUnits()[0] = "mutated" // must not affect the next call
+	if RetiredBridgeUnits()[0] != "waypoint-ysf2dmr.service" {
+		t.Fatal("RetiredBridgeUnits must return a copy, not the backing slice")
 	}
 }
 
-// TestViewRedactsCrossModeSecrets: the two DMR-master bridges' passwords never
-// reach the view — it reports only has_password.
-func TestViewRedactsCrossModeSecrets(t *testing.T) {
-	v := fixture().View("/tmp/config.db")
-	cm := fmt.Sprintf("%+v", v.CrossMode)
-	if strings.Contains(cm, "y2d-s3cret") || strings.Contains(cm, "n2d-s3cret") {
-		t.Fatal("cross-mode DMR-master password leaked into the view")
+// TestCrossModeDormantData: the retired bridge sections are kept dormant — their
+// data (masters, target TGs, and the DMR-master passwords) round-trips through the
+// store unchanged via Save/Load, so disabling the surface loses nothing and
+// RFC-0003's migration can seed bus definitions from it. This replaces the old INI
+// render/round-trip test.
+func TestCrossModeDormantData(t *testing.T) {
+	s := memStore(t)
+	seed := fixture()
+	if err := seed.Save(s, "seed"); err != nil {
+		t.Fatal(err)
 	}
-	if !v.CrossMode.YSF2DMR.HasPassword || !v.CrossMode.NXDN2DMR.HasPassword {
-		t.Fatal("cross-mode bridges with a master password should report has_password")
+	got, err := Load(s)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// The non-secret bridge still surfaces its fields.
-	if v.CrossMode.DMR2YSF.DefaultTG != "9" {
-		t.Fatalf("DMR2YSF view should carry DefaultTG, got %q", v.CrossMode.DMR2YSF.DefaultTG)
+	for name, ok := range map[string]bool{
+		"YSF2DMR":  reflect.DeepEqual(got.YSF2DMR, seed.YSF2DMR),
+		"DMR2YSF":  reflect.DeepEqual(got.DMR2YSF, seed.DMR2YSF),
+		"YSF2NXDN": reflect.DeepEqual(got.YSF2NXDN, seed.YSF2NXDN),
+		"DMR2NXDN": reflect.DeepEqual(got.DMR2NXDN, seed.DMR2NXDN),
+		"NXDN2DMR": reflect.DeepEqual(got.NXDN2DMR, seed.NXDN2DMR),
+	} {
+		if !ok {
+			t.Errorf("dormant bridge %s did not survive the store round-trip", name)
+		}
+	}
+	// The DMR-master passwords are part of the preserved data (RFC-0003 will need
+	// them) — the store keeps the secret even though nothing renders it.
+	if got.YSF2DMR.Password != "y2d-s3cret" || got.NXDN2DMR.Password != "n2d-s3cret" {
+		t.Fatalf("dormant bridge passwords lost: ysf2dmr=%q nxdn2dmr=%q", got.YSF2DMR.Password, got.NXDN2DMR.Password)
 	}
 }
 
@@ -986,6 +931,31 @@ func TestViewSurfacesNodeLock(t *testing.T) {
 	}
 	if !strings.Contains(string(blob), `"self_only":true`) {
 		t.Fatalf("DMR view JSON missing self_only: %s", blob)
+	}
+}
+
+// TestViewSurfacesYSFModeParams closes parity gap G1: the [System Fusion] mode
+// params (self_only, low_deviation, tx_hang, mode_hang, remote_gateway) are stored
+// and rendered but were not surfaced; ViewYSF now carries them from m.YSF, like
+// P25/NXDN/M17 surface their equivalents, and they serialize under the keys the
+// settings page binds to.
+func TestViewSurfacesYSFModeParams(t *testing.T) {
+	m := fixture() // YSF{SelfOnly:true, LowDeviation:true, TXHang:"6", ModeHang:"25", RemoteGateway:true}
+	v := m.View("/tmp/config.db")
+	if !v.YSF.SelfOnly || !v.YSF.LowDeviation || !v.YSF.RemoteGateway {
+		t.Fatalf("YSF view should surface the [System Fusion] mode toggles, got %+v", v.YSF)
+	}
+	if v.YSF.TXHang != "6" || v.YSF.ModeHang != "25" {
+		t.Fatalf("YSF view should surface the hang timers, got tx_hang=%q mode_hang=%q", v.YSF.TXHang, v.YSF.ModeHang)
+	}
+	blob, err := json.Marshal(v.YSF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"self_only":true`, `"low_deviation":true`, `"remote_gateway":true`, `"tx_hang":"6"`, `"mode_hang":"25"`} {
+		if !strings.Contains(string(blob), key) {
+			t.Errorf("YSF view JSON missing %s: %s", key, blob)
+		}
 	}
 }
 

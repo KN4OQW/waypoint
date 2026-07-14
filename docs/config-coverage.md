@@ -87,16 +87,26 @@ Network]` loopback (17011). M17Gateway loads 224 reflectors from the space/tab
 `M17Hosts.txt`, opens its Rpt port to MMDVM-Host (17010), and links to a live
 reflector (`Linked to M17-M17 C`, ACKN received). Both units stable, NRestarts=0.
 
-## 3. Cross-mode gateways  → [#21]
+## 3. Cross-mode gateways  → superseded by RFC-0003
 
-Transcoding bridges, each a unit + config + card: **YSF2DMR, DMR2YSF, YSF2NXDN,
-DMR2NXDN, NXDN2DMR** (the WPSD `dmr2ysf`/`ysf2dmr`/`dmr2nxdn` family). Config
-layer ✅: each has a store section (`model.go`), an INI renderer (`RenderYSF2DMR`
-… `RenderNXDN2DMR`), an **enable-gated** render target (an off bridge contributes
-no target — `render.go`), and the Gateways settings tab. Remaining: pin/build the
-`MMDVM_CM` (juribeparada) bridge binaries in waypoint-stack `build.sh` — the
-config renders but the daemons are not yet compiled there. Status: ✅ (config) ·
-🟡 (daemon builds pending in waypoint-stack).
+Transcoding bridges **YSF2DMR, DMR2YSF, YSF2NXDN, DMR2NXDN, NXDN2DMR** (the WPSD
+`dmr2ysf`/`ysf2dmr`/`dmr2nxdn` family) were modeled as one unit + config + card
+each. That per-bridge-daemon model is **superseded by the RFC-0003 bus
+architecture** — a named bus with modes attached, traffic entering from any
+attached mode converted and emitted to the others — an intentional departure from
+WPSD's bridge model. The MMDVM_CM bridge surface did not survive the rewrite, so it
+was retired rather than fixing its known defects (stale daemon on disable, null
+view when disabled).
+
+What changed: the five INI renderers and their render targets are removed (no
+bridge INI is written, no `waypoint-<bridge>.service` restarted), the view no
+longer projects them, and the Gateways tab shows a placeholder. Apply stops any
+bridge daemon still running (`config.RetiredBridgeUnits`), which closes the
+stale-daemon defect by construction. The bridge **store sections are retained
+(dormant)**: `SetCrossBridge`/`SetSection` still accept them and they round-trip
+through Save/Load, so disabling loses nothing (RFC-0001) and RFC-0003's migration
+can seed bus definitions from the saved masters/passwords/TGs. Status: ⏸
+superseded (config retired) · the `MMDVM_CM` daemon builds are no longer needed.
 
 ## 4. Host / network configuration  → [#32]
 
@@ -146,13 +156,14 @@ APRS (APRSGateway), GPSD, transparent data, DAPNET beyond POCSAG.
 
 ## Sequenced next steps
 
-The per-mode **config** layer is complete — all eight modes and the five
-cross-mode bridges have store sections, renderers, render targets, and settings
-tabs. What's left is deploy-side (waypoint-stack) and adjacent domains:
+The per-mode **config** layer is complete — all eight modes have store sections,
+renderers, render targets, and settings tabs. The five cross-mode bridges are
+retired (§3, superseded by RFC-0003); their sections remain dormant. What's left is
+deploy-side (waypoint-stack) and adjacent domains:
 
-1. Pin/build the two remaining daemons in waypoint-stack `build.sh`:
-   **DAPNETGateway** (POCSAG) and the **MMDVM_CM** cross-mode bridge binaries —
-   the only mode/bridge daemons not yet compiled there.
+1. Pin/build the remaining daemon in waypoint-stack `build.sh`: **DAPNETGateway**
+   (POCSAG). The **MMDVM_CM** cross-mode bridge binaries are no longer needed — the
+   bridge surface is retired (§3).
 2. Host network config (NetworkManager renderer + confirm-or-revert apply) — [#32].
 3. DMR fine-grained coverage: TG hold + per-section RF/Net hang overrides (global
    mode-hang already modeled in `general`).
