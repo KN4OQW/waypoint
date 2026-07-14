@@ -144,7 +144,12 @@ Rules:
 - Unknown token → renders empty **and** the UI flags it on the page card (so a
   typo is visible, never a silent blank).
 - Non-ASCII in a template is stripped/replaced (`?`) — HD44780 CGROM is not
-  UTF-8. Documented in the UI.
+  UTF-8. `sanitizeASCII` replaces any rune outside `0x20`–`0x7E`. Documented in the
+  UI. **Confirmed on glass** (2026-07-14, docs/on-hardware-report.md): `°`/`—`
+  render as `?`; ASCII descenders `g j p q y` render cleanly. **ROM-A00 caveat:** on
+  a Japanese-ROM (A00) panel two *ASCII* code points differ — `\` (0x5C) shows as
+  `¥` and `~` (0x7E) as `→` — a panel-ROM property, not the software; avoid `\`/`~`
+  for portable output (A02 panels show them normally).
 - Optional later: `{lh_rssi_bar}` using HD44780 CGRAM custom glyphs for a signal
   bar (8 programmable chars). Deferred; noted so the render buffer reserves it.
 
@@ -160,6 +165,13 @@ Rules:
   synthesized caller page (`{status}` + last-heard-style lines) until
   `*_voice_end` + a short linger, then resume rotation where it paused. This is
   the "who's talking right now" behavior operators expect from Pi-Star/WPSD.
+- **Reload on apply:** the renderer captures its config at start, so a config
+  change only reaches the panel when it is torn down and restarted. `POST
+  /api/config/apply` calls `reloadLCD`, which restarts the renderer **only when the
+  `lcd` section actually changed** (an unrelated apply never blinks the panel).
+  This is what makes edit-pages-then-Apply update the glass without a daemon
+  restart (validated on hardware 2026-07-14; the LCD section renders no INI and no
+  unit, so without this it silently never took — see report finding F6).
 - **Diffed writes:** keep the last text buffer; only `WriteLine` rows that
   changed, so the bus isn't hammered every tick (HD44780 over I2C is slow).
 
