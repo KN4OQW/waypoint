@@ -16,8 +16,36 @@ type View struct {
 	NXDN      ViewNXDN      `json:"nxdn"`
 	DStar     ViewDStar     `json:"dstar"`
 	M17       ViewM17       `json:"m17"`
+	POCSAG    ViewPOCSAG    `json:"pocsag"`
+	FM        ViewFM        `json:"fm"`
 	CrossMode ViewCrossMode `json:"crossmode"`
 	ReadOnly  bool          `json:"read_only"`
+}
+
+// ViewPOCSAG is the POCSAG tab's read model: the mode enable, the paging channel
+// ([POCSAG] Frequency), and the DAPNETGateway settings a user actually sets. The
+// DAPNET AuthKey is a secret — never serialized; HasAuthKey reports only whether
+// one is set (the write path preserves it when the field is left blank).
+type ViewPOCSAG struct {
+	Enable     bool   `json:"enable"`
+	Frequency  string `json:"frequency"`
+	Server     string `json:"server"`
+	Callsign   string `json:"callsign"`
+	HasAuthKey bool   `json:"has_auth_key"`
+	Whitelist  string `json:"whitelist"`
+	Blacklist  string `json:"blacklist"`
+}
+
+// ViewFM is the FM tab's read model: the mode enable plus the [FM] operator
+// parameters. Analog FM has no gateway daemon and no secrets.
+type ViewFM struct {
+	Enable        bool   `json:"enable"`
+	CTCSS         string `json:"ctcss"`
+	Timeout       string `json:"timeout"`
+	KerchunkTime  string `json:"kerchunk_time"`
+	RFAudioBoost  string `json:"rf_audio_boost"`
+	ExtAudioBoost string `json:"ext_audio_boost"`
+	AccessMode    string `json:"access_mode"`
 }
 
 // ViewCrossMode is the Gateways tab's read model: one sub-view per transcoding
@@ -348,6 +376,24 @@ func (m *Model) View(storePath string) *View {
 		Revert:          m.M17GW.Revert,
 		HangTime:        m.M17GW.HangTime,
 		Voice:           m.M17GW.Voice,
+	}
+	v.POCSAG = ViewPOCSAG{
+		Enable:     m.Modes.POCSAG,
+		Frequency:  m.POCSAG.Frequency,
+		Server:     m.POCSAG.Server,
+		Callsign:   m.POCSAG.Callsign,
+		HasAuthKey: m.POCSAG.AuthKey != "",
+		Whitelist:  m.POCSAG.Whitelist,
+		Blacklist:  m.POCSAG.Blacklist,
+	}
+	v.FM = ViewFM{
+		Enable:        m.Modes.FM,
+		CTCSS:         m.FM.CTCSS,
+		Timeout:       m.FM.Timeout,
+		KerchunkTime:  m.FM.KerchunkTime,
+		RFAudioBoost:  m.FM.RFAudioBoost,
+		ExtAudioBoost: m.FM.ExtAudioBoost,
+		AccessMode:    m.FM.AccessMode,
 	}
 	// Cross-mode bridges: the two DMR-master bridges expose only HasPassword (the
 	// value is never serialized — SetCrossBridge preserves it on a blank write).

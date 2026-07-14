@@ -242,7 +242,7 @@ func TestParityRealRoundTrip(t *testing.T) {
 // mmManaged / dgManaged: the sections whose operator-facing keys the store owns
 // and must round-trip. Keys outside these sections are fixed operational values
 // (Log/MQTT/lookup paths) not part of parity.
-var mmManaged = []string{"General", "Info", "Modem", "D-Star", "DMR", "System Fusion", "P25", "NXDN", "M17", "DMR Network"}
+var mmManaged = []string{"General", "Info", "Modem", "D-Star", "DMR", "System Fusion", "P25", "NXDN", "M17", "POCSAG", "FM", "DMR Network"}
 var dgManaged = []string{"DMR Network 1", "DMR Network 2"}
 
 func assertRoundTrip(t *testing.T, orig, rend *INI, sections []string) {

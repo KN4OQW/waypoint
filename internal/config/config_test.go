@@ -32,7 +32,7 @@ func fixture() *Model {
 		Display: Display{Type: "HD44780", OLEDType: "6", Port: "/dev/ttyUSB0", NextionLayout: "3", HD44780Rows: "4", HD44780Cols: "20", HD44780I2CAddr: "0x22"},
 		DMR:     DMR{ColorCode: "1", ID: "3180202", EmbeddedLCOnly: true, SelfOnly: true, DumpTAData: true, Beacons: true},
 		DMRNet:  DMRNet{LocalPort: "62032", GatewayAddress: "127.0.0.1", GatewayPort: "62031", Slot1: true, Slot2: true, Jitter: "360"},
-		Modes:   Modes{DStar: false, DMR: true, YSF: true, P25: false, NXDN: true, M17: false, POCSAG: false, FM: false},
+		Modes:   Modes{DStar: false, DMR: true, YSF: true, P25: false, NXDN: true, M17: false, POCSAG: true, FM: true},
 		// Routing round-trips through generated type templates, not verbatim
 		// rewrites: a primary BM (catch-all/PassAll, the TG9990 Parrot rides it),
 		// prefixed SystemX (prefix 4) and TGIF (prefix 5) alternates, and an XLX
@@ -60,6 +60,12 @@ func fixture() *Model {
 		},
 		M17:   M17{CAN: "0", SelfOnly: true, AllowEncryption: false, TXHang: "5"},
 		M17GW: M17Gateway{Suffix: "H", Startup: "M17-M17 C", Revert: true, HangTime: "240", Voice: true},
+		// POCSAG carries the DAPNET AuthKey secret (redacted in the view, preserved on
+		// blank) plus the paging channel and RIC whitelist/blacklist; every field is
+		// non-empty so the round-trip cannot be masked by a rendered default. FM is the
+		// analog surface (no gateway daemon) with non-default operator values.
+		POCSAG: POCSAG{Frequency: "439987500", Server: "dapnet.afu.rwth-aachen.de", Callsign: "KN4OQW", AuthKey: "dapnet-s3cret", Whitelist: "1234567,7654321", Blacklist: "9999999"},
+		FM:     FM{CTCSS: "127.3", Timeout: "180", KerchunkTime: "3", RFAudioBoost: "2", ExtAudioBoost: "3", AccessMode: "2"},
 		// Cross-mode bridges: every bridge enabled with non-empty fields so the
 		// round-trip cannot be masked by a rendered default filling an empty field.
 		// The two DMR-master bridges (YSF2DMR, NXDN2DMR) each carry their own master
@@ -143,6 +149,14 @@ func TestLosslessRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// DAPNETGateway is an always-on gateway (like YSF/P25/NXDN), so its rendered INI
+	// is always parsed and passed — the POCSAG gateway fields (server, callsign,
+	// AuthKey, whitelist/blacklist) round-trip through it, while the mode enable and
+	// paging Frequency round-trip through MMDVM-Host's [POCSAG] section.
+	dpg, err := ParseINI(strings.NewReader(m.RenderDAPNETGateway()))
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Cross-mode bridges: the fixture enables all five, so each renders and parses
 	// back. A bridge INI has no Enable key — its presence in fromINI IS its Enable
 	// (see fromINI), so passing every rendered bridge recovers Enable=true plus its
@@ -167,7 +181,7 @@ func TestLosslessRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := fromINI(mm, dg, yg, nil, pg, ng, xg, mg, y2d, d2y, y2n, d2n, n2d) // dgid nil: fixture runs the classic YSFGateway
+	got := fromINI(mm, dg, yg, nil, pg, ng, xg, mg, dpg, y2d, d2y, y2n, d2n, n2d) // dgid nil: fixture runs the classic YSFGateway
 	if !reflect.DeepEqual(m, got) {
 		t.Fatalf("round-trip lost data:\n want %+v\n  got %+v", m, got)
 	}
@@ -472,6 +486,151 @@ func TestSetDStarGatewayPreservesPassword(t *testing.T) {
 	m2, _ := Load(s)
 	if m2.DStarGW.IRCDDBPassword != "newirc" {
 		t.Fatalf("new password should replace, got %q", m2.DStarGW.IRCDDBPassword)
+	}
+}
+
+// TestPOCSAGFMRendered: the paging channel renders into MMDVM-Host's [POCSAG] +
+// [POCSAG Network] (the 3800/4800 loopback to DAPNETGateway), the DAPNET login /
+// filters render into DAPNETGateway.ini, and the analog [FM] operator keys render
+// into MMDVM-Host. Every asserted key is one the pinned g4klx MMDVM-Host.ini /
+// DAPNETGateway.ini exposes.
+func TestPOCSAGFMRendered(t *testing.T) {
+	m := fixture() // POCSAG + FM enabled, AuthKey dapnet-s3cret, CTCSS 127.3
+	mm := m.RenderMMDVM()
+	for sec, wants := range map[string][]string{
+		"POCSAG":         {"Enable=1", "Frequency=439987500"},
+		"POCSAG Network": {"Enable=1", "LocalPort=3800", "GatewayPort=4800"},
+		"FM": {
+			"Enable=1", "CTCSSFrequency=127.3", "Timeout=180",
+			"KerchunkTime=3", "AccessMode=2", "RFAudioBoost=2", "ExtAudioBoost=3",
+		},
+	} {
+		got := section(mm, sec)
+		for _, w := range wants {
+			if !strings.Contains(got, w) {
+				t.Errorf("MMDVM [%s] missing %q\n%s", sec, w, got)
+			}
+		}
+	}
+
+	dpg := m.RenderDAPNETGateway()
+	for sec, wants := range map[string][]string{
+		"General": {"Callsign=KN4OQW", "RptPort=3800", "LocalPort=4800", "WhiteList=1234567,7654321", "BlackList=9999999"},
+		"MQTT":    {"Name=dapnet-gateway"},
+		"DAPNET":  {"Address=dapnet.afu.rwth-aachen.de", "AuthKey=dapnet-s3cret", "Port=43434"},
+	} {
+		got := section(dpg, sec)
+		for _, w := range wants {
+			if !strings.Contains(got, w) {
+				t.Errorf("DAPNETGateway [%s] missing %q\n%s", sec, w, got)
+			}
+		}
+	}
+
+	// A blank whitelist/blacklist must be omitted (an empty value would filter
+	// everything), not rendered as WhiteList=.
+	m.POCSAG.Whitelist = ""
+	m.POCSAG.Blacklist = ""
+	if g := section(m.RenderDAPNETGateway(), "General"); strings.Contains(g, "WhiteList=") || strings.Contains(g, "BlackList=") {
+		t.Errorf("blank whitelist/blacklist should be omitted from [General]\n%s", g)
+	}
+}
+
+// TestDAPNETTargetRegistered: the POCSAG gateway is an always-on render target
+// (like the YSF/P25/NXDN/M17 gateways) wired to the dapnetgateway unit, and its
+// target's Render matches the standalone renderer byte-for-byte.
+func TestDAPNETTargetRegistered(t *testing.T) {
+	m := fixture()
+	paths := Paths{DAPNETGateway: "/etc/DAPNETGateway.ini"}
+	var found *RenderTarget
+	for i := range m.RenderTargets(paths) {
+		tg := m.RenderTargets(paths)[i]
+		if tg.Unit == unitDAPNETGateway {
+			found = &tg
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("DAPNETGateway target not registered in RenderTargets")
+	}
+	if found.Path != paths.DAPNETGateway {
+		t.Errorf("DAPNETGateway path = %q, want %q", found.Path, paths.DAPNETGateway)
+	}
+	if found.Render(m) != m.RenderDAPNETGateway() {
+		t.Error("DAPNETGateway target Render does not match the standalone renderer")
+	}
+}
+
+// TestSetDAPNETPreservesAuthKey: editing POCSAG without resupplying the DAPNET
+// AuthKey keeps the stored one; a non-blank one replaces it. Mirrors the DMR /
+// ircDDB write-only-secret rule for the paging secret.
+func TestSetDAPNETPreservesAuthKey(t *testing.T) {
+	s := memStore(t)
+	_ = fixture().Save(s, "seed") // AuthKey dapnet-s3cret
+
+	// UI edits the paging frequency, supplies no AuthKey (blank = keep stored), and
+	// sends only the fields the panel manages — the merge must keep the rest.
+	body := `{"frequency":"433000000","server":"dapnet.afu.rwth-aachen.de","auth_key":""}`
+	if err := SetDAPNET(s, []byte(body), "test"); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := Load(s)
+	if m.POCSAG.Frequency != "433000000" {
+		t.Fatalf("frequency not updated: %q", m.POCSAG.Frequency)
+	}
+	if m.POCSAG.AuthKey != "dapnet-s3cret" {
+		t.Fatalf("blank AuthKey should have kept the stored one, got %q", m.POCSAG.AuthKey)
+	}
+	// An unspecified field (Callsign) survives the merge.
+	if m.POCSAG.Callsign != "KN4OQW" {
+		t.Fatalf("unspecified field lost on merge: %q", m.POCSAG.Callsign)
+	}
+
+	// Now supply a new AuthKey — it replaces.
+	if err := SetDAPNET(s, []byte(`{"auth_key":"rotated-key"}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	m2, _ := Load(s)
+	if m2.POCSAG.AuthKey != "rotated-key" {
+		t.Fatalf("new AuthKey should replace, got %q", m2.POCSAG.AuthKey)
+	}
+}
+
+// TestViewRedactsDAPNETAuthKey: the DAPNET AuthKey never reaches the view — it
+// reports only has_auth_key. FM (no secret) surfaces its fields plainly.
+func TestViewRedactsDAPNETAuthKey(t *testing.T) {
+	v := fixture().View("/tmp/config.db")
+	pv := fmt.Sprintf("%+v", v.POCSAG)
+	if strings.Contains(pv, "dapnet-s3cret") {
+		t.Fatal("DAPNET AuthKey leaked into the view")
+	}
+	if !v.POCSAG.HasAuthKey {
+		t.Fatal("POCSAG view should report has_auth_key when a key is set")
+	}
+	if v.POCSAG.Frequency != "439987500" || v.POCSAG.Whitelist != "1234567,7654321" {
+		t.Fatalf("POCSAG view should carry non-secret fields, got %+v", v.POCSAG)
+	}
+	if v.FM.CTCSS != "127.3" || !v.FM.Enable {
+		t.Fatalf("FM view should surface its params, got %+v", v.FM)
+	}
+}
+
+// TestPOCSAGFMIsolation: changing POCSAG or FM settings must not alter the [DMR]
+// or [Modem] sections of MMDVM-Host.ini — the paging gateway fields render into
+// DAPNETGateway.ini only.
+func TestPOCSAGFMIsolation(t *testing.T) {
+	m := fixture()
+	beforeDMR, beforeModem := section(m.RenderMMDVM(), "DMR"), section(m.RenderMMDVM(), "Modem")
+
+	m.POCSAG.Server = "changed.dapnet.example"
+	m.POCSAG.AuthKey = "rotated" // gateway-only; never touches MMDVM
+	m.FM.CTCSS = "100.0"
+
+	if got := section(m.RenderMMDVM(), "DMR"); got != beforeDMR {
+		t.Errorf("changing POCSAG/FM altered [DMR]:\n before %q\n after %q", beforeDMR, got)
+	}
+	if got := section(m.RenderMMDVM(), "Modem"); got != beforeModem {
+		t.Errorf("changing POCSAG/FM altered [Modem]:\n before %q\n after %q", beforeModem, got)
 	}
 }
 

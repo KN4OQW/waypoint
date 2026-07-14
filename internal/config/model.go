@@ -37,6 +37,8 @@ type Model struct {
 	DStarGW  DStarGateway `json:"dstargw"`
 	M17      M17          `json:"m17"`
 	M17GW    M17Gateway   `json:"m17gw"`
+	POCSAG   POCSAG       `json:"pocsag"`
+	FM       FM           `json:"fm"`
 	// Cross-mode transcoding bridges (MMDVM_CM). Each is a standalone daemon with
 	// its own INI + systemd unit, gated by its Enable flag (see render.go
 	// RenderTargets). YSF2DMR and NXDN2DMR carry a DMR-master password (a secret,
@@ -141,6 +143,40 @@ type M17Gateway struct {
 	Revert   bool   `json:"revert"`    // revert to Startup after inactivity
 	HangTime string `json:"hang_time"` // seconds a network reflector is held
 	Voice    bool   `json:"voice"`     // spoken link-status announcements
+}
+
+// POCSAG holds the paging surface: the single MMDVM-Host [POCSAG] parameter
+// (Frequency, the paging channel) plus the DAPNETGateway.ini settings (its enable
+// flag is in Modes, like the other modes). MMDVM-Host talks to DAPNETGateway over
+// the fixed 3800/4800 [POCSAG Network] loopback; the gateway logs the operator
+// into DAPNET (the amateur paging network) and relays pages. AuthKey is a secret
+// (redacted in the API view, preserved on blank — like the ircDDB password).
+// Server/AuthKey/Callsign/Whitelist/Blacklist render into DAPNETGateway.ini;
+// Frequency is the only [POCSAG] key. Every non-fixed key is one the pinned
+// pre-MQTT g4klx MMDVM-Host.ini / DAPNETGateway.ini exposes.
+type POCSAG struct {
+	Frequency string `json:"frequency"` // MMDVM-Host [POCSAG] Frequency (paging channel, Hz)
+	Server    string `json:"server"`    // DAPNET server ([DAPNET] Address), e.g. dapnet.afu.rwth-aachen.de
+	Callsign  string `json:"callsign"`  // POCSAG/DAPNET login callsign ([General] Callsign); defaults to the station callsign when blank
+	AuthKey   string `json:"auth_key"`  // DAPNET AuthKey (secret; blank on write = keep stored)
+	Whitelist string `json:"whitelist"` // comma-separated RIC whitelist ([General] WhiteList); empty omits it
+	Blacklist string `json:"blacklist"` // comma-separated RIC blacklist ([General] BlackList); empty omits it
+}
+
+// FM is analog FM: MMDVM-Host's [FM] mode parameters (its enable flag is in
+// Modes, like the other modes). Unlike every digital mode, FM has NO gateway
+// daemon — the [FM] section is the whole surface, so there is no render target
+// beyond MMDVM-Host. The modeled keys are the operator-facing ones (CTCSS tone,
+// timeout, kerchunk time, the two audio-boost levels, access mode); MMDVM-Host's
+// own defaults cover the rest of the large [FM] block. Every key name is verbatim
+// from the pinned pre-MQTT g4klx MMDVM-Host.ini.
+type FM struct {
+	CTCSS         string `json:"ctcss"`           // [FM] CTCSSFrequency, the sub-audible access tone (Hz, e.g. 88.4)
+	Timeout       string `json:"timeout"`         // [FM] Timeout, transmit time limit (seconds)
+	KerchunkTime  string `json:"kerchunk_time"`   // [FM] KerchunkTime, anti-kerchunk hold before keying (seconds; 0 = off)
+	RFAudioBoost  string `json:"rf_audio_boost"`  // [FM] RFAudioBoost, RF-side audio gain multiplier
+	ExtAudioBoost string `json:"ext_audio_boost"` // [FM] ExtAudioBoost, network-side audio gain multiplier
+	AccessMode    string `json:"access_mode"`     // [FM] AccessMode, 0..3 (carrier/CTCSS access; see the ini comment)
 }
 
 // DStar holds MMDVM-Host's [D-Star] mode parameters (its enable flag is in
@@ -420,6 +456,8 @@ func (m *Model) sections() map[string]any {
 		"dstargw":  &m.DStarGW,
 		"m17":      &m.M17,
 		"m17gw":    &m.M17GW,
+		"pocsag":   &m.POCSAG,
+		"fm":       &m.FM,
 		"ysf2dmr":  &m.YSF2DMR,
 		"dmr2ysf":  &m.DMR2YSF,
 		"ysf2nxdn": &m.YSF2NXDN,

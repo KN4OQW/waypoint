@@ -14,6 +14,8 @@ const TABS = [
   { id: "p25",          tag: "25", label: "P25",          sub: "NAC & Talkgroups",     crumb: "MODES / P25",             title: "P25 (Phase 1)",         desc: "APCO P25 gateway: network access code, startup talkgroups, and gateway behaviour." },
   { id: "nxdn",         tag: "NX", label: "NXDN",         sub: "RAN & Talkgroups",     crumb: "MODES / NXDN",            title: "NXDN",                  desc: "NXDN gateway: radio access number, startup talkgroups, and gateway behaviour." },
   { id: "m17",          tag: "17", label: "M17",          sub: "CAN & Reflectors",     crumb: "MODES / M17",             title: "M17",                   desc: "M17 gateway: channel access number, startup reflector + module, and gateway behaviour." },
+  { id: "pocsag",       tag: "PG", label: "POCSAG",       sub: "DAPNET Paging",        crumb: "MODES / POCSAG",          title: "POCSAG (DAPNET)",       desc: "Amateur paging: the paging channel and the DAPNETGateway login (server, callsign, AuthKey). The AuthKey is stored on the node and never shown." },
+  { id: "fm",           tag: "FM", label: "FM",           sub: "Analog Voice",         crumb: "MODES / FM",              title: "FM (Analog)",           desc: "Analog FM has no gateway — just the MMDVM-Host [FM] parameters: CTCSS tone, timeout, kerchunk time, audio levels, and access mode." },
   { id: "modes",        tag: "MD", label: "Modes",        sub: "Digital Modes",        crumb: "MODES / DIGITAL",         title: "Digital Mode Control",  desc: "Which digital voice / data modes MMDVM-Host handles. Toggling one restarts the stack on Apply." },
   { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Bridges",   crumb: "BRIDGES / GATEWAYS",      title: "Cross-Mode Gateways",   desc: "Transcoding bridges between digital voice modes." },
   { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "SYSTEM / NETWORK",        title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
@@ -64,6 +66,8 @@ function buildEdit(c) {
     dstargw: dstargwFrom(c.dstar || {}),
     m17: m17From(c.m17 || {}),
     m17gw: m17gwFrom(c.m17 || {}),
+    pocsag: pocsagFrom(c.pocsag || {}),
+    fm: fmFrom(c.fm || {}),
     ysf2dmr: ysf2dmrFrom(cm.ysf2dmr || {}),
     dmr2ysf: dmr2ysfFrom(cm.dmr2ysf || {}),
     ysf2nxdn: ysf2nxdnFrom(cm.ysf2nxdn || {}),
@@ -201,6 +205,39 @@ function nxdngwFrom(n) {
   return {
     static: n.static || "", voice: n.voice !== false,
     rf_hang_time: n.rf_hang_time || "120", net_hang_time: n.net_hang_time || "60",
+  };
+}
+
+// The POCSAG view is flat (mode enable + paging + DAPNET login); the enable is the
+// "modes" section, everything else is the "pocsag" store section. auth_key starts
+// blank (blank = keep the stored one); has_auth_key drives the placeholder, like
+// the ircDDB password.
+function pocsagFrom(p) {
+  return {
+    frequency: p.frequency || "439987500", server: p.server || "dapnet.afu.rwth-aachen.de",
+    callsign: p.callsign || "", auth_key: "", has_auth_key: !!p.has_auth_key,
+    whitelist: p.whitelist || "", blacklist: p.blacklist || "",
+  };
+}
+// cleanPocsag strips the UI-only has_auth_key flag (the store rejects unknown
+// fields) and omits auth_key when blank, so the merge keeps the stored secret.
+// A supplied AuthKey replaces it.
+function cleanPocsag(p) {
+  const out = {
+    frequency: p.frequency || "", server: p.server || "", callsign: p.callsign || "",
+    whitelist: p.whitelist || "", blacklist: p.blacklist || "",
+  };
+  if (p.auth_key) out.auth_key = p.auth_key;
+  return out;
+}
+
+// The FM view is flat too; the enable is the "modes" section, the analog params
+// are the "fm" store section. No gateway, no secrets.
+function fmFrom(f) {
+  return {
+    ctcss: f.ctcss || "88.4", timeout: f.timeout || "180", kerchunk_time: f.kerchunk_time || "0",
+    rf_audio_boost: f.rf_audio_boost || "1", ext_audio_boost: f.ext_audio_boost || "1",
+    access_mode: f.access_mode || "1",
   };
 }
 
@@ -707,6 +744,48 @@ function panelM17() {
   return `<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
 }
 
+// The POCSAG panel splits into the "modes" enable + the "pocsag" store section
+// (paging frequency + DAPNETGateway login/filters). The AuthKey is a redacted
+// secret: it starts blank (blank = keep the stored one) and has_auth_key drives
+// the placeholder, exactly like the ircDDB password.
+function panelPocsag() {
+  const p = edit.pocsag || (edit.pocsag = {});
+  const paging = card("PAGING CHANNEL",
+    toggle("modes", "pocsag", "POCSAG", "ENABLED", "DISABLED") +
+    input("pocsag", "frequency", { label: "Paging frequency", kind: "mhz", unit: "MHz", accent: true }));
+  const dapnet = card("DAPNET LOGIN",
+    input("pocsag", "server", { label: "DAPNET server" }) +
+    input("pocsag", "callsign", { label: "Callsign (blank = station callsign)" }) +
+    row("AuthKey", `<input data-sec="pocsag" data-key="auth_key" type="password" value="${esc(p.auth_key || "")}" placeholder="${p.has_auth_key ? "•••••• unchanged" : "from the DAPNET portal"}">`));
+  const filters = card("RIC FILTERS (OPTIONAL)",
+    input("pocsag", "whitelist", { label: "Whitelist (comma-separated RICs)" }) +
+    input("pocsag", "blacklist", { label: "Blacklist (comma-separated RICs)" }));
+  const hint = note("DAPNETGateway will not connect until a valid AuthKey is set (get one from the DAPNET web portal). Leave whitelist/blacklist blank to pass all RICs.");
+  return `<div class="grid2"><div class="stack">${paging}${filters}</div>${dapnet}</div>${hint}`;
+}
+
+// FM (analog) has no gateway daemon — the panel edits the "modes" enable + the
+// "fm" store section only. Access mode is a select over MMDVM-Host's 0..3 set.
+function panelFm() {
+  const f = edit.fm || (edit.fm = {});
+  const amVal = f.access_mode || "1";
+  const amSel = `<select data-sec="fm" data-key="access_mode">` +
+    [["0", "0 — Carrier access with COS"], ["1", "1 — CTCSS access, no COS"],
+     ["2", "2 — CTCSS access with COS"], ["3", "3 — CTCSS start, then carrier"]]
+      .map(([v, l]) => `<option value="${v}"${v === amVal ? " selected" : ""}>${esc(l)}</option>`).join("") + `</select>`;
+  const access = card("ACCESS",
+    toggle("modes", "fm", "FM", "ENABLED", "DISABLED") +
+    input("fm", "ctcss", { label: "CTCSS tone", unit: "Hz", accent: true }) +
+    row("Access mode", amSel));
+  const timing = card("TIMING",
+    input("fm", "timeout", { label: "Timeout", unit: "sec" }) +
+    input("fm", "kerchunk_time", { label: "Kerchunk time", unit: "sec" }));
+  const audio = card("AUDIO LEVELS",
+    input("fm", "rf_audio_boost", { label: "RF audio boost" }) +
+    input("fm", "ext_audio_boost", { label: "Network audio boost" }));
+  return `<div class="grid2">${access}<div class="stack">${timing}${audio}</div></div>`;
+}
+
 function renderPanel() {
   const c = state.config || {};
   const box = document.getElementById("panels");
@@ -719,6 +798,8 @@ function renderPanel() {
     case "p25":          box.innerHTML = panelP25(); break;
     case "nxdn":         box.innerHTML = panelNXDN(); break;
     case "m17":          box.innerHTML = panelM17(); break;
+    case "pocsag":       box.innerHTML = panelPocsag(); break;
+    case "fm":           box.innerHTML = panelFm(); break;
     case "modes":        box.innerHTML = panelModes(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
@@ -765,6 +846,7 @@ async function apply() {
       const payload = sec === "networks" ? edit.networks.map(cleanNet)
         : sec === "routes" ? (edit.routes || []).filter((r) => r.tg && r.network)
         : sec === "dstargw" ? cleanDstargw(edit.dstargw)
+        : sec === "pocsag" ? cleanPocsag(edit.pocsag)
         : (sec === "ysf2dmr" || sec === "nxdn2dmr") ? cleanBridge(edit[sec])
         : edit[sec];
       const r = await fetch("/api/config/" + sec, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
