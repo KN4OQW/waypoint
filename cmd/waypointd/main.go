@@ -136,6 +136,16 @@ func (s *server) configView(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(m.View(s.storePath))
 }
 
+// isCrossBridge reports whether a section name is one of the cross-mode
+// transcoding bridges, which write through the secret-preserving SetCrossBridge.
+func isCrossBridge(section string) bool {
+	switch section {
+	case "ysf2dmr", "dmr2ysf", "ysf2nxdn", "dmr2nxdn", "nxdn2dmr":
+		return true
+	}
+	return false
+}
+
 // configPut writes a single config section (PUT /api/config/{section}).
 func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 	section := strings.TrimPrefix(r.URL.Path, "/api/config/")
@@ -157,6 +167,23 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 	// rule: a blank field keeps the stored one (see SetDStarGateway).
 	if section == "dstargw" {
 		if err := config.SetDStarGateway(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// Cross-mode bridges: YSF2DMR/NXDN2DMR carry a redacted DMR-master password, so
+	// the same write-only-secret rule applies — a blank field keeps the stored one
+	// (SetCrossBridge). Routing all five through it is uniform and harmless: the
+	// no-secret bridges simply carry no password key.
+	if isCrossBridge(section) {
+		known, err := config.SetCrossBridge(s.store, section, body, "api")
+		if !known {
+			http.Error(w, "unknown config section: "+section, http.StatusNotFound)
+			return
+		}
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -351,6 +378,29 @@ func (s *server) backfillDefaults() error {
 		}
 		log.Printf("config store: backfilled display defaults")
 	}
+	// Cross-mode bridges arrived after Display: a store seeded before them lacks
+	// each bridge section. Backfill the disabled defaults so Load never returns a
+	// zero bridge and RenderTargets sees a real (off) Enable flag.
+	for _, bf := range []struct {
+		key string
+		val any
+	}{
+		{"ysf2dmr", config.DefaultYSF2DMR()},
+		{"dmr2ysf", config.DefaultDMR2YSF()},
+		{"ysf2nxdn", config.DefaultYSF2NXDN()},
+		{"dmr2nxdn", config.DefaultDMR2NXDN()},
+		{"nxdn2dmr", config.DefaultNXDN2DMR()},
+	} {
+		if _, ok, err := s.store.Get(bf.key); err != nil || !ok {
+			if err != nil {
+				return err
+			}
+			if err := s.store.Set(bf.key, bf.val, "backfill"); err != nil {
+				return err
+			}
+			log.Printf("config store: backfilled %s defaults", bf.key)
+		}
+	}
 	return nil
 }
 
@@ -443,6 +493,11 @@ func main() {
 	nxdngwINI := flag.String("nxdngateway-ini", "/home/pi-star/waypoint/etc/NXDNGateway.ini", "NXDNGateway.ini render target")
 	dstargwINI := flag.String("dstargateway-ini", "/home/pi-star/waypoint/etc/dstargateway.cfg", "dstargateway.cfg render target")
 	m17gwINI := flag.String("m17gateway-ini", "/home/pi-star/waypoint/etc/M17Gateway.ini", "M17Gateway.ini render target")
+	ysf2dmrINI := flag.String("ysf2dmr-ini", "/home/pi-star/waypoint/etc/YSF2DMR.ini", "YSF2DMR.ini render target (rendered only when the bridge is enabled)")
+	dmr2ysfINI := flag.String("dmr2ysf-ini", "/home/pi-star/waypoint/etc/DMR2YSF.ini", "DMR2YSF.ini render target (rendered only when the bridge is enabled)")
+	ysf2nxdnINI := flag.String("ysf2nxdn-ini", "/home/pi-star/waypoint/etc/YSF2NXDN.ini", "YSF2NXDN.ini render target (rendered only when the bridge is enabled)")
+	dmr2nxdnINI := flag.String("dmr2nxdn-ini", "/home/pi-star/waypoint/etc/DMR2NXDN.ini", "DMR2NXDN.ini render target (rendered only when the bridge is enabled)")
+	nxdn2dmrINI := flag.String("nxdn2dmr-ini", "/home/pi-star/waypoint/etc/NXDN2DMR.ini", "NXDN2DMR.ini render target (rendered only when the bridge is enabled)")
 	ysfHosts := flag.String("ysf-hosts", "/home/pi-star/waypoint/etc/YSFHosts.json", "cached YSF reflector hostlist path")
 	ysfHostsURL := flag.String("ysf-hosts-url", ysfhosts.DefaultURL, "YSF reflector hostlist source URL")
 	p25Hosts := flag.String("p25-hosts", "/home/pi-star/waypoint/etc/P25Hosts.json", "cached P25 reflector hostlist path")
@@ -472,6 +527,7 @@ func main() {
 		paths: config.Paths{
 			MMDVM: *mmdvmINI, DMRGateway: *dmrgwINI, YSFGateway: *ysfgwINI, DGIdGateway: *dgidgwINI,
 			P25Gateway: *p25gwINI, NXDNGateway: *nxdngwINI, DStarGateway: *dstargwINI, M17Gateway: *m17gwINI,
+			YSF2DMR: *ysf2dmrINI, DMR2YSF: *dmr2ysfINI, YSF2NXDN: *ysf2nxdnINI, DMR2NXDN: *dmr2nxdnINI, NXDN2DMR: *nxdn2dmrINI,
 		},
 		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts,
 	}
