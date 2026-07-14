@@ -24,7 +24,7 @@ func Import(mmdvmPath, dmrgatewayPath string) (*Model, error) {
 	// or cross-mode bridge INI exists at seed time (waypointd creates them); those
 	// sections get defaults. The gateway/bridge INIs are non-nil only in the
 	// round-trip harness.
-	return fromINI(mm, dg, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil), nil
+	return fromINI(mm, dg, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil), nil
 }
 
 // fromINI builds a Model from already-parsed INIs. Shared by Import (from disk)
@@ -34,12 +34,16 @@ func Import(mmdvmPath, dmrgatewayPath string) (*Model, error) {
 // case their sections take their defaults. When dgid is non-nil the System
 // Fusion config is read from it (the DG-ID daemon) instead of yg.
 //
+// dpg (DAPNETGateway.ini) is the POCSAG gateway, read like the always-on gateways
+// (yg/pg/ng): nil yields defaults, non-nil is read back. The POCSAG mode enable and
+// paging Frequency come from mm's [POCSAG] section, not dpg.
+//
 // The five trailing INIs are the cross-mode bridges — y2d (YSF2DMR), d2y
 // (DMR2YSF), y2n (YSF2NXDN), d2n (DMR2NXDN), n2d (NXDN2DMR). A bridge daemon has
 // no INI Enable key, so its presence (non-nil) IS its Enable: a nil bridge INI
 // yields a disabled default, a non-nil one an enabled bridge with its fields read
 // back (mirrors how dgid's presence implies EnableDGId).
-func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg, y2d, d2y, y2n, d2n, n2d *INI) *Model {
+func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg, dpg, y2d, d2y, y2n, d2n, n2d *INI) *Model {
 	m := &Model{
 		General: General{
 			Callsign:    mm.Get("General", "Callsign"),
@@ -129,6 +133,8 @@ func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg, y2d, d2y, y2n, d2n, n2d *INI) *Mo
 			TXHang:          orDefault(mm.Get("M17", "TXHang"), "5"),
 		},
 		M17GW:    m17GatewayFromINI(mg),
+		POCSAG:   pocsagFromINI(mm, dpg),
+		FM:       fmFromINI(mm),
 		YSF2DMR:  ysf2dmrFromINI(y2d),
 		DMR2YSF:  dmr2ysfFromINI(d2y),
 		YSF2NXDN: ysf2nxdnFromINI(y2n),
@@ -277,6 +283,64 @@ func m17GatewayFromINI(mg *INI) M17Gateway {
 		Revert:   mg.Bool("Network", "Revert"),
 		HangTime: orDefault(mg.Get("Network", "HangTime"), "240"),
 		Voice:    mg.Bool("Voice", "Enabled"),
+	}
+}
+
+// DefaultPOCSAG is the sane paging default: the common WPSD paging channel
+// (439.9875 MHz), the RWTH DAPNET core server, and no login credentials/filters
+// yet (the operator fills in a DAPNET callsign + AuthKey to actually connect —
+// DAPNETGateway won't start with an unconfigured key). Callsign is left blank so
+// it renders as the station callsign. Used to seed a fresh store and to backfill
+// the section on a store created before POCSAG existed.
+func DefaultPOCSAG() POCSAG {
+	return POCSAG{
+		Frequency: "439987500", Server: "dapnet.afu.rwth-aachen.de",
+		Callsign: "", AuthKey: "", Whitelist: "", Blacklist: "",
+	}
+}
+
+// pocsagFromINI reconstructs the POCSAG section: Frequency (and the mode enable,
+// read separately in fromINI) come from MMDVM-Host's [POCSAG] section; the DAPNET
+// login/filter fields come from DAPNETGateway.ini (dpg), or the defaults when dpg
+// is nil (no gateway file at seed time). Callsign is read verbatim — a
+// Waypoint-rendered file carries the resolved callsign, and the store is
+// authoritative afterward.
+func pocsagFromINI(mm, dpg *INI) POCSAG {
+	p := DefaultPOCSAG()
+	p.Frequency = orDefault(mm.Get("POCSAG", "Frequency"), "439987500")
+	if dpg != nil {
+		p.Server = orDefault(dpg.Get("DAPNET", "Address"), "dapnet.afu.rwth-aachen.de")
+		p.Callsign = dpg.Get("General", "Callsign")
+		p.AuthKey = dpg.Get("DAPNET", "AuthKey")
+		p.Whitelist = dpg.Get("General", "WhiteList")
+		p.Blacklist = dpg.Get("General", "BlackList")
+	}
+	return p
+}
+
+// DefaultFM is the MMDVM-Host [FM] default for the modeled operator keys, matching
+// the pinned g4klx MMDVM-Host.ini: CTCSS 88.4 Hz, transmit timeout 180 s (the
+// daemon default; the ini leaves Timeout commented), no kerchunk hold, unity
+// audio boosts, and access mode 1 (CTCSS-only access without COS). Used to
+// backfill a store seeded before FM.
+func DefaultFM() FM {
+	return FM{
+		CTCSS: "88.4", Timeout: "180", KerchunkTime: "0",
+		RFAudioBoost: "1", ExtAudioBoost: "1", AccessMode: "1",
+	}
+}
+
+// fmFromINI reads the modeled [FM] operator keys from an MMDVM-Host INI, falling
+// back to the pinned-ini defaults for any key a hand-written file omits (the rest
+// of the large [FM] block is MMDVM-Host's own defaults, not modeled).
+func fmFromINI(mm *INI) FM {
+	return FM{
+		CTCSS:         orDefault(mm.Get("FM", "CTCSSFrequency"), "88.4"),
+		Timeout:       orDefault(mm.Get("FM", "Timeout"), "180"),
+		KerchunkTime:  orDefault(mm.Get("FM", "KerchunkTime"), "0"),
+		RFAudioBoost:  orDefault(mm.Get("FM", "RFAudioBoost"), "1"),
+		ExtAudioBoost: orDefault(mm.Get("FM", "ExtAudioBoost"), "1"),
+		AccessMode:    orDefault(mm.Get("FM", "AccessMode"), "1"),
 	}
 }
 

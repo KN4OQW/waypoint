@@ -173,6 +173,16 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// POCSAG carries the DAPNET AuthKey, the same write-only secret rule: a blank
+	// field keeps the stored one (see SetDAPNET).
+	if section == "pocsag" {
+		if err := config.SetDAPNET(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	// Cross-mode bridges: YSF2DMR/NXDN2DMR carry a redacted DMR-master password, so
 	// the same write-only-secret rule applies — a blank field keeps the stored one
 	// (SetCrossBridge). Routing all five through it is uniform and harmless: the
@@ -401,6 +411,27 @@ func (s *server) backfillDefaults() error {
 			log.Printf("config store: backfilled %s defaults", bf.key)
 		}
 	}
+	// POCSAG + FM arrived after the cross-mode bridges: a store seeded before them
+	// lacks both sections. Backfill their defaults so Load never returns a zero
+	// value and the paging/analog panels render sane fields.
+	if _, ok, err := s.store.Get("pocsag"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("pocsag", config.DefaultPOCSAG(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled pocsag defaults")
+	}
+	if _, ok, err := s.store.Get("fm"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("fm", config.DefaultFM(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled fm defaults")
+	}
 	return nil
 }
 
@@ -493,6 +524,7 @@ func main() {
 	nxdngwINI := flag.String("nxdngateway-ini", "/home/pi-star/waypoint/etc/NXDNGateway.ini", "NXDNGateway.ini render target")
 	dstargwINI := flag.String("dstargateway-ini", "/home/pi-star/waypoint/etc/dstargateway.cfg", "dstargateway.cfg render target")
 	m17gwINI := flag.String("m17gateway-ini", "/home/pi-star/waypoint/etc/M17Gateway.ini", "M17Gateway.ini render target")
+	dapnetgwINI := flag.String("dapnetgateway-ini", "/home/pi-star/waypoint/etc/DAPNETGateway.ini", "DAPNETGateway.ini render target (POCSAG paging gateway)")
 	ysf2dmrINI := flag.String("ysf2dmr-ini", "/home/pi-star/waypoint/etc/YSF2DMR.ini", "YSF2DMR.ini render target (rendered only when the bridge is enabled)")
 	dmr2ysfINI := flag.String("dmr2ysf-ini", "/home/pi-star/waypoint/etc/DMR2YSF.ini", "DMR2YSF.ini render target (rendered only when the bridge is enabled)")
 	ysf2nxdnINI := flag.String("ysf2nxdn-ini", "/home/pi-star/waypoint/etc/YSF2NXDN.ini", "YSF2NXDN.ini render target (rendered only when the bridge is enabled)")
@@ -527,7 +559,8 @@ func main() {
 		paths: config.Paths{
 			MMDVM: *mmdvmINI, DMRGateway: *dmrgwINI, YSFGateway: *ysfgwINI, DGIdGateway: *dgidgwINI,
 			P25Gateway: *p25gwINI, NXDNGateway: *nxdngwINI, DStarGateway: *dstargwINI, M17Gateway: *m17gwINI,
-			YSF2DMR: *ysf2dmrINI, DMR2YSF: *dmr2ysfINI, YSF2NXDN: *ysf2nxdnINI, DMR2NXDN: *dmr2nxdnINI, NXDN2DMR: *nxdn2dmrINI,
+			DAPNETGateway: *dapnetgwINI,
+			YSF2DMR:       *ysf2dmrINI, DMR2YSF: *dmr2ysfINI, YSF2NXDN: *ysf2nxdnINI, DMR2NXDN: *dmr2nxdnINI, NXDN2DMR: *nxdn2dmrINI,
 		},
 		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts,
 	}
