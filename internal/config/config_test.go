@@ -653,28 +653,45 @@ func TestPOCSAGFMRendered(t *testing.T) {
 	}
 }
 
-// TestDAPNETTargetRegistered: the POCSAG gateway is an always-on render target
-// (like the YSF/P25/NXDN/M17 gateways) wired to the dapnetgateway unit, and its
-// target's Render matches the standalone renderer byte-for-byte.
-func TestDAPNETTargetRegistered(t *testing.T) {
-	m := fixture()
-	paths := Paths{DAPNETGateway: "/etc/DAPNETGateway.ini"}
-	var found *RenderTarget
+// TestDAPNETTargetRegistered: the POCSAG gateway is a render target wired to the
+// dapnetgateway unit *when POCSAG mode is enabled*, and its target's Render
+// matches the standalone renderer byte-for-byte. It is NOT always-on: unlike the
+// digital-mode gateways it exits without a DAPNET AuthKey, so rendering it with
+// POCSAG off would crash-loop the unit and stall every Apply.
+func dapnetTarget(m *Model, paths Paths) *RenderTarget {
 	for i := range m.RenderTargets(paths) {
 		tg := m.RenderTargets(paths)[i]
 		if tg.Unit == unitDAPNETGateway {
-			found = &tg
-			break
+			return &tg
 		}
 	}
+	return nil
+}
+
+func TestDAPNETTargetRegistered(t *testing.T) {
+	m := fixture() // POCSAG enabled
+	paths := Paths{DAPNETGateway: "/etc/DAPNETGateway.ini"}
+	found := dapnetTarget(m, paths)
 	if found == nil {
-		t.Fatal("DAPNETGateway target not registered in RenderTargets")
+		t.Fatal("DAPNETGateway target not registered in RenderTargets when POCSAG is enabled")
 	}
 	if found.Path != paths.DAPNETGateway {
 		t.Errorf("DAPNETGateway path = %q, want %q", found.Path, paths.DAPNETGateway)
 	}
 	if found.Render(m) != m.RenderDAPNETGateway() {
 		t.Error("DAPNETGateway target Render does not match the standalone renderer")
+	}
+}
+
+// TestDAPNETTargetGatedOnPOCSAG: with POCSAG disabled the DAPNETGateway target is
+// absent, so apply neither writes DAPNETGateway.ini nor restarts (and crash-loops)
+// its unit. Guards the fix for the ~45s Apply stall observed on hardware.
+func TestDAPNETTargetGatedOnPOCSAG(t *testing.T) {
+	m := fixture()
+	m.Modes.POCSAG = false
+	paths := Paths{DAPNETGateway: "/etc/DAPNETGateway.ini"}
+	if found := dapnetTarget(m, paths); found != nil {
+		t.Fatal("DAPNETGateway target present with POCSAG disabled; want gated out")
 	}
 }
 
