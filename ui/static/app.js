@@ -28,8 +28,12 @@ function renderThemes() {
   const cur = localStorage.getItem("wp-theme") || "phosphor";
   THEMES.forEach((th) => {
     const s = document.createElement("button");
+    s.type = "button";
     s.className = "swatch" + (th.key === cur ? " on" : "");
-    s.innerHTML = `<span class="dot" style="background:${th.color}"></span>`;
+    s.title = th.key;
+    s.setAttribute("aria-label", th.key + " theme");
+    s.setAttribute("aria-pressed", String(th.key === cur));
+    s.innerHTML = `<span class="dot" style="background:${th.color}" aria-hidden="true"></span>`;
     s.onclick = () => { applyTheme(th.key); localStorage.setItem("wp-theme", th.key); renderThemes(); };
     box.appendChild(s);
   });
@@ -87,10 +91,11 @@ function renderOnAir() {
     return;
   }
   const dir = e.type === "rf_voice_start" ? "RF" : "NET";
+  const dirWord = dir === "RF" ? "RF transmission" : "Network transmission";
   box.className = "onair active";
   box.innerHTML =
-    `<span class="dir">${dir}</span><div>` +
-    `<span class="who">${esc(e.source)}<span class="arrow" aria-hidden="true">→</span>${esc(e.dest)}</span>` +
+    `<span class="dir"><span aria-hidden="true">${dir}</span><span class="sr-only">${dirWord}</span></span><div>` +
+    `<span class="who">${esc(e.source)}<span class="arrow" aria-hidden="true">→</span><span class="sr-only"> to </span>${esc(e.dest)}</span>` +
     `<span class="meta">${esc(e.mode)}${e.slot ? " slot " + e.slot : ""}${e.network ? " · " + esc(e.network) : ""}</span>` +
     `</div>`;
 }
