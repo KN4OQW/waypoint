@@ -4,20 +4,24 @@
 // INIs and restarts them. Values are never hard-coded and never patched into
 // INIs — the store is authoritative (RFC-0001).
 
+// Mode-gated tabs carry a `mode` key: they appear in the left nav only while
+// that mode is enabled (edit.modes[mode]). Tabs without a `mode` are always
+// shown. The Modes tab is the always-on place to turn a mode on and reveal its
+// tab. See tabVisible() / renderNav().
 const TABS = [
   { id: "general",      tag: "RF", label: "General",      sub: "Radio & Station",     crumb: "SYSTEM / GENERAL",        title: "General Configuration", desc: "Station identity, operating frequencies and modem hardware for this hotspot node." },
   { id: "setup",        tag: "SU", label: "Setup",         sub: "Control & Display",    crumb: "SYSTEM / SETUP",          title: "Control Software & Display", desc: "TRX mode and the MMDVM-Host display driver. Waypoint runs display-free (status is served over MQTT); these fields are here for parity and for nodes driving a physical panel." },
-  { id: "brandmeister", tag: "BM", label: "BrandMeister", sub: "Network & Security",   crumb: "NETWORKS / BRANDMEISTER", title: "DMR Networks",          desc: "Master servers this node bridges DMR traffic to. Passwords are stored on the node and never shown." },
-  { id: "dmr",          tag: "DM", label: "DMR",          sub: "Master & Slots",       crumb: "MODES / DMR",             title: "DMR Settings",          desc: "Color code and per-slot behaviour for Digital Mobile Radio." },
-  { id: "dstar",        tag: "DS", label: "D-Star",        sub: "ircDDB & reflectors",  crumb: "MODES / D-STAR",          title: "D-Star",                desc: "D-Star gateway: module band letter, ircDDB callsign routing, startup reflector, and which reflector protocols are on." },
-  { id: "ysf",          tag: "YS", label: "System Fusion", sub: "YSF / FCS reflectors", crumb: "MODES / SYSTEM FUSION",   title: "System Fusion (YSF)",   desc: "C4FM gateway: startup reflector or FCS room, Wires-X, and which reflector networks are on." },
-  { id: "p25",          tag: "25", label: "P25",          sub: "NAC & Talkgroups",     crumb: "MODES / P25",             title: "P25 (Phase 1)",         desc: "APCO P25 gateway: network access code, startup talkgroups, and gateway behaviour." },
-  { id: "nxdn",         tag: "NX", label: "NXDN",         sub: "RAN & Talkgroups",     crumb: "MODES / NXDN",            title: "NXDN",                  desc: "NXDN gateway: radio access number, startup talkgroups, and gateway behaviour." },
-  { id: "m17",          tag: "17", label: "M17",          sub: "CAN & Reflectors",     crumb: "MODES / M17",             title: "M17",                   desc: "M17 gateway: channel access number, startup reflector + module, and gateway behaviour." },
-  { id: "pocsag",       tag: "PG", label: "POCSAG",       sub: "DAPNET Paging",        crumb: "MODES / POCSAG",          title: "POCSAG (DAPNET)",       desc: "Amateur paging: the paging channel and the DAPNETGateway login (server, callsign, AuthKey). The AuthKey is stored on the node and never shown." },
-  { id: "fm",           tag: "FM", label: "FM",           sub: "Analog Voice",         crumb: "MODES / FM",              title: "FM (Analog)",           desc: "Analog FM has no gateway — just the MMDVM-Host [FM] parameters: CTCSS tone, timeout, kerchunk time, audio levels, and access mode." },
+  { id: "brandmeister", tag: "BM", label: "BrandMeister", sub: "Network & Security",   crumb: "NETWORKS / BRANDMEISTER", title: "DMR Networks",          desc: "Master servers this node bridges DMR traffic to. Passwords are stored on the node and never shown.", mode: "dmr" },
+  { id: "dmr",          tag: "DM", label: "DMR",          sub: "Master & Slots",       crumb: "MODES / DMR",             title: "DMR Settings",          desc: "Color code and per-slot behaviour for Digital Mobile Radio.", mode: "dmr" },
+  { id: "dstar",        tag: "DS", label: "D-Star",        sub: "ircDDB & reflectors",  crumb: "MODES / D-STAR",          title: "D-Star",                desc: "D-Star gateway: module band letter, ircDDB callsign routing, startup reflector, and which reflector protocols are on.", mode: "dstar" },
+  { id: "ysf",          tag: "YS", label: "System Fusion", sub: "YSF / FCS reflectors", crumb: "MODES / SYSTEM FUSION",   title: "System Fusion (YSF)",   desc: "C4FM gateway: startup reflector or FCS room, Wires-X, and which reflector networks are on.", mode: "ysf" },
+  { id: "p25",          tag: "25", label: "P25",          sub: "NAC & Talkgroups",     crumb: "MODES / P25",             title: "P25 (Phase 1)",         desc: "APCO P25 gateway: network access code, startup talkgroups, and gateway behaviour.", mode: "p25" },
+  { id: "nxdn",         tag: "NX", label: "NXDN",         sub: "RAN & Talkgroups",     crumb: "MODES / NXDN",            title: "NXDN",                  desc: "NXDN gateway: radio access number, startup talkgroups, and gateway behaviour.", mode: "nxdn" },
+  { id: "m17",          tag: "17", label: "M17",          sub: "CAN & Reflectors",     crumb: "MODES / M17",             title: "M17",                   desc: "M17 gateway: channel access number, startup reflector + module, and gateway behaviour.", mode: "m17" },
+  { id: "pocsag",       tag: "PG", label: "POCSAG",       sub: "DAPNET Paging",        crumb: "MODES / POCSAG",          title: "POCSAG (DAPNET)",       desc: "Amateur paging: the paging channel and the DAPNETGateway login (server, callsign, AuthKey). The AuthKey is stored on the node and never shown.", mode: "pocsag" },
+  { id: "fm",           tag: "FM", label: "FM",           sub: "Analog Voice",         crumb: "MODES / FM",              title: "FM (Analog)",           desc: "Analog FM has no gateway — just the MMDVM-Host [FM] parameters: CTCSS tone, timeout, kerchunk time, audio levels, and access mode.", mode: "fm" },
   { id: "modes",        tag: "MD", label: "Modes",        sub: "Digital Modes",        crumb: "MODES / DIGITAL",         title: "Digital Mode Control",  desc: "Which digital voice / data modes MMDVM-Host handles. Toggling one restarts the stack on Apply." },
-  { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Bridges",   crumb: "BRIDGES / GATEWAYS",      title: "Cross-Mode Gateways",   desc: "Transcoding bridges between digital voice modes." },
+  { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Bridges",   crumb: "BRIDGES / GATEWAYS",      title: "Cross-Mode Gateways",   desc: "Transcoding bridges between digital voice modes.", bridges: true },
   { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "SYSTEM / NETWORK",        title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
   { id: "expert",       tag: "SY", label: "Expert",       sub: "System & Config",      crumb: "SYSTEM / EXPERT",         title: "Expert & System",       desc: "Firmware versions and low-level configuration." },
 ];
@@ -358,7 +362,11 @@ function panelModes() {
       <div class="mode-foot"><span class="d"></span><span class="s">${on ? "ENABLED" : "DISABLED"}</span></div>
     </div>`;
   }).join("");
-  return `<div class="modes-grid">${cards}</div>`;
+  // Cross-mode bridges have no modes.* toggle, so their tab is gated on any
+  // bridge being enabled (tabVisible). This link is the always-present way in
+  // when every bridge is off and the Gateways tab is therefore hidden.
+  const gwLink = `<div class="mode-gw-link"><a href="#gateways" data-goto="gateways">Cross-mode gateways →</a></div>`;
+  return `<div class="modes-grid">${cards}</div>${gwLink}`;
 }
 
 // --- Setup: Control Software + Display ------------------------------------
@@ -871,14 +879,30 @@ function reset() {
   banner("", "ok");
   document.getElementById("save-banner") && (document.getElementById("save-banner").hidden = true);
   buildEdit(state.config);
+  renderNav(); // discarding edits may restore a mode's saved state — resync the nav
   renderPanel();
 }
 
 // --- chrome --------------------------------------------------------------
+// The cross-mode bridges each live in their own store section; the Gateways tab
+// is gated on any one being enabled rather than a single modes.* flag.
+const BRIDGE_SECS = ["ysf2dmr", "nxdn2dmr", "dmr2ysf", "ysf2nxdn", "dmr2nxdn"];
+
+// A mode-gated tab shows only while its mode is enabled (edit.modes reflects the
+// live, possibly-unsaved toggle); the Gateways tab shows while any bridge is
+// enabled. The active tab always stays visible so you don't lose the panel
+// you're editing the instant you flip its own enable off.
+function tabVisible(t) {
+  if (t.id === state.tab) return true;
+  if (t.bridges) return BRIDGE_SECS.some((s) => (edit[s] || {}).enable);
+  if (t.mode) return !!(edit.modes || {})[t.mode];
+  return true;
+}
+
 function renderNav() {
   const nav = document.getElementById("nav");
   nav.querySelectorAll(".nav-item").forEach((n) => n.remove());
-  TABS.forEach((t) => {
+  TABS.filter(tabVisible).forEach((t) => {
     const item = el("button", "nav-item" + (t.id === state.tab ? " on" : ""));
     item.innerHTML = `<div class="bar"></div><div class="tag">${esc(t.tag)}</div><div><div class="label">${esc(t.label)}</div><div class="sub">${esc(t.sub)}</div></div>`;
     item.onclick = () => selectTab(t.id);
@@ -943,6 +967,7 @@ async function load() {
   state.health = hlth.status === "fulfilled" ? hlth.value : {};
   buildEdit(state.config);
   renderStatus();
+  renderNav(); // config now known — hide mode tabs whose mode is disabled
   renderPanel();
   // Reflector lists load lazily; refresh the relevant panel if it's showing.
   try {
@@ -1020,11 +1045,14 @@ document.getElementById("panels").addEventListener("input", (e) => {
   }
 });
 document.getElementById("panels").addEventListener("click", (e) => {
+  const goto = e.target.closest("[data-goto]");
+  if (goto) { e.preventDefault(); selectTab(goto.dataset.goto); return; }
   const tg = e.target.closest("[data-toggle]");
   if (tg) {
     const [sec, key] = tg.dataset.toggle.split(".");
     setField(sec, key, !(edit[sec] || {})[key]);
     renderPanel();
+    if (sec === "modes") renderNav(); // enabling/disabling a mode reveals/hides its tab
     return;
   }
   // per-network Enable toggle, bound by type (creates the network on demand).
