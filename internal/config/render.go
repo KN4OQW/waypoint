@@ -12,14 +12,15 @@ import (
 // here and one entry in RenderTargets — the apply path never changes (issue
 // #21 gateway-plugin seam).
 type Paths struct {
-	MMDVM        string
-	DMRGateway   string
-	YSFGateway   string
-	DGIdGateway  string // alternative YSF gateway; rendered here only when YSFGW.EnableDGId
-	P25Gateway   string
-	NXDNGateway  string
-	DStarGateway string
-	M17Gateway   string
+	MMDVM         string
+	DMRGateway    string
+	YSFGateway    string
+	DGIdGateway   string // alternative YSF gateway; rendered here only when YSFGW.EnableDGId
+	P25Gateway    string
+	NXDNGateway   string
+	DStarGateway  string
+	M17Gateway    string
+	DAPNETGateway string // POCSAG paging gateway (always rendered, like the mode gateways)
 	// Cross-mode bridge INIs (MMDVM_CM). Each is rendered only when its bridge is
 	// enabled (RenderTargets), so a disabled bridge writes no file and restarts no
 	// unit.
@@ -33,14 +34,15 @@ type Paths struct {
 // systemd units restarted when a target's file changes. Each render target
 // owns its unit name, so adding a mode does not touch the apply code.
 const (
-	unitMMDVM        = "waypoint-mmdvm.service"
-	unitDMRGateway   = "waypoint-dmrgateway.service"
-	unitYSFGateway   = "waypoint-ysfgateway.service"
-	unitDGIdGateway  = "waypoint-dgidgateway.service" // mutually exclusive with YSFGateway (systemd Conflicts=)
-	unitP25Gateway   = "waypoint-p25gateway.service"
-	unitNXDNGateway  = "waypoint-nxdngateway.service"
-	unitDStarGateway = "waypoint-dstargateway.service"
-	unitM17Gateway   = "waypoint-m17gateway.service"
+	unitMMDVM         = "waypoint-mmdvm.service"
+	unitDMRGateway    = "waypoint-dmrgateway.service"
+	unitYSFGateway    = "waypoint-ysfgateway.service"
+	unitDGIdGateway   = "waypoint-dgidgateway.service" // mutually exclusive with YSFGateway (systemd Conflicts=)
+	unitP25Gateway    = "waypoint-p25gateway.service"
+	unitNXDNGateway   = "waypoint-nxdngateway.service"
+	unitDStarGateway  = "waypoint-dstargateway.service"
+	unitM17Gateway    = "waypoint-m17gateway.service"
+	unitDAPNETGateway = "waypoint-dapnetgateway.service"
 
 	unitYSF2DMR  = "waypoint-ysf2dmr.service"
 	unitDMR2YSF  = "waypoint-dmr2ysf.service"
@@ -80,6 +82,10 @@ func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 		{Path: paths.NXDNGateway, Unit: unitNXDNGateway, Render: (*Model).RenderNXDNGateway},
 		{Path: paths.DStarGateway, Unit: unitDStarGateway, Render: (*Model).RenderDStarGateway},
 		{Path: paths.M17Gateway, Unit: unitM17Gateway, Render: (*Model).RenderM17Gateway},
+		// POCSAG's DAPNETGateway is an always-on mode gateway (like YSF/P25/NXDN/M17):
+		// it is rendered every apply, and the [POCSAG Network] Enable in MMDVM-Host.ini
+		// gates whether the daemon actually receives paging traffic.
+		{Path: paths.DAPNETGateway, Unit: unitDAPNETGateway, Render: (*Model).RenderDAPNETGateway},
 	}
 	// Cross-mode bridges append after the always-on gateways, and only when
 	// enabled: an off bridge contributes no target, so apply neither writes its
@@ -250,8 +256,26 @@ func (m *Model) RenderMMDVM() string {
 		kb("AllowEncryption", m.M17.AllowEncryption),
 		kv("TXHang", def(m.M17.TXHang, "5")),
 	)
-	modeSect(&b, "POCSAG", m.Modes.POCSAG)
-	modeSect(&b, "FM", m.Modes.FM)
+	// POCSAG is the paging channel: Enable + the transmit Frequency. The rest of
+	// the paging config (DAPNET login/filters) lives in DAPNETGateway.ini, which
+	// MMDVM-Host reaches over the [POCSAG Network] loopback below.
+	sect(&b, "POCSAG",
+		kb("Enable", m.Modes.POCSAG),
+		kv("Frequency", def(m.POCSAG.Frequency, "439987500")),
+	)
+	// FM (analog) has no gateway daemon — this [FM] section is the whole surface.
+	// The operator-facing keys come from the model; MMDVM-Host's own defaults cover
+	// the many fixed calibration keys not modeled here. AccessMode: 0 carrier w/COS,
+	// 1 CTCSS-only no COS, 2 CTCSS-only w/COS, 3 CTCSS-start then carrier w/COS.
+	sect(&b, "FM",
+		kb("Enable", m.Modes.FM),
+		kv("CTCSSFrequency", def(m.FM.CTCSS, "88.4")),
+		kv("Timeout", def(m.FM.Timeout, "180")),
+		kv("KerchunkTime", def(m.FM.KerchunkTime, "0")),
+		kv("AccessMode", def(m.FM.AccessMode, "1")),
+		kv("RFAudioBoost", def(m.FM.RFAudioBoost, "1")),
+		kv("ExtAudioBoost", def(m.FM.ExtAudioBoost, "1")),
+	)
 
 	sect(&b, "DMR Network",
 		kb("Enable", m.Modes.DMR),
@@ -312,6 +336,17 @@ func (m *Model) RenderMMDVM() string {
 		kv("LocalPort", m17MMDVMLocalPort),
 		kv("GatewayAddress", "127.0.0.1"),
 		kv("GatewayPort", m17MMDVMGatewayPort),
+		kv("Debug", "0"),
+	)
+	// The POCSAG network talks to DAPNETGateway on the fixed 3800/4800 pair. Enable
+	// tracks the POCSAG mode: with it off the daemon still runs (always-on target)
+	// but MMDVM-Host neither listens for nor forwards paging traffic.
+	sect(&b, "POCSAG Network",
+		kb("Enable", m.Modes.POCSAG),
+		kv("LocalAddress", "127.0.0.1"),
+		kv("LocalPort", pocsagMMDVMLocalPort),
+		kv("GatewayAddress", "127.0.0.1"),
+		kv("GatewayPort", pocsagMMDVMGatewayPort),
 		kv("Debug", "0"),
 	)
 
@@ -406,6 +441,9 @@ const (
 
 	m17MMDVMLocalPort   = "17011" // MMDVM-Host listens here; M17Gateway RptPort
 	m17MMDVMGatewayPort = "17010" // M17Gateway listens here (LocalPort); MMDVM-Host sends here
+
+	pocsagMMDVMLocalPort   = "3800" // MMDVM-Host listens here; DAPNETGateway RptPort
+	pocsagMMDVMGatewayPort = "4800" // DAPNETGateway listens here (LocalPort); MMDVM-Host sends here
 )
 
 // RenderYSFGateway renders a complete YSFGateway.ini from the model. Callsign,
@@ -930,6 +968,60 @@ func (m *Model) RenderM17Gateway() string {
 	return b.String()
 }
 
+// RenderDAPNETGateway renders a complete DAPNETGateway.ini from the model — the
+// POCSAG paging gateway. It logs the node into DAPNET (the amateur paging network)
+// and relays pages to MMDVM-Host over the fixed 3800/4800 [POCSAG Network]
+// loopback. Like the YSF/P25/NXDN gateways it is MQTT-era (DisplayLevel=0,
+// MQTTLevel=1, Name=dapnet-gateway on the data plane). Callsign defaults to the
+// station callsign; the DAPNET server and AuthKey come from the POCSAG section.
+// AuthKey is the secret — it renders verbatim (empty until the operator sets one,
+// and DAPNETGateway will not start with an unconfigured key). WhiteList/BlackList
+// are RIC filters, omitted when blank (an empty value would filter everything).
+func (m *Model) RenderDAPNETGateway() string {
+	var b strings.Builder
+	b.WriteString(generatedHeader)
+
+	// RptPort 3800 is where the gateway sends to MMDVM-Host; LocalPort 4800 is where
+	// it listens for MMDVM-Host — the mirror of the [POCSAG Network] pair.
+	general := []string{
+		kv("Callsign", firstNonEmpty(m.POCSAG.Callsign, m.General.Callsign)),
+	}
+	if strings.TrimSpace(m.POCSAG.Whitelist) != "" {
+		general = append(general, kv("WhiteList", m.POCSAG.Whitelist))
+	}
+	if strings.TrimSpace(m.POCSAG.Blacklist) != "" {
+		general = append(general, kv("BlackList", m.POCSAG.Blacklist))
+	}
+	general = append(general,
+		kv("RptAddress", "127.0.0.1"),
+		kv("RptPort", pocsagMMDVMLocalPort),
+		kv("LocalAddress", "127.0.0.1"),
+		kv("LocalPort", pocsagMMDVMGatewayPort),
+		kv("Daemon", "0"),
+	)
+	sect(&b, "General", general...)
+	sect(&b, "Log",
+		kv("MQTTLevel", "1"),
+		kv("DisplayLevel", "0"),
+	)
+	sect(&b, "MQTT",
+		kv("Address", "127.0.0.1"),
+		kv("Port", "1883"),
+		kv("Keepalive", "60"),
+		kv("Auth", "0"),
+		kv("Name", "dapnet-gateway"),
+	)
+	// DAPNET core server on the fixed transmitter port 43434; AuthKey authenticates
+	// the login (a per-operator secret from the DAPNET web portal).
+	sect(&b, "DAPNET",
+		kv("Address", def(m.POCSAG.Server, "dapnet.afu.rwth-aachen.de")),
+		kv("Port", "43434"),
+		kv("AuthKey", m.POCSAG.AuthKey),
+		kv("Debug", "0"),
+	)
+	return b.String()
+}
+
 // RenderDMRGateway renders a complete DMRGateway.ini from the model.
 func (m *Model) RenderDMRGateway() string {
 	var b strings.Builder
@@ -1246,10 +1338,6 @@ func sect(b *strings.Builder, name string, lines ...string) {
 		b.WriteString(l)
 		b.WriteByte('\n')
 	}
-}
-
-func modeSect(b *strings.Builder, name string, on bool) {
-	sect(b, name, kb("Enable", on))
 }
 
 func kv(k, v string) string { return k + "=" + v }

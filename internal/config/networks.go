@@ -62,6 +62,32 @@ func SetDStarGateway(s *store.Store, raw []byte, by string) error {
 	return s.Set("dstargw", &incoming, by)
 }
 
+// SetDAPNET writes the POCSAG section (pocsag) with the same write-only-secret
+// rule the DMR networks and the D-Star gateway use: the API View never exposes the
+// DAPNET AuthKey, so a blank incoming AuthKey means "keep the stored one", and a
+// non-blank one replaces it. Like SetSection this is a merge — the body is decoded
+// over the stored section so a UI that sends only the fields it manages never drops
+// the rest — but the secret is reconciled after the merge so a blank field can
+// never wipe the stored AuthKey (defense in depth: the UI also omits it when
+// blank). Unknown fields are rejected, matching SetSection.
+func SetDAPNET(s *store.Store, raw []byte, by string) error {
+	var existing POCSAG
+	if _, err := s.GetInto("pocsag", &existing); err != nil {
+		return err
+	}
+	// Merge onto a copy of the stored section so unspecified fields survive.
+	incoming := existing
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&incoming); err != nil {
+		return err
+	}
+	if incoming.AuthKey == "" {
+		incoming.AuthKey = existing.AuthKey
+	}
+	return s.Set("pocsag", &incoming, by)
+}
+
 // SetCrossBridge writes one cross-mode bridge section (ysf2dmr, dmr2ysf, …) with
 // the same write-only-secret rule the DMR networks and the D-Star gateway use: a
 // blank "password" in the body means "keep the stored one". The redacted view
