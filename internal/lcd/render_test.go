@@ -1,7 +1,9 @@
 package lcd
 
 import (
+	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -9,8 +11,10 @@ import (
 	"github.com/KN4OQW/waypoint/internal/hub"
 )
 
-// fakeDevice records every call so tests can assert exact writes (design §7).
+// fakeDevice records every call so tests can assert exact writes (design §7). It
+// is mutex-guarded so the concurrent Run tests are race-free.
 type fakeDevice struct {
+	mu            sync.Mutex
 	rows, cols    int
 	inits, clears int
 	writes        []fakeWrite
@@ -22,16 +26,35 @@ type fakeWrite struct {
 	text string
 }
 
-func (f *fakeDevice) Init(r, c int) error { f.rows, f.cols, f.inits = r, c, f.inits+1; return nil }
+func (f *fakeDevice) Init(r, c int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rows, f.cols, f.inits = r, c, f.inits+1
+	return nil
+}
 func (f *fakeDevice) WriteLine(row int, text string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.writes = append(f.writes, fakeWrite{row, text})
 	return nil
 }
-func (f *fakeDevice) Clear() error { f.clears++; return nil }
-func (f *fakeDevice) Close() error { f.closed = true; return nil }
+func (f *fakeDevice) Clear() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.clears++
+	return nil
+}
+func (f *fakeDevice) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = true
+	return nil
+}
 
 // row returns the most recent text written to row n ("" if never written).
 func (f *fakeDevice) row(n int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	s := ""
 	for _, w := range f.writes {
 		if w.row == n {
@@ -40,6 +63,9 @@ func (f *fakeDevice) row(n int) string {
 	}
 	return s
 }
+
+func (f *fakeDevice) writeCount() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.writes) }
+func (f *fakeDevice) isClosed() bool  { f.mu.Lock(); defer f.mu.Unlock(); return f.closed }
 
 func page(name string, enabled bool, dur string, lines ...string) config.LCDPage {
 	return config.LCDPage{Enabled: enabled, Name: name, Duration: dur, Lines: lines}
@@ -197,7 +223,7 @@ func TestDiffedWrites(t *testing.T) {
 	if dev.inits != 1 || dev.clears != 1 {
 		t.Fatalf("want one Init+Clear, got init=%d clear=%d", dev.inits, dev.clears)
 	}
-	firstWrites := len(dev.writes)
+	firstWrites := dev.writeCount()
 	if firstWrites != 1 { // only row0 differs from the cleared (blank) panel
 		t.Fatalf("first frame writes = %d, want 1 (row0 only)", firstWrites)
 	}
@@ -209,7 +235,66 @@ func TestDiffedWrites(t *testing.T) {
 	if err := r.Tick(base); err != nil {
 		t.Fatal(err)
 	}
-	if len(dev.writes) != firstWrites {
-		t.Errorf("unchanged frame wrote %d extra rows", len(dev.writes)-firstWrites)
+	if dev.writeCount() != firstWrites {
+		t.Errorf("unchanged frame wrote %d extra rows", dev.writeCount()-firstWrites)
+	}
+}
+
+// Run consumes hub events and paints on ticks. Ticks are unbounded (unbuffered)
+// so each send blocks until Run has finished the previous frame — a race-free
+// barrier that needs no sleeps. drain guarantees an event published before a tick
+// is folded into that frame.
+func TestRunFoldsEventsAndRenders(t *testing.T) {
+	h := hub.New()
+	ch, _, cancel := h.Subscribe()
+	defer cancel()
+	dev := &fakeDevice{}
+	cfg := config.LCD{Rows: "2", Cols: "20", ScrollSpeed: "0", ActivityInterrupt: true,
+		Pages: []config.LCDPage{page("Idle", true, "8", "{status}")}}
+	r := NewRenderer(cfg, Info{Callsign: "KN4OQW"}, dev, nil)
+
+	ticks := make(chan time.Time)
+	ctx, stop := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = r.Run(ctx, ch, ticks); close(done) }()
+
+	now := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)
+	ticks <- now // frame 1 (idle) processing
+	ticks <- now // barrier: frame 1 done
+	if got := dev.row(0); !strings.HasPrefix(got, "Listening") {
+		t.Fatalf("idle row0 = %q, want Listening", got)
+	}
+
+	h.Publish(hub.Event{Type: "rf_voice_start", Mode: "DMR", Source: "W1ABC", Dest: "TG91", Time: now})
+	ticks <- now // this frame drains the queued event and renders the live status
+	ticks <- now // barrier: that frame done
+	if got := dev.row(0); !strings.HasPrefix(got, "RX DMR TG91 W1ABC") {
+		t.Fatalf("live row0 = %q, want the caller status", got)
+	}
+
+	stop()
+	<-done
+	if !dev.isClosed() {
+		t.Error("Run did not Close the device on shutdown")
+	}
+}
+
+func TestRunStopsOnContextCancel(t *testing.T) {
+	dev := &fakeDevice{}
+	r := NewRenderer(config.LCD{Rows: "1", Cols: "16", Pages: []config.LCDPage{page("x", true, "5", "hi")}}, testInfo(), dev, nil)
+	ctx, stop := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() { errc <- r.Run(ctx, nil, nil) }()
+	stop()
+	select {
+	case err := <-errc:
+		if err != context.Canceled {
+			t.Fatalf("Run returned %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after context cancel")
+	}
+	if !dev.isClosed() {
+		t.Error("Run did not Close the device on cancel")
 	}
 }
