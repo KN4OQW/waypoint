@@ -20,7 +20,7 @@ type Paths struct {
 	NXDNGateway   string
 	DStarGateway  string
 	M17Gateway    string
-	DAPNETGateway string // POCSAG paging gateway (always rendered, like the mode gateways)
+	DAPNETGateway string // POCSAG paging gateway (rendered only when POCSAG mode is enabled)
 	// Cross-mode bridge INIs (MMDVM_CM). Each is rendered only when its bridge is
 	// enabled (RenderTargets), so a disabled bridge writes no file and restarts no
 	// unit.
@@ -82,10 +82,17 @@ func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 		{Path: paths.NXDNGateway, Unit: unitNXDNGateway, Render: (*Model).RenderNXDNGateway},
 		{Path: paths.DStarGateway, Unit: unitDStarGateway, Render: (*Model).RenderDStarGateway},
 		{Path: paths.M17Gateway, Unit: unitM17Gateway, Render: (*Model).RenderM17Gateway},
-		// POCSAG's DAPNETGateway is an always-on mode gateway (like YSF/P25/NXDN/M17):
-		// it is rendered every apply, and the [POCSAG Network] Enable in MMDVM-Host.ini
-		// gates whether the daemon actually receives paging traffic.
-		{Path: paths.DAPNETGateway, Unit: unitDAPNETGateway, Render: (*Model).RenderDAPNETGateway},
+	}
+	// POCSAG's DAPNETGateway is gated on the POCSAG mode enable, NOT always-on.
+	// Unlike the digital-mode gateways (YSF/P25/NXDN/M17/D-Star) — which idle
+	// harmlessly when their mode is off — DAPNETGateway exits immediately with
+	// "AuthKey not set or invalid" when there is no DAPNET credential. Rendering it
+	// unconditionally therefore made it crash-loop on every node that had not
+	// configured POCSAG, and (because apply does a blocking `systemctl restart`)
+	// stretched every Apply to ~45s. Gate it like a bridge: POCSAG off ⇒ no target
+	// ⇒ apply neither writes DAPNETGateway.ini nor restarts the unit.
+	if m.Modes.POCSAG {
+		targets = append(targets, RenderTarget{Path: paths.DAPNETGateway, Unit: unitDAPNETGateway, Render: (*Model).RenderDAPNETGateway})
 	}
 	// Cross-mode bridges append after the always-on gateways, and only when
 	// enabled: an off bridge contributes no target, so apply neither writes its
