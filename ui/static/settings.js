@@ -165,18 +165,49 @@ function lcdFrom(l) {
     cols: l.cols || "20",
     scroll_speed: l.scroll_speed || "300",
     activity_interrupt: l.activity_interrupt !== false,
+    linger_secs: l.linger_secs || "3",
     pages: (l.pages || []).map((p) => ({
       enabled: p.enabled !== false,
       name: p.name || "",
       duration: p.duration || "8",
+      interrupt: !!p.interrupt,
       lines: (p.lines || []).slice(),
     })),
   };
 }
 
-// LCD_TOKENS mirrors the renderer's grounded token set (internal/lcd/tokens.go):
-// the palette offers these, and lines are validated against them client-side.
-const LCD_TOKENS = ["callsign", "dmr_id", "ip", "time", "date", "uptime", "version", "mode", "modes", "status", "lh_call", "lh_tg", "lh_mode", "lh_ber", "lh_rssi", "lh_ago"];
+// LCD_TOKEN_HELP is the single source of truth for the token palette, the legend,
+// client-side validation, and the preview. Each entry documents the token and its
+// data source; it mirrors the renderer's grounded token set (internal/lcd/tokens.go)
+// so the UI never offers a token the driver can't expand. `sample` feeds the live
+// preview (a representative "active DMR call" snapshot).
+const LCD_TOKEN_HELP = [
+  ["callsign", "Station callsign (config)", "KN4OQW"],
+  ["dmr_id", "DMR ID (config)", "3180202"],
+  ["ip", "Node's LAN IPv4 address", "192.168.1.50"],
+  ["hostname", "Node hostname", "waypoint"],
+  ["version", "Waypoint version", "1.0"],
+  ["freq_rx", "RX frequency, MHz (modem config)", "433.1250"],
+  ["freq_tx", "TX frequency, MHz (modem config)", "433.1250"],
+  ["time", "Clock, HH:MM", "15:04"],
+  ["date", "Date, YYYY-MM-DD", "2026-07-14"],
+  ["uptime", "Time since the daemon started", "1h30m"],
+  ["mode", "Active mode, else IDLE", "DMR"],
+  ["modes", "Enabled modes, space-joined", "DMR YSF"],
+  ["status", "Activity line, else Listening", "RX DMR TG91 W1ABC"],
+  ["source", "Caller now, else last heard", "W1ABC"],
+  ["tg", "Talkgroup now, else last heard", "TG91"],
+  ["rssi", "Signal of the last transmission", "-70"],
+  ["ber", "Bit-error rate of the last transmission", "0.5%"],
+  ["lh_call", "Last heard callsign", "W1ABC"],
+  ["lh_tg", "Last heard talkgroup", "TG91"],
+  ["lh_mode", "Last heard mode", "DMR"],
+  ["lh_ber", "Last heard bit-error rate", "0.5%"],
+  ["lh_rssi", "Last heard RSSI, dBm", "-70"],
+  ["lh_ago", "Time since the last transmission", "30s"],
+];
+const LCD_TOKENS = LCD_TOKEN_HELP.map((t) => t[0]);
+const LCD_SAMPLE = LCD_TOKEN_HELP.reduce((m, t) => { m[t[0]] = t[2]; return m; }, {});
 // unknownTokens returns the {tokens} in a line that aren't in LCD_TOKENS.
 function unknownTokens(line) {
   const bad = [];
@@ -186,6 +217,25 @@ function unknownTokens(line) {
     if (!LCD_TOKENS.includes(m[1]) && !bad.includes(m[1])) bad.push(m[1]);
   }
   return bad;
+}
+
+// lcdExpandLine mirrors the Go renderer (internal/lcd): expand {tokens} against a
+// sample snapshot (unknown → blank), strip non-ASCII to "?", then truncate/pad to
+// exactly cols. Used for the client-side preview only.
+function lcdExpandLine(line, cols) {
+  let out = String(line || "").replace(/\{([a-z0-9_]+)\}/g, (m, name) =>
+    Object.prototype.hasOwnProperty.call(LCD_SAMPLE, name) ? LCD_SAMPLE[name] : "");
+  out = out.replace(/[^\x20-\x7e]/g, "?");
+  if (out.length > cols) return out.slice(0, cols);
+  return out + " ".repeat(cols - out.length);
+}
+
+// lcdPreviewText renders a page to rows lines of cols columns, exactly as the
+// panel would show it at rest (no scroll) — a faithful geometry-matching preview.
+function lcdPreviewText(page, rows, cols) {
+  const lines = [];
+  for (let i = 0; i < rows; i++) lines.push(lcdExpandLine((page.lines || [])[i] || "", cols));
+  return lines.join("\n");
 }
 
 function ysfgwFrom(y) {
@@ -476,7 +526,7 @@ function lcdSelect(key, opts, cur, extra) {
   return `<select data-lcd-dim="${esc(key)}"${extra || ""}>${o}</select>`;
 }
 
-function pageCard(p, i, rows) {
+function pageCard(p, i, rows, cols, total) {
   let lines = "";
   const bad = [];
   for (let j = 0; j < rows; j++) {
@@ -487,16 +537,23 @@ function pageCard(p, i, rows) {
   }
   const warn = `<div class="lcd-warn${bad.length ? "" : " hide"}" role="alert" data-lcdwarn="${i}">${warnText(bad)}</div>`;
   const palette = `<div class="lcd-tokens" role="group" aria-label="Insert a token into page ${i + 1}">` +
-    LCD_TOKENS.map((tk) => `<button type="button" class="lcd-tok" data-lcdtoken="${esc(tk)}" data-lcdpageidx="${i}" title="Insert {${esc(tk)}}">{${esc(tk)}}</button>`).join("") + `</div>`;
+    LCD_TOKEN_HELP.map(([tk, desc]) => `<button type="button" class="lcd-tok" data-lcdtoken="${esc(tk)}" data-lcdpageidx="${i}" title="${esc(desc)} — inserts {${esc(tk)}}">{${esc(tk)}}</button>`).join("") + `</div>`;
+  const preview = `<div class="lcd-preview">` +
+    `<div class="lcd-preview-label" id="lcd-pv-label-${i}">Preview (${esc(cols)}×${esc(String(rows))})</div>` +
+    `<pre class="lcd-screen" data-lcdpreview="${i}" role="group" aria-labelledby="lcd-pv-label-${i}">${esc(lcdPreviewText(p, rows, parseInt(cols, 10) || 20))}</pre></div>`;
+  const upDis = i === 0 ? " disabled aria-disabled=\"true\"" : "";
+  const dnDis = i === total - 1 ? " disabled aria-disabled=\"true\"" : "";
   return `<section class="card lcd-page">
       <div class="card-head lcd-pagehead">
-        <span class="sq" aria-hidden="true"></span>
+        <button type="button" class="lcd-move" data-lcdmove="up" data-lcdpageidx="${i}" aria-label="Move page ${i + 1} up"${upDis}>▲</button>
+        <button type="button" class="lcd-move" data-lcdmove="down" data-lcdpageidx="${i}" aria-label="Move page ${i + 1} down"${dnDis}>▼</button>
         <input class="lcd-pagename" data-lcdpage="${i}" data-lcdkey="name" value="${esc(p.name || "")}" placeholder="Page name" aria-label="Page ${i + 1} name">
-        <button type="button" class="pill ${p.enabled ? "on" : "off"}" data-lcdpageen="${i}" aria-pressed="${p.enabled ? "true" : "false"}">${p.enabled ? "ENABLED" : "DISABLED"}</button>
+        <button type="button" class="pill ${p.enabled ? "on" : "off"}" data-lcdpageen="${i}" aria-pressed="${p.enabled ? "true" : "false"}" aria-label="Page ${i + 1} enabled">${p.enabled ? "ENABLED" : "DISABLED"}</button>
+        <button type="button" class="pill ${p.interrupt ? "on" : "off"}" data-lcdpageint="${i}" aria-pressed="${p.interrupt ? "true" : "false"}" aria-label="Page ${i + 1} interrupt on activity" title="Take over the panel on TX/RX, then resume rotation">${p.interrupt ? "INTERRUPT" : "ROTATE"}</button>
         <span class="lcd-dur"><input class="mini" data-lcdpage="${i}" data-lcdkey="duration" value="${esc(p.duration || "")}" inputmode="numeric" aria-label="Page ${i + 1} hold seconds"> s</span>
         <button type="button" class="netdel" data-lcdpagedel="${i}" aria-label="Remove page ${i + 1}">✕</button>
       </div>
-      ${lines}${warn}${palette}
+      ${lines}${warn}${preview}${palette}
     </section>`;
 }
 
@@ -516,9 +573,19 @@ function updatePageWarning(i) {
   el.classList.toggle("hide", bad.length === 0);
 }
 
+// lcdLegend is the token reference: every token, what it shows, and its source.
+// It is generated from LCD_TOKEN_HELP so it can never drift from the palette or
+// the renderer. Rendered as a real <dl> inside <details> for accessible reading.
+function lcdLegend() {
+  const items = LCD_TOKEN_HELP.map(([tk, desc]) =>
+    `<dt>{${esc(tk)}}</dt><dd>${esc(desc)}</dd>`).join("");
+  return `<details class="lcd-legend"><summary>TOKEN REFERENCE</summary><dl>${items}</dl></details>`;
+}
+
 function panelLCD() {
   const l = edit.lcd || (edit.lcd = lcdFrom({}));
   const rows = Math.max(1, parseInt(l.rows, 10) || 4);
+  const cols = l.cols || "20";
   const panel = card("PANEL",
     lcdToggleRow("enabled", "Driver enabled", "ENABLED", "DISABLED") +
     input("lcd", "i2c_bus", { label: "I2C bus" }) +
@@ -526,13 +593,24 @@ function panelLCD() {
     row("Rows", lcdSelect("rows", [["2", "2 rows"], ["4", "4 rows"]], l.rows)) +
     row("Columns", lcdSelect("cols", [["16", "16 columns"], ["20", "20 columns"]], l.cols)) +
     input("lcd", "scroll_speed", { label: "Scroll speed", unit: "ms" }) +
-    lcdToggleRow("activity_interrupt", "Interrupt on activity", "ON", "OFF"));
-  const help = note("Lines fill in from <b>{tokens}</b> — e.g. <code>{callsign}</code>, <code>{status}</code>, <code>{lh_call}</code>. A line wider than the panel scrolls. Characters outside plain ASCII show as <code>?</code>.");
+    lcdToggleRow("activity_interrupt", "Interrupt on activity", "ON", "OFF") +
+    input("lcd", "linger_secs", { label: "Interrupt linger", unit: "s" }));
+  const help = note("Lines fill in from <b>{tokens}</b> — e.g. <code>{callsign}</code>, <code>{status}</code>, <code>{source}</code>. A line wider than the panel scrolls; characters outside plain ASCII show as <code>?</code>. A page may have at most as many lines as the panel has rows.");
   const disabled = l.enabled ? "" : note("The driver is <b>disabled</b> — pages are saved but nothing is drawn until you enable it above.");
-  const pages = (l.pages || []).map((p, i) => pageCard(p, i, rows)).join("");
+  const pages = (l.pages || []).map((p, i) => pageCard(p, i, rows, cols, (l.pages || []).length)).join("");
   const add = `<button type="button" class="btn ghost mini-btn" id="lcd-add-page">+ ADD PAGE</button>`;
-  return `<div class="grid2">${panel}<div class="stack">${help}${disabled}</div></div>` +
+  return `<div class="grid2">${panel}<div class="stack">${help}${lcdLegend()}${disabled}</div></div>` +
     `<div class="stack" style="margin-top:16px;">${pages || note("No pages yet — add one to show something on the panel.")}${add}</div>`;
+}
+
+// updatePagePreview refreshes one page's live preview in place (no re-render) so
+// typing in a line input never steals focus, mirroring updatePageWarning.
+function updatePagePreview(i) {
+  const el = document.querySelector(`[data-lcdpreview="${i}"]`);
+  if (!el) return;
+  const l = edit.lcd || {};
+  const rows = Math.max(1, parseInt(l.rows, 10) || 4);
+  el.textContent = lcdPreviewText(l.pages[i], rows, parseInt(l.cols, 10) || 20);
 }
 
 // ensureLcdLine pads a page's lines array so index ri is assignable.
@@ -1135,10 +1213,11 @@ document.getElementById("panels").addEventListener("input", (e) => {
     renderPanel();
     return;
   }
-  // LCD rows/cols selects — rows changes the line-input count, so re-render.
+  // LCD rows/cols selects — rows changes the line-input count and cols changes the
+  // preview width, so either re-renders the page cards.
   if (t.dataset.lcdDim != null) {
     setField("lcd", t.dataset.lcdDim, t.value);
-    if (t.dataset.lcdDim === "rows") renderPanel();
+    renderPanel();
     return;
   }
   // LCD page name / duration.
@@ -1147,12 +1226,12 @@ document.getElementById("panels").addEventListener("input", (e) => {
     dirty.add("lcd"); refreshActions();
     return;
   }
-  // LCD page line: update the model and refresh just this page's token warning.
+  // LCD page line: update the model, refresh this page's token warning + preview.
   if (t.dataset.lcdline != null) {
     const pi = +t.dataset.lcdline, ri = +t.dataset.lcdrow;
     ensureLcdLine(pi, ri);
     edit.lcd.pages[pi].lines[ri] = t.value;
-    dirty.add("lcd"); updatePageWarning(pi); refreshActions();
+    dirty.add("lcd"); updatePageWarning(pi); updatePagePreview(pi); refreshActions();
     return;
   }
   // DMR Master (primary) selector — the primary is the no-prefix catch-all.
@@ -1195,12 +1274,23 @@ document.getElementById("panels").addEventListener("click", (e) => {
   // LCD per-page enable toggle.
   const lpe = e.target.closest("[data-lcdpageen]");
   if (lpe) { const p = edit.lcd.pages[+lpe.dataset.lcdpageen]; p.enabled = !p.enabled; dirty.add("lcd"); renderPanel(); refreshActions(); return; }
+  // LCD per-page interrupt toggle (take over the panel on activity vs rotate).
+  const lpi = e.target.closest("[data-lcdpageint]");
+  if (lpi) { const p = edit.lcd.pages[+lpi.dataset.lcdpageint]; p.interrupt = !p.interrupt; dirty.add("lcd"); renderPanel(); refreshActions(); return; }
+  // LCD reorder page (swap with the neighbour in the given direction).
+  const lpm = e.target.closest("[data-lcdmove]");
+  if (lpm) {
+    const i = +lpm.dataset.lcdpageidx, j = lpm.dataset.lcdmove === "up" ? i - 1 : i + 1;
+    const ps = edit.lcd.pages;
+    if (j >= 0 && j < ps.length) { [ps[i], ps[j]] = [ps[j], ps[i]]; dirty.add("lcd"); renderPanel(); refreshActions(); }
+    return;
+  }
   // LCD remove page.
   const lpd = e.target.closest("[data-lcdpagedel]");
   if (lpd) { edit.lcd.pages.splice(+lpd.dataset.lcdpagedel, 1); dirty.add("lcd"); renderPanel(); refreshActions(); return; }
   // LCD add page.
   if (e.target.id === "lcd-add-page") {
-    (edit.lcd.pages = edit.lcd.pages || []).push({ enabled: true, name: "Page " + (edit.lcd.pages.length + 1), duration: "8", lines: [] });
+    (edit.lcd.pages = edit.lcd.pages || []).push({ enabled: true, name: "Page " + (edit.lcd.pages.length + 1), duration: "8", interrupt: false, lines: [] });
     dirty.add("lcd"); renderPanel(); refreshActions();
     return;
   }

@@ -176,6 +176,20 @@
   .lcd-tok { font-family: var(--mono); font-size: 10.5px; color: var(--muted); background: #0c0f15; border: 1px solid var(--field-line); border-radius: 5px; padding: 4px 7px; cursor: pointer; }
   .lcd-tok:hover { color: var(--accent); border-color: var(--accent); }
   .lcd-warn { margin-top: 11px; font-family: var(--mono); font-size: 11px; color: var(--warn); background: rgba(255,159,69,.08); border: 1px solid rgba(255,159,69,.3); border-radius: 8px; padding: 8px 11px; }
+  /* page reorder + interrupt controls in the page head */
+  .lcd-move { font-family: var(--mono); font-size: 12px; line-height: 1; color: var(--muted); background: #0c0f15; border: 1px solid var(--field-line); border-radius: 5px; padding: 5px 8px; cursor: pointer; }
+  .lcd-move:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+  .lcd-move:disabled { opacity: .35; cursor: default; }
+  /* live client-side preview, a monospace facsimile of the panel */
+  .lcd-preview { margin-top: 12px; }
+  .lcd-preview-label { font-family: var(--mono); font-size: 10px; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; margin-bottom: 5px; }
+  .lcd-screen { display: inline-block; font-family: var(--mono); font-size: 13px; line-height: 1.5; white-space: pre; color: #7dff9b; background: #071a0d; border: 1px solid #123; border-radius: 6px; padding: 8px 10px; letter-spacing: 1px; }
+  /* token reference legend */
+  .lcd-legend { margin-top: 4px; }
+  .lcd-legend summary { font-family: var(--mono); font-size: 10px; letter-spacing: 1px; color: var(--muted); cursor: pointer; padding: 4px 0; }
+  .lcd-legend dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 8px 0 0; }
+  .lcd-legend dt { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+  .lcd-legend dd { margin: 0; font-size: 11.5px; color: var(--dim); }
   .note code { font-family: var(--mono); font-size: 11px; color: var(--accent); background: rgba(255,255,255,.04); padding: 1px 4px; border-radius: 3px; }
   /* pill toggles rendered as real buttons (keyboard-operable) */
   button.pill { background: transparent; cursor: pointer; }

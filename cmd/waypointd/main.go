@@ -14,6 +14,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -181,6 +182,17 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 	// field keeps the stored one (see SetDAPNET).
 	if section == "pocsag" {
 		if err := config.SetDAPNET(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// The native LCD driver validates its page geometry on save: a page may not
+	// declare more lines than the panel has rows (SetLCD → ValidateLCD), so an
+	// invalid page set is rejected here rather than silently clipped on the panel.
+	if section == "lcd" {
+		if err := config.SetLCD(s.store, body, "api"); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -572,12 +584,19 @@ func lcdInfo(m *config.Model, version string, started time.Time) lcd.Info {
 			modes = append(modes, strings.ToUpper(md.Key))
 		}
 	}
+	host, err := os.Hostname()
+	if err != nil {
+		host = ""
+	}
 	return lcd.Info{
 		Callsign: m.General.Callsign,
 		DMRID:    m.General.ID,
 		Modes:    modes,
 		Version:  version,
 		Started:  started,
+		Hostname: host,
+		FreqRX:   m.Modem.RXFreqHz,
+		FreqTX:   m.Modem.TXFreqHz,
 	}
 }
 
