@@ -25,6 +25,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/dstarhosts"
 	"github.com/KN4OQW/waypoint/internal/hub"
 	"github.com/KN4OQW/waypoint/internal/lcd"
+	"github.com/KN4OQW/waypoint/internal/lcd/hd44780"
 	"github.com/KN4OQW/waypoint/internal/m17hosts"
 	"github.com/KN4OQW/waypoint/internal/mqtt"
 	"github.com/KN4OQW/waypoint/internal/nxdnhosts"
@@ -519,12 +520,16 @@ func (s *server) startLCD(ctx context.Context, m *config.Model) bool {
 	return true
 }
 
-// newLCDDevice selects the display device for the panel config. There is no
-// hardware driver yet (stage 5 slots the real PCF8574/HD44780 device in here,
-// falling back to noop on open failure), so this always returns a headless noop.
+// newLCDDevice opens the real HD44780 over the configured PCF8574 I2C backpack,
+// falling back to a headless noop if the bus or panel is unavailable — device
+// trouble is never fatal to the daemon (design §7).
 func newLCDDevice(cfg config.LCD) lcd.LCDDevice {
-	log.Printf("lcd: no hardware driver yet — running headless (noop), %s@%s", cfg.I2CBus, cfg.I2CAddress)
-	return lcd.NoopDevice{}
+	dev, err := hd44780.Open(cfg.I2CBus, cfg.I2CAddress)
+	if err != nil {
+		log.Printf("lcd: I2C %s@%s unavailable, disabled: %v", cfg.I2CBus, cfg.I2CAddress, err)
+		return lcd.NoopDevice{}
+	}
+	return dev
 }
 
 // lcdInfo snapshots the config/health-derived tokens the renderer needs. Modes
