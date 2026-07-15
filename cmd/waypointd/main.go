@@ -31,6 +31,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/lcd/hd44780"
 	"github.com/KN4OQW/waypoint/internal/m17hosts"
 	"github.com/KN4OQW/waypoint/internal/mqtt"
+	"github.com/KN4OQW/waypoint/internal/netconfig"
 	"github.com/KN4OQW/waypoint/internal/nxdnhosts"
 	"github.com/KN4OQW/waypoint/internal/p25hosts"
 	"github.com/KN4OQW/waypoint/internal/store"
@@ -42,18 +43,27 @@ import (
 var Version = "dev"
 
 type server struct {
-	hub        *hub.Hub
-	demo       bool
-	started    time.Time
-	store      *store.Store
-	storePath  string
-	paths      config.Paths // where each daemon reads its generated INI (render targets)
-	ysfHosts   string       // cached YSF reflector hostlist (JSON)
-	p25Hosts   string       // cached P25 reflector (talkgroup) hostlist (JSON)
-	nxdnHosts  string       // cached NXDN reflector (talkgroup) hostlist (JSON)
-	dstarHosts string       // cached D-Star reflector hostlist (JSON)
-	m17Hosts   string       // cached M17 reflector hostlist (space/tab text)
-	dmrHosts   string       // cached DMR master hostlist (DMR_Hosts.txt, space/tab text)
+	hub       *hub.Hub
+	demo      bool
+	started   time.Time
+	store     *store.Store
+	storePath string
+	paths     config.Paths // where each daemon reads its generated INI (render targets)
+
+	// Host/OS networking domain (docs/config-coverage.md §4). netKeyfileDir is
+	// where the NetworkManager keyfile renderer writes waypoint-*.nmconnection;
+	// netGuard runs the confirm-or-revert apply (a bad network change can strand
+	// the node, so it is guarded, unlike the radio apply); netConfirmTimeout is the
+	// rollback window handed to each apply.
+	netKeyfileDir     string
+	netConfirmTimeout time.Duration
+	netGuard          *netconfig.Guard
+	ysfHosts          string // cached YSF reflector hostlist (JSON)
+	p25Hosts          string // cached P25 reflector (talkgroup) hostlist (JSON)
+	nxdnHosts         string // cached NXDN reflector (talkgroup) hostlist (JSON)
+	dstarHosts        string // cached D-Star reflector hostlist (JSON)
+	m17Hosts          string // cached M17 reflector hostlist (space/tab text)
+	dmrHosts          string // cached DMR master hostlist (DMR_Hosts.txt, space/tab text)
 
 	// Native LCD renderer lifecycle. The renderer captures its config at start, so
 	// a config change (enable, geometry, pages) only reaches the panel when the
@@ -727,6 +737,8 @@ func main() {
 	dmrHosts := flag.String("dmr-hosts", "/usr/local/etc/DMR_Hosts.txt", "cached DMR master hostlist path (DMR_Hosts.txt)")
 	dmrHostsURL := flag.String("dmr-hosts-url", dmrhosts.DefaultURL, "DMR master hostlist source URL")
 	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
+	nmKeyfileDir := flag.String("nm-keyfile-dir", "/etc/NetworkManager/system-connections", "directory for rendered NetworkManager keyfiles (waypoint-*.nmconnection)")
+	netConfirmTimeout := flag.Duration("network-confirm-timeout", netconfig.DefaultConfirmTimeout, "confirm-or-revert rollback window for a network apply")
 	flag.Parse()
 
 	st, err := store.Open(*storePath)
@@ -745,7 +757,10 @@ func main() {
 			YSF2DMR:       *ysf2dmrINI, DMR2YSF: *dmr2ysfINI, YSF2NXDN: *ysf2nxdnINI, DMR2NXDN: *dmr2nxdnINI, NXDN2DMR: *nxdn2dmrINI,
 		},
 		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts,
+		netKeyfileDir: *nmKeyfileDir, netConfirmTimeout: *netConfirmTimeout,
 	}
+	// The confirm-or-revert guard for network applies (needs s.netKeyfileDir set).
+	s.netGuard = s.newNetGuard()
 	if err := s.seedStore(); err != nil {
 		log.Printf("config store seed skipped: %v", err)
 	}
@@ -806,6 +821,11 @@ func main() {
 	mux.HandleFunc("/api/dstar/reflectors", s.dstarReflectors)
 	mux.HandleFunc("/api/m17/reflectors", s.m17Reflectors)
 	mux.HandleFunc("/api/dmr/masters", s.dmrMasters)
+	// Host/OS networking domain (docs/config-coverage.md §4).
+	mux.HandleFunc("/api/network/status", s.networkStatus)
+	mux.HandleFunc("/api/network/config", s.networkConfig)
+	mux.HandleFunc("/api/network/apply", s.networkApply)
+	mux.HandleFunc("/api/network/confirm", s.networkConfirm)
 	mux.Handle("/", http.FileServerFS(ui.FS()))
 
 	mode := "live, mqtt " + *broker

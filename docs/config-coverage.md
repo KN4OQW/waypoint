@@ -98,24 +98,40 @@ no target — `render.go`), and the Gateways settings tab. Remaining: pin/build 
 config renders but the daemons are not yet compiled there. Status: ✅ (config) ·
 🟡 (daemon builds pending in waypoint-stack).
 
-## 4. Host / network configuration  → [#32]
+## 4. Host / network configuration  → [#32]  → 🟡 (foundation shipped)
 
-Not yet modeled at all, and the largest missing domain. NetworkManager is the
-substrate, so the renderer target is NM connection keyfiles + `timesyncd.conf` +
-`hostnamectl` — **not** INI files.
+The second renderer family. NetworkManager is the substrate, so the renderer
+target is NM connection keyfiles + `timesyncd.conf` + `hostnamectl` — **not** INI
+files. The **foundation is now in place** (`internal/netconfig`): read-only
+status, the keyfile renderer, and the confirm-or-revert apply engine. The Wi-Fi
+and VLAN *edit surfaces* are the remaining work.
 
-| Area | Surface | Renderer target |
-|---|---|---|
-| Ethernet / Wi-Fi | connection profiles, SSID/PSK, regulatory country | NM keyfile |
-| IPv4 method | **DHCP vs static** (address, prefix, gateway) | NM keyfile `ipv4.method` |
-| **VLAN** | tagged interfaces (parent + VLAN id) | NM `type=vlan` connection |
-| DNS | servers, search domains, static vs auto | NM `ipv4.dns` / resolv.conf |
-| **NTP** | time servers, enable | `systemd-timesyncd` `NTP=` |
-| Hostname / timezone | node hostname, TZ | `hostnamectl` |
+| Area | Surface | Renderer target | Status |
+|---|---|---|---|
+| **Live status** | interfaces, link, IPv4, DNS, Wi-Fi SSID+signal, NTP sync | read-only (`nmcli`/`timedatectl` → `GET /api/network/status`) | ✅ |
+| Ethernet / Wi-Fi | connection profiles, SSID/PSK, regulatory country | NM keyfile | 🟡 (renderer ✅ · Wi-Fi UI ⬜) |
+| IPv4 method | **DHCP vs static** (address, prefix, gateway) | NM keyfile `ipv4.method` | 🟡 (model+renderer ✅ · UI ⬜) |
+| **VLAN** | tagged interfaces (parent + VLAN id) | NM `type=vlan` connection | ⬜ |
+| DNS | servers, search domains, static vs auto | NM `ipv4.dns` / resolv.conf | 🟡 (renderer ✅) |
+| **NTP** | time servers, enable | `systemd-timesyncd` `NTP=` | 🟡 (model+status ✅ · apply ⬜) |
+| Hostname / timezone | node hostname, TZ | `hostnamectl` | 🟡 (model ✅ · apply ⬜) |
 
-Risk to respect: a bad network apply can strand the node. The apply for this
-domain needs a **confirm-or-revert** guard (stage → apply → if the admin
-session doesn't reconfirm within N seconds, roll back), unlike the radio apply.
+Risk respected: a bad network apply can strand the node, so this domain's apply
+is a **confirm-or-revert** guard (`internal/netconfig` `Guard`), unlike the radio
+apply. `POST /api/network/apply` checkpoints the pre-apply state, renders the
+keyfiles, and returns a confirm token + deadline; `POST /api/network/confirm`
+makes it permanent; **no confirm by the deadline rolls back automatically on a
+server-side timer** — the revert never depends on the admin's HTTP session
+surviving (which the apply itself may sever). The checkpoint backend is the
+portable keyfile snapshot (`KeyfileCheckpoint`, unit-tested); NetworkManager's
+native D-Bus checkpoint (`NMCheckpoint`, via `busctl`) is the preferred backstop
+once validated on the bench NM version and drops in behind the same interface.
+
+Ownership rule: Waypoint writes and prunes only `waypoint-*.nmconnection`
+profiles (0600 root) — a hand-made NM profile on the same box is never touched.
+Render is pure (deterministic per-profile UUID), so an unchanged store re-applies
+to no diff. Wi-Fi PSKs use the write-only/preserved-on-blank/redacted secret
+pattern (`View`/`Set`), wired now ahead of the Wi-Fi surface.
 
 ## 5. Dashboard / system  → 🟡
 
@@ -153,7 +169,9 @@ tabs. What's left is deploy-side (waypoint-stack) and adjacent domains:
 1. Pin/build the two remaining daemons in waypoint-stack `build.sh`:
    **DAPNETGateway** (POCSAG) and the **MMDVM_CM** cross-mode bridge binaries —
    the only mode/bridge daemons not yet compiled there.
-2. Host network config (NetworkManager renderer + confirm-or-revert apply) — [#32].
+2. Host network config — [#32]. Foundation shipped (`internal/netconfig`: status,
+   keyfile renderer, confirm-or-revert apply). Next: the Wi-Fi / static-IP / VLAN
+   edit surface, plus wiring the hostname/timezone/NTP applies to their targets.
 3. DMR fine-grained coverage: TG hold + per-section RF/Net hang overrides (global
    mode-hang already modeled in `general`).
 4. Full modem-calibration coverage + calibration wizard ([#20]).

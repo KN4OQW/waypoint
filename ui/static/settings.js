@@ -38,6 +38,8 @@ let p25Refs = [];           // cached P25 talkgroup list for the startup-TG pick
 let nxdnRefs = [];          // cached NXDN talkgroup list for the startup-TG picker
 let dstarRefs = [];         // cached D-Star reflector list for the startup picker
 let m17Refs = [];           // cached M17 reflector list for the startup picker
+let netStatus = null;       // live host-network state from /api/network/status (read-only)
+let netCountdown = null;     // interval handle for the confirm-or-revert countdown bar
 
 const el = (t, cls, html) => { const e = document.createElement(t); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -799,6 +801,122 @@ function panelPending(what) {
   return note(`<b>${esc(what)}</b> settings aren't wired yet — a later slice of the configuration store (<a href="https://github.com/KN4OQW/waypoint/issues/1">waypoint#1</a>).`);
 }
 
+// --- Network (host / OS) -------------------------------------------------
+// The Network tab's first slice is read-only STATUS: the node's live host
+// networking (interfaces, IPv4, DNS, Wi-Fi, NTP) parsed from nmcli/timedatectl and
+// served at /api/network/status. The Wi-Fi / VLAN / static-IP EDIT surface (which
+// writes the store and applies through the confirm-or-revert guard) lands in the
+// next slice; the confirm countdown bar (showNetworkConfirmBar) is wired now so
+// that surface has nothing left to build on the safety path.
+// statRow renders a read-only status field. The input carries an aria-label (the
+// visible <label> is not programmatically associated in this codebase's idiom), so
+// each value is self-describing to a screen reader.
+function statRow(label, value) {
+  const v = value == null || value === "" ? "—" : value;
+  return `<div class="row"><label>${esc(label)}</label><input value="${esc(v)}" readonly aria-label="${esc(label)}"></div>`;
+}
+function panelNetwork() {
+  if (!netStatus) return note("Fetching live network status…");
+  const s = netStatus;
+  const host = card("HOST", statRow("Hostname", s.hostname) + statRow("NTP", ntpText(s.ntp)) + (s.wifi ? statRow("Wi-Fi", `${s.wifi.ssid} · ${s.wifi.signal}%`) : ""));
+  const devs = (s.devices || []).filter((d) => d.type === "ethernet" || d.type === "wifi");
+  const devCards = devs.length
+    ? devs.map(deviceCard).join("")
+    : note("No managed Ethernet or Wi-Fi interfaces reported.");
+  const hint = note("This is the node's <b>live</b> network state (read from NetworkManager), not editable config. The Wi-Fi &amp; static-IP editor — with a confirm-or-revert apply so a bad change can't strand the node — is the next slice (<a href='https://github.com/KN4OQW/waypoint/issues/32'>waypoint#32</a>).");
+  return `<div class="grid2">${host}<div class="stack">${devCards}</div></div>${hint}`;
+}
+function ntpText(ntp) {
+  if (!ntp) return "—";
+  const state = ntp.enabled ? (ntp.synchronized ? "synchronized" : "enabled, not yet synced") : "disabled";
+  return ntp.server ? `${state} · ${ntp.server}` : state;
+}
+function deviceCard(d) {
+  const title = `${d.name} · ${d.type.toUpperCase()}`;
+  const conn = d.connection ? d.connection + (d.managed ? " (waypoint)" : "") : "—";
+  return card(title,
+    statRow("State", d.state) +
+    statRow("Profile", conn) +
+    statRow("IPv4", d.ipv4 + (d.method ? ` (${d.method})` : "")) +
+    statRow("Gateway", d.gateway) +
+    statRow("DNS", (d.dns || []).join(", ")) +
+    statRow("MAC", d.mac));
+}
+
+// showNetworkConfirmBar renders the "Keep these settings?" countdown after a
+// network apply. The rollback is enforced SERVER-SIDE on a timer (the node reverts
+// even if this page never loads again); this bar is just the operator's chance to
+// make the change permanent before the deadline. Confirm POSTs the token; letting
+// it hit zero lets the server roll back on its own.
+function showNetworkConfirmBar(deadlineISO, token) {
+  const deadline = Date.parse(deadlineISO);
+  if (isNaN(deadline)) return;
+  clearInterval(netCountdown);
+  hideNetworkConfirmBar();
+
+  // Build the bar's DOM once. role="alert" announces the warning a single time;
+  // the per-second countdown lives in an aria-hidden span so it is NOT re-announced
+  // every tick (only the visible number changes). The message text is meaningful
+  // without the exact seconds, so a screen-reader user still understands the stakes.
+  const bar = el("div");
+  bar.id = "net-confirm-bar";
+  bar.setAttribute("role", "alert");
+  bar.setAttribute("aria-live", "assertive");
+  bar.style.cssText = "position:fixed; left:0; right:0; bottom:0; z-index:50; padding:13px 18px; display:flex; align-items:center; gap:16px; font-family:var(--mono); font-size:13px; background:rgba(255,107,107,0.10); border-top:1px solid var(--warn); color:var(--warn);";
+
+  const msg = el("span");
+  msg.innerHTML = `<b>Keep these network settings?</b> The node reverts automatically (in <span id="net-count" aria-hidden="true">…</span>) unless you confirm it is still reachable.`;
+  bar.appendChild(msg);
+
+  if (token) {
+    const btn = el("button", "", "Keep settings");
+    btn.type = "button";
+    btn.setAttribute("aria-label", "Keep these network settings and cancel the automatic revert");
+    btn.style.cssText = "margin-left:auto; padding:6px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--warn); color:#000; border:none; border-radius:6px;";
+    btn.onclick = () => confirmNetwork(token);
+    bar.appendChild(btn);
+  }
+  document.body.appendChild(bar);
+  // Move focus to the confirm control so a keyboard user lands on the decision.
+  const btn = bar.querySelector("button");
+  if (btn) btn.focus();
+
+  const count = bar.querySelector("#net-count");
+  const tick = () => {
+    const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+    if (count) count.textContent = left + "s";
+    if (left <= 0) {
+      clearInterval(netCountdown);
+      netCountdown = null;
+      // A meaningful state change — replacing the alert's content announces it once.
+      bar.textContent = "Network change reverted — the confirm window elapsed, so the node rolled back to its previous settings.";
+      setTimeout(hideNetworkConfirmBar, 4000);
+      loadNetwork();
+    }
+  };
+  tick();
+  netCountdown = setInterval(tick, 1000);
+}
+function hideNetworkConfirmBar() {
+  const bar = document.getElementById("net-confirm-bar");
+  if (bar) bar.remove();
+  clearInterval(netCountdown);
+  netCountdown = null;
+}
+async function confirmNetwork(token) {
+  if (!token) { banner("This browser doesn't hold the confirm token for the pending change — confirm from the tab that applied it, or let it revert.", "bad"); return; }
+  try {
+    const r = await fetch("/api/network/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+    if (!r.ok) throw new Error((await r.text()).trim());
+    sessionStorage.removeItem("wp-net-token");
+    hideNetworkConfirmBar();
+    banner("Network settings kept.", "ok");
+    loadNetwork();
+  } catch (err) {
+    banner("Confirm failed: " + String(err.message || err), "bad");
+  }
+}
+
 // The Gateways tab: one card per cross-mode transcoding bridge (MMDVM_CM). Each
 // card has its own Enable toggle — the bridge runs as its own daemon, so enabling
 // it renders its INI and starts its unit on Apply (render.go RenderTargets). The
@@ -1024,7 +1142,7 @@ function renderPanel() {
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
     case "gateways":     box.innerHTML = panelGateways(); break;
-    case "network":      box.innerHTML = panelPending("Network & Wi-Fi"); break;
+    case "network":      box.innerHTML = panelNetwork(); break;
     default:             box.innerHTML = "";
   }
 }
@@ -1116,6 +1234,9 @@ function selectTab(id) {
   document.getElementById("desc").textContent = t.desc;
   renderNav();
   renderPanel();
+  // The Network tab shows live system state, fetched on demand (not part of the
+  // store config load).
+  if (id === "network") loadNetwork();
 }
 
 function renderThemes() {
@@ -1189,6 +1310,26 @@ async function load() {
     dmrMasters = await fetch("/api/dmr/masters").then((r) => r.json()) || [];
     if (state.tab === "brandmeister") renderPanel();
   } catch { /* offline — the master dropdowns show what's cached (may be empty) */ }
+  // Host-network status is live system state, fetched separately from the store
+  // config. Refresh whenever the Network tab is showing.
+  if (state.tab === "network") loadNetwork();
+  // Resume a confirm-or-revert countdown if a network apply is mid-window (e.g. the
+  // page reloaded after applying). The deadline comes from the server; the token is
+  // held in sessionStorage by the tab that applied.
+  try {
+    const nc = await fetch("/api/network/config").then((r) => r.json());
+    if (nc && nc.pending_confirm) showNetworkConfirmBar(nc.pending_confirm.deadline, sessionStorage.getItem("wp-net-token"));
+  } catch { /* no store / offline */ }
+}
+
+// loadNetwork fetches the live host-network status and re-renders the Network tab.
+async function loadNetwork() {
+  try {
+    netStatus = await fetch("/api/network/status").then((r) => r.json());
+  } catch {
+    netStatus = null;
+  }
+  if (state.tab === "network") renderPanel();
 }
 
 // text edits update the working copy; toggles flip a bool and re-render.

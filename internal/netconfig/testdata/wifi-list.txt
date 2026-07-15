@@ -1,0 +1,3 @@
+no:NeighborNet:47
+yes:MyNetwork:82
+no:CoffeeShop\:Guest:31
