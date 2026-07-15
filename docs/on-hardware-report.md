@@ -313,6 +313,30 @@ Notes:
 - The auto-rollback now emits a journal line (`network apply auto-rolled back:
   no confirm before the deadline…`) so the operator sees a server-side revert.
 
+### VLAN, NTP, hostname (2026-07-14, part 2)
+
+The rest of the host-network surface — VLANs (through the confirm-or-revert guard)
+and the DIRECT-apply host settings (NTP, hostname) — was validated on the bench Pi
+(NM 1.52.1, composite backend, throwaway daemon on port 8075, production config.db
+untouched). The script saved the as-found hostname/NTP state and **restored it at
+the end** (host settings apply directly and mutate the real system).
+
+| Test | Scenario | Expected | Result |
+|---|---|---|---|
+| **V-A** | Create VLAN 50 on eth0 (static 10.50.0.2/24), **do NOT confirm** | server-side timer rolls back — the `eth0.50` interface and `waypoint-vlan50` keyfile removed | **PASS** — `eth0.50` came up at 10.50.0.2 on apply; after the 40 s window both the interface and keyfile were gone |
+| **V-B** | Same VLAN 50, **confirm within the window** | it sticks | **PASS** — `eth0.50 = 10.50.0.2` still present 45 s past the old deadline |
+| **NTP** | Set `pool.ntp.org` + `time.cloudflare.com`, enable, direct apply | drop-in written, `timedatectl NTP=yes`, clock synchronizes | **PASS** — `/etc/systemd/timesyncd.conf.d/waypoint.conf` rendered `NTP=pool.ntp.org time.cloudflare.com`; `NTP=yes`, `NTPSynchronized=yes`, server `pool.ntp.org` |
+| **Hostname** | Change hostname, re-apply the same value | hostname changes; a repeat apply is a no-op | **PASS** — `hostnamectl --static` → `waypoint-bench`; second apply returned `changed=false` (idempotent) |
+
+Notes:
+- The VLAN is a *tagged child* of `eth0` (`eth0.50`), not `eth0` itself, so this
+  path never risked the SSH uplink — but it still exercised the full guard
+  (checkpoint → activate `nmcli connection up waypoint-vlan50` → rollback/confirm).
+- mDNS reflection could not be checked — `avahi-resolve` is not installed on this
+  image; the static hostname change via `hostnamectl` was confirmed directly.
+- Cleanup verified: hostname back to `wpsd`, the waypoint timesyncd drop-in removed,
+  `set-ntp` restored, no `waypoint-*` profiles left, `eth0` still `172.16.50.13`.
+
 ## Manual follow-ups
 1. Over-the-air QSO per mode (requires keying a radio).
 2. Host network: a live **Wi-Fi association** on the bench Pi needs the AP's real

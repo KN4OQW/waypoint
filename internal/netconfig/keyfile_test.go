@@ -12,9 +12,8 @@ import (
 // round-trip cannot be masked by a rendered default filling an empty field.
 func sampleModel() Model {
 	return Model{
-		Hostname: "waypoint-node",
-		Timezone: "America/New_York",
-		NTP:      NTP{Enabled: true, Servers: []string{"time.cloudflare.com", "pool.ntp.org"}},
+		Host: Host{Hostname: "waypoint-node", Timezone: "America/New_York"},
+		NTP:  NTP{Enabled: true, Servers: []string{"time.cloudflare.com", "pool.ntp.org"}},
 		Connections: []Connection{
 			{
 				Name:        "lan",

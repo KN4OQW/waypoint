@@ -119,7 +119,7 @@ func (k *KeyfileCheckpoint) Rollback(handle string) error {
 	}
 	// Restore every snapshotted file to its captured content.
 	for n, content := range snap.files {
-		if _, err := writeAtomicIfChanged(filepath.Join(k.Dir, n), content); err != nil {
+		if _, err := writeAtomicIfChanged(filepath.Join(k.Dir, n), content, 0o600); err != nil {
 			return err
 		}
 	}

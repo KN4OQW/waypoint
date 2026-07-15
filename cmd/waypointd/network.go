@@ -118,6 +118,50 @@ func (s *server) networkWiFiScan(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, results)
 }
 
+// networkHostApply serves POST /api/network/host/apply: the DIRECT apply path for
+// hostname, timezone, and NTP. These cannot strand the node, so — unlike a
+// connection/VLAN change — they skip the confirm-or-revert guard and take effect
+// immediately. The apply is idempotent: applying the values already in effect
+// issues no set commands.
+func (s *server) networkHostApply(w http.ResponseWriter, _ *http.Request) {
+	m, err := netconfig.Load(s.store)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := m.Validate(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	changed, err := netconfig.ApplyHost(netRun, s.timesyncdConf, m.Host, m.NTP)
+	if err != nil {
+		http.Error(w, "host apply: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("host settings applied (changed=%v): hostname=%q timezone=%q ntp=%v", changed, m.Host.Hostname, m.Host.Timezone, m.NTP.Enabled)
+	writeJSON(w, map[string]any{"applied": true, "changed": changed})
+}
+
+// networkTimezones serves GET /api/network/timezones: the tz-database zone list
+// (timedatectl list-timezones) for the searchable picker, cached for the process
+// lifetime (the list is effectively static).
+func (s *server) networkTimezones(w http.ResponseWriter, _ *http.Request) {
+	s.netScanMu.Lock()
+	cached := s.timezones
+	s.netScanMu.Unlock()
+	if cached == nil {
+		zones, err := netconfig.ListTimezones(netconfig.ExecRunner)
+		if err != nil {
+			zones = []string{}
+		}
+		s.netScanMu.Lock()
+		s.timezones = zones
+		cached = zones
+		s.netScanMu.Unlock()
+	}
+	writeJSON(w, cached)
+}
+
 // networkStatus serves GET /api/network/status: the live host-network state
 // (interfaces, IPv4, DNS, Wi-Fi, NTP), parsed from nmcli + timedatectl. Read-only
 // and independent of the store — it is what the box is actually doing. This is the

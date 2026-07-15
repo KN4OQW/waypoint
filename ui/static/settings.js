@@ -39,11 +39,14 @@ let nxdnRefs = [];          // cached NXDN talkgroup list for the startup-TG pic
 let dstarRefs = [];         // cached D-Star reflector list for the startup picker
 let m17Refs = [];           // cached M17 reflector list for the startup picker
 let netStatus = null;       // live host-network state from /api/network/status (read-only)
-let netEdit = null;          // working copy of /api/network/config (editable, guarded apply)
-let netDirty = false;        // unsaved network edits pending Apply Network
+let netEdit = null;          // working copy of /api/network/config (editable)
+let netDirty = false;        // unsaved connection/VLAN edits (guarded Apply Network)
+let netHostDirty = false;    // unsaved host/NTP edits (direct Apply Host Settings)
 let netScanResults = [];     // cached /api/network/wifi/scan for the join picker
+let netTimezones = [];       // cached /api/network/timezones for the tz datalist
 let netCountdown = null;     // interval handle for the confirm-or-revert countdown bar
 let netApplying = false;     // an Apply Network is in flight
+let netApplyingHost = false; // an Apply Host Settings is in flight
 
 const el = (t, cls, html) => { const e = document.createElement(t); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -821,7 +824,7 @@ function statRow(label, value) {
 }
 function panelNetwork() {
   const live = netStatusSection();
-  const editors = netEdit ? `${netEthCard()}${netWifiCard()}` : note("Loading network configuration…");
+  const editors = netEdit ? `${netHostCard()}${netEthCard()}${netWifiCard()}${netVlanCard()}` : note("Loading network configuration…");
   // The network Apply is SEPARATE from the radio Apply: it routes through the
   // confirm-or-revert guard (save → guarded apply → countdown). No direct-apply
   // escape hatch exists for host networking.
@@ -864,25 +867,32 @@ function deviceCard(d) {
 // netEdit is the working copy of GET /api/network/config, kept separate from the
 // radio `edit`/`dirty` state so a network change never rides the radio Apply (it
 // must go through the guard). buildNetEdit normalizes the view into it.
+function ipBlock(src) {
+  return {
+    method: (src && src.method) || "auto",
+    address: (src && src.address) || "", prefix: (src && src.prefix) || "",
+    gateway: (src && src.gateway) || "",
+    dns: ((src && src.dns) || []).slice(),
+    search_domains: ((src && src.search_domains) || []).slice(),
+  };
+}
 function buildNetEdit(cfg) {
+  cfg = cfg || {};
   netEdit = {
-    connections: ((cfg && cfg.connections) || []).map((c) => ({
+    host: { hostname: (cfg.host && cfg.host.hostname) || "", timezone: (cfg.host && cfg.host.timezone) || "" },
+    ntp: { enabled: cfg.ntp ? cfg.ntp.enabled !== false : true, servers: ((cfg.ntp && cfg.ntp.servers) || []).slice() },
+    connections: (cfg.connections || []).map((c) => ({
       name: c.name, type: c.type, interface: c.interface || "", autoconnect: c.autoconnect !== false,
-      priority: c.priority || "", _managed: true,
-      ipv4: {
-        method: (c.ipv4 && c.ipv4.method) || "auto",
-        address: (c.ipv4 && c.ipv4.address) || "", prefix: (c.ipv4 && c.ipv4.prefix) || "",
-        gateway: (c.ipv4 && c.ipv4.gateway) || "",
-        dns: ((c.ipv4 && c.ipv4.dns) || []).slice(),
-        search_domains: ((c.ipv4 && c.ipv4.search_domains) || []).slice(),
-      },
+      priority: c.priority || "", _managed: true, ipv4: ipBlock(c.ipv4),
       ssid: c.ssid || "", hidden: !!c.hidden, country: c.country || "", has_psk: !!c.has_psk, psk: "",
     })),
+    vlans: (cfg.vlans || []).map((v) => ({ parent: v.parent || "", id: v.id || "", name: v.name || "", ipv4: ipBlock(v.ipv4) })),
   };
   // Ensure an Ethernet and a Wi-Fi slot exist so the cards always render; these
   // placeholders are only persisted once actually configured (netPersist).
   netEthConn(); netWifiConn();
   netDirty = false;
+  netHostDirty = false;
 }
 function netConn(type, mk) {
   let c = netEdit.connections.find((x) => x.type === type);
@@ -925,41 +935,105 @@ function netToPayload(c) {
   if (c.type === "wifi") p.wifi = { ssid: c.ssid || "", psk: c.psk || "", hidden: !!c.hidden, country: (c.country || "").toUpperCase() };
   return p;
 }
+// vlanToPayload maps an edited VLAN to the store MODEL shape (id as a number).
+function vlanToPayload(v) {
+  return {
+    parent: (v.parent || "").trim(), id: parseInt(v.id, 10) || 0, name: v.name || "",
+    ipv4: {
+      method: v.ipv4.method || "auto", address: v.ipv4.address || "", prefix: v.ipv4.prefix || "",
+      gateway: v.ipv4.gateway || "", dns: (v.ipv4.dns || []).slice(), search_domains: (v.ipv4.search_domains || []).slice(),
+    },
+  };
+}
+// netIPv4Target resolves the ipv4 object an editor scope points at:
+// "conn:<type>" → the ethernet/wifi connection; "vlan:<idx>" → that VLAN.
+function netIPv4Target(scope) {
+  const sep = scope.indexOf(":");
+  const kind = scope.slice(0, sep), ref = scope.slice(sep + 1);
+  if (kind === "vlan") return netEdit.vlans[+ref].ipv4;
+  return netConnByType(ref).ipv4;
+}
+function netMarkHostDirty() { netHostDirty = true; const b = document.getElementById("host-apply"); if (b) b.disabled = false; }
 function listToText(a) { return (a || []).join(", "); }
 function textToList(s) { return String(s || "").split(/[\s,]+/).filter(Boolean); }
 
-// ipv4Editor renders the shared DHCP/Static IPv4 sub-form for one connection.
-function ipv4Editor(c) {
-  const ip = c.ipv4;
+// ipv4Editor renders the shared DHCP/Static IPv4 sub-form. `scope` identifies the
+// target ipv4 object for the event handlers ("conn:ethernet", "conn:wifi",
+// "vlan:<idx>"); `label` names it for screen readers.
+function ipv4Editor(ip, scope, label) {
   const isStatic = ip.method === "manual";
   const methodSel = row("IPv4 method",
-    `<select data-netmethod="${esc(c.type)}" aria-label="IPv4 method for ${esc(c.name)}">
+    `<select data-netmethod="${esc(scope)}" aria-label="IPv4 method for ${esc(label)}">
        <option value="auto"${isStatic ? "" : " selected"}>DHCP (automatic)</option>
        <option value="manual"${isStatic ? " selected" : ""}>Static</option>
      </select>`);
   const staticFields = isStatic
-    ? row("IP address", `<input data-netip="${esc(c.type)}" data-ipkey="address" value="${esc(ip.address)}" placeholder="192.168.1.50" aria-label="IP address">`) +
-      row("Prefix (CIDR)", `<input data-netip="${esc(c.type)}" data-ipkey="prefix" value="${esc(ip.prefix)}" placeholder="24" aria-label="Network prefix length">`) +
-      row("Gateway", `<input data-netip="${esc(c.type)}" data-ipkey="gateway" value="${esc(ip.gateway)}" placeholder="192.168.1.1" aria-label="Default gateway">`)
+    ? row("IP address", `<input data-netip="${esc(scope)}" data-ipkey="address" value="${esc(ip.address)}" placeholder="192.168.1.50" aria-label="IP address for ${esc(label)}">`) +
+      row("Prefix (CIDR)", `<input data-netip="${esc(scope)}" data-ipkey="prefix" value="${esc(ip.prefix)}" placeholder="24" aria-label="Network prefix length for ${esc(label)}">`) +
+      row("Gateway", `<input data-netip="${esc(scope)}" data-ipkey="gateway" value="${esc(ip.gateway)}" placeholder="192.168.1.1" aria-label="Default gateway for ${esc(label)}">`)
     : "";
   const dnsLabel = isStatic ? "DNS servers" : "DNS override (optional)";
-  const dns = row(dnsLabel, `<input data-netdns="${esc(c.type)}" value="${esc(listToText(ip.dns))}" placeholder="1.1.1.1, 8.8.8.8" aria-label="${esc(dnsLabel)} for ${esc(c.name)}">`) +
+  const dns = row(dnsLabel, `<input data-netdns="${esc(scope)}" value="${esc(listToText(ip.dns))}" placeholder="1.1.1.1, 8.8.8.8" aria-label="${esc(dnsLabel)} for ${esc(label)}">`) +
     (isStatic ? "" : note("With DHCP, listing DNS servers here <b>replaces</b> the ones the DHCP server hands out (ignore-auto-dns)."));
-  const search = row("Search domains (optional)", `<input data-netsearch="${esc(c.type)}" value="${esc(listToText(ip.search_domains))}" placeholder="lan, example.org" aria-label="DNS search domains for ${esc(c.name)}">`);
+  const search = row("Search domains (optional)", `<input data-netsearch="${esc(scope)}" value="${esc(listToText(ip.search_domains))}" placeholder="lan, example.org" aria-label="DNS search domains for ${esc(label)}">`);
   return methodSel + staticFields + dns + search;
 }
 function netEthCard() {
   const c = netEthConn();
-  return card("ETHERNET (waypoint-eth0)", ipv4Editor(c));
+  return card("ETHERNET (waypoint-eth0)", ipv4Editor(c.ipv4, "conn:ethernet", "Ethernet"));
 }
 function netWifiCard() {
   const c = netWifiConn();
   const creds =
     row("SSID (network name)", `<input data-netwifi="wifi" data-wkey="ssid" value="${esc(c.ssid)}" placeholder="Your Wi-Fi name" aria-label="Wi-Fi SSID">`) +
     row("Passphrase", `<input data-netpsk="wifi" type="password" value="${esc(c.psk)}" placeholder="${c.has_psk ? "•••••• unchanged" : "Wi-Fi passphrase"}" aria-label="Wi-Fi passphrase">`) +
-    `<div class="toggle-row"><span class="name">Hidden network</span><span class="pill ${c.hidden ? "on" : "off"}" data-nethidden="wifi" role="switch" aria-checked="${c.hidden}" tabindex="0" style="cursor:pointer;">${c.hidden ? "ON" : "OFF"}</span></div>` +
+    switchRow("Hidden network", "nethidden", "wifi", c.hidden) +
     row("Regulatory country", `<input data-netwifi="wifi" data-wkey="country" value="${esc(c.country)}" maxlength="2" placeholder="US" aria-label="Regulatory country code">`);
-  return card("WI-FI (waypoint-wifi)", creds) + netScanSection() + card("WI-FI IPv4", ipv4Editor(c));
+  return card("WI-FI (waypoint-wifi)", creds) + netScanSection() + card("WI-FI IPv4", ipv4Editor(c.ipv4, "conn:wifi", "Wi-Fi"));
+}
+
+// switchRow renders an accessible on/off switch: a role="switch" pill with
+// aria-checked, focusable and Enter/Space-operable (see the panels keydown handler).
+// dataAttr is the data-* hook name; ref is the value passed to the handler.
+function switchRow(label, dataAttr, ref, on) {
+  return `<div class="toggle-row"><span class="name" id="sw-${esc(dataAttr)}-${esc(ref)}">${esc(label)}</span>` +
+    `<span class="pill ${on ? "on" : "off"}" data-${esc(dataAttr)}="${esc(ref)}" role="switch" aria-checked="${on ? "true" : "false"}" aria-labelledby="sw-${esc(dataAttr)}-${esc(ref)}" tabindex="0" style="cursor:pointer;">${on ? "ON" : "OFF"}</span></div>`;
+}
+
+// netHostCard: hostname, timezone (searchable via a datalist), NTP enable + servers.
+// These APPLY DIRECTLY (no guard — they can't strand the node), so the card has its
+// own Apply button distinct from the guarded network apply.
+function netHostCard() {
+  const h = netEdit.host, n = netEdit.ntp;
+  const tzOptions = (netTimezones || []).map((z) => `<option value="${esc(z)}"></option>`).join("");
+  const liveTz = netStatus && netStatus.timezone ? ` <span class="note" style="margin:0">(now: ${esc(netStatus.timezone)})</span>` : "";
+  const body =
+    row("Hostname", `<input data-hostf="1" data-hkey="hostname" value="${esc(h.hostname)}" placeholder="${esc((netStatus && netStatus.hostname) || "waypoint")}" aria-label="Hostname">`) +
+    row("Timezone", `<input list="tz-list" data-hostf="1" data-hkey="timezone" value="${esc(h.timezone)}" placeholder="Region/City" aria-label="Timezone (type to search)"><datalist id="tz-list">${tzOptions}</datalist>${liveTz}`) +
+    switchRow("NTP time sync", "netntp", "1", n.enabled) +
+    row("NTP servers (optional)", `<input data-ntpservers="1" value="${esc(listToText(n.servers))}" placeholder="pool.ntp.org, time.cloudflare.com" aria-label="NTP servers">`) +
+    `<div style="margin-top:10px;"><button type="button" id="host-apply"${netHostDirty ? "" : " disabled"} style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">APPLY HOST SETTINGS</button> <span class="note" style="margin:0;">Applies immediately (hostname, timezone &amp; NTP can't strand the node).</span></div>`;
+  return card("HOST · TIME · NTP", body);
+}
+
+// netVlanCard: the VLAN list. Each VLAN is a tagged interface on a parent, with its
+// own IPv4 block. VLANs render NM type=vlan keyfiles and go through the CONFIRM-OR-
+// REVERT guard (a bad VLAN can cut the uplink), so they save with "Apply Network".
+function netVlanCard() {
+  const vlans = netEdit.vlans || [];
+  const blocks = vlans.map((v, i) => {
+    const head = `<div class="toggle-row"><span class="name">VLAN ${esc(v.id || "?")}${v.name ? " · " + esc(v.name) : ""} <span class="note" style="margin:0">(waypoint-vlan${esc(v.id || "?")})</span></span>` +
+      `<button type="button" class="pill off" data-vlandel="${i}" style="cursor:pointer;" aria-label="Remove VLAN ${esc(v.id || "")}">REMOVE</button></div>`;
+    const fields =
+      row("Parent interface", `<input data-vlanf="${i}" data-vkey="parent" value="${esc(v.parent)}" placeholder="eth0" aria-label="VLAN ${esc(v.id || "")} parent interface">`) +
+      row("VLAN id (1–4094)", `<input data-vlanf="${i}" data-vkey="id" type="number" min="1" max="4094" value="${esc(v.id)}" placeholder="50" aria-label="VLAN id">`) +
+      row("Label (optional)", `<input data-vlanf="${i}" data-vkey="name" value="${esc(v.name)}" placeholder="iot" aria-label="VLAN label">`) +
+      ipv4Editor(v.ipv4, "vlan:" + i, "VLAN " + (v.id || (i + 1)));
+    return `<div style="border-top:1px solid var(--line,rgba(128,128,128,0.25)); padding-top:8px; margin-top:8px;">${head}${fields}</div>`;
+  }).join("");
+  const empty = vlans.length ? "" : note("No VLANs. Add one to put a tagged interface on a parent device.");
+  const add = `<div style="margin-top:10px;"><button type="button" id="vlan-add" style="padding:6px 14px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--accent); border:1px solid var(--accent); border-radius:6px;">+ ADD VLAN</button></div>`;
+  return card("VLANs", empty + blocks + add);
 }
 function netScanSection() {
   const rows = (netScanResults || []).map((n) => {
@@ -1463,8 +1537,13 @@ async function loadNetwork() {
   ]);
   netStatus = st.status === "fulfilled" ? st.value : null;
   netScanResults = scan.status === "fulfilled" && Array.isArray(scan.value) ? scan.value : [];
-  if (cfg.status === "fulfilled" && !netDirty) buildNetEdit(cfg.value);
+  // Only rebuild netEdit when there are no unsaved edits of EITHER kind, so a
+  // background refresh never clobbers what the operator is typing.
+  if (cfg.status === "fulfilled" && !netDirty && !netHostDirty) buildNetEdit(cfg.value);
   else if (!netEdit) buildNetEdit({});
+  if (!netTimezones.length) {
+    try { netTimezones = (await fetch("/api/network/timezones").then((r) => r.json())) || []; } catch { /* picker still accepts a typed zone */ }
+  }
   if (state.tab === "network") renderPanel();
 }
 
@@ -1490,7 +1569,10 @@ async function applyNetwork() {
   const btn = document.getElementById("net-apply");
   if (btn) { btn.textContent = "APPLYING…"; btn.disabled = true; }
   try {
-    const payload = { connections: netEdit.connections.filter(netPersist).map(netToPayload) };
+    const payload = {
+      connections: netEdit.connections.filter(netPersist).map(netToPayload),
+      vlans: (netEdit.vlans || []).map(vlanToPayload),
+    };
     let r = await fetch("/api/network/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     if (!r.ok) throw new Error((await r.text()).trim());
     r = await fetch("/api/network/apply", { method: "POST" });
@@ -1508,21 +1590,49 @@ async function applyNetwork() {
   }
 }
 
+// applyHost saves and applies the host/NTP settings DIRECTLY (no guard — they
+// can't strand the node). Idempotent server-side, so a no-op apply is harmless.
+async function applyHost() {
+  if (netApplyingHost || !netEdit) return;
+  netApplyingHost = true;
+  const btn = document.getElementById("host-apply");
+  if (btn) { btn.textContent = "APPLYING…"; btn.disabled = true; }
+  try {
+    const payload = { host: { hostname: (netEdit.host.hostname || "").trim(), timezone: (netEdit.host.timezone || "").trim() }, ntp: { enabled: !!netEdit.ntp.enabled, servers: (netEdit.ntp.servers || []).slice() } };
+    let r = await fetch("/api/network/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    if (!r.ok) throw new Error((await r.text()).trim());
+    r = await fetch("/api/network/host/apply", { method: "POST" });
+    if (!r.ok) throw new Error((await r.text()).trim());
+    const j = await r.json();
+    netHostDirty = false;
+    banner(j.changed ? "Host settings applied." : "Host settings already in effect (no change).", "ok");
+  } catch (err) {
+    banner("Host apply failed: " + String(err.message || err), "bad");
+  } finally {
+    netApplyingHost = false;
+    await loadNetwork();
+  }
+}
+
 // text edits update the working copy; toggles flip a bool and re-render.
 document.getElementById("panels").addEventListener("input", (e) => {
   const t = e.target;
   if (!t.dataset) return;
-  // --- network editable fields (separate state; guarded apply) ---
+  // --- network editable fields (connections + VLANs: guarded apply) ---
   if (t.dataset.netmethod != null) {
-    netConnByType(t.dataset.netmethod).ipv4.method = t.value;
+    netIPv4Target(t.dataset.netmethod).method = t.value;
     netMarkDirty(); renderPanel();
     return;
   }
-  if (t.dataset.netip != null) { netConnByType(t.dataset.netip).ipv4[t.dataset.ipkey] = t.value.trim(); netMarkDirty(); return; }
-  if (t.dataset.netdns != null) { netConnByType(t.dataset.netdns).ipv4.dns = textToList(t.value); netMarkDirty(); return; }
-  if (t.dataset.netsearch != null) { netConnByType(t.dataset.netsearch).ipv4.search_domains = textToList(t.value); netMarkDirty(); return; }
+  if (t.dataset.netip != null) { netIPv4Target(t.dataset.netip)[t.dataset.ipkey] = t.value.trim(); netMarkDirty(); return; }
+  if (t.dataset.netdns != null) { netIPv4Target(t.dataset.netdns).dns = textToList(t.value); netMarkDirty(); return; }
+  if (t.dataset.netsearch != null) { netIPv4Target(t.dataset.netsearch).search_domains = textToList(t.value); netMarkDirty(); return; }
   if (t.dataset.netwifi != null) { netConnByType(t.dataset.netwifi)[t.dataset.wkey] = t.value; netMarkDirty(); return; }
   if (t.dataset.netpsk != null) { netConnByType(t.dataset.netpsk).psk = t.value; netMarkDirty(); return; }
+  if (t.dataset.vlanf != null) { netEdit.vlans[+t.dataset.vlanf][t.dataset.vkey] = t.value; netMarkDirty(); return; }
+  // --- host/NTP fields (direct apply) ---
+  if (t.dataset.hostf != null) { netEdit.host[t.dataset.hkey] = t.value; netMarkHostDirty(); return; }
+  if (t.dataset.ntpservers != null) { netEdit.ntp.servers = textToList(t.value); netMarkHostDirty(); return; }
   if (t.dataset.sec) {
     let v = t.value;
     if (t.dataset.kind === "mhz") { const f = parseFloat(v); v = isNaN(f) ? "" : String(Math.round(f * 1e6)); }
@@ -1604,6 +1714,17 @@ document.getElementById("panels").addEventListener("click", (e) => {
   }
   if (e.target.id === "net-scan-refresh") { rescanWiFi(); return; }
   if (e.target.id === "net-apply") { applyNetwork(); return; }
+  // NTP enable switch (direct-apply state).
+  const nnt = e.target.closest("[data-netntp]");
+  if (nnt) { netEdit.ntp.enabled = !netEdit.ntp.enabled; netMarkHostDirty(); renderPanel(); return; }
+  // VLAN add / remove (guarded-apply state).
+  if (e.target.id === "vlan-add") {
+    (netEdit.vlans = netEdit.vlans || []).push({ parent: "eth0", id: "", name: "", ipv4: { method: "auto", address: "", prefix: "", gateway: "", dns: [], search_domains: [] } });
+    netMarkDirty(); renderPanel(); return;
+  }
+  const vd = e.target.closest("[data-vlandel]");
+  if (vd) { netEdit.vlans.splice(+vd.dataset.vlandel, 1); netMarkDirty(); renderPanel(); return; }
+  if (e.target.id === "host-apply") { applyHost(); return; }
   const tg = e.target.closest("[data-toggle]");
   if (tg) {
     const [sec, key] = tg.dataset.toggle.split(".");
@@ -1651,18 +1772,25 @@ document.getElementById("panels").addEventListener("click", (e) => {
     dirty.add("routes"); renderPanel(); refreshActions();
   }
 });
-// Keyboard support for the Wi-Fi "hidden network" switch (a role="switch" pill):
-// Enter/Space toggle it, matching a native checkbox, and focus is restored after
-// the re-render so the keyboard user stays put.
+// Keyboard support for the network role="switch" pills (Wi-Fi hidden, NTP enable):
+// Enter/Space toggle them like a native checkbox, and focus is restored after the
+// re-render so the keyboard user stays put.
 document.getElementById("panels").addEventListener("keydown", (e) => {
   const t = e.target;
-  if (!t.dataset || t.dataset.nethidden == null) return;
+  if (!t.dataset) return;
   if (e.key !== "Enter" && e.key !== " ") return;
-  e.preventDefault();
-  const type = t.dataset.nethidden;
-  const c = netConnByType(type); c.hidden = !c.hidden; netMarkDirty(); renderPanel();
-  const again = document.querySelector('[data-nethidden="' + type + '"]');
-  if (again) again.focus();
+  if (t.dataset.nethidden != null) {
+    e.preventDefault();
+    const type = t.dataset.nethidden;
+    const c = netConnByType(type); c.hidden = !c.hidden; netMarkDirty(); renderPanel();
+    const again = document.querySelector('[data-nethidden="' + type + '"]');
+    if (again) again.focus();
+  } else if (t.dataset.netntp != null) {
+    e.preventDefault();
+    netEdit.ntp.enabled = !netEdit.ntp.enabled; netMarkHostDirty(); renderPanel();
+    const again = document.querySelector("[data-netntp]");
+    if (again) again.focus();
+  }
 });
 // Track the focused LCD line input so the token palette inserts into the right
 // row even after the click moves focus to the button.

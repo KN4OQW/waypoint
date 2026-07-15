@@ -40,6 +40,8 @@ func fixtureRunner(t *testing.T) Runner {
 			return readFixture(t, "wifi-list.txt"), nil
 		case strings.Contains(joined, "show-timesync"):
 			return "ServerName=time.cloudflare.com\n", nil
+		case strings.Contains(joined, "Timezone"):
+			return "America/New_York\n", nil
 		case strings.Contains(joined, "timedatectl show"):
 			return readFixture(t, "timedatectl-show.txt"), nil
 		}

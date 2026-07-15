@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -59,9 +60,12 @@ func profileID(name string) string { return ProfileID(name) }
 // order — the set the apply path brings up so a saved change reaches the live
 // device (not just the keyfile on disk).
 func (m Model) ProfileIDs() []string {
-	ids := make([]string, 0, len(m.Connections))
+	ids := make([]string, 0, len(m.Connections)+len(m.VLANs))
 	for _, c := range m.Connections {
 		ids = append(ids, ProfileID(c.Name))
+	}
+	for _, v := range m.VLANs {
+		ids = append(ids, ProfileID(v.connName()))
 	}
 	return ids
 }
@@ -174,14 +178,49 @@ type Target struct {
 // can trust that writing or removing these files never touches a hand-made
 // profile. Rendering is pure: same Model + same dir ⇒ identical Targets.
 func (m Model) RenderTargets(dir string) []Target {
-	out := make([]Target, 0, len(m.Connections))
+	out := make([]Target, 0, len(m.Connections)+len(m.VLANs))
 	for _, c := range m.Connections {
 		out = append(out, Target{
 			Path:    filepath.Join(dir, FileName(c.Name)),
 			Content: c.render(),
 		})
 	}
+	// VLANs render after the base connections: each is waypoint-vlan<id>, matching
+	// the same ownership marker so Sync writes/prunes them like any managed profile.
+	for _, v := range m.VLANs {
+		out = append(out, Target{
+			Path:    filepath.Join(dir, FileName(v.connName())),
+			Content: v.render(),
+		})
+	}
 	return out
+}
+
+// connName is a VLAN's connection stem: vlan<id> ⇒ waypoint-vlan<id>.
+func (v VLAN) connName() string { return "vlan" + strconv.Itoa(v.ID) }
+
+// render compiles a VLAN into an NM type=vlan keyfile. Pure, like Connection.render.
+// interface-name is the conventional <parent>.<id> vlan device NM creates.
+func (v VLAN) render() string {
+	var b strings.Builder
+	b.WriteString(generatedHeader)
+	name := v.connName()
+	b.WriteString("\n[connection]\n")
+	writeKV(&b, "id", profileID(name))
+	writeKV(&b, "uuid", connUUID(name))
+	writeKV(&b, "type", "vlan")
+	writeKV(&b, "interface-name", v.Parent+"."+strconv.Itoa(v.ID))
+	writeKV(&b, "autoconnect", "true")
+
+	b.WriteString("\n[vlan]\n")
+	writeKV(&b, "parent", v.Parent)
+	writeKV(&b, "id", strconv.Itoa(v.ID))
+
+	b.WriteString("\n[ipv4]\n")
+	v.IPv4.render(&b)
+	b.WriteString("\n[ipv6]\n")
+	writeKV(&b, "method", "auto")
+	return b.String()
 }
 
 // Validate rejects a model the renderer cannot compile or that would produce a
@@ -213,6 +252,12 @@ func (m Model) Validate() error {
 			return fmt.Errorf("netconfig: connection %q: %w", c.Name, err)
 		}
 	}
+	if err := validateVLANs(m.VLANs); err != nil {
+		return err
+	}
+	if err := validateHost(m.Host); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -227,7 +272,7 @@ func (m Model) Sync(dir string) (changed bool, err error) {
 	want := make(map[string]bool, len(targets))
 	for _, t := range targets {
 		want[filepath.Base(t.Path)] = true
-		wrote, err := writeAtomicIfChanged(t.Path, t.Content)
+		wrote, err := writeAtomicIfChanged(t.Path, t.Content, 0o600)
 		if err != nil {
 			return changed, err
 		}
@@ -257,10 +302,12 @@ func (m Model) Sync(dir string) (changed bool, err error) {
 }
 
 // writeAtomicIfChanged writes content to path via a temp-file+rename (a crash
-// mid-write never leaves NM reading a half-written profile) at 0600, but skips the
-// write when the file already holds exactly content — so an unchanged render
-// leaves the mtime alone and Sync can report "no change". Returns whether it wrote.
-func writeAtomicIfChanged(path, content string) (bool, error) {
+// mid-write never leaves a reader a half-written file) at mode, but skips the write
+// when the file already holds exactly content — so an unchanged render leaves the
+// mtime alone and the caller can report "no change". Returns whether it wrote.
+// Keyfiles use 0600 (they carry the Wi-Fi PSK, and NM refuses a looser secret
+// file); the timesyncd drop-in uses 0644 (no secret).
+func writeAtomicIfChanged(path, content string, mode os.FileMode) (bool, error) {
 	if cur, err := os.ReadFile(path); err == nil && string(cur) == content {
 		return false, nil
 	}
@@ -275,9 +322,7 @@ func writeAtomicIfChanged(path, content string) (bool, error) {
 		tmp.Close()
 		return false, err
 	}
-	// 0600 root: system-connections files carry the Wi-Fi PSK, and NM refuses to
-	// load a secret-bearing profile with looser permissions.
-	if err := tmp.Chmod(0o600); err != nil {
+	if err := tmp.Chmod(mode); err != nil {
 		tmp.Close()
 		return false, err
 	}

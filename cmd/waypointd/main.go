@@ -58,11 +58,13 @@ type server struct {
 	netKeyfileDir     string
 	netConfirmTimeout time.Duration
 	netBackend        string // "composite" (NM + keyfile) or "keyfile" (fallback)
+	timesyncdConf     string // rendered systemd-timesyncd drop-in path (NTP direct apply)
 	netGuard          *netconfig.Guard
-	// Wi-Fi scan cache (one radio → process-wide, brief TTL; see networkWiFiScan).
+	// Wi-Fi scan cache + timezone list cache (netScanMu guards both).
 	netScanMu  sync.Mutex
 	netScan    []netconfig.WiFiScanResult
 	netScanAt  time.Time
+	timezones  []string
 	ysfHosts   string // cached YSF reflector hostlist (JSON)
 	p25Hosts   string // cached P25 reflector (talkgroup) hostlist (JSON)
 	nxdnHosts  string // cached NXDN reflector (talkgroup) hostlist (JSON)
@@ -745,6 +747,7 @@ func main() {
 	nmKeyfileDir := flag.String("nm-keyfile-dir", "/etc/NetworkManager/system-connections", "directory for rendered NetworkManager keyfiles (waypoint-*.nmconnection)")
 	netConfirmTimeout := flag.Duration("network-confirm-timeout", netconfig.DefaultConfirmTimeout, "confirm-or-revert rollback window for a network apply")
 	netBackend := flag.String("network-backend", "composite", "network rollback backend: composite (NM D-Bus checkpoint + keyfile snapshot) or keyfile (fallback, no live-device rollback)")
+	timesyncdConf := flag.String("timesyncd-conf", "/etc/systemd/timesyncd.conf.d/waypoint.conf", "rendered systemd-timesyncd drop-in for NTP servers")
 	flag.Parse()
 
 	st, err := store.Open(*storePath)
@@ -764,6 +767,7 @@ func main() {
 		},
 		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts,
 		netKeyfileDir: *nmKeyfileDir, netConfirmTimeout: *netConfirmTimeout, netBackend: *netBackend,
+		timesyncdConf: *timesyncdConf,
 	}
 	// The confirm-or-revert guard for network applies (needs s.netKeyfileDir set).
 	s.netGuard = s.newNetGuard()
@@ -830,9 +834,11 @@ func main() {
 	// Host/OS networking domain (docs/config-coverage.md §4).
 	mux.HandleFunc("/api/network/status", s.networkStatus)
 	mux.HandleFunc("/api/network/wifi/scan", s.networkWiFiScan)
+	mux.HandleFunc("/api/network/timezones", s.networkTimezones)
 	mux.HandleFunc("/api/network/config", s.networkConfig)
 	mux.HandleFunc("/api/network/apply", s.networkApply)
 	mux.HandleFunc("/api/network/confirm", s.networkConfirm)
+	mux.HandleFunc("/api/network/host/apply", s.networkHostApply)
 	mux.Handle("/", http.FileServerFS(ui.FS()))
 
 	mode := "live, mqtt " + *broker

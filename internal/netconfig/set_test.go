@@ -99,18 +99,18 @@ func TestSetPreservesPSKOnBlank(t *testing.T) {
 func TestSetMergePreservesConnections(t *testing.T) {
 	s := testStore(t)
 	seed := Model{
-		Hostname:    "old-name",
+		Host:        Host{Hostname: "old-name"},
 		Connections: []Connection{{Name: "wifi", Type: TypeWiFi, WiFi: WiFi{SSID: "S", PSK: "keep-me"}}},
 	}
 	if err := s.Set(storeKey, &seed, "test"); err != nil {
 		t.Fatal(err)
 	}
-	if err := Set(s, []byte(`{"hostname":"new-name"}`), "test"); err != nil {
+	if err := Set(s, []byte(`{"host":{"hostname":"new-name"}}`), "test"); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
 	m, _ := Load(s)
-	if m.Hostname != "new-name" {
-		t.Errorf("hostname = %q", m.Hostname)
+	if m.Host.Hostname != "new-name" {
+		t.Errorf("hostname = %q", m.Host.Hostname)
 	}
 	if len(m.Connections) != 1 || m.Connections[0].WiFi.PSK != "keep-me" {
 		t.Errorf("connections dropped by a hostname-only write: %+v", m.Connections)

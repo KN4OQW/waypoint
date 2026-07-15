@@ -6,13 +6,13 @@ package netconfig
 // connection list without ever handling the credential. Served alongside the live
 // Status; this is the desired config, Status is the observed state.
 //
-// The foundation exposes the view so the write-only-secret plumbing is testable
-// now; the Wi-Fi/VLAN edit surface that consumes it lands in the next slice.
+// Host, NTP, and VLANs carry no secrets, so they project straight through; only
+// the Wi-Fi PSK is redacted (per connection).
 type View struct {
-	Hostname    string           `json:"hostname"`
-	Timezone    string           `json:"timezone"`
+	Host        Host             `json:"host"`
 	NTP         NTP              `json:"ntp"`
 	Connections []ViewConnection `json:"connections"`
+	VLANs       []VLAN           `json:"vlans"`
 }
 
 // ViewConnection is one connection with its PSK redacted to HasPSK.
@@ -32,9 +32,9 @@ type ViewConnection struct {
 // View projects the Model onto the redacted API shape.
 func (m Model) View() View {
 	v := View{
-		Hostname: m.Hostname,
-		Timezone: m.Timezone,
-		NTP:      m.NTP,
+		Host:  m.Host,
+		NTP:   m.NTP,
+		VLANs: m.VLANs,
 	}
 	for _, c := range m.Connections {
 		v.Connections = append(v.Connections, ViewConnection{

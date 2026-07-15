@@ -12,6 +12,7 @@ import (
 // meant to converge to. Served at GET /api/network/status.
 type Status struct {
 	Hostname string      `json:"hostname"`
+	Timezone string      `json:"timezone"`
 	Devices  []Device    `json:"devices"`
 	WiFi     *WiFiStatus `json:"wifi,omitempty"` // present only when a Wi-Fi device is associated
 	NTP      NTPStatus   `json:"ntp"`
@@ -101,6 +102,9 @@ func Collect(run Runner) (*Status, error) {
 		if _, v := terseEq(strings.TrimSpace(firstLine(tsOut))); v != "" {
 			s.NTP.Server = v
 		}
+	}
+	if tzOut, err := run("timedatectl", "show", "-p", "Timezone", "--value"); err == nil {
+		s.Timezone = strings.TrimSpace(tzOut)
 	}
 	return s, nil
 }

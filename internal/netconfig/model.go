@@ -50,16 +50,25 @@ const (
 // and the keyfile renderer consumes. Like internal/config.Model it carries
 // secrets (Wi-Fi PSK) that the API View (view.go) redacts.
 type Model struct {
-	// Hostname and Timezone drive hostnamectl (apply wiring lands with their
-	// surface); they are modeled here so the domain is whole. Blank means leave
-	// the host default untouched.
-	Hostname string `json:"hostname"`
-	Timezone string `json:"timezone"`
-	NTP      NTP    `json:"ntp"`
+	// Host (hostname + timezone) and NTP apply DIRECTLY — they cannot strand the
+	// node, so they skip the confirm-or-revert guard (a third apply mechanism:
+	// hostnamectl/timedatectl exec + a timesyncd drop-in, see host.go).
+	Host Host `json:"host"`
+	NTP  NTP  `json:"ntp"`
 	// Connections are the managed NM profiles. Each renders to exactly one
 	// waypoint-<Name>.nmconnection keyfile, in slice order (which fixes the write
 	// order and therefore render purity).
 	Connections []Connection `json:"connections"`
+	// VLANs render type=vlan NM keyfiles (waypoint-vlan<id>) and, like connections,
+	// go through the confirm-or-revert guard (a bad VLAN can cut the uplink).
+	VLANs []VLAN `json:"vlans"`
+}
+
+// Host is the node's hostname and timezone. Blank means leave the host default
+// untouched. Applied via hostnamectl / timedatectl (host.go), idempotently.
+type Host struct {
+	Hostname string `json:"hostname"`
+	Timezone string `json:"timezone"`
 }
 
 // NTP is the systemd-timesyncd surface: whether the client is on and which
@@ -67,6 +76,18 @@ type Model struct {
 type NTP struct {
 	Enabled bool     `json:"enabled"`
 	Servers []string `json:"servers"`
+}
+
+// VLAN is a tagged virtual interface on a parent device. It renders an NM
+// type=vlan connection (waypoint-vlan<ID>) carrying its own IPv4 block — the same
+// dhcp/static shape as an ethernet/wifi profile (H2). ID is the 802.1Q tag
+// (1–4094); Name is an operator label (not rendered — NM has no label key beyond
+// the id, which is waypoint-vlan<ID>).
+type VLAN struct {
+	Parent string `json:"parent"`
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	IPv4   IPv4   `json:"ipv4"`
 }
 
 // Connection is one managed NetworkManager profile. Name is the identity: the
