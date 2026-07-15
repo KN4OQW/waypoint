@@ -4,23 +4,28 @@ package config
 // secrets removed. Passwords never appear — a network reports only whether one
 // is set. This is what GET /api/config returns.
 type View struct {
-	Sources   Sources       `json:"sources"`
-	General   ViewGeneral   `json:"general"`
-	Display   ViewDisplay   `json:"display"`
-	DMR       ViewDMR       `json:"dmr"`
-	Modes     []ViewMode    `json:"modes"`
-	Networks  []ViewNetwork `json:"networks"`
-	Routes    []ViewRoute   `json:"routes"`
-	YSF       ViewYSF       `json:"ysf"`
-	P25       ViewP25       `json:"p25"`
-	NXDN      ViewNXDN      `json:"nxdn"`
-	DStar     ViewDStar     `json:"dstar"`
-	M17       ViewM17       `json:"m17"`
-	POCSAG    ViewPOCSAG    `json:"pocsag"`
-	FM        ViewFM        `json:"fm"`
-	CrossMode ViewCrossMode `json:"crossmode"`
-	LCD       ViewLCD       `json:"lcd"`
-	ReadOnly  bool          `json:"read_only"`
+	Sources  Sources       `json:"sources"`
+	General  ViewGeneral   `json:"general"`
+	Display  ViewDisplay   `json:"display"`
+	DMR      ViewDMR       `json:"dmr"`
+	Modes    []ViewMode    `json:"modes"`
+	Networks []ViewNetwork `json:"networks"`
+	Routes   []ViewRoute   `json:"routes"`
+	YSF      ViewYSF       `json:"ysf"`
+	P25      ViewP25       `json:"p25"`
+	NXDN     ViewNXDN      `json:"nxdn"`
+	DStar    ViewDStar     `json:"dstar"`
+	M17      ViewM17       `json:"m17"`
+	POCSAG   ViewPOCSAG    `json:"pocsag"`
+	FM       ViewFM        `json:"fm"`
+	LCD      ViewLCD       `json:"lcd"`
+	ReadOnly bool          `json:"read_only"`
+	// The cross-mode transcoding bridges (MMDVM_CM) are no longer projected here.
+	// The per-bridge-daemon model is retired for the RFC-0003 bus architecture, so
+	// the settings page shows a placeholder instead of bridge cards. The bridge store
+	// sections are retained (dormant) — SetCrossBridge/SetSection still accept them
+	// and they round-trip through Save/Load — but they have no read-model surface, so
+	// nothing is projected. RFC-0003's migration reads them straight from the store.
 }
 
 // ViewPOCSAG is the POCSAG tab's read model: the mode enable, the paging channel
@@ -69,55 +74,6 @@ type ViewLCDPage struct {
 	Duration  string   `json:"duration"`
 	Interrupt bool     `json:"interrupt"`
 	Lines     []string `json:"lines"`
-}
-
-// ViewCrossMode is the Gateways tab's read model: one sub-view per transcoding
-// bridge. The two DMR-master bridges (YSF2DMR, NXDN2DMR) carry a password secret,
-// so they expose HasPassword (whether one is set) instead of the value — the same
-// write-only-secret treatment as a DMR network / the ircDDB password.
-type ViewCrossMode struct {
-	YSF2DMR  ViewYSF2DMR  `json:"ysf2dmr"`
-	DMR2YSF  ViewDMR2YSF  `json:"dmr2ysf"`
-	YSF2NXDN ViewYSF2NXDN `json:"ysf2nxdn"`
-	DMR2NXDN ViewDMR2NXDN `json:"dmr2nxdn"`
-	NXDN2DMR ViewNXDN2DMR `json:"nxdn2dmr"`
-}
-
-type ViewYSF2DMR struct {
-	Enable      bool   `json:"enable"`
-	DMRId       string `json:"dmr_id"`
-	Master      string `json:"master"`
-	Options     string `json:"options"`
-	TG          string `json:"tg"`
-	HasPassword bool   `json:"has_password"`
-}
-
-type ViewDMR2YSF struct {
-	Enable    bool   `json:"enable"`
-	DMRId     string `json:"dmr_id"`
-	DefaultTG string `json:"default_tg"`
-}
-
-type ViewYSF2NXDN struct {
-	Enable bool   `json:"enable"`
-	NXDNId string `json:"nxdn_id"`
-	TG     string `json:"tg"`
-}
-
-type ViewDMR2NXDN struct {
-	Enable bool   `json:"enable"`
-	DMRId  string `json:"dmr_id"`
-	NXDNId string `json:"nxdn_id"`
-}
-
-type ViewNXDN2DMR struct {
-	Enable      bool   `json:"enable"`
-	DMRId       string `json:"dmr_id"`
-	Master      string `json:"master"`
-	Options     string `json:"options"`
-	TG          string `json:"tg"`
-	NXDNTG      string `json:"nxdn_tg"`
-	HasPassword bool   `json:"has_password"`
 }
 
 // ViewM17 is the M17 tab's read model: the mode enable, the [M17] mode params
@@ -183,10 +139,19 @@ type ViewP25 struct {
 	NetHangTime      string `json:"net_hang_time"`
 }
 
-// ViewYSF is the System Fusion tab's read model: the mode enable plus the
-// gateway settings a user actually sets.
+// ViewYSF is the System Fusion tab's read model: the mode enable, the [System
+// Fusion] mode params, and the gateway settings a user actually sets. The five
+// mode params (self_only, low_deviation, tx_hang, mode_hang, remote_gateway) are
+// stored + rendered into MMDVM-Host's [System Fusion] and are surfaced here for
+// parity with P25/NXDN/M17, which expose their equivalents (parity gap G1). No
+// secrets.
 type ViewYSF struct {
 	Enable            bool   `json:"enable"`
+	SelfOnly          bool   `json:"self_only"`
+	LowDeviation      bool   `json:"low_deviation"`
+	TXHang            string `json:"tx_hang"`
+	ModeHang          string `json:"mode_hang"`
+	RemoteGateway     bool   `json:"remote_gateway"`
 	Suffix            string `json:"suffix"`
 	WiresXPassthrough bool   `json:"wiresx_passthrough"`
 	Startup           string `json:"startup"`
@@ -340,6 +305,11 @@ func (m *Model) View(storePath string) *View {
 	}
 	v.YSF = ViewYSF{
 		Enable:            m.Modes.YSF,
+		SelfOnly:          m.YSF.SelfOnly,
+		LowDeviation:      m.YSF.LowDeviation,
+		TXHang:            m.YSF.TXHang,
+		ModeHang:          m.YSF.ModeHang,
+		RemoteGateway:     m.YSF.RemoteGateway,
 		Suffix:            m.YSFGW.Suffix,
 		WiresXPassthrough: m.YSFGW.WiresXPassthrough,
 		Startup:           m.YSFGW.Startup,
@@ -418,28 +388,8 @@ func (m *Model) View(storePath string) *View {
 		ExtAudioBoost: m.FM.ExtAudioBoost,
 		AccessMode:    m.FM.AccessMode,
 	}
-	// Cross-mode bridges: the two DMR-master bridges expose only HasPassword (the
-	// value is never serialized — SetCrossBridge preserves it on a blank write).
-	v.CrossMode = ViewCrossMode{
-		YSF2DMR: ViewYSF2DMR{
-			Enable: m.YSF2DMR.Enable, DMRId: m.YSF2DMR.DMRId, Master: m.YSF2DMR.Master,
-			Options: m.YSF2DMR.Options, TG: m.YSF2DMR.TG, HasPassword: m.YSF2DMR.Password != "",
-		},
-		DMR2YSF: ViewDMR2YSF{
-			Enable: m.DMR2YSF.Enable, DMRId: m.DMR2YSF.DMRId, DefaultTG: m.DMR2YSF.DefaultTG,
-		},
-		YSF2NXDN: ViewYSF2NXDN{
-			Enable: m.YSF2NXDN.Enable, NXDNId: m.YSF2NXDN.NXDNId, TG: m.YSF2NXDN.TG,
-		},
-		DMR2NXDN: ViewDMR2NXDN{
-			Enable: m.DMR2NXDN.Enable, DMRId: m.DMR2NXDN.DMRId, NXDNId: m.DMR2NXDN.NXDNId,
-		},
-		NXDN2DMR: ViewNXDN2DMR{
-			Enable: m.NXDN2DMR.Enable, DMRId: m.NXDN2DMR.DMRId, Master: m.NXDN2DMR.Master,
-			Options: m.NXDN2DMR.Options, TG: m.NXDN2DMR.TG, NXDNTG: m.NXDN2DMR.NXDNTG,
-			HasPassword: m.NXDN2DMR.Password != "",
-		},
-	}
+	// The cross-mode transcoding bridges are retired (RFC-0003) and no longer
+	// projected — their store sections stay dormant (see the View doc comment).
 	for _, md := range modeDisplay {
 		v.Modes = append(v.Modes, ViewMode{Key: md.key, Name: md.name, Enabled: md.get(m.Modes)})
 	}

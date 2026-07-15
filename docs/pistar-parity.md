@@ -32,10 +32,12 @@ above WPSD parity · `partial` — present but diverging or incomplete/not surfa
 
 **Baseline (verified 2026-07-13, branch `cross-mode-gateways`):** `general`,
 `modem` (core offsets), `dmr`, `dmrnet`, `modes`, `networks`, `display`/Setup,
-`dstar`, `ysf`, `p25`, `nxdn`, `m17`, and the five cross-mode bridges are all
-**done** — each done field verified to have a store key, a renderer line, a view
-projection, and a UI control (see the Prompt 10 parity report at the foot of this
-file). The remaining gaps are: (a) a small set of per-mode MMDVM-Host params that
+`dstar`, `ysf`, `p25`, `nxdn`, `m17` are all **done** — each done field verified to
+have a store key, a renderer line, a view projection, and a UI control (see the
+Prompt 10 parity report at the foot of this file). The five cross-mode bridges are
+**superseded by the RFC-0003 bus architecture** — an intentional departure from
+WPSD's per-bridge-daemon model; their store sections are retained (dormant) but no
+longer rendered or surfaced (see the Cross-mode row). The remaining gaps are: (a) a small set of per-mode MMDVM-Host params that
 are modeled + rendered but not surfaced in the view/UI (YSF Self-Only / Low
 Deviation / TX Hang / Mode Hang / Remote Gateway; P25/NXDN/M17 TX Hang), and (b)
 the modem-calibration, structured-location, POCSAG/DAPNET, FM, and host/OS
@@ -88,7 +90,7 @@ WPSD `<h2>` "MMDVMHost Configuration" (mode enables, then Display Type).
 | M17 Mode | `[M17] Enable` | `modes.m17` | done | requires the MMDVM-Host fork (upstream removed M17). |
 | POCSAG Mode | `[POCSAG] Enable` | `modes.pocsag` | done | enable only; DAPNET config pending. |
 | FM Mode | `[FM] Enable` | `modes.fm` | done | *Waypoint-only toggle* — Pi-Star/WPSD edit FM via the expert INI editor. |
-| YSF2DMR / DMR2YSF / YSF2NXDN / DMR2NXDN / NXDN2DMR Mode | per cross-mode daemon (MMDVM_CM) | `ysf2dmr.enable` / `dmr2ysf.enable` / `ysf2nxdn.enable` / `dmr2nxdn.enable` / `nxdn2dmr.enable` | done | Gateways tab — each bridge is its own store section + INI + `waypoint-<bridge>.service` unit + card. Enable is a Waypoint-model gate (no INI Enable key): it decides whether the bridge contributes a render target, inferred from the file's presence on import. A bridge and the gateway it borrows loopback ports from are mutually exclusive at runtime (deploy `Conflicts=`). YSF2P25 / P252DMR not modeled. |
+| YSF2DMR / DMR2YSF / YSF2NXDN / DMR2NXDN / NXDN2DMR Mode | per cross-mode daemon (MMDVM_CM) | `ysf2dmr.enable` / `dmr2ysf.enable` / `ysf2nxdn.enable` / `dmr2nxdn.enable` / `nxdn2dmr.enable` | superseded | **Superseded by the RFC-0003 bus architecture** — an intentional departure from WPSD's bridge model. The per-bridge-daemon surface is retired: no bridge INI is rendered, no `waypoint-<bridge>.service` is started, and the Gateways tab shows a placeholder. The bridge store sections are kept **dormant** — `SetCrossBridge`/`SetSection` still accept them and they round-trip through Save/Load — so disabling loses nothing (RFC-0001) and RFC-0003's migration can seed bus definitions from the saved masters/passwords/TGs. Apply stops any bridge daemon still running (`RetiredBridgeUnits`), which also closes the stale-daemon-on-disable defect. YSF2P25 / P252DMR were never modeled. |
 | Display Type (None / OLED3 / OLED6 / Nextion / HD44780 / TFT Serial / LCDproc) | `[General] Display` (+ `[OLED] Type`) | `display.type` / `display.oled_type` | done | Setup tab. Node stays `DisplayLevel=0` (status over MQTT); the driver subsections render for clone parity. |
 | Display Port | `[Nextion]` / `[TFT Serial]` `Port` | `display.port` | done | Setup tab — None / modem / ttyACM* / ttyUSB* / ttyS2 / ttyNextionDriver. |
 | Nextion Layout (G4KLX / ON7LDS L2 / L3 / L3 HS) | `[Nextion] ScreenLayout` | `display.nextion_layout` | done | Setup tab — shown only when type = Nextion. |
@@ -238,8 +240,9 @@ mutually exclusive). The deploy's two units — `waypoint-ysfgateway.service` an
 `waypoint-dgidgateway.service` — must carry systemd `Conflicts=` on each other so
 restarting the enabled one stops the other; waypointd's apply restarts whichever
 target `ysfgw.enable_dgid` selects. The YSF2DMR/YSF2NXDN cross-mode bridges (and
-their DMR/NXDN counterparts) are modeled on the **Gateways** tab, not the YSF
-panel — see the Cross-mode bridges row in the mode table.
+their DMR/NXDN counterparts) are **superseded by the RFC-0003 bus architecture** —
+the Gateways tab now shows a placeholder, not per-bridge cards; see the Cross-mode
+row in the mode table.
 
 ### WPSD YSF fields
 
@@ -250,8 +253,8 @@ panel — see the Cross-mode bridges row in the mode table.
 | WiresX Auto Passthrough | `[General] WiresXCommandPassthrough` | `ysfgw.wiresx_passthrough` | done | |
 | Enable DGIdGateway *(WPSD new — D2)* | `DGIdGateway.ini` | `ysfgw.enable_dgid` | done | swaps the YSF render target/unit to DGIdGateway (mutually exclusive with YSFGateway). |
 | YCS Network *(WPSD new — D2)* | `DGIdGateway.ini` `[DGId=5]` | `ysfgw.ycs_network` | done | links the startup reflector/room as a static DG-ID network (Type from the id: FCS room → `FCS`, else `YSF`). |
-| YSF2DMR: CCS7/DMR ID · DMR Master · DMR Options · DMR Master Password · YSF2DMR TG | `YSF2DMR.ini` `[DMR Network]` Id/Address/Options/Password/StartupDstId | `ysf2dmr.dmr_id` / `.master` / `.options` / `.password` / `.tg` | done | Gateways tab; password is redacted/preserved. DMR Options is the WPSD addition. |
-| YSF2NXDN: NXDN ID · NXDN TG | `YSF2NXDN.ini` `[NXDN Network]` Id/StartupDstId | `ysf2nxdn.nxdn_id` / `.tg` | done | Gateways tab. |
+| YSF2DMR: CCS7/DMR ID · DMR Master · DMR Options · DMR Master Password · YSF2DMR TG | *(no INI — retired)* | `ysf2dmr.dmr_id` / `.master` / `.options` / `.password` / `.tg` | superseded | **Superseded by the RFC-0003 bus architecture.** No YSF2DMR.ini is rendered; the store section is kept dormant (data preserved for RFC-0003 migration, password still redacted/preserved). See the Cross-mode row. |
+| YSF2NXDN: NXDN ID · NXDN TG | *(no INI — retired)* | `ysf2nxdn.nxdn_id` / `.tg` | superseded | **Superseded by the RFC-0003 bus architecture** — dormant store section, no INI. |
 | YSF2P25: DMR ID · P25 Host | `YSF2P25.ini` | — | not modeled | out of scope (no P25 cross-gateway). |
 
 ### Waypoint YSF fields (modeled beyond the WPSD panel labels)
@@ -264,10 +267,10 @@ panel — see the Cross-mode bridges row in the mode table.
 | YSF reflector network | `[YSF Network] Enable` | `ysfgw.ysf_network` | done | REFLECTOR NETWORKS card. |
 | FCS room network | `[FCS Network] Enable` | `ysfgw.fcs_network` | done | REFLECTOR NETWORKS card. |
 | APRS position beacon | `[APRS] Enable` | `ysfgw.aprs` | done | REFLECTOR NETWORKS card. |
-| Low Deviation | `[System Fusion] LowDeviation` | `ysf.low_deviation` | partial | store + rendered (default off); **no view/UI** — gap G1. |
-| Self Only | `[System Fusion] SelfOnly` | `ysf.self_only` | partial | store + rendered; **no view/UI** — gap G1. (P25/NXDN/M17 surface their equivalents; YSF does not.) |
-| TX Hang / Mode Hang | `[System Fusion] TXHang` / `ModeHang` | `ysf.tx_hang` / `ysf.mode_hang` | partial | store + rendered (defaults 4 / 20); **no view/UI** — gap G1. |
-| Remote Gateway | `[System Fusion] RemoteGateway` | `ysf.remote_gateway` | partial | store + rendered; **no view/UI** — gap G1. |
+| Low Deviation | `[System Fusion] LowDeviation` | `ysf.low_deviation` | done | store + rendered + `ViewYSF`/`panelYSF` BEHAVIOUR card (gap G1 closed). |
+| Self Only | `[System Fusion] SelfOnly` | `ysf.self_only` | done | store + rendered + BEHAVIOUR card toggle (gap G1 closed); parity with P25/NXDN/M17/D-Star `self_only`. |
+| TX Hang / Mode Hang | `[System Fusion] TXHang` / `ModeHang` | `ysf.tx_hang` / `ysf.mode_hang` | done | store + rendered (defaults 4 / 20) + `panelYSF` HANG TIMERS card (gap G1 closed). |
+| Remote Gateway | `[System Fusion] RemoteGateway` | `ysf.remote_gateway` | done | store + rendered + BEHAVIOUR card toggle (gap G1 closed); parity with P25/NXDN/D-Star `remote_gateway`. |
 
 ---
 
@@ -395,7 +398,14 @@ renderer line, a view projection, **and** a UI control. Result:
 | P25 (NAC, static, self-only, override-UID, remote-gw, voice, hang) | ✅ | ✅ | ✅ | ✅ | **done** |
 | NXDN (RAN, static, self-only, remote-gw, voice, hang) | ✅ | ✅ | ✅ | ✅ | **done** |
 | M17 (CAN, startup, D3 suffix, self-only, allow-enc, revert, hang, voice) | ✅ | ✅ | ✅ | ✅ | **done** |
-| Cross-mode bridges (YSF2DMR/DMR2YSF/YSF2NXDN/DMR2NXDN/NXDN2DMR) | ✅ | ✅ | ✅ | ✅ | **done** |
+| Cross-mode bridges (YSF2DMR/DMR2YSF/YSF2NXDN/DMR2NXDN/NXDN2DMR) | ▪ | ▪ | ▪ | ▪ | **superseded (RFC-0003)** |
+
+> **Cross-mode bridges — superseded.** Verified `done` on 2026-07-13, then retired:
+> the per-bridge-daemon model is replaced by the RFC-0003 bus architecture (an
+> intentional departure from WPSD's bridge model). No bridge INI is rendered, no
+> `waypoint-<bridge>.service` is started, and the Gateways tab shows a placeholder.
+> The bridge store sections are kept **dormant** (data preserved for RFC-0003's
+> migration); apply stops any bridge daemon still running.
 
 **Statuses flipped this pass:** YSF/P25/NXDN/M17 panel headers `pending → done`;
 YSF `ysfgw.startup/suffix/revert/inactivity_timeout/ysf_network/fcs_network/aprs`,
@@ -404,11 +414,11 @@ note was rewritten to match the shipped code.
 
 **Remaining gaps (no field claimed `done` has one):**
 
-- **G1 — YSF `[System Fusion]` mode params not surfaced.** `ysf.self_only`,
-  `ysf.low_deviation`, `ysf.tx_hang`, `ysf.mode_hang`, `ysf.remote_gateway` are in
-  the store and rendered with correct defaults, but are **not** in `ViewYSF` or
-  `panelYSF`. Asymmetry: P25/NXDN/M17 surface their Self-Only / Remote-Gateway
-  equivalents; YSF does not. Marked `partial`.
+- **G1 — YSF `[System Fusion]` mode params not surfaced. (CLOSED)** `ysf.self_only`,
+  `ysf.low_deviation`, `ysf.tx_hang`, `ysf.mode_hang`, `ysf.remote_gateway` are now
+  in `ViewYSF` and `panelYSF` (BEHAVIOUR + HANG TIMERS cards), matching how
+  P25/NXDN/M17/D-Star surface their Self-Only / Remote-Gateway equivalents. Closed
+  alongside the cross-mode-bridge retirement.
 - **G2 — per-mode `TXHang` not surfaced.** `p25.tx_hang`, `nxdn.tx_hang`,
   `m17.tx_hang` are stored + rendered (defaults 5) but absent from the view/UI.
   Not a WPSD panel field, so no WPSD-parity impact; marked `partial`.

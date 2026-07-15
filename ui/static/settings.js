@@ -18,7 +18,7 @@ const TABS = [
   { id: "pocsag",       tag: "PG", label: "POCSAG",       sub: "DAPNET Paging",        crumb: "MODES / POCSAG",          title: "POCSAG (DAPNET)",       desc: "Amateur paging: the paging channel and the DAPNETGateway login (server, callsign, AuthKey). The AuthKey is stored on the node and never shown." },
   { id: "fm",           tag: "FM", label: "FM",           sub: "Analog Voice",         crumb: "MODES / FM",              title: "FM (Analog)",           desc: "Analog FM has no gateway — just the MMDVM-Host [FM] parameters: CTCSS tone, timeout, kerchunk time, audio levels, and access mode." },
   { id: "modes",        tag: "MD", label: "Modes",        sub: "Digital Modes",        crumb: "MODES / DIGITAL",         title: "Digital Mode Control",  desc: "Which digital voice / data modes MMDVM-Host handles. Toggling one restarts the stack on Apply." },
-  { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Bridges",   crumb: "BRIDGES / GATEWAYS",      title: "Cross-Mode Gateways",   desc: "Transcoding bridges between digital voice modes." },
+  { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Routing",   crumb: "BRIDGES / GATEWAYS",      title: "Cross-Mode Gateways",   desc: "Cross-mode routing is being redesigned as a bus system (RFC-0003)." },
   { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "SYSTEM / NETWORK",        title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
   { id: "expert",       tag: "SY", label: "Expert",       sub: "System & Config",      crumb: "SYSTEM / EXPERT",         title: "Expert & System",       desc: "Firmware versions and low-level configuration." },
 ];
@@ -56,7 +56,7 @@ const mhz = (hz) => (hz ? (Number(hz) / 1e6).toFixed(6) : "");
 // Built from the redacted view; fields map to the store's typed sections. The
 // General tab spans two sections (general + modem), so edits route accordingly.
 function buildEdit(c) {
-  const g = c.general || {}, d = c.dmr || {}, cm = c.crossmode || {};
+  const g = c.general || {}, d = c.dmr || {};
   edit = {
     general: { callsign: g.callsign, id: g.dmr_id, duplex: !!g.duplex, power: g.power, location: g.location, url: g.url },
     modem:   { rx_freq_hz: g.rx_freq_hz, tx_freq_hz: g.tx_freq_hz, port: g.modem_port, rx_offset: g.rx_offset, tx_offset: g.tx_offset },
@@ -65,6 +65,7 @@ function buildEdit(c) {
     dmr:     { color_code: d.color_code, id: d.id, embedded_lc_only: !!d.embedded_lc_only, dump_ta_data: !!d.dump_ta_data, beacons: !!d.beacons, self_only: !!d.self_only },
     dmrnet:  { slot1: !!d.slot1, slot2: !!d.slot2 },
     modes:   Object.fromEntries((c.modes || []).map((m) => [m.key, !!m.enabled])),
+    ysf:     ysfFrom(c.ysf || {}),
     // password starts blank (blank = keep the stored one); has_password drives the placeholder.
     networks: (c.networks || []).map((n) => ({ name: n.name, type: n.type || "custom", address: n.address, port: n.port, primary: !!n.primary, options: n.options || "", essid: n.essid || "", enabled: !!n.enabled, password: "", has_password: !!n.has_password, auto_rewrite: !!n.auto_rewrite, tg_list_file: n.tg_list_file || "", xlx_startup: n.xlx_startup || "", xlx_module: n.xlx_module || "", xlx_slot: n.xlx_slot || "2", rewrites: (n.rewrites || []).slice() })),
     routes: (c.routes || []).map((r) => ({ slot: r.slot || "2", tg: r.tg || "", network: r.network || "" })),
@@ -79,54 +80,21 @@ function buildEdit(c) {
     m17gw: m17gwFrom(c.m17 || {}),
     pocsag: pocsagFrom(c.pocsag || {}),
     fm: fmFrom(c.fm || {}),
-    ysf2dmr: ysf2dmrFrom(cm.ysf2dmr || {}),
-    dmr2ysf: dmr2ysfFrom(cm.dmr2ysf || {}),
-    ysf2nxdn: ysf2nxdnFrom(cm.ysf2nxdn || {}),
-    dmr2nxdn: dmr2nxdnFrom(cm.dmr2nxdn || {}),
-    nxdn2dmr: nxdn2dmrFrom(cm.nxdn2dmr || {}),
   };
   dirty = new Set();
   refreshActions();
 }
 
-// --- cross-mode bridges --------------------------------------------------
-// Each bridge is its own store section. The two DMR-master bridges (ysf2dmr,
-// nxdn2dmr) carry a redacted password: it starts blank (blank = keep the stored
-// one) and has_password drives the placeholder, exactly like the ircDDB password.
-function ysf2dmrFrom(b) {
+// The YSF view is flat (mode params + gateway settings); it splits back into two
+// store sections: "ysf" (MMDVM-Host [System Fusion] mode params) and "ysfgw"
+// (YSFGateway.ini). This mirrors p25/p25gw and nxdn/nxdngw. TXHang/ModeHang default
+// to the values MMDVM-Host renders when blank.
+function ysfFrom(y) {
   return {
-    enable: !!b.enable, dmr_id: b.dmr_id || "", master: b.master || "",
-    options: b.options || "", tg: b.tg || "", password: "", has_password: !!b.has_password,
+    self_only: !!y.self_only, low_deviation: !!y.low_deviation,
+    tx_hang: y.tx_hang || "4", mode_hang: y.mode_hang || "20",
+    remote_gateway: !!y.remote_gateway,
   };
-}
-function dmr2ysfFrom(b) {
-  return { enable: !!b.enable, dmr_id: b.dmr_id || "", default_tg: b.default_tg || "" };
-}
-function ysf2nxdnFrom(b) {
-  return { enable: !!b.enable, nxdn_id: b.nxdn_id || "", tg: b.tg || "" };
-}
-function dmr2nxdnFrom(b) {
-  return { enable: !!b.enable, dmr_id: b.dmr_id || "", nxdn_id: b.nxdn_id || "" };
-}
-function nxdn2dmrFrom(b) {
-  return {
-    enable: !!b.enable, dmr_id: b.dmr_id || "", master: b.master || "",
-    options: b.options || "", tg: b.tg || "", nxdn_tg: b.nxdn_tg || "",
-    password: "", has_password: !!b.has_password,
-  };
-}
-
-// cleanBridge strips the UI-only has_password flag (the store rejects unknown
-// fields) and omits password when blank, so the merge keeps the stored secret.
-// A supplied password replaces it. No-op for a bridge that has no password field.
-function cleanBridge(b) {
-  const out = {};
-  for (const k in b) {
-    if (k === "has_password") continue;
-    if (k === "password" && !b[k]) continue; // blank = keep stored
-    out[k] = b[k];
-  }
-  return out;
 }
 
 // The D-Star view is flat (mode params + gateway settings); it splits back into
@@ -1128,47 +1096,16 @@ async function confirmNetwork(token) {
   }
 }
 
-// The Gateways tab: one card per cross-mode transcoding bridge (MMDVM_CM). Each
-// card has its own Enable toggle — the bridge runs as its own daemon, so enabling
-// it renders its INI and starts its unit on Apply (render.go RenderTargets). The
-// two DMR-master bridges (YSF2DMR, NXDN2DMR) add a master + redacted password +
-// options + target TG; the others are minimal. pwRow renders a write-only-secret
-// input (blank keeps the stored one), matching the D-Star ircDDB password.
-function pwRow(sec, hasPw) {
-  const val = (edit[sec] || {}).password || "";
-  return row("DMR master password", `<input data-sec="${esc(sec)}" data-key="password" type="password" value="${esc(val)}" placeholder="${hasPw ? "•••••• unchanged" : "master password"}">`);
-}
+// The Gateways tab: the per-bridge-daemon cross-mode surface (YSF2DMR/DMR2YSF/
+// YSF2NXDN/DMR2NXDN/NXDN2DMR) is retired in favour of the RFC-0003 bus
+// architecture — a user creates a named bus and attaches modes to it, and traffic
+// entering from any attached mode is converted and emitted to the others. The tab
+// remains as a placeholder so the redesign has a home; the bridge store sections
+// are kept dormant (disabling loses nothing — RFC-0001), so no data is lost.
 function panelGateways() {
-  const y2d = edit.ysf2dmr || {}, n2d = edit.nxdn2dmr || {};
-  const ysf2dmr = card("YSF2DMR — YSF → DMR",
-    toggle("ysf2dmr", "enable", "Bridge", "ENABLED", "DISABLED") +
-    input("ysf2dmr", "dmr_id", { label: "CCS7 / DMR ID" }) +
-    input("ysf2dmr", "master", { label: "DMR master (address)" }) +
-    pwRow("ysf2dmr", y2d.has_password) +
-    input("ysf2dmr", "tg", { label: "YSF2DMR talkgroup", accent: true }) +
-    input("ysf2dmr", "options", { label: "DMR options (advanced)" }));
-  const nxdn2dmr = card("NXDN2DMR — NXDN → DMR",
-    toggle("nxdn2dmr", "enable", "Bridge", "ENABLED", "DISABLED") +
-    input("nxdn2dmr", "dmr_id", { label: "CCS7 / DMR ID" }) +
-    input("nxdn2dmr", "master", { label: "DMR master (address)" }) +
-    pwRow("nxdn2dmr", n2d.has_password) +
-    input("nxdn2dmr", "tg", { label: "DMR talkgroup", accent: true }) +
-    input("nxdn2dmr", "nxdn_tg", { label: "NXDN talkgroup" }) +
-    input("nxdn2dmr", "options", { label: "DMR options (advanced)" }));
-  const dmr2ysf = card("DMR2YSF — DMR → YSF",
-    toggle("dmr2ysf", "enable", "Bridge", "ENABLED", "DISABLED") +
-    input("dmr2ysf", "dmr_id", { label: "CCS7 / DMR ID" }) +
-    input("dmr2ysf", "default_tg", { label: "Default DMR talkgroup", accent: true }));
-  const ysf2nxdn = card("YSF2NXDN — YSF → NXDN",
-    toggle("ysf2nxdn", "enable", "Bridge", "ENABLED", "DISABLED") +
-    input("ysf2nxdn", "nxdn_id", { label: "NXDN ID" }) +
-    input("ysf2nxdn", "tg", { label: "NXDN talkgroup", accent: true }));
-  const dmr2nxdn = card("DMR2NXDN — DMR → NXDN",
-    toggle("dmr2nxdn", "enable", "Bridge", "ENABLED", "DISABLED") +
-    input("dmr2nxdn", "dmr_id", { label: "CCS7 / DMR ID" }) +
-    input("dmr2nxdn", "nxdn_id", { label: "NXDN ID" }));
-  const hint = note("Each bridge is a standalone transcoding daemon. Enabling one renders its INI and starts its unit on Apply; the DMR-master bridges log into their own master (password stored on the node, never shown). A bridge and the gateway it borrows loopback ports from can't run at once.");
-  return `<div class="grid2"><div class="stack">${ysf2dmr}${nxdn2dmr}</div><div class="stack">${dmr2ysf}${ysf2nxdn}${dmr2nxdn}</div></div>${hint}`;
+  const placeholder = card("CROSS-MODE ROUTING",
+    note("Cross-mode routing is being redesigned as a bus system (RFC-0003). The old per-mode transcoding bridges (YSF2DMR, DMR2YSF, YSF2NXDN, DMR2NXDN, NXDN2DMR) have been retired; any settings you saved for them are preserved and will seed the new bus definitions."));
+  return `<div class="stack">${placeholder}</div>`;
 }
 
 function panelYSF() {
@@ -1181,9 +1118,18 @@ function panelYSF() {
     input("ysfgw", "suffix", { label: "Suffix (RPT/ND)" }) +
     row("Startup reflector", `<input data-sec="ysfgw" data-key="startup" list="ysf-refs" value="${esc(startup)}" placeholder="e.g. FCS00290 or a YSF reflector"><datalist id="ysf-refs">${opts}</datalist>`) +
     input("ysfgw", "inactivity_timeout", { label: "Inactivity revert", unit: "min" }));
+  // Mode params render into MMDVM-Host's [System Fusion] (self_only, low_deviation,
+  // remote_gateway, tx_hang, mode_hang) — the "ysf" store section, split from the
+  // "ysfgw" gateway section like p25/p25gw and nxdn/nxdngw.
   const behaviour = card("BEHAVIOUR",
+    toggleRow("ysf", "self_only", "Self only (accept only my callsign)") +
+    toggleRow("ysf", "low_deviation", "Low deviation (narrow-band C4FM)") +
+    toggleRow("ysf", "remote_gateway", "Remote gateway (advanced — leave off for local control)") +
     toggleRow("ysfgw", "wiresx_passthrough", "Wires-X passthrough (advanced — leave off for local control)") +
     toggleRow("ysfgw", "revert", "Revert to startup on inactivity"));
+  const timers = card("HANG TIMERS",
+    input("ysf", "tx_hang", { label: "TX hang", unit: "sec" }) +
+    input("ysf", "mode_hang", { label: "Mode hang", unit: "sec" }));
   const networks = card("REFLECTOR NETWORKS",
     toggleRow("ysfgw", "ysf_network", "YSF reflector network") +
     toggleRow("ysfgw", "fcs_network", "FCS room network") +
@@ -1196,7 +1142,7 @@ function panelYSF() {
     toggleRow("ysfgw", "ycs_network", "Link the startup reflector as a DG-ID network (YCS)") +
     toggleRow("ysfgw", "upper_hostfiles", "UPPERCASE reflector names in the hostlist"));
   const hint = ysfRefs.length ? "" : note("Reflector list not loaded yet (fetched from the YSF register on a schedule). You can still type a reflector id above.");
-  return `<div class="grid2">${gateway}<div class="stack">${behaviour}${networks}${dgid}</div></div>${hint}`;
+  return `<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}${networks}${dgid}</div></div>${hint}`;
 }
 
 function panelP25() {
@@ -1430,7 +1376,6 @@ async function apply() {
         : sec === "routes" ? (edit.routes || []).filter((r) => r.tg && r.network)
         : sec === "dstargw" ? cleanDstargw(edit.dstargw)
         : sec === "pocsag" ? cleanPocsag(edit.pocsag)
-        : (sec === "ysf2dmr" || sec === "nxdn2dmr") ? cleanBridge(edit[sec])
         : edit[sec];
       const r = await fetch("/api/config/" + sec, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!r.ok) throw new Error(sec + ": " + (await r.text()).trim());

@@ -275,13 +275,19 @@ func (s *server) configApply(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "restart: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_ = s.store.RecordApply("api", map[string]any{"restarted": restarted})
+	// Stop any retired cross-mode bridge daemon (MMDVM_CM) still running from the old
+	// per-bridge surface. The bridges no longer contribute a render target (RFC-0003
+	// bus architecture supersedes them), so they are never restarted; stopping any
+	// that are still active on every apply closes the stale-daemon-on-disable defect
+	// by construction. Best-effort: a stop failure is logged, not fatal to the apply.
+	stopped := s.stopUnitsIfActive(config.RetiredBridgeUnits())
+	_ = s.store.RecordApply("api", map[string]any{"restarted": restarted, "stopped": stopped})
 	// The native LCD driver renders no INI and restarts no unit, so it is absent
 	// from targets/restarted — bring the panel in line with the applied config
 	// here (a no-op unless the LCD section changed).
 	s.reloadLCD(m)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"applied": true, "restarted": restarted})
+	_ = json.NewEncoder(w).Encode(map[string]any{"applied": true, "restarted": restarted, "stopped": stopped})
 }
 
 // restartSet is the deduped, ordered list of units to restart for a set of
@@ -299,18 +305,47 @@ func restartSet(targets []config.RenderTarget) []string {
 	return units
 }
 
+// systemctlRun invokes systemctl and returns its combined output. It is a package
+// variable so tests can substitute a fake (there is no systemd under `go test`).
+var systemctlRun = func(args ...string) ([]byte, error) {
+	return exec.Command("systemctl", args...).CombinedOutput()
+}
+
 func (s *server) restartUnits(units []string) ([]string, error) {
 	var done []string
 	for _, u := range units {
 		if u == "" {
 			continue
 		}
-		if out, err := exec.Command("systemctl", "restart", u).CombinedOutput(); err != nil {
+		if out, err := systemctlRun("restart", u); err != nil {
 			return done, fmt.Errorf("%s: %v: %s", u, err, strings.TrimSpace(string(out)))
 		}
 		done = append(done, u)
 	}
 	return done, nil
+}
+
+// stopUnitsIfActive stops each unit that is currently active, skipping ones that
+// are already inactive or not installed (`is-active` exits non-zero for both). A
+// stop failure is logged and skipped rather than failing the apply — a lingering
+// bridge that refuses to stop must not block a config change. Returns the units it
+// actually stopped.
+func (s *server) stopUnitsIfActive(units []string) []string {
+	var stopped []string
+	for _, u := range units {
+		if u == "" {
+			continue
+		}
+		if _, err := systemctlRun("is-active", "--quiet", u); err != nil {
+			continue // inactive or unknown unit — nothing to stop
+		}
+		if out, err := systemctlRun("stop", u); err != nil {
+			log.Printf("apply: stop %s: %v: %s", u, err, strings.TrimSpace(string(out)))
+			continue
+		}
+		stopped = append(stopped, u)
+	}
+	return stopped
 }
 
 // seedStore imports the existing INI files into a fresh store on first run, so
@@ -724,11 +759,9 @@ func main() {
 	dstargwINI := flag.String("dstargateway-ini", "/home/pi-star/waypoint/etc/dstargateway.cfg", "dstargateway.cfg render target")
 	m17gwINI := flag.String("m17gateway-ini", "/home/pi-star/waypoint/etc/M17Gateway.ini", "M17Gateway.ini render target")
 	dapnetgwINI := flag.String("dapnetgateway-ini", "/home/pi-star/waypoint/etc/DAPNETGateway.ini", "DAPNETGateway.ini render target (POCSAG paging gateway)")
-	ysf2dmrINI := flag.String("ysf2dmr-ini", "/home/pi-star/waypoint/etc/YSF2DMR.ini", "YSF2DMR.ini render target (rendered only when the bridge is enabled)")
-	dmr2ysfINI := flag.String("dmr2ysf-ini", "/home/pi-star/waypoint/etc/DMR2YSF.ini", "DMR2YSF.ini render target (rendered only when the bridge is enabled)")
-	ysf2nxdnINI := flag.String("ysf2nxdn-ini", "/home/pi-star/waypoint/etc/YSF2NXDN.ini", "YSF2NXDN.ini render target (rendered only when the bridge is enabled)")
-	dmr2nxdnINI := flag.String("dmr2nxdn-ini", "/home/pi-star/waypoint/etc/DMR2NXDN.ini", "DMR2NXDN.ini render target (rendered only when the bridge is enabled)")
-	nxdn2dmrINI := flag.String("nxdn2dmr-ini", "/home/pi-star/waypoint/etc/NXDN2DMR.ini", "NXDN2DMR.ini render target (rendered only when the bridge is enabled)")
+	// The cross-mode bridge render-target flags (ysf2dmr-ini … nxdn2dmr-ini) are
+	// retired with the per-bridge-daemon model (RFC-0003 bus architecture). No bridge
+	// INI is rendered any more; apply stops any bridge daemon still running instead.
 	ysfHosts := flag.String("ysf-hosts", "/home/pi-star/waypoint/etc/YSFHosts.json", "cached YSF reflector hostlist path")
 	ysfHostsURL := flag.String("ysf-hosts-url", ysfhosts.DefaultURL, "YSF reflector hostlist source URL")
 	p25Hosts := flag.String("p25-hosts", "/home/pi-star/waypoint/etc/P25Hosts.json", "cached P25 reflector hostlist path")
@@ -763,7 +796,6 @@ func main() {
 			MMDVM: *mmdvmINI, DMRGateway: *dmrgwINI, YSFGateway: *ysfgwINI, DGIdGateway: *dgidgwINI,
 			P25Gateway: *p25gwINI, NXDNGateway: *nxdngwINI, DStarGateway: *dstargwINI, M17Gateway: *m17gwINI,
 			DAPNETGateway: *dapnetgwINI,
-			YSF2DMR:       *ysf2dmrINI, DMR2YSF: *dmr2ysfINI, YSF2NXDN: *ysf2nxdnINI, DMR2NXDN: *dmr2nxdnINI, NXDN2DMR: *nxdn2dmrINI,
 		},
 		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts,
 		netKeyfileDir: *nmKeyfileDir, netConfirmTimeout: *netConfirmTimeout, netBackend: *netBackend,

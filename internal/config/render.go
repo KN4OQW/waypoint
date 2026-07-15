@@ -21,14 +21,11 @@ type Paths struct {
 	DStarGateway  string
 	M17Gateway    string
 	DAPNETGateway string // POCSAG paging gateway (rendered only when POCSAG mode is enabled)
-	// Cross-mode bridge INIs (MMDVM_CM). Each is rendered only when its bridge is
-	// enabled (RenderTargets), so a disabled bridge writes no file and restarts no
-	// unit.
-	YSF2DMR  string
-	DMR2YSF  string
-	YSF2NXDN string
-	DMR2NXDN string
-	NXDN2DMR string
+	// The cross-mode bridge INIs (MMDVM_CM: YSF2DMR/DMR2YSF/YSF2NXDN/DMR2NXDN/
+	// NXDN2DMR) once had Paths fields here. The per-bridge-daemon model is retired in
+	// favour of the RFC-0003 bus architecture: RenderTargets no longer emits a bridge
+	// INI, so there is nothing to locate. The bridge store sections are retained
+	// (dormant) for RFC-0003's migration — see model.go sections() and RetiredBridgeUnits.
 }
 
 // systemd units restarted when a target's file changes. Each render target
@@ -44,12 +41,28 @@ const (
 	unitM17Gateway    = "waypoint-m17gateway.service"
 	unitDAPNETGateway = "waypoint-dapnetgateway.service"
 
+	// Cross-mode transcoding bridge units (MMDVM_CM). The per-bridge-daemon model is
+	// retired for the RFC-0003 bus architecture, so RenderTargets no longer restarts
+	// them. They remain named here only so apply can STOP any that a node was still
+	// running under the old surface — see RetiredBridgeUnits.
 	unitYSF2DMR  = "waypoint-ysf2dmr.service"
 	unitDMR2YSF  = "waypoint-dmr2ysf.service"
 	unitYSF2NXDN = "waypoint-ysf2nxdn.service"
 	unitDMR2NXDN = "waypoint-dmr2nxdn.service"
 	unitNXDN2DMR = "waypoint-nxdn2dmr.service"
 )
+
+// retiredBridgeUnits are the cross-mode transcoding bridge daemons (MMDVM_CM)
+// retired in favour of the RFC-0003 bus architecture. RenderTargets no longer
+// contributes a target for them, so apply never restarts them; instead apply stops
+// any that are still active, which closes the stale-daemon-on-disable defect by
+// construction (a bridge disabled under the old surface no longer lingers).
+var retiredBridgeUnits = []string{unitYSF2DMR, unitDMR2YSF, unitYSF2NXDN, unitDMR2NXDN, unitNXDN2DMR}
+
+// RetiredBridgeUnits returns the systemd units apply must stop if they are still
+// running (see retiredBridgeUnits). The slice is copied so callers cannot mutate
+// the registry.
+func RetiredBridgeUnits() []string { return append([]string(nil), retiredBridgeUnits...) }
 
 // RenderTarget ties one generated INI to the daemon unit that consumes it and
 // the pure function that produces it. A mode contributes its own target rather
@@ -94,27 +107,12 @@ func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 	if m.Modes.POCSAG {
 		targets = append(targets, RenderTarget{Path: paths.DAPNETGateway, Unit: unitDAPNETGateway, Render: (*Model).RenderDAPNETGateway})
 	}
-	// Cross-mode bridges append after the always-on gateways, and only when
-	// enabled: an off bridge contributes no target, so apply neither writes its
-	// INI nor restarts its unit (stopping an already-running bridge on disable is
-	// a deploy/systemd concern, like the YSFGateway/DGIdGateway Conflicts=). This
-	// keeps the leading MMDVM/DMRGateway indices fixed for the apply/restart order.
-	for _, b := range []struct {
-		on     bool
-		path   string
-		unit   string
-		render func(*Model) string
-	}{
-		{m.YSF2DMR.Enable, paths.YSF2DMR, unitYSF2DMR, (*Model).RenderYSF2DMR},
-		{m.DMR2YSF.Enable, paths.DMR2YSF, unitDMR2YSF, (*Model).RenderDMR2YSF},
-		{m.YSF2NXDN.Enable, paths.YSF2NXDN, unitYSF2NXDN, (*Model).RenderYSF2NXDN},
-		{m.DMR2NXDN.Enable, paths.DMR2NXDN, unitDMR2NXDN, (*Model).RenderDMR2NXDN},
-		{m.NXDN2DMR.Enable, paths.NXDN2DMR, unitNXDN2DMR, (*Model).RenderNXDN2DMR},
-	} {
-		if b.on {
-			targets = append(targets, RenderTarget{Path: b.path, Unit: b.unit, Render: b.render})
-		}
-	}
+	// The cross-mode transcoding bridges (MMDVM_CM) used to append here when enabled.
+	// The per-bridge-daemon model is retired for the RFC-0003 bus architecture, so no
+	// bridge ever contributes a target: apply writes no bridge INI and restarts no
+	// bridge unit, regardless of the (dormant) bridge sections' Enable flags. Apply
+	// instead STOPS any bridge daemon still running from the old surface
+	// (RetiredBridgeUnits), which closes the stale-daemon-on-disable defect.
 	return targets
 }
 
@@ -1098,240 +1096,6 @@ func (m *Model) RenderDMRGateway() string {
 		lines = append(lines, networkRewrites(net, m.Routes)...)
 		sect(&b, fmt.Sprintf("DMR Network %d", n), lines...)
 	}
-	return b.String()
-}
-
-// --- cross-mode transcoding bridges (MMDVM_CM) ---------------------------
-
-// Cross-mode bridge fixed ports + shared lookup paths, transcribed from the
-// MMDVM_CM sample INIs. Each bridge borrows the loopback of the gateway it reads
-// from or writes to (YSF 3200/4200, NXDN 14020/14021, DMR 62031/62032), so a
-// bridge and that gateway cannot run at once — a deploy/systemd concern (like the
-// YSFGateway/DGIdGateway Conflicts=), not modeled here. The renderers emit a
-// faithful, startable INI; the store owns only the operator-facing keys.
-const (
-	ysf2dmrYSFLocal  = "42013" // YSF2DMR  [YSF Network] LocalPort
-	ysf2nxdnYSFLocal = "42014" // YSF2NXDN [YSF Network] LocalPort
-	ysfNetworkPort   = "42000" // YSFGateway [YSF Network] Port the YSF-side bridges connect to
-
-	nxdn2dmrNXDNLocal = "42022" // NXDN2DMR [NXDN Network] LocalPort
-	nxdnNetworkPort   = "14050" // NXDNGateway [Network] Port the NXDN-side bridge connects to
-
-	dmrMasterPort = "62031" // upstream DMR master port for the master-logging bridges (YSF2DMR/NXDN2DMR)
-
-	crossDMRIdsFile  = "/usr/local/etc/DMRIds.dat"
-	crossNXDNIdsFile = "/usr/local/etc/NXDN.csv"
-)
-
-// bridgeLog is the pre-MQTT [Log] block shared by every MMDVM_CM bridge: like
-// M17Gateway these tools have no libmosquitto, so they log to the console
-// (DisplayLevel=1 → the systemd journal) and write no file (FileLevel=0). Their
-// own link status is therefore not on the dashboard data plane; RF activity still
-// surfaces through MMDVM-Host.
-func bridgeLog(b *strings.Builder, root string) {
-	sect(b, "Log",
-		kv("DisplayLevel", "1"),
-		kv("FileLevel", "0"),
-		kv("FilePath", "/tmp"),
-		kv("FileRoot", root),
-	)
-}
-
-// bridgeInfo is the shared [Info] block (station frequencies/power/location).
-func bridgeInfo(b *strings.Builder, m *Model) {
-	sect(b, "Info",
-		kv("RXFrequency", m.Modem.RXFreqHz),
-		kv("TXFrequency", m.Modem.TXFreqHz),
-		kv("Power", def(m.General.Power, "1")),
-		kv("Location", def(m.General.Location, "Waypoint")),
-		kv("Description", "Waypoint"),
-	)
-}
-
-// dmrMasterNet writes the [DMR Network] block for a bridge that logs into its own
-// upstream DMR master (YSF2DMR, NXDN2DMR): the DMR ID, master address+password,
-// target talkgroup (StartupDstId, group call so StartupPC=0), and the optional
-// WPSD Options line (omitted when blank, like a DMR network's).
-func dmrMasterNet(b *strings.Builder, dmrID, master, password, tg, options string) {
-	lines := []string{
-		kv("Id", dmrID),
-		kv("StartupDstId", def(tg, "9990")),
-		kv("StartupPC", "0"),
-		kv("Address", master),
-		kv("Port", dmrMasterPort),
-		kv("Jitter", "500"),
-		kv("Password", password),
-	}
-	if strings.TrimSpace(options) != "" {
-		lines = append(lines, kv("Options", options))
-	}
-	lines = append(lines, kv("Debug", "0"))
-	sect(b, "DMR Network", lines...)
-}
-
-// RenderYSF2DMR renders a complete YSF2DMR.ini — the fat bridge. It reads System
-// Fusion from YSFGateway's [YSF Network] (port 42000) and re-emits on its own DMR
-// master. Callsign/frequencies come from the shared station config; the DMR ID,
-// master, password, options and target TG come from the bridge section.
-func (m *Model) RenderYSF2DMR() string {
-	var b strings.Builder
-	b.WriteString(generatedHeader)
-
-	bridgeInfo(&b, m)
-	sect(&b, "YSF Network",
-		kv("Callsign", m.General.Callsign),
-		kv("Suffix", "ND"),
-		kv("DstAddress", "127.0.0.1"),
-		kv("DstPort", ysfNetworkPort),
-		kv("LocalAddress", "127.0.0.1"),
-		kv("LocalPort", ysf2dmrYSFLocal),
-		kb("EnableWiresX", true),
-		kb("RemoteGateway", false),
-		kv("Daemon", "0"),
-	)
-	dmrMasterNet(&b, firstNonEmpty(m.YSF2DMR.DMRId, m.DMR.ID, m.General.ID),
-		m.YSF2DMR.Master, m.YSF2DMR.Password, m.YSF2DMR.TG, m.YSF2DMR.Options)
-	sect(&b, "DMR Id Lookup",
-		kv("File", crossDMRIdsFile),
-		kv("Time", "24"),
-	)
-	bridgeLog(&b, "YSF2DMR")
-	return b.String()
-}
-
-// RenderDMR2YSF renders a complete DMR2YSF.ini. It rides the local DMRGateway
-// loopback (62031/62032) on the DMR side and takes over the YSF 3200/4200 pair on
-// the YSF side. DefaultTG is the DMR-side default destination talkgroup.
-func (m *Model) RenderDMR2YSF() string {
-	var b strings.Builder
-	b.WriteString(generatedHeader)
-
-	sect(&b, "YSF Network",
-		kv("Callsign", m.General.Callsign),
-		kv("GatewayAddress", "127.0.0.1"),
-		kv("GatewayPort", ysfMMDVMGatewayPort),
-		kv("LocalAddress", "127.0.0.1"),
-		kv("LocalPort", ysfMMDVMLocalPort),
-		kv("FCSRooms", fcsRoomsPath),
-		kv("Daemon", "0"),
-		kv("Debug", "0"),
-	)
-	sect(&b, "DMR Network",
-		kv("Id", firstNonEmpty(m.DMR2YSF.DMRId, m.DMR.ID, m.General.ID)),
-		kv("RptAddress", "127.0.0.1"),
-		kv("RptPort", def(m.DMRNet.LocalPort, "62032")),
-		kv("LocalAddress", "127.0.0.1"),
-		kv("LocalPort", def(m.DMRNet.GatewayPort, "62031")),
-		kv("DefaultDstTG", def(m.DMR2YSF.DefaultTG, "9")),
-		kv("Debug", "0"),
-	)
-	sect(&b, "DMR Id Lookup",
-		kv("File", crossDMRIdsFile),
-		kv("Time", "24"),
-	)
-	bridgeLog(&b, "DMR2YSF")
-	return b.String()
-}
-
-// RenderYSF2NXDN renders a complete YSF2NXDN.ini. It reads System Fusion from
-// YSFGateway's [YSF Network] and re-emits on the NXDN 14020/14021 pair. NXDNId is
-// the id it registers with; TG is the target NXDN talkgroup.
-func (m *Model) RenderYSF2NXDN() string {
-	var b strings.Builder
-	b.WriteString(generatedHeader)
-
-	bridgeInfo(&b, m)
-	sect(&b, "YSF Network",
-		kv("Callsign", m.General.Callsign),
-		kv("Suffix", "ND"),
-		kv("DstAddress", "127.0.0.1"),
-		kv("DstPort", ysfNetworkPort),
-		kv("LocalAddress", "127.0.0.1"),
-		kv("LocalPort", ysf2nxdnYSFLocal),
-		kb("EnableWiresX", true),
-		kv("Daemon", "0"),
-	)
-	sect(&b, "NXDN Network",
-		kv("Id", m.YSF2NXDN.NXDNId),
-		kv("StartupDstId", def(m.YSF2NXDN.TG, "0")),
-		kv("LocalAddress", "127.0.0.1"),
-		kv("LocalPort", nxdnMMDVMLocalPort),
-		kv("DstAddress", "127.0.0.1"),
-		kv("DstPort", nxdnMMDVMGatewayPort),
-		kv("Debug", "0"),
-	)
-	sect(&b, "NXDN Id Lookup",
-		kv("File", crossNXDNIdsFile),
-		kv("Time", "24"),
-	)
-	bridgeLog(&b, "YSF2NXDN")
-	return b.String()
-}
-
-// RenderDMR2NXDN renders a complete DMR2NXDN.ini. It rides the local DMRGateway
-// loopback on the DMR side and the NXDN 14020/14021 pair on the NXDN side. NXDNId
-// is the NXDN-side default id.
-func (m *Model) RenderDMR2NXDN() string {
-	var b strings.Builder
-	b.WriteString(generatedHeader)
-
-	sect(&b, "NXDN Network",
-		kv("GatewayAddress", "127.0.0.1"),
-		kv("GatewayPort", nxdnMMDVMGatewayPort),
-		kv("LocalAddress", "127.0.0.1"),
-		kv("LocalPort", nxdnMMDVMLocalPort),
-		kv("DefaultID", def(m.DMR2NXDN.NXDNId, "65519")),
-		kv("Daemon", "0"),
-	)
-	sect(&b, "DMR Network",
-		kv("Id", firstNonEmpty(m.DMR2NXDN.DMRId, m.DMR.ID, m.General.ID)),
-		kv("RptAddress", "127.0.0.1"),
-		kv("RptPort", def(m.DMRNet.LocalPort, "62032")),
-		kv("LocalAddress", "127.0.0.1"),
-		kv("LocalPort", def(m.DMRNet.GatewayPort, "62031")),
-		kv("Debug", "0"),
-	)
-	sect(&b, "DMR Id Lookup",
-		kv("File", crossDMRIdsFile),
-		kv("Time", "24"),
-	)
-	sect(&b, "NXDN Id Lookup",
-		kv("File", crossNXDNIdsFile),
-		kv("Time", "24"),
-	)
-	bridgeLog(&b, "DMR2NXDN")
-	return b.String()
-}
-
-// RenderNXDN2DMR renders a complete NXDN2DMR.ini — the other fat bridge. It reads
-// NXDN from NXDNGateway (port 14050) and re-emits on its own DMR master, exactly
-// like YSF2DMR. NXDNTG is the NXDN-side listen talkgroup.
-func (m *Model) RenderNXDN2DMR() string {
-	var b strings.Builder
-	b.WriteString(generatedHeader)
-
-	bridgeInfo(&b, m)
-	sect(&b, "NXDN Network",
-		kv("Callsign", m.General.Callsign),
-		kv("TG", def(m.NXDN2DMR.NXDNTG, "20")),
-		kv("DstAddress", "127.0.0.1"),
-		kv("DstPort", nxdnNetworkPort),
-		kv("LocalAddress", "127.0.0.1"),
-		kv("LocalPort", nxdn2dmrNXDNLocal),
-		kv("DefaultID", "65519"),
-		kv("Daemon", "0"),
-	)
-	dmrMasterNet(&b, firstNonEmpty(m.NXDN2DMR.DMRId, m.DMR.ID, m.General.ID),
-		m.NXDN2DMR.Master, m.NXDN2DMR.Password, m.NXDN2DMR.TG, m.NXDN2DMR.Options)
-	sect(&b, "DMR Id Lookup",
-		kv("File", crossDMRIdsFile),
-		kv("Time", "24"),
-	)
-	sect(&b, "NXDN Id Lookup",
-		kv("File", crossNXDNIdsFile),
-		kv("Time", "24"),
-	)
-	bridgeLog(&b, "NXDN2DMR")
 	return b.String()
 }
 
