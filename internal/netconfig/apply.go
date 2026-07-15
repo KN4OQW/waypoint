@@ -36,9 +36,23 @@ type Guard struct {
 	apply func(Model) error
 	// newToken mints confirm tokens; injectable so tests get deterministic ones.
 	newToken func() string
+	// logf reports lifecycle events (notably an automatic rollback — an operator
+	// must see when the node reverted itself). No-op unless set via SetLogger.
+	logf func(format string, args ...any)
 
 	mu      sync.Mutex
 	pending *pending
+}
+
+// SetLogger wires a logger for guard lifecycle events (e.g. log.Printf). The
+// auto-rollback path especially should be visible: it fires server-side with no
+// HTTP response to carry the news.
+func (g *Guard) SetLogger(logf func(format string, args ...any)) { g.logf = logf }
+
+func (g *Guard) log(format string, args ...any) {
+	if g.logf != nil {
+		g.logf(format, args...)
+	}
 }
 
 type pending struct {
@@ -155,7 +169,11 @@ func (g *Guard) onTimeout(p *pending) {
 	}
 	p.done = true
 	p.outcome = OutcomeRolledBack
-	_ = g.cp.Rollback(p.handle)
+	if err := g.cp.Rollback(p.handle); err != nil {
+		g.log("network apply auto-rollback FAILED after confirm deadline: %v", err)
+		return
+	}
+	g.log("network apply auto-rolled back: no confirm before the deadline; pre-apply state restored")
 }
 
 // PendingStatus reports the in-flight apply (if any) so the UI can render the

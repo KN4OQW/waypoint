@@ -48,8 +48,23 @@ func connUUID(name string) string {
 // FileName is the keyfile basename for a connection: waypoint-<name>.nmconnection.
 func FileName(name string) string { return profilePrefix + name + keyfileExt }
 
-// profileID is the [connection] id for a connection: waypoint-<name>.
-func profileID(name string) string { return profilePrefix + name }
+// ProfileID is the [connection] id / nmcli name for a connection: waypoint-<name>.
+// The apply path activates a change by bringing this id up on its device.
+func ProfileID(name string) string { return profilePrefix + name }
+
+// profileID is the internal alias used by the renderer.
+func profileID(name string) string { return ProfileID(name) }
+
+// ProfileIDs returns the NM connection ids for every managed connection, in model
+// order — the set the apply path brings up so a saved change reaches the live
+// device (not just the keyfile on disk).
+func (m Model) ProfileIDs() []string {
+	ids := make([]string, 0, len(m.Connections))
+	for _, c := range m.Connections {
+		ids = append(ids, ProfileID(c.Name))
+	}
+	return ids
+}
 
 // RenderConnection compiles one Connection into a NetworkManager keyfile. It is a
 // pure function: the same Connection always yields byte-identical output (map
@@ -66,11 +81,17 @@ func (c Connection) render() string {
 		writeKV(&b, "interface-name", c.Interface)
 	}
 	writeKV(&b, "autoconnect", boolKey(c.Autoconnect))
+	if p := strings.TrimSpace(c.Priority); p != "" && p != "0" {
+		writeKV(&b, "autoconnect-priority", p)
+	}
 
 	if c.Type == TypeWiFi {
 		b.WriteString("\n[wifi]\n")
 		writeKV(&b, "mode", "infrastructure")
 		writeKV(&b, "ssid", c.WiFi.SSID)
+		if c.WiFi.Hidden {
+			writeKV(&b, "hidden", "true")
+		}
 		if c.WiFi.PSK != "" {
 			b.WriteString("\n[wifi-security]\n")
 			writeKV(&b, "key-mgmt", "wpa-psk")
@@ -111,9 +132,15 @@ func (ip IPv4) render(b *strings.Builder) {
 	}
 	if len(ip.DNS) > 0 {
 		writeKV(b, "dns", strings.Join(ip.DNS, ";")+";")
+		// With DHCP, operator DNS is an OVERRIDE: ignore-auto-dns drops the
+		// DHCP-provided servers so only these are used (the prompt's "DNS override
+		// also allowed with DHCP"). With a static address the servers stand alone.
 		if method == "auto" {
 			writeKV(b, "ignore-auto-dns", "true")
 		}
+	}
+	if len(ip.SearchDomains) > 0 {
+		writeKV(b, "dns-search", strings.Join(ip.SearchDomains, ";")+";")
 	}
 }
 
@@ -157,10 +184,13 @@ func (m Model) RenderTargets(dir string) []Target {
 	return out
 }
 
-// Validate rejects a model the renderer cannot compile: an unknown connection
-// type, a blank/duplicate name, or a manual IPv4 method with no address. It runs
-// before an apply so a bad model is caught at save/apply time rather than
-// producing an NM profile that silently fails to load.
+// Validate rejects a model the renderer cannot compile or that would produce a
+// dangerous/broken profile: an unknown connection type, a blank/duplicate name, a
+// Wi-Fi profile with no SSID or a malformed country, or an IPv4 config that fails
+// sanity (empty static config, unparseable address/gateway, gateway outside the
+// subnet). It runs before an apply so a bad model is caught at save/apply time
+// rather than after NM has been handed a profile that silently fails to load — or
+// worse, one that applies and strands the node.
 func (m Model) Validate() error {
 	seen := map[string]bool{}
 	for _, c := range m.Connections {
@@ -174,8 +204,13 @@ func (m Model) Validate() error {
 		if c.Type != TypeEthernet && c.Type != TypeWiFi {
 			return fmt.Errorf("netconfig: connection %q has unknown type %q", c.Name, c.Type)
 		}
-		if c.IPv4.Method == "manual" && c.IPv4.Address == "" {
-			return fmt.Errorf("netconfig: connection %q is manual IPv4 but has no address", c.Name)
+		if c.Type == TypeWiFi {
+			if err := validateWiFi(c.WiFi); err != nil {
+				return fmt.Errorf("netconfig: connection %q: %w", c.Name, err)
+			}
+		}
+		if err := validateIPv4(c.IPv4); err != nil {
+			return fmt.Errorf("netconfig: connection %q: %w", c.Name, err)
 		}
 	}
 	return nil

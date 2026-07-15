@@ -1,12 +1,16 @@
 package netconfig
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+// errCreate is a sentinel Create failure for the composite unwind test.
+var errCreate = errors.New("checkpoint create failed")
 
 // The keyfile checkpoint restores exactly the pre-apply managed set: a changed
 // file reverts, a file the apply added is removed, and a hand-made profile is
@@ -102,7 +106,8 @@ func TestNMCheckpointArgs(t *testing.T) {
 		t.Fatalf("handle = %q", handle)
 	}
 	create := strings.Join(calls[0], " ")
-	for _, want := range []string{"busctl call", nmBusName, "CheckpointCreate", "aouu", "0 90 3"} {
+	// Armed timeout is the confirm window (90s) + nmRollbackGrace (30s) = 120s; flags = 3.
+	for _, want := range []string{"busctl call", nmBusName, "CheckpointCreate", "aouu", "0 120 3"} {
 		if !strings.Contains(create, want) {
 			t.Errorf("CheckpointCreate call missing %q:\n%s", want, create)
 		}
@@ -120,6 +125,44 @@ func TestNMCheckpointArgs(t *testing.T) {
 	}
 	if got := strings.Join(calls[2], " "); !strings.Contains(got, "CheckpointDestroy o /org/freedesktop/NetworkManager/Checkpoint/3") {
 		t.Errorf("Destroy call = %s", got)
+	}
+}
+
+// The composite rolls back / destroys every backend, and Create unwinds cleanly
+// if a later backend fails.
+func TestCompositeCheckpoint(t *testing.T) {
+	a, b := &fakeCheckpoint{}, &fakeCheckpoint{}
+	c := NewCompositeCheckpoint(a, b)
+	h, err := c.Create(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.created != 1 || b.created != 1 {
+		t.Fatalf("both backends should checkpoint: a=%d b=%d", a.created, b.created)
+	}
+	if err := c.Rollback(h); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.rolled) != 1 || len(b.rolled) != 1 {
+		t.Fatalf("rollback should reach both backends: a=%v b=%v", a.rolled, b.rolled)
+	}
+	// A second rollback of the same handle fails — it was consumed.
+	if err := c.Rollback(h); err == nil {
+		t.Fatal("rollback of a consumed composite handle should fail")
+	}
+}
+
+// If a later backend's Create fails, the composite unwinds the earlier ones so
+// nothing is left armed (e.g. NM checkpoint succeeds but the keyfile snapshot errs).
+func TestCompositeCreateUnwinds(t *testing.T) {
+	good := &fakeCheckpoint{}
+	bad := &fakeCheckpoint{createErr: errCreate}
+	c := NewCompositeCheckpoint(good, bad)
+	if _, err := c.Create(time.Minute); err == nil {
+		t.Fatal("composite Create should fail when a backend fails")
+	}
+	if len(good.destroyed) != 1 {
+		t.Fatalf("the earlier backend should be destroyed on unwind, got %v", good.destroyed)
 	}
 }
 

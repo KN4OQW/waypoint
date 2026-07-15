@@ -267,11 +267,59 @@ with no restart.
   rolls the config back (it predates the LCD section, which then backfills to
   disabled on restore — the driver degrades to noop if the panel is later removed).
 
+## Host network — confirm-or-revert guard (2026-07-14)
+
+The host/OS networking domain's **confirm-or-revert** apply was validated on the
+bench Pi. This is the safety property the whole domain hinges on: a bad network
+apply can strand the node, so an apply checkpoints, activates the change, and
+**automatically rolls back on a server-side timer** unless the admin confirms in
+time — the revert must not depend on the admin's HTTP session surviving (the
+apply may sever it).
+
+- **Build/run:** the branch tip cross-compiled `GOOS=linux GOARCH=arm64`, run as
+  a *separate* test daemon (`/tmp/waypointd-hwtest`, port 8074, throwaway store —
+  the production waypointd and its config.db were untouched) with
+  `-nm-keyfile-dir /etc/NetworkManager/system-connections -network-backend
+  composite -network-confirm-timeout 40s`. NM 1.52.1. Everything driven through
+  the API (`PUT /api/network/config`, `POST /api/network/apply|confirm`).
+- **Backend proven:** the `composite` backend = NetworkManager's native D-Bus
+  checkpoint (`CheckpointCreate/Rollback/Destroy` via `busctl`, verified working
+  as root on NM 1.52.1) restoring **live device state**, composed with the
+  keyfile snapshot for on-disk consistency. This is the H1 "preferred once
+  validated on the bench NM version" path — now validated.
+- **Ownership honored:** the stock `Wired connection 1` profile was never edited
+  or deleted; only `waypoint-eth0`/`waypoint-wifi` were written, and all
+  `waypoint-*` profiles were removed at the end (node left on stock DHCP,
+  reachable).
+
+Baseline: `eth0` at `172.16.50.13/24` gw `172.16.50.1` (my SSH path — so the
+test ran **detached** on the Pi to survive the link flipping).
+
+| Test | Scenario | Expected | Result |
+|---|---|---|---|
+| **A** | Managed static → DHCP, **do NOT confirm**; wait past the 40 s window | server-side timer rolls back to the pre-apply static; node reachable | **PASS** — after the window `eth0=172.16.50.13`, active `waypoint-eth0`, gateway reachable |
+| **B** | Managed static → DHCP, **confirm within the window** | change sticks (DHCP); no rollback after the window | **PASS** — `waypoint-eth0.method=auto` stuck, still `auto` + reachable 45 s past the old deadline |
+| **C** | Configure Wi-Fi with a sentinel PSK; exercise the full PUT→GET→apply path | PSK never in any API response or log | **PASS** — 0 occurrences across `GET /api/network/config`, `/status`, `/wifi/scan`, **and** the daemon log; view shows `has_psk:true`; the secret lives only in the `0600` keyfile |
+
+Notes:
+- Test A specifically exercised **our** 40 s guard timer (NM's own rollback
+  backstop is armed at 40 s + 30 s grace, so it had not yet fired when the node
+  was already back — the server-side revert stands on its own).
+- Test C proves the **secret-handling** path (redaction in the view + never
+  logged), which is the security-relevant guarantee. Live Wi-Fi *association*
+  was not performed — the test harness has no real AP credential (none was
+  invented). The scan endpoint against the live radio returned nearby networks
+  correctly (dedup, signal, security, in-use).
+- The auto-rollback now emits a journal line (`network apply auto-rolled back:
+  no confirm before the deadline…`) so the operator sees a server-side revert.
+
 ## Manual follow-ups
 1. Over-the-air QSO per mode (requires keying a radio).
-2. POCSAG/DG-ID/bridge **network logins** need real credentials — none were
+2. Host network: a live **Wi-Fi association** on the bench Pi needs the AP's real
+   PSK (not seeded); the credential-handling path is proven, association is not.
+3. POCSAG/DG-ID/bridge **network logins** need real credentials — none were
    seeded, so none were invented or registered.
-3. LCD/HD44780 hardware drive — **DONE (2026-07-14)**: a 20×2 HD44780 on a PCF8574
+4. LCD/HD44780 hardware drive — **DONE (2026-07-14)**: a 20×2 HD44780 on a PCF8574
    backpack (0x27) was attached and the native driver validated on glass — see the
    *LCD (native HD44780 driver)* section above. The only remaining LCD MANUAL is the
    RF-from-a-real-radio activity interrupt (validated via the demo feed instead).

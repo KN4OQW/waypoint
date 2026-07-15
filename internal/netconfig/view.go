@@ -21,8 +21,11 @@ type ViewConnection struct {
 	Type        ConnType `json:"type"`
 	Interface   string   `json:"interface"`
 	Autoconnect bool     `json:"autoconnect"`
+	Priority    string   `json:"priority"`
 	IPv4        IPv4     `json:"ipv4"`
 	SSID        string   `json:"ssid"`
+	Hidden      bool     `json:"hidden"`
+	Country     string   `json:"country"`
 	HasPSK      bool     `json:"has_psk"`
 }
 
@@ -39,8 +42,11 @@ func (m Model) View() View {
 			Type:        c.Type,
 			Interface:   c.Interface,
 			Autoconnect: c.Autoconnect,
+			Priority:    c.Priority,
 			IPv4:        c.IPv4,
 			SSID:        c.WiFi.SSID,
+			Hidden:      c.WiFi.Hidden,
+			Country:     c.WiFi.Country,
 			HasPSK:      c.WiFi.PSK != "",
 		})
 	}

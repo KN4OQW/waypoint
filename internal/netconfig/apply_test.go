@@ -126,12 +126,17 @@ func TestGuardTimeoutRollsBack(t *testing.T) {
 	applied := 0
 	g := newTestGuard(cp, clk, &applied)
 
+	var logged int
+	g.SetLogger(func(string, ...any) { logged++ })
 	if _, _, err := g.Apply(Model{}, 90*time.Second); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	// Admin never confirms; the deadline fires.
 	clk.fireAll()
 
+	if logged == 0 {
+		t.Error("an auto-rollback should be logged (operator must see the node reverted)")
+	}
 	if len(cp.rolled) != 1 || cp.rolled[0] != "cp-1" {
 		t.Fatalf("timeout should roll back the checkpoint, got %v", cp.rolled)
 	}

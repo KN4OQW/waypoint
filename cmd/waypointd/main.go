@@ -57,13 +57,18 @@ type server struct {
 	// rollback window handed to each apply.
 	netKeyfileDir     string
 	netConfirmTimeout time.Duration
+	netBackend        string // "composite" (NM + keyfile) or "keyfile" (fallback)
 	netGuard          *netconfig.Guard
-	ysfHosts          string // cached YSF reflector hostlist (JSON)
-	p25Hosts          string // cached P25 reflector (talkgroup) hostlist (JSON)
-	nxdnHosts         string // cached NXDN reflector (talkgroup) hostlist (JSON)
-	dstarHosts        string // cached D-Star reflector hostlist (JSON)
-	m17Hosts          string // cached M17 reflector hostlist (space/tab text)
-	dmrHosts          string // cached DMR master hostlist (DMR_Hosts.txt, space/tab text)
+	// Wi-Fi scan cache (one radio → process-wide, brief TTL; see networkWiFiScan).
+	netScanMu  sync.Mutex
+	netScan    []netconfig.WiFiScanResult
+	netScanAt  time.Time
+	ysfHosts   string // cached YSF reflector hostlist (JSON)
+	p25Hosts   string // cached P25 reflector (talkgroup) hostlist (JSON)
+	nxdnHosts  string // cached NXDN reflector (talkgroup) hostlist (JSON)
+	dstarHosts string // cached D-Star reflector hostlist (JSON)
+	m17Hosts   string // cached M17 reflector hostlist (space/tab text)
+	dmrHosts   string // cached DMR master hostlist (DMR_Hosts.txt, space/tab text)
 
 	// Native LCD renderer lifecycle. The renderer captures its config at start, so
 	// a config change (enable, geometry, pages) only reaches the panel when the
@@ -739,6 +744,7 @@ func main() {
 	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
 	nmKeyfileDir := flag.String("nm-keyfile-dir", "/etc/NetworkManager/system-connections", "directory for rendered NetworkManager keyfiles (waypoint-*.nmconnection)")
 	netConfirmTimeout := flag.Duration("network-confirm-timeout", netconfig.DefaultConfirmTimeout, "confirm-or-revert rollback window for a network apply")
+	netBackend := flag.String("network-backend", "composite", "network rollback backend: composite (NM D-Bus checkpoint + keyfile snapshot) or keyfile (fallback, no live-device rollback)")
 	flag.Parse()
 
 	st, err := store.Open(*storePath)
@@ -757,7 +763,7 @@ func main() {
 			YSF2DMR:       *ysf2dmrINI, DMR2YSF: *dmr2ysfINI, YSF2NXDN: *ysf2nxdnINI, DMR2NXDN: *dmr2nxdnINI, NXDN2DMR: *nxdn2dmrINI,
 		},
 		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts,
-		netKeyfileDir: *nmKeyfileDir, netConfirmTimeout: *netConfirmTimeout,
+		netKeyfileDir: *nmKeyfileDir, netConfirmTimeout: *netConfirmTimeout, netBackend: *netBackend,
 	}
 	// The confirm-or-revert guard for network applies (needs s.netKeyfileDir set).
 	s.netGuard = s.newNetGuard()
@@ -823,6 +829,7 @@ func main() {
 	mux.HandleFunc("/api/dmr/masters", s.dmrMasters)
 	// Host/OS networking domain (docs/config-coverage.md §4).
 	mux.HandleFunc("/api/network/status", s.networkStatus)
+	mux.HandleFunc("/api/network/wifi/scan", s.networkWiFiScan)
 	mux.HandleFunc("/api/network/config", s.networkConfig)
 	mux.HandleFunc("/api/network/apply", s.networkApply)
 	mux.HandleFunc("/api/network/confirm", s.networkConfirm)

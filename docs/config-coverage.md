@@ -102,30 +102,39 @@ config renders but the daemons are not yet compiled there. Status: ✅ (config) 
 
 The second renderer family. NetworkManager is the substrate, so the renderer
 target is NM connection keyfiles + `timesyncd.conf` + `hostnamectl` — **not** INI
-files. The **foundation is now in place** (`internal/netconfig`): read-only
-status, the keyfile renderer, and the confirm-or-revert apply engine. The Wi-Fi
-and VLAN *edit surfaces* are the remaining work.
+files. The foundation **plus the first edit surfaces** are in place
+(`internal/netconfig`): read-only status, the keyfile renderer, the
+confirm-or-revert apply engine, and the Ethernet/IPv4 + Wi-Fi editors. VLAN and
+the hostname/timezone/NTP applies are the remaining work.
 
 | Area | Surface | Renderer target | Status |
 |---|---|---|---|
 | **Live status** | interfaces, link, IPv4, DNS, Wi-Fi SSID+signal, NTP sync | read-only (`nmcli`/`timedatectl` → `GET /api/network/status`) | ✅ |
-| Ethernet / Wi-Fi | connection profiles, SSID/PSK, regulatory country | NM keyfile | 🟡 (renderer ✅ · Wi-Fi UI ⬜) |
-| IPv4 method | **DHCP vs static** (address, prefix, gateway) | NM keyfile `ipv4.method` | 🟡 (model+renderer ✅ · UI ⬜) |
+| Ethernet / Wi-Fi | connection profiles, SSID/PSK, hidden, regulatory country, autoconnect priority | NM keyfile | ✅ (renderer + UI; live Wi-Fi *association* needs the AP credential) |
+| IPv4 method | **DHCP vs static** (address, prefix, gateway) | NM keyfile `ipv4.method` | ✅ (model + renderer + UI + validation) |
 | **VLAN** | tagged interfaces (parent + VLAN id) | NM `type=vlan` connection | ⬜ |
-| DNS | servers, search domains, static vs auto | NM `ipv4.dns` / resolv.conf | 🟡 (renderer ✅) |
+| DNS | servers, search domains, static vs auto, DHCP override | NM `ipv4.dns` / `dns-search` / `ignore-auto-dns` | ✅ |
 | **NTP** | time servers, enable | `systemd-timesyncd` `NTP=` | 🟡 (model+status ✅ · apply ⬜) |
 | Hostname / timezone | node hostname, TZ | `hostnamectl` | 🟡 (model ✅ · apply ⬜) |
 
+Wi-Fi scan for the join picker is served at `GET /api/network/wifi/scan`
+(`nmcli device wifi list`, cached ~10 s). IPv4 validation refuses an empty static
+config and a gateway outside the subnet (a lock-yourself-out mistake).
+
 Risk respected: a bad network apply can strand the node, so this domain's apply
 is a **confirm-or-revert** guard (`internal/netconfig` `Guard`), unlike the radio
-apply. `POST /api/network/apply` checkpoints the pre-apply state, renders the
-keyfiles, and returns a confirm token + deadline; `POST /api/network/confirm`
-makes it permanent; **no confirm by the deadline rolls back automatically on a
-server-side timer** — the revert never depends on the admin's HTTP session
-surviving (which the apply itself may sever). The checkpoint backend is the
-portable keyfile snapshot (`KeyfileCheckpoint`, unit-tested); NetworkManager's
-native D-Bus checkpoint (`NMCheckpoint`, via `busctl`) is the preferred backstop
-once validated on the bench NM version and drops in behind the same interface.
+apply. `POST /api/network/apply` checkpoints, renders the keyfiles, **activates**
+them, and returns a confirm token + deadline; `POST /api/network/confirm` makes it
+permanent; **no confirm by the deadline rolls back automatically on a server-side
+timer** — the revert never depends on the admin's HTTP session surviving (which
+the apply itself may sever). The default `composite` backend is NetworkManager's
+native D-Bus checkpoint (`NMCheckpoint`, via `busctl`) restoring **live device
+state**, composed with the keyfile snapshot (`KeyfileCheckpoint`) for on-disk
+consistency; `-network-backend keyfile` is the fallback where NM checkpoints are
+unavailable. **Hardware-validated on the bench Pi (NM 1.52.1, 2026-07-14):**
+static→DHCP without confirm auto-reverts and stays reachable; with confirm it
+sticks; a Wi-Fi PSK never appears in any API response or log (see
+`docs/on-hardware-report.md`).
 
 Ownership rule: Waypoint writes and prunes only `waypoint-*.nmconnection`
 profiles (0600 root) — a hand-made NM profile on the same box is never touched.
@@ -169,9 +178,10 @@ tabs. What's left is deploy-side (waypoint-stack) and adjacent domains:
 1. Pin/build the two remaining daemons in waypoint-stack `build.sh`:
    **DAPNETGateway** (POCSAG) and the **MMDVM_CM** cross-mode bridge binaries —
    the only mode/bridge daemons not yet compiled there.
-2. Host network config — [#32]. Foundation shipped (`internal/netconfig`: status,
-   keyfile renderer, confirm-or-revert apply). Next: the Wi-Fi / static-IP / VLAN
-   edit surface, plus wiring the hostname/timezone/NTP applies to their targets.
+2. Host network config — [#32]. Foundation + first edit surfaces shipped
+   (`internal/netconfig`: status, keyfile renderer, confirm-or-revert apply
+   hardware-validated, Ethernet/IPv4 + Wi-Fi editors). Next: VLAN (`type=vlan`)
+   and wiring the hostname/timezone/NTP applies to their targets.
 3. DMR fine-grained coverage: TG hold + per-section RF/Net hang overrides (global
    mode-hang already modeled in `general`).
 4. Full modem-calibration coverage + calibration wizard ([#20]).

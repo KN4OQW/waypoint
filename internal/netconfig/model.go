@@ -79,32 +79,42 @@ type Connection struct {
 	Interface   string   `json:"interface"`   // [connection] interface-name; blank binds by type only
 	Autoconnect bool     `json:"autoconnect"` // [connection] autoconnect (default true when zero-value? no — explicit)
 	IPv4        IPv4     `json:"ipv4"`
+	// Priority is [connection] autoconnect-priority: a higher number wins when
+	// several autoconnect profiles could activate (e.g. prefer Wi-Fi over a fallback).
+	// Kept as a string for form-friendliness; blank/"0" omits the key.
+	Priority string `json:"priority"`
 	// WiFi is meaningful only when Type==TypeWiFi. The PSK is a secret: redacted
-	// in the view and preserved on a blank write (set.go). The full Wi-Fi surface
-	// (SSID picker, country, hidden) lands in the next slice; the credential
-	// plumbing is wired now so secrets never need a schema change later.
+	// in the view and preserved on a blank write (set.go).
 	WiFi WiFi `json:"wifi"`
 }
 
-// IPv4 is the [ipv4] group. Method is NM's ipv4.method ("auto" for DHCP,
-// "manual" for a static address, "disabled" to turn IPv4 off). For manual,
-// Address/Prefix/Gateway are required and render to address1; DNS renders to the
-// dns list for either method (with ignore-auto-dns on auto so the static servers
-// win).
+// IPv4 is the [ipv4] group. Method is NM's ipv4.method — "auto" for DHCP,
+// "manual" for a static address, "disabled" to turn IPv4 off (the UI presents
+// these as DHCP / Static and maps). For manual, Address/Prefix (+ optional
+// Gateway) render to address1. DNS renders for either method: with manual it is
+// the resolver set; with auto it is a DNS *override* (rendered alongside
+// ignore-auto-dns so the operator's servers replace the DHCP-provided ones rather
+// than being merged). SearchDomains render to dns-search for either method.
 type IPv4 struct {
-	Method  string   `json:"method"`
-	Address string   `json:"address"`
-	Prefix  string   `json:"prefix"`
-	Gateway string   `json:"gateway"`
-	DNS     []string `json:"dns"`
+	Method        string   `json:"method"`
+	Address       string   `json:"address"`
+	Prefix        string   `json:"prefix"`
+	Gateway       string   `json:"gateway"`
+	DNS           []string `json:"dns"`
+	SearchDomains []string `json:"search_domains"`
 }
 
-// WiFi is the [wifi] / [wifi-security] groups. Foundation carries SSID + PSK; the
-// PSK is write-only (see set.go). Additional keys (band, country, hidden) arrive
-// with the Wi-Fi surface.
+// WiFi is the [wifi] / [wifi-security] groups. The PSK is write-only (see set.go).
+// Hidden renders [wifi] hidden=true for a non-broadcast SSID. Country is the
+// regulatory domain (a 2-letter code); it is stored and validated here but is a
+// system/radio-wide setting with no per-connection NM keyfile key, so it is
+// applied to the wpa_supplicant/reg-domain out of band (a documented follow-up),
+// not rendered into the keyfile.
 type WiFi struct {
-	SSID string `json:"ssid"`
-	PSK  string `json:"psk"`
+	SSID    string `json:"ssid"`
+	PSK     string `json:"psk"`
+	Hidden  bool   `json:"hidden"`
+	Country string `json:"country"`
 }
 
 // DefaultModel is the zero-configuration baseline: NTP on (systemd-timesyncd's

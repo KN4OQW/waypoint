@@ -67,9 +67,11 @@ func (kf *keyfile) toConnection() Connection {
 		Type:        ConnType(kf.get("connection", "type")),
 		Interface:   kf.get("connection", "interface-name"),
 		Autoconnect: kf.get("connection", "autoconnect") == "true",
+		Priority:    kf.get("connection", "autoconnect-priority"),
 	}
 	if c.Type == TypeWiFi {
 		c.WiFi.SSID = kf.get("wifi", "ssid")
+		c.WiFi.Hidden = kf.get("wifi", "hidden") == "true"
 		if kf.has("wifi-security") {
 			c.WiFi.PSK = kf.get("wifi-security", "psk")
 		}
@@ -89,12 +91,22 @@ func (kf *keyfile) toConnection() Connection {
 			c.IPv4.Address = ipPart
 		}
 	}
-	if dns := kf.get("ipv4", "dns"); dns != "" {
-		for _, d := range strings.Split(strings.TrimSuffix(dns, ";"), ";") {
-			if d != "" {
-				c.IPv4.DNS = append(c.IPv4.DNS, d)
-			}
+	c.IPv4.DNS = splitKeyfileList(kf.get("ipv4", "dns"))
+	c.IPv4.SearchDomains = splitKeyfileList(kf.get("ipv4", "dns-search"))
+	return c
+}
+
+// splitKeyfileList splits a NM keyfile ';'-terminated list ("a;b;") into its
+// elements, or nil when empty.
+func splitKeyfileList(v string) []string {
+	if v == "" {
+		return nil
+	}
+	var out []string
+	for _, e := range strings.Split(strings.TrimSuffix(v, ";"), ";") {
+		if e != "" {
+			out = append(out, e)
 		}
 	}
-	return c
+	return out
 }

@@ -162,7 +162,12 @@ func NewNMCheckpoint(run Runner) *NMCheckpoint { return &NMCheckpoint{Run: run} 
 // An empty device array checkpoints every device. The returned object path is the
 // handle.
 func (n *NMCheckpoint) Create(timeout time.Duration) (string, error) {
-	secs := int(timeout / time.Second)
+	// Arm NM's own rollback timer LONGER than the Guard's server-side timer so it is
+	// a pure backstop: normally the Guard fires first and calls Rollback explicitly
+	// (immediate), and Confirm calls Destroy (cancelling NM's timer). NM's timer only
+	// fires if waypointd itself dies before its timer — in which case NM still
+	// un-strands the node on its own. Grace keeps the two from racing at the deadline.
+	secs := int((timeout + nmRollbackGrace) / time.Second)
 	// busctl call <dest> <path> <iface> CheckpointCreate <sig> <args...>
 	// Method input signature "aouu": ao (object-path array — 0 elements = all
 	// devices), u (rollback_timeout, seconds), u (flags). The array is passed as a
@@ -193,6 +198,80 @@ func (n *NMCheckpoint) Rollback(handle string) error {
 // on rollback, drop connections created after the checkpoint and disconnect
 // devices activated after it, so an apply that added a profile is fully undone.
 const nmCheckpointFlags = 0x1 | 0x2
+
+// nmRollbackGrace is how much longer than the Guard's confirm window NM's native
+// rollback timer is armed — a backstop that only fires if waypointd dies (see Create).
+const nmRollbackGrace = 30 * time.Second
+
+// CompositeCheckpoint chains several checkpoint backends so a rollback restores
+// every layer of state. Production host networking uses [NMCheckpoint,
+// KeyfileCheckpoint]: NM restores the LIVE device/connection state (the only thing
+// that un-strands a node whose active link was just cut), and the keyfile snapshot
+// guarantees the on-disk profiles match afterward so the reverted state also
+// survives a reboot / the next reload. Rolling back device state alone can leave a
+// bad keyfile on disk; rewriting the keyfile alone never re-activates the device —
+// together they are correct.
+type CompositeCheckpoint struct {
+	backends []Checkpoint
+	handles  map[string][]string // composite handle -> per-backend sub-handle (index-aligned)
+	seq      int
+}
+
+// NewCompositeCheckpoint chains backends. Create calls them in order; Rollback and
+// Destroy call them in order too (NM first so the device un-strands before the
+// keyfile layer reconciles disk).
+func NewCompositeCheckpoint(backends ...Checkpoint) *CompositeCheckpoint {
+	return &CompositeCheckpoint{backends: backends, handles: map[string][]string{}}
+}
+
+func (c *CompositeCheckpoint) Create(timeout time.Duration) (string, error) {
+	subs := make([]string, len(c.backends))
+	for i, b := range c.backends {
+		h, err := b.Create(timeout)
+		if err != nil {
+			// Unwind the backends that already checkpointed so none is left armed.
+			for j := i - 1; j >= 0; j-- {
+				_ = c.backends[j].Destroy(subs[j])
+			}
+			return "", err
+		}
+		subs[i] = h
+	}
+	c.seq++
+	handle := "cmp-" + strconv.Itoa(c.seq)
+	c.handles[handle] = subs
+	return handle, nil
+}
+
+func (c *CompositeCheckpoint) Rollback(handle string) error {
+	subs, ok := c.handles[handle]
+	if !ok {
+		return fmt.Errorf("netconfig: unknown composite checkpoint %q", handle)
+	}
+	var firstErr error
+	for i, b := range c.backends {
+		if err := b.Rollback(subs[i]); err != nil && firstErr == nil {
+			firstErr = err // keep going: every layer should get its chance to revert
+		}
+	}
+	delete(c.handles, handle)
+	return firstErr
+}
+
+func (c *CompositeCheckpoint) Destroy(handle string) error {
+	subs, ok := c.handles[handle]
+	if !ok {
+		return nil
+	}
+	var firstErr error
+	for i, b := range c.backends {
+		if err := b.Destroy(subs[i]); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	delete(c.handles, handle)
+	return firstErr
+}
 
 // parseBusctlObjectPath extracts the object path from a busctl reply like
 // `o "/org/freedesktop/NetworkManager/Checkpoint/1"`. busctl prints the reply

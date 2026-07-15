@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/KN4OQW/waypoint/internal/netconfig"
@@ -30,29 +32,52 @@ func readBody(r *http.Request) ([]byte, error) {
 // rollback timer, and the change only sticks if the admin confirms before the
 // deadline. See internal/netconfig.
 
+// netActivateWait bounds each `nmcli connection up` so a change that severs the
+// link cannot hang the apply handler for nmcli's default 90s — the guard's
+// rollback is what recovers, not a long block here.
+const netActivateWait = "25"
+
 // newNetGuard builds the confirm-or-revert Guard for network applies. The apply
 // closure is the dangerous part it guards: render the store's netconfig model to
 // NetworkManager keyfiles (Sync writes 0600 and prunes only waypoint-* profiles),
-// then reload NM so it re-reads them. The checkpoint backend is the portable
-// keyfile snapshot (KeyfileCheckpoint) — robust and unit-tested; the NM-native
-// D-Bus checkpoint (NMCheckpoint) is the preferred backstop once validated on the
-// bench NM version, and drops in behind the same interface without touching the
-// Guard.
+// reload NM, then ACTIVATE each managed profile so the change reaches the live
+// device (not just the keyfile on disk).
+//
+// The checkpoint backend selects how a rollback un-does that:
+//   - "composite" (default): NM-native checkpoint (restores live device/connection
+//     state — the only thing that un-strands a node whose link was just cut, plus
+//     NM's own rollback-timeout backstop if waypointd dies) composed with the
+//     keyfile snapshot (keeps on-disk profiles consistent with the reverted state).
+//   - "keyfile": the portable keyfile-only snapshot, for environments without NM
+//     D-Bus checkpoint support — restores the files + reload but cannot re-activate
+//     a live device, so its protection is weaker (documented).
 func (s *server) newNetGuard() *netconfig.Guard {
-	cp := netconfig.NewKeyfileCheckpoint(s.netKeyfileDir, netRun)
+	keyfileCP := netconfig.NewKeyfileCheckpoint(s.netKeyfileDir, netRun)
+	var cp netconfig.Checkpoint = keyfileCP
+	if s.netBackend != "keyfile" {
+		// NM first so a rollback restores the live device before the keyfile layer
+		// reconciles disk.
+		cp = netconfig.NewCompositeCheckpoint(netconfig.NewNMCheckpoint(netRun), keyfileCP)
+	}
 	apply := func(m netconfig.Model) error {
-		changed, err := m.Sync(s.netKeyfileDir)
-		if err != nil {
+		if _, err := m.Sync(s.netKeyfileDir); err != nil {
 			return err
 		}
-		if changed {
-			if _, err := netRun("nmcli", "connection", "reload"); err != nil {
-				return err
+		if _, err := netRun("nmcli", "connection", "reload"); err != nil {
+			return err
+		}
+		// Activate each managed profile so the saved change takes effect now. A
+		// bounded wait keeps a link-severing change from hanging the handler.
+		for _, id := range m.ProfileIDs() {
+			if out, err := netRun("nmcli", "-w", netActivateWait, "connection", "up", id); err != nil {
+				return fmt.Errorf("activate %s: %v: %s", id, err, strings.TrimSpace(out))
 			}
 		}
 		return nil
 	}
-	return netconfig.NewGuard(cp, apply)
+	g := netconfig.NewGuard(cp, apply)
+	g.SetLogger(log.Printf) // make the server-side auto-rollback visible in the journal
+	return g
 }
 
 // netRun is the production status/apply command runner: it executes the command
@@ -61,6 +86,36 @@ func (s *server) newNetGuard() *netconfig.Guard {
 func netRun(name string, args ...string) (string, error) {
 	out, err := exec.Command(name, args...).CombinedOutput()
 	return string(out), err
+}
+
+// wifiScanTTL is how long a Wi-Fi scan is cached. A scan takes seconds and the
+// picker polls, so serving a recent result avoids hammering the radio; ~10s keeps
+// the list fresh enough to reflect the operator walking toward an AP.
+const wifiScanTTL = 10 * time.Second
+
+// networkWiFiScan serves GET /api/network/wifi/scan: visible Wi-Fi networks for
+// the join picker, cached for wifiScanTTL. The cache is process-wide (one radio),
+// guarded by netScanMu.
+func (s *server) networkWiFiScan(w http.ResponseWriter, _ *http.Request) {
+	s.netScanMu.Lock()
+	fresh := s.netScanAt.After(time.Now().Add(-wifiScanTTL)) && s.netScan != nil
+	cached := s.netScan
+	s.netScanMu.Unlock()
+	if fresh {
+		writeJSON(w, cached)
+		return
+	}
+	results, err := netconfig.ScanWiFi(netconfig.ExecRunner)
+	if err != nil {
+		// A scan can fail on a wired-only node (no Wi-Fi device) — return an empty
+		// list, not an error, so the picker degrades gracefully.
+		results = []netconfig.WiFiScanResult{}
+	}
+	s.netScanMu.Lock()
+	s.netScan = results
+	s.netScanAt = time.Now()
+	s.netScanMu.Unlock()
+	writeJSON(w, results)
 }
 
 // networkStatus serves GET /api/network/status: the live host-network state
