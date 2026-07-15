@@ -1,0 +1,14 @@
+{
+  "name": "waypoint-a11y",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Automated accessibility (axe-core) gate for the Waypoint UI.",
+  "scripts": {
+    "scan": "node scan.mjs"
+  },
+  "dependencies": {
+    "@axe-core/playwright": "4.12.1",
+    "playwright": "1.61.1"
+  }
+}

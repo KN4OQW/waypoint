@@ -180,10 +180,13 @@ func DefaultDisplay() Display {
 }
 
 // DefaultLCD is the native LCD driver's default: disabled, wired for the common
-// case (a PCF8574-backpack HD44780 at 0x27 on /dev/i2c-1, 20×4), with two starter
-// pages so a first-time operator who enables it sees something immediately. The
-// page lines use only grounded tokens (docs/design/lcd.md §5). Used to seed a
-// fresh store and to backfill a store created before the LCD driver existed.
+// case (a PCF8574-backpack HD44780 at 0x27 on /dev/i2c-1, 20×4), with a starter
+// page set so a first-time operator who enables it sees something immediately.
+// Every starter page declares at most two lines, so the set is valid on a 20×2
+// bench panel and a 20×4 alike (a page must never have more lines than the panel
+// has rows — see ValidateLCD). The lines use only grounded tokens
+// (docs/design/lcd.md §5). Used to seed a fresh store and to backfill a store
+// created before the LCD driver existed.
 func DefaultLCD() LCD {
 	return LCD{
 		Enabled:           false,
@@ -193,18 +196,19 @@ func DefaultLCD() LCD {
 		Cols:              "20",
 		ScrollSpeed:       "300",
 		ActivityInterrupt: true,
+		LingerSecs:        "3",
 		Pages: []LCDPage{
 			{Enabled: true, Name: "Idle", Duration: "8", Lines: []string{
 				"{callsign}  {mode}",
-				"{status}",
-				"{modes}",
-				"{time}   up {uptime}",
+				"{freq_rx}  {time}",
 			}},
-			{Enabled: true, Name: "Last Heard", Duration: "5", Lines: []string{
-				"Last Heard",
-				"{lh_call}  {lh_tg}",
-				"{lh_mode}  BER {lh_ber}",
-				"{lh_ago} ago",
+			{Enabled: true, Name: "Activity", Duration: "5", Interrupt: true, Lines: []string{
+				"{mode}  {source}",
+				"TG {tg}",
+			}},
+			{Enabled: true, Name: "Network", Duration: "5", Lines: []string{
+				"{ip}",
+				"{hostname}",
 			}},
 		},
 	}

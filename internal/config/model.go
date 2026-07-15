@@ -332,17 +332,24 @@ type LCD struct {
 	Rows              string    `json:"rows"`               // 2 or 4
 	Cols              string    `json:"cols"`               // 16 or 20
 	ScrollSpeed       string    `json:"scroll_speed"`       // ms per scroll step for over-wide lines
-	ActivityInterrupt bool      `json:"activity_interrupt"` // jump to a caller page while keyed, then resume rotation
+	ActivityInterrupt bool      `json:"activity_interrupt"` // master switch for interrupt pages (below)
+	LingerSecs        string    `json:"linger_secs"`        // hold an interrupt page this long after key-up before resuming
 	Pages             []LCDPage `json:"pages"`
 }
 
-// LCDPage is one screen in the rotation: a name, whether it participates, how
-// long it holds, and one templated string per row (extra rows render blank).
+// LCDPage is one screen the operator defines: a name, whether it participates,
+// how long it holds, whether it is an activity-interrupt page, and one templated
+// string per row. A template line is literal text plus {tokens} (see
+// internal/lcd/tokens.go). Pages are data, not code — the renderer expands them
+// against live state. A page must not declare more lines than the panel has rows
+// (ValidateLCD rejects it at save time, naming the geometry); extra rows on the
+// panel render blank.
 type LCDPage struct {
-	Enabled  bool     `json:"enabled"`
-	Name     string   `json:"name"`
-	Duration string   `json:"duration"` // seconds this page holds before rotating
-	Lines    []string `json:"lines"`    // one templated line per row
+	Enabled   bool     `json:"enabled"`
+	Name      string   `json:"name"`
+	Duration  string   `json:"duration"`  // seconds this page holds before rotating
+	Interrupt bool     `json:"interrupt"` // take over immediately on TX/RX; excluded from normal rotation
+	Lines     []string `json:"lines"`     // one templated line per row
 }
 
 // General is station identity and top-level behaviour.

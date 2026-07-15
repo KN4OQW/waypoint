@@ -24,19 +24,22 @@ type LCDDevice interface {
 // marquee reads clearly.
 const scrollGap = "   "
 
-// defaultLinger holds the activity page briefly after key-up before rotation
-// resumes, so a quick over-and-out is still readable.
+// defaultLinger holds an activity page briefly after key-up before rotation
+// resumes, so a quick over-and-out is still readable. It is the fallback when
+// LCD.LingerSecs is blank or malformed.
 const defaultLinger = 3 * time.Second
 
-// activityPage is the synthesized "who's talking" screen shown during the
-// activity interrupt. It is not operator-configurable; it renders through the
-// same token engine, so it adapts to the panel width and available data.
-var activityPage = config.LCDPage{
+// fallbackActivityPage is the synthesized "who's talking" screen shown during an
+// activity interrupt when the operator has defined no page of their own with
+// interrupt=true. It renders through the same token engine, so it adapts to the
+// panel width and available data. Once the operator marks one of their pages
+// interrupt=true, that page is used instead (interruptPage).
+var fallbackActivityPage = config.LCDPage{
 	Name: "Activity",
 	Lines: []string{
 		"{status}",
-		"{lh_call}  {lh_tg}",
-		"{lh_mode}",
+		"{source}  {tg}",
+		"{mode}",
 		"",
 	},
 }
@@ -73,11 +76,15 @@ type Renderer struct {
 func NewRenderer(cfg config.LCD, info Info, dev LCDDevice, ip func() string) *Renderer {
 	rows := clampAtLeast(atoiDef(cfg.Rows, 4), 1)
 	cols := clampAtLeast(atoiDef(cfg.Cols, 20), 1)
+	linger := defaultLinger
+	if v, err := strconv.Atoi(strings.TrimSpace(cfg.LingerSecs)); err == nil && v >= 0 {
+		linger = time.Duration(v) * time.Second
+	}
 	return &Renderer{
 		cfg: cfg, info: info, dev: dev, ip: ip,
 		rows: rows, cols: cols,
 		scroll: time.Duration(atoiDef(cfg.ScrollSpeed, 300)) * time.Millisecond,
-		linger: defaultLinger,
+		linger: linger,
 		last:   make([]string, rows),
 	}
 }
@@ -174,17 +181,14 @@ func (r *Renderer) Tick(now time.Time) error {
 	return nil
 }
 
-// frame renders the current page's rows for instant now, each exactly cols wide.
+// frame renders the current page's rows for instant now, each exactly cols wide,
+// applying the scroll marquee to any over-wide row (anchored at the page's start).
 func (r *Renderer) frame(now time.Time) []string {
 	page, anchor := r.currentPage(now)
 	rc := renderCtx{st: &r.st, info: r.info, now: now, ip: r.ip}
 	out := make([]string, r.rows)
 	for i := 0; i < r.rows; i++ {
-		tmpl := ""
-		if i < len(page.Lines) {
-			tmpl = page.Lines[i]
-		}
-		text := expand(tmpl, rc)
+		text := expandRow(page, i, rc)
 		off := 0
 		if r.scroll > 0 && len([]rune(text)) > r.cols {
 			off = int(now.Sub(anchor) / r.scroll)
@@ -194,21 +198,47 @@ func (r *Renderer) frame(now time.Time) []string {
 	return out
 }
 
+// expandRow expands the template for row i of a page (or the empty string past the
+// page's declared lines) against the render context. A blank or whitespace-only
+// template expands to blanks, which window pads to a blank row.
+func expandRow(page config.LCDPage, i int, rc renderCtx) string {
+	tmpl := ""
+	if i < len(page.Lines) {
+		tmpl = page.Lines[i]
+	}
+	return expand(tmpl, rc)
+}
+
+// renderPage is the pure render contract (design §6): it expands one page against
+// a live state snapshot into exactly rows lines of cols columns — token expansion
+// plus truncation/padding, no scroll and no hardware. This is the geometry-
+// agnostic core: a page with fewer lines than rows pads the remainder blank, a
+// line wider than cols is truncated (the renderer's marquee is a timed view of the
+// same truncation). It takes the instant now so time tokens are deterministic.
+func renderPage(rows, cols int, page config.LCDPage, st *state, info Info, ip func() string, now time.Time) []string {
+	rc := renderCtx{st: st, info: info, now: now, ip: ip}
+	out := make([]string, rows)
+	for i := 0; i < rows; i++ {
+		out[i] = window(expandRow(page, i, rc), cols, 0)
+	}
+	return out
+}
+
 // currentPage resolves which page to show at instant now, advancing rotation and
 // entering/leaving the activity interrupt as needed. It returns the page and the
 // scroll anchor (the instant that page began showing).
 func (r *Renderer) currentPage(now time.Time) (config.LCDPage, time.Time) {
-	// Activity interrupt: hold the caller page while keyed and through the linger
-	// after key-up, then resume rotation where it paused.
+	// Activity interrupt: hold the interrupt page while keyed and through the
+	// linger after key-up, then resume rotation where it paused.
 	if r.interrupt {
 		if !r.st.active && now.Sub(r.endedAt) >= r.linger {
 			r.interrupt = false
 			r.pageStart = now // give the resumed page a fresh hold
 		} else {
-			return activityPage, r.interruptStart
+			return r.interruptPage(), r.interruptStart
 		}
 	}
-	pages := r.enabledPages()
+	pages := r.rotationPages()
 	if len(pages) == 0 {
 		return config.LCDPage{}, r.pageStart
 	}
@@ -226,14 +256,29 @@ func (r *Renderer) currentPage(now time.Time) (config.LCDPage, time.Time) {
 	return pages[r.pageIdx], r.pageStart
 }
 
-func (r *Renderer) enabledPages() []config.LCDPage {
+// rotationPages are the pages the normal cycle steps through: enabled and not
+// marked interrupt. An interrupt page is excluded here because it shows only
+// during activity (interruptPage), not in the idle rotation.
+func (r *Renderer) rotationPages() []config.LCDPage {
 	var ps []config.LCDPage
 	for _, p := range r.cfg.Pages {
-		if p.Enabled {
+		if p.Enabled && !p.Interrupt {
 			ps = append(ps, p)
 		}
 	}
 	return ps
+}
+
+// interruptPage is the page shown during an activity interrupt: the first enabled
+// page the operator marked interrupt=true, or the synthesized fallback when they
+// defined none (so activity still surfaces on a stock or minimal config).
+func (r *Renderer) interruptPage() config.LCDPage {
+	for _, p := range r.cfg.Pages {
+		if p.Enabled && p.Interrupt {
+			return p
+		}
+	}
+	return fallbackActivityPage
 }
 
 // window fits a line to exactly cols runes: as-is when it already fits, padded

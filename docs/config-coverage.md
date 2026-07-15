@@ -108,24 +108,66 @@ through Save/Load, so disabling loses nothing (RFC-0001) and RFC-0003's migratio
 can seed bus definitions from the saved masters/passwords/TGs. Status: ⏸
 superseded (config retired) · the `MMDVM_CM` daemon builds are no longer needed.
 
-## 4. Host / network configuration  → [#32]
+## 4. Host / network configuration  → [#32]  → 🟡 (foundation shipped)
 
-Not yet modeled at all, and the largest missing domain. NetworkManager is the
-substrate, so the renderer target is NM connection keyfiles + `timesyncd.conf` +
-`hostnamectl` — **not** INI files.
+The second renderer family — **now complete**. NetworkManager is the substrate,
+so the renderer target is NM connection keyfiles + a `systemd-timesyncd` drop-in +
+`hostnamectl`/`timedatectl` — **not** INI files. `internal/netconfig` covers
+read-only status, the keyfile renderer, the confirm-or-revert apply engine, and
+the full edit surface (Ethernet/IPv4, Wi-Fi, VLAN, NTP, hostname/timezone).
 
-| Area | Surface | Renderer target |
-|---|---|---|
-| Ethernet / Wi-Fi | connection profiles, SSID/PSK, regulatory country | NM keyfile |
-| IPv4 method | **DHCP vs static** (address, prefix, gateway) | NM keyfile `ipv4.method` |
-| **VLAN** | tagged interfaces (parent + VLAN id) | NM `type=vlan` connection |
-| DNS | servers, search domains, static vs auto | NM `ipv4.dns` / resolv.conf |
-| **NTP** | time servers, enable | `systemd-timesyncd` `NTP=` |
-| Hostname / timezone | node hostname, TZ | `hostnamectl` |
+| Area | Surface | Renderer target | Status |
+|---|---|---|---|
+| **Live status** | interfaces, link, IPv4, DNS, Wi-Fi SSID+signal, NTP sync, timezone | read-only (`nmcli`/`timedatectl` → `GET /api/network/status`) | ✅ |
+| Ethernet / Wi-Fi | connection profiles, SSID/PSK, hidden, regulatory country, autoconnect priority | NM keyfile | ✅ (renderer + UI; live Wi-Fi *association* needs the AP credential) |
+| IPv4 method | **DHCP vs static** (address, prefix, gateway) | NM keyfile `ipv4.method` | ✅ (model + renderer + UI + validation) |
+| **VLAN** | tagged interfaces (parent + VLAN id + own IPv4) | NM `type=vlan` connection (`waypoint-vlan<id>`) | ✅ (renderer + UI + validation; hardware-validated) |
+| DNS | servers, search domains, static vs auto, DHCP override | NM `ipv4.dns` / `dns-search` / `ignore-auto-dns` | ✅ |
+| **NTP** | time servers, enable | `systemd-timesyncd` drop-in `NTP=` + `set-ntp` | ✅ (direct apply; hardware-validated) |
+| Hostname / timezone | node hostname, TZ | `hostnamectl` / `timedatectl` (idempotent exec) | ✅ (direct apply; **closes the Phase-1 stubs**, below) |
 
-Risk to respect: a bad network apply can strand the node. The apply for this
-domain needs a **confirm-or-revert** guard (stage → apply → if the admin
-session doesn't reconfirm within N seconds, roll back), unlike the radio apply.
+Wi-Fi scan for the join picker is served at `GET /api/network/wifi/scan`
+(`nmcli device wifi list`, cached ~10 s); the timezone picker at
+`GET /api/network/timezones` (`timedatectl list-timezones`). IPv4 validation
+refuses an empty static config and a gateway outside the subnet (a
+lock-yourself-out mistake); VLAN validation enforces the 802.1Q id range (1–4094)
+and unique ids.
+
+**Three apply mechanisms, by safety class.** VLAN and connection changes go
+through the confirm-or-revert **guard** (a bad one can cut the uplink). NTP and
+hostname/timezone **apply directly** — they cannot strand the node, so they skip
+the guard: NTP renders a timesyncd drop-in + `timedatectl set-ntp` + a
+change-gated `systemctl restart`, and hostname/timezone are idempotent
+`hostnamectl`/`timedatectl` exec calls (the third apply mechanism — no rendered
+file). All are idempotent: re-applying the values already in effect is a no-op.
+
+**Phase-1 stub closure.** The original parity plan (§5, dashboard/system) listed
+*station-ID/legal helpers* and left **hostname/timezone** as unfinished Phase-1
+stubs. Those are now closed here: hostname and timezone are modeled
+(`netconfig.Host`), edited in the Network tab, and applied via
+`hostnamectl`/`timedatectl`.
+
+Risk respected: a bad network apply can strand the node, so this domain's apply
+is a **confirm-or-revert** guard (`internal/netconfig` `Guard`), unlike the radio
+apply. `POST /api/network/apply` checkpoints, renders the keyfiles, **activates**
+them, and returns a confirm token + deadline; `POST /api/network/confirm` makes it
+permanent; **no confirm by the deadline rolls back automatically on a server-side
+timer** — the revert never depends on the admin's HTTP session surviving (which
+the apply itself may sever). The default `composite` backend is NetworkManager's
+native D-Bus checkpoint (`NMCheckpoint`, via `busctl`) restoring **live device
+state**, composed with the keyfile snapshot (`KeyfileCheckpoint`) for on-disk
+consistency; `-network-backend keyfile` is the fallback where NM checkpoints are
+unavailable. **Hardware-validated on the bench Pi (NM 1.52.1, 2026-07-14):**
+static→DHCP without confirm auto-reverts and stays reachable; with confirm it
+sticks; a Wi-Fi PSK never appears in any API response or log; a VLAN create rolls
+back / sticks the same way; NTP syncs against pool servers; hostname changes are
+applied and idempotent (see `docs/on-hardware-report.md`).
+
+Ownership rule: Waypoint writes and prunes only `waypoint-*.nmconnection`
+profiles (0600 root) — a hand-made NM profile on the same box is never touched.
+Render is pure (deterministic per-profile UUID), so an unchanged store re-applies
+to no diff. Wi-Fi PSKs use the write-only/preserved-on-blank/redacted secret
+pattern (`View`/`Set`), wired now ahead of the Wi-Fi surface.
 
 ## 5. Dashboard / system  → 🟡
 
@@ -164,7 +206,10 @@ deploy-side (waypoint-stack) and adjacent domains:
 1. Pin/build the remaining daemon in waypoint-stack `build.sh`: **DAPNETGateway**
    (POCSAG). The **MMDVM_CM** cross-mode bridge binaries are no longer needed — the
    bridge surface is retired (§3).
-2. Host network config (NetworkManager renderer + confirm-or-revert apply) — [#32].
+2. Host network config — [#32]. **Complete** (`internal/netconfig`): status,
+   keyfile renderer, confirm-or-revert apply, and the full edit surface
+   (Ethernet/IPv4, Wi-Fi, VLAN, NTP, hostname/timezone), all hardware-validated on
+   the bench Pi. Closes the Phase-1 hostname/TZ stubs.
 3. DMR fine-grained coverage: TG hold + per-section RF/Net hang overrides (global
    mode-hang already modeled in `general`).
 4. Full modem-calibration coverage + calibration wizard ([#20]).

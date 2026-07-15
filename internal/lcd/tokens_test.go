@@ -15,9 +15,13 @@ func populatedCtx() renderCtx {
 			activeMode: "DMR",
 			lastHeard:  &heard{call: "W1ABC", tg: "TG91", mode: "DMR", ber: 0.5, rssi: -70, at: tokenNow.Add(-30 * time.Second)},
 		},
-		info: Info{Callsign: "KN4OQW", DMRID: "3180202", Modes: []string{"DMR", "YSF"}, Version: "1.2.3", Started: tokenNow.Add(-90 * time.Minute)},
-		now:  tokenNow,
-		ip:   func() string { return "192.168.1.50" },
+		info: Info{
+			Callsign: "KN4OQW", DMRID: "3180202", Modes: []string{"DMR", "YSF"}, Version: "1.2.3",
+			Started: tokenNow.Add(-90 * time.Minute), Hostname: "waypoint",
+			FreqRX: "433125000", FreqTX: "433125000",
+		},
+		now: tokenNow,
+		ip:  func() string { return "192.168.1.50" },
 	}
 }
 
@@ -27,6 +31,9 @@ func TestExpandPopulated(t *testing.T) {
 		"{callsign}": "KN4OQW",
 		"{dmr_id}":   "3180202",
 		"{ip}":       "192.168.1.50",
+		"{hostname}": "waypoint",
+		"{freq_rx}":  "433.1250",
+		"{freq_tx}":  "433.1250",
 		"{time}":     "15:04",
 		"{date}":     "2026-07-13",
 		"{uptime}":   "1h30m",
@@ -34,6 +41,10 @@ func TestExpandPopulated(t *testing.T) {
 		"{mode}":     "DMR",
 		"{modes}":    "DMR YSF",
 		"{status}":   "Listening", // not keyed in this ctx
+		"{source}":   "W1ABC",     // idle → falls back to last heard
+		"{tg}":       "TG91",      // idle → falls back to last heard
+		"{rssi}":     "-70",       // most-recent transmission's signal
+		"{ber}":      "0.5%",
 		"{lh_call}":  "W1ABC",
 		"{lh_tg}":    "TG91",
 		"{lh_mode}":  "DMR",
@@ -55,9 +66,30 @@ func TestExpandPopulated(t *testing.T) {
 func TestExpandActiveStatus(t *testing.T) {
 	rc := populatedCtx()
 	rc.st.active = true
-	rc.st.actDir, rc.st.actMode, rc.st.actTG, rc.st.actCall = "RX", "DMR", "TG91", "W1ABC"
-	if got := expand("{status}", rc); got != "RX DMR TG91 W1ABC" {
+	rc.st.actDir, rc.st.actMode, rc.st.actTG, rc.st.actCall = "RX", "DMR", "TG5", "K5XYZ"
+	if got := expand("{status}", rc); got != "RX DMR TG5 K5XYZ" {
 		t.Errorf("active status = %q", got)
+	}
+	// While keyed, {source}/{tg} read the in-progress call, not the last heard.
+	if got := expand("{source} {tg}", rc); got != "K5XYZ TG5" {
+		t.Errorf("live source/tg = %q, want the in-progress call", got)
+	}
+}
+
+// freqMHz renders Hz as MHz, dashes a blank, and passes a non-numeric value
+// through untouched (never guessing at malformed config).
+func TestFreqMHz(t *testing.T) {
+	cases := map[string]string{
+		"433125000": "433.1250",
+		"145500000": "145.5000",
+		"":          fbNone,
+		"  ":        fbNone,
+		"garbage":   "garbage",
+	}
+	for in, want := range cases {
+		if got := freqMHz(in); got != want {
+			t.Errorf("freqMHz(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
@@ -66,6 +98,10 @@ func TestExpandFallbacks(t *testing.T) {
 	cases := map[string]string{
 		"{mode}":     fbMode, // IDLE
 		"{status}":   fbIdle, // Listening
+		"{source}":   fbNone, // - (no last heard)
+		"{tg}":       fbNone,
+		"{rssi}":     fbNone,
+		"{ber}":      fbNone,
 		"{lh_call}":  fbNone, // -
 		"{lh_tg}":    fbNone,
 		"{lh_mode}":  fbNone,
@@ -73,7 +109,10 @@ func TestExpandFallbacks(t *testing.T) {
 		"{lh_rssi}":  fbNone,
 		"{lh_ago}":   fbNone,
 		"{ip}":       fbNoIP, // no-ip (nil ip func)
-		"{modes}":    "",     // no enabled modes
+		"{hostname}": fbNone, // - (blank hostname)
+		"{freq_rx}":  fbNone, // - (blank freq)
+		"{freq_tx}":  fbNone,
+		"{modes}":    "", // no enabled modes
 		"{callsign}": "",
 	}
 	for tmpl, want := range cases {

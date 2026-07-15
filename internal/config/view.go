@@ -64,14 +64,16 @@ type ViewLCD struct {
 	Cols              string        `json:"cols"`
 	ScrollSpeed       string        `json:"scroll_speed"`
 	ActivityInterrupt bool          `json:"activity_interrupt"`
+	LingerSecs        string        `json:"linger_secs"`
 	Pages             []ViewLCDPage `json:"pages"`
 }
 
 type ViewLCDPage struct {
-	Enabled  bool     `json:"enabled"`
-	Name     string   `json:"name"`
-	Duration string   `json:"duration"`
-	Lines    []string `json:"lines"`
+	Enabled   bool     `json:"enabled"`
+	Name      string   `json:"name"`
+	Duration  string   `json:"duration"`
+	Interrupt bool     `json:"interrupt"`
+	Lines     []string `json:"lines"`
 }
 
 // ViewM17 is the M17 tab's read model: the mode enable, the [M17] mode params
@@ -424,13 +426,15 @@ func (m *Model) View(storePath string) *View {
 		Cols:              m.LCD.Cols,
 		ScrollSpeed:       m.LCD.ScrollSpeed,
 		ActivityInterrupt: m.LCD.ActivityInterrupt,
+		LingerSecs:        m.LCD.LingerSecs,
 	}
 	for _, p := range m.LCD.Pages {
 		v.LCD.Pages = append(v.LCD.Pages, ViewLCDPage{
-			Enabled:  p.Enabled,
-			Name:     p.Name,
-			Duration: p.Duration,
-			Lines:    append([]string(nil), p.Lines...),
+			Enabled:   p.Enabled,
+			Name:      p.Name,
+			Duration:  p.Duration,
+			Interrupt: p.Interrupt,
+			Lines:     append([]string(nil), p.Lines...),
 		})
 	}
 	return v

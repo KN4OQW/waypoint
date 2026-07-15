@@ -373,8 +373,11 @@ func TestSetSectionRejectsUnknownField(t *testing.T) {
 	}
 }
 
-// DefaultLCD carries the documented panel defaults and two starter pages, so a
-// first-time operator who enables the driver sees something.
+// DefaultLCD carries the documented panel defaults and a starter page set, so a
+// first-time operator who enables the driver sees something. Every starter page
+// declares at most two lines, so the default set is valid on a 20×2 bench panel
+// as well as a 20×4 (ValidateLCD must accept it at both geometries), and one page
+// is an interrupt page so activity surfaces out of the box.
 func TestDefaultLCD(t *testing.T) {
 	d := DefaultLCD()
 	if d.Enabled {
@@ -383,15 +386,33 @@ func TestDefaultLCD(t *testing.T) {
 	if d.I2CBus != "/dev/i2c-1" || d.I2CAddress != "0x27" || d.Rows != "4" || d.Cols != "20" {
 		t.Errorf("unexpected panel defaults: %+v", d)
 	}
-	if d.ScrollSpeed != "300" || !d.ActivityInterrupt {
+	if d.ScrollSpeed != "300" || !d.ActivityInterrupt || d.LingerSecs != "3" {
 		t.Errorf("unexpected behaviour defaults: %+v", d)
 	}
-	if len(d.Pages) != 2 || d.Pages[0].Name != "Idle" || d.Pages[1].Name != "Last Heard" {
-		t.Fatalf("want two starter pages Idle+Last Heard: %+v", d.Pages)
+	if len(d.Pages) != 3 || d.Pages[0].Name != "Idle" || d.Pages[1].Name != "Activity" || d.Pages[2].Name != "Network" {
+		t.Fatalf("want starter pages Idle+Activity+Network: %+v", d.Pages)
 	}
+	interrupts := 0
 	for _, p := range d.Pages {
 		if !p.Enabled || p.Duration == "" || len(p.Lines) == 0 {
 			t.Errorf("starter page not usable: %+v", p)
+		}
+		if len(p.Lines) > 2 {
+			t.Errorf("starter page %q has %d lines; must be ≤2 to stay valid on a 20×2 panel", p.Name, len(p.Lines))
+		}
+		if p.Interrupt {
+			interrupts++
+		}
+	}
+	if interrupts != 1 {
+		t.Errorf("want exactly one interrupt starter page, got %d", interrupts)
+	}
+	// The default set must validate on both the bench 20×2 and the default 20×4.
+	for _, rows := range []string{"2", "4"} {
+		g := d
+		g.Rows = rows
+		if err := ValidateLCD(g); err != nil {
+			t.Errorf("default pages rejected at 20×%s: %v", rows, err)
 		}
 	}
 }
@@ -405,11 +426,12 @@ func TestLCDStoreRoundTrip(t *testing.T) {
 	m := fixture()
 	m.LCD = LCD{
 		Enabled: true, I2CBus: "/dev/i2c-3", I2CAddress: "0x3f",
-		Rows: "2", Cols: "16", ScrollSpeed: "250", ActivityInterrupt: false,
+		Rows: "4", Cols: "16", ScrollSpeed: "250", ActivityInterrupt: true, LingerSecs: "7",
 		Pages: []LCDPage{
 			{Enabled: true, Name: "Status", Duration: "10", Lines: []string{"{callsign} {mode}", "{status}"}},
-			{Enabled: false, Name: "Clock", Duration: "4", Lines: []string{"{time}"}},                        // ragged: one line
-			{Enabled: true, Name: "Net", Duration: "6", Lines: []string{"{ip}", "{lh_call}", "{lh_tg}", ""}}, // ragged: four incl. blank
+			{Enabled: false, Name: "Clock", Duration: "4", Lines: []string{"{time}"}},                                    // ragged: one line
+			{Enabled: true, Name: "Caller", Duration: "5", Interrupt: true, Lines: []string{"{source}", "{tg}"}},         // interrupt page
+			{Enabled: true, Name: "Net", Duration: "6", Lines: []string{"{ip}", "{hostname}", "{freq_rx}", "{freq_tx}"}}, // four lines, valid at 4 rows
 		},
 	}
 	if err := m.Save(s, "seed"); err != nil {
@@ -459,14 +481,14 @@ func TestLCDIsolation(t *testing.T) {
 // wholesale, and an unknown field is rejected.
 func TestSetSectionLCDMerge(t *testing.T) {
 	s := memStore(t)
-	_ = fixture().Save(s, "seed") // LCD = DefaultLCD(), two pages
+	_ = fixture().Save(s, "seed") // LCD = DefaultLCD(), three starter pages
 
 	// Partial: flip enabled only — the starter pages must survive the merge.
 	if _, err := SetSection(s, "lcd", []byte(`{"enabled":true}`), "test"); err != nil {
 		t.Fatal(err)
 	}
 	m, _ := Load(s)
-	if !m.LCD.Enabled || len(m.LCD.Pages) != 2 {
+	if !m.LCD.Enabled || len(m.LCD.Pages) != 3 {
 		t.Fatalf("partial merge dropped pages or missed enable: %+v", m.LCD)
 	}
 
@@ -482,6 +504,91 @@ func TestSetSectionLCDMerge(t *testing.T) {
 	// Unknown field rejected.
 	if _, err := SetSection(s, "lcd", []byte(`{"bogus":true}`), "test"); err == nil {
 		t.Fatal("unknown LCD field should be rejected")
+	}
+}
+
+// ValidateLCD rejects a page with more lines than the panel has rows (the one
+// rule the geometry-agnostic renderer can't express), and the error names the
+// geometry so the operator knows which panel they exceeded. A page with rows-or-
+// fewer lines is fine, and a blank/malformed Rows falls back to the 4-row default.
+func TestValidateLCD(t *testing.T) {
+	base := LCD{Cols: "20"}
+
+	// 3 lines on a 20×2 panel: rejected, error names "20x2".
+	bad := base
+	bad.Rows = "2"
+	bad.Pages = []LCDPage{{Name: "Idle", Lines: []string{"a", "b", "c"}}}
+	err := ValidateLCD(bad)
+	if err == nil {
+		t.Fatal("3-line page on a 2-row panel must be rejected")
+	}
+	if !strings.Contains(err.Error(), "20x2") || !strings.Contains(err.Error(), "Idle") {
+		t.Errorf("error should name the geometry and page: %v", err)
+	}
+
+	// Same pages on a 20×4 panel: fine.
+	ok4 := base
+	ok4.Rows = "4"
+	ok4.Pages = bad.Pages
+	if err := ValidateLCD(ok4); err != nil {
+		t.Errorf("3-line page on a 4-row panel should pass: %v", err)
+	}
+
+	// Exactly rows lines: the boundary is inclusive.
+	exact := base
+	exact.Rows = "2"
+	exact.Pages = []LCDPage{{Name: "P", Lines: []string{"a", "b"}}}
+	if err := ValidateLCD(exact); err != nil {
+		t.Errorf("2-line page on a 2-row panel should pass: %v", err)
+	}
+
+	// Blank Rows falls back to 4, so a 4-line page passes but a 5-line one fails.
+	fb := base
+	fb.Rows = ""
+	fb.Pages = []LCDPage{{Name: "P", Lines: []string{"a", "b", "c", "d"}}}
+	if err := ValidateLCD(fb); err != nil {
+		t.Errorf("blank Rows should default to 4 and accept 4 lines: %v", err)
+	}
+	fb.Pages = []LCDPage{{Name: "P", Lines: []string{"a", "b", "c", "d", "e"}}}
+	if err := ValidateLCD(fb); err == nil {
+		t.Error("blank Rows should default to 4 and reject 5 lines")
+	}
+}
+
+// SetLCD enforces the geometry rule on the merged result: shrinking the panel to
+// fewer rows than an existing page's line count is rejected at save time, and the
+// store is left unchanged; a valid write commits.
+func TestSetLCDValidatesGeometry(t *testing.T) {
+	s := memStore(t)
+	seed := fixture()
+	seed.LCD = LCD{Rows: "4", Cols: "20", Pages: []LCDPage{
+		{Enabled: true, Name: "Big", Duration: "5", Lines: []string{"a", "b", "c", "d"}},
+	}}
+	if err := seed.Save(s, "seed"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Shrinking to 2 rows while the page still has 4 lines is rejected.
+	if err := SetLCD(s, []byte(`{"rows":"2"}`), "test"); err == nil {
+		t.Fatal("shrinking rows below an existing page's line count must be rejected")
+	}
+	m, _ := Load(s)
+	if m.LCD.Rows != "4" {
+		t.Errorf("rejected save must not mutate the store: rows=%q", m.LCD.Rows)
+	}
+
+	// A valid write (same geometry, fewer lines) commits.
+	if err := SetLCD(s, []byte(`{"pages":[{"enabled":true,"name":"Two","duration":"5","lines":["x","y"]}]}`), "test"); err != nil {
+		t.Fatalf("valid LCD write rejected: %v", err)
+	}
+	m, _ = Load(s)
+	if len(m.LCD.Pages) != 1 || m.LCD.Pages[0].Name != "Two" {
+		t.Errorf("valid write did not commit: %+v", m.LCD.Pages)
+	}
+
+	// SetLCD keeps SetSection's contract: unknown fields are rejected.
+	if err := SetLCD(s, []byte(`{"bogus":1}`), "test"); err == nil {
+		t.Error("SetLCD should reject an unknown field")
 	}
 }
 

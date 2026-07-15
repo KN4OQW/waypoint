@@ -121,6 +121,64 @@ func TestWindowWraps(t *testing.T) {
 	}
 }
 
+// renderPage is the pure render contract: it must pad short pages to exactly rows
+// lines and truncate over-wide lines to exactly cols columns, identically at 20×2
+// and 20×4 (geometry-agnostic). A fake state drives token expansion.
+func TestRenderPageGeometry(t *testing.T) {
+	st := &state{activeMode: "DMR"}
+	info := Info{Callsign: "KN4OQW"}
+	now := time.Date(2026, 7, 13, 15, 4, 0, 0, time.UTC)
+	// Two templates: one short (pads), one over-wide (truncates at offset 0).
+	page := config.LCDPage{Name: "P", Lines: []string{"{callsign} {mode}", "0123456789ABCDEFGHIJKLMN"}}
+
+	for _, tc := range []struct {
+		name       string
+		rows, cols int
+		want       []string
+	}{
+		{"20x2", 2, 20, []string{
+			"KN4OQW DMR" + strings.Repeat(" ", 10), // padded to 20
+			"0123456789ABCDEFGHIJ",                 // 24 runes truncated to 20
+		}},
+		{"20x4", 4, 20, []string{
+			"KN4OQW DMR" + strings.Repeat(" ", 10),
+			"0123456789ABCDEFGHIJ",
+			strings.Repeat(" ", 20), // no third template line → blank row
+			strings.Repeat(" ", 20), // no fourth → blank row
+		}},
+		{"16x2", 2, 16, []string{
+			"KN4OQW DMR" + strings.Repeat(" ", 6),
+			"0123456789ABCDEF", // truncated to 16
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := renderPage(tc.rows, tc.cols, page, st, info, nil, now)
+			if len(got) != tc.rows {
+				t.Fatalf("got %d rows, want %d", len(got), tc.rows)
+			}
+			for i, w := range tc.want {
+				if len([]rune(got[i])) != tc.cols {
+					t.Errorf("row %d width = %d, want %d (%q)", i, len([]rune(got[i])), tc.cols, got[i])
+				}
+				if got[i] != w {
+					t.Errorf("row %d = %q, want %q", i, got[i], w)
+				}
+			}
+		})
+	}
+}
+
+// A blank or whitespace-only template line renders as a blank (all-spaces) row.
+func TestRenderPageBlankLines(t *testing.T) {
+	page := config.LCDPage{Name: "P", Lines: []string{"", "   "}}
+	got := renderPage(2, 20, page, &state{}, Info{}, nil, time.Time{})
+	for i, r := range got {
+		if strings.TrimSpace(r) != "" || len([]rune(r)) != 20 {
+			t.Errorf("row %d = %q, want a 20-wide blank line", i, r)
+		}
+	}
+}
+
 func TestRotation(t *testing.T) {
 	base := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)
 	cfg := config.LCD{
@@ -205,6 +263,46 @@ func TestActivityInterrupt(t *testing.T) {
 	}
 	if p, _ := r.currentPage(base.Add(8 * time.Second)); p.Name != "Idle" {
 		t.Errorf("after linger: page %q, want the resumed Idle", p.Name) // 3s ≥ linger
+	}
+}
+
+// An operator page marked interrupt=true is the one shown during activity (not the
+// synthesized fallback), it is excluded from the idle rotation, and the linger is
+// taken from config.LingerSecs.
+func TestOperatorInterruptPage(t *testing.T) {
+	base := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)
+	cfg := config.LCD{
+		Rows: "2", Cols: "20", ScrollSpeed: "0", ActivityInterrupt: true, LingerSecs: "10",
+		Pages: []config.LCDPage{
+			page("Idle", true, "5", "{callsign}"),
+			{Enabled: true, Name: "Caller", Duration: "5", Interrupt: true, Lines: []string{"{source}", "{tg}"}},
+			page("Net", true, "5", "{ip}"),
+		},
+	}
+	r := NewRenderer(cfg, testInfo(), &fakeDevice{}, nil)
+	_ = r.Tick(base)
+
+	// Idle rotation cycles only the non-interrupt pages: Idle ↔ Net, never Caller.
+	for i, want := range []string{"Idle", "Net", "Idle"} {
+		if p, _ := r.currentPage(base.Add(time.Duration(i) * 5 * time.Second)); p.Name != want {
+			t.Errorf("rotation step %d = %q, want %q (interrupt page must be excluded)", i, p.Name, want)
+		}
+	}
+
+	// Key-down shows the operator's interrupt page, not the "Activity" fallback.
+	r.Handle(hub.Event{Type: "rf_voice_start", Mode: "DMR", Source: "W1ABC", Dest: "TG91", Time: base.Add(20 * time.Second)})
+	p, _ := r.currentPage(base.Add(20 * time.Second))
+	if p.Name != "Caller" {
+		t.Fatalf("interrupt page = %q, want the operator's Caller page", p.Name)
+	}
+
+	// Key-up: the configured 10s linger holds the interrupt page past the default 3s.
+	r.Handle(hub.Event{Type: "rf_voice_end", Mode: "DMR", Source: "W1ABC", Dest: "TG91", Time: base.Add(21 * time.Second)})
+	if p, _ := r.currentPage(base.Add(26 * time.Second)); p.Name != "Caller" { // 5s < 10s linger
+		t.Errorf("within configured linger: %q, want Caller", p.Name)
+	}
+	if p, _ := r.currentPage(base.Add(32 * time.Second)); p.Name == "Caller" { // 11s ≥ linger → resumed
+		t.Error("interrupt page held past the configured linger")
 	}
 }
 
