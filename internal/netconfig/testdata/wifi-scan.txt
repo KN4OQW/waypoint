@@ -1,0 +1,5 @@
+*:MyNetwork:82:WPA2
+ :NeighborNet:47:WPA1 WPA2
+ :MyNetwork:60:WPA2
+ :CoffeeShop\:Guest:31:
+ ::12:WPA2

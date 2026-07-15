@@ -38,6 +38,15 @@ let p25Refs = [];           // cached P25 talkgroup list for the startup-TG pick
 let nxdnRefs = [];          // cached NXDN talkgroup list for the startup-TG picker
 let dstarRefs = [];         // cached D-Star reflector list for the startup picker
 let m17Refs = [];           // cached M17 reflector list for the startup picker
+let netStatus = null;       // live host-network state from /api/network/status (read-only)
+let netEdit = null;          // working copy of /api/network/config (editable)
+let netDirty = false;        // unsaved connection/VLAN edits (guarded Apply Network)
+let netHostDirty = false;    // unsaved host/NTP edits (direct Apply Host Settings)
+let netScanResults = [];     // cached /api/network/wifi/scan for the join picker
+let netTimezones = [];       // cached /api/network/timezones for the tz datalist
+let netCountdown = null;     // interval handle for the confirm-or-revert countdown bar
+let netApplying = false;     // an Apply Network is in flight
+let netApplyingHost = false; // an Apply Host Settings is in flight
 
 const el = (t, cls, html) => { const e = document.createElement(t); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -165,18 +174,49 @@ function lcdFrom(l) {
     cols: l.cols || "20",
     scroll_speed: l.scroll_speed || "300",
     activity_interrupt: l.activity_interrupt !== false,
+    linger_secs: l.linger_secs || "3",
     pages: (l.pages || []).map((p) => ({
       enabled: p.enabled !== false,
       name: p.name || "",
       duration: p.duration || "8",
+      interrupt: !!p.interrupt,
       lines: (p.lines || []).slice(),
     })),
   };
 }
 
-// LCD_TOKENS mirrors the renderer's grounded token set (internal/lcd/tokens.go):
-// the palette offers these, and lines are validated against them client-side.
-const LCD_TOKENS = ["callsign", "dmr_id", "ip", "time", "date", "uptime", "version", "mode", "modes", "status", "lh_call", "lh_tg", "lh_mode", "lh_ber", "lh_rssi", "lh_ago"];
+// LCD_TOKEN_HELP is the single source of truth for the token palette, the legend,
+// client-side validation, and the preview. Each entry documents the token and its
+// data source; it mirrors the renderer's grounded token set (internal/lcd/tokens.go)
+// so the UI never offers a token the driver can't expand. `sample` feeds the live
+// preview (a representative "active DMR call" snapshot).
+const LCD_TOKEN_HELP = [
+  ["callsign", "Station callsign (config)", "KN4OQW"],
+  ["dmr_id", "DMR ID (config)", "3180202"],
+  ["ip", "Node's LAN IPv4 address", "192.168.1.50"],
+  ["hostname", "Node hostname", "waypoint"],
+  ["version", "Waypoint version", "1.0"],
+  ["freq_rx", "RX frequency, MHz (modem config)", "433.1250"],
+  ["freq_tx", "TX frequency, MHz (modem config)", "433.1250"],
+  ["time", "Clock, HH:MM", "15:04"],
+  ["date", "Date, YYYY-MM-DD", "2026-07-14"],
+  ["uptime", "Time since the daemon started", "1h30m"],
+  ["mode", "Active mode, else IDLE", "DMR"],
+  ["modes", "Enabled modes, space-joined", "DMR YSF"],
+  ["status", "Activity line, else Listening", "RX DMR TG91 W1ABC"],
+  ["source", "Caller now, else last heard", "W1ABC"],
+  ["tg", "Talkgroup now, else last heard", "TG91"],
+  ["rssi", "Signal of the last transmission", "-70"],
+  ["ber", "Bit-error rate of the last transmission", "0.5%"],
+  ["lh_call", "Last heard callsign", "W1ABC"],
+  ["lh_tg", "Last heard talkgroup", "TG91"],
+  ["lh_mode", "Last heard mode", "DMR"],
+  ["lh_ber", "Last heard bit-error rate", "0.5%"],
+  ["lh_rssi", "Last heard RSSI, dBm", "-70"],
+  ["lh_ago", "Time since the last transmission", "30s"],
+];
+const LCD_TOKENS = LCD_TOKEN_HELP.map((t) => t[0]);
+const LCD_SAMPLE = LCD_TOKEN_HELP.reduce((m, t) => { m[t[0]] = t[2]; return m; }, {});
 // unknownTokens returns the {tokens} in a line that aren't in LCD_TOKENS.
 function unknownTokens(line) {
   const bad = [];
@@ -186,6 +226,25 @@ function unknownTokens(line) {
     if (!LCD_TOKENS.includes(m[1]) && !bad.includes(m[1])) bad.push(m[1]);
   }
   return bad;
+}
+
+// lcdExpandLine mirrors the Go renderer (internal/lcd): expand {tokens} against a
+// sample snapshot (unknown → blank), strip non-ASCII to "?", then truncate/pad to
+// exactly cols. Used for the client-side preview only.
+function lcdExpandLine(line, cols) {
+  let out = String(line || "").replace(/\{([a-z0-9_]+)\}/g, (m, name) =>
+    Object.prototype.hasOwnProperty.call(LCD_SAMPLE, name) ? LCD_SAMPLE[name] : "");
+  out = out.replace(/[^\x20-\x7e]/g, "?");
+  if (out.length > cols) return out.slice(0, cols);
+  return out + " ".repeat(cols - out.length);
+}
+
+// lcdPreviewText renders a page to rows lines of cols columns, exactly as the
+// panel would show it at rest (no scroll) — a faithful geometry-matching preview.
+function lcdPreviewText(page, rows, cols) {
+  const lines = [];
+  for (let i = 0; i < rows; i++) lines.push(lcdExpandLine((page.lines || [])[i] || "", cols));
+  return lines.join("\n");
 }
 
 function ysfgwFrom(y) {
@@ -476,7 +535,7 @@ function lcdSelect(key, opts, cur, extra) {
   return `<select data-lcd-dim="${esc(key)}"${extra || ""}>${o}</select>`;
 }
 
-function pageCard(p, i, rows) {
+function pageCard(p, i, rows, cols, total) {
   let lines = "";
   const bad = [];
   for (let j = 0; j < rows; j++) {
@@ -487,16 +546,23 @@ function pageCard(p, i, rows) {
   }
   const warn = `<div class="lcd-warn${bad.length ? "" : " hide"}" role="alert" data-lcdwarn="${i}">${warnText(bad)}</div>`;
   const palette = `<div class="lcd-tokens" role="group" aria-label="Insert a token into page ${i + 1}">` +
-    LCD_TOKENS.map((tk) => `<button type="button" class="lcd-tok" data-lcdtoken="${esc(tk)}" data-lcdpageidx="${i}" title="Insert {${esc(tk)}}">{${esc(tk)}}</button>`).join("") + `</div>`;
+    LCD_TOKEN_HELP.map(([tk, desc]) => `<button type="button" class="lcd-tok" data-lcdtoken="${esc(tk)}" data-lcdpageidx="${i}" title="${esc(desc)} — inserts {${esc(tk)}}">{${esc(tk)}}</button>`).join("") + `</div>`;
+  const preview = `<div class="lcd-preview">` +
+    `<div class="lcd-preview-label" id="lcd-pv-label-${i}">Preview (${esc(cols)}×${esc(String(rows))})</div>` +
+    `<pre class="lcd-screen" data-lcdpreview="${i}" role="group" aria-labelledby="lcd-pv-label-${i}">${esc(lcdPreviewText(p, rows, parseInt(cols, 10) || 20))}</pre></div>`;
+  const upDis = i === 0 ? " disabled aria-disabled=\"true\"" : "";
+  const dnDis = i === total - 1 ? " disabled aria-disabled=\"true\"" : "";
   return `<section class="card lcd-page">
       <div class="card-head lcd-pagehead">
-        <span class="sq" aria-hidden="true"></span>
+        <button type="button" class="lcd-move" data-lcdmove="up" data-lcdpageidx="${i}" aria-label="Move page ${i + 1} up"${upDis}>▲</button>
+        <button type="button" class="lcd-move" data-lcdmove="down" data-lcdpageidx="${i}" aria-label="Move page ${i + 1} down"${dnDis}>▼</button>
         <input class="lcd-pagename" data-lcdpage="${i}" data-lcdkey="name" value="${esc(p.name || "")}" placeholder="Page name" aria-label="Page ${i + 1} name">
-        <button type="button" class="pill ${p.enabled ? "on" : "off"}" data-lcdpageen="${i}" aria-pressed="${p.enabled ? "true" : "false"}">${p.enabled ? "ENABLED" : "DISABLED"}</button>
+        <button type="button" class="pill ${p.enabled ? "on" : "off"}" data-lcdpageen="${i}" aria-pressed="${p.enabled ? "true" : "false"}" aria-label="Page ${i + 1} enabled">${p.enabled ? "ENABLED" : "DISABLED"}</button>
+        <button type="button" class="pill ${p.interrupt ? "on" : "off"}" data-lcdpageint="${i}" aria-pressed="${p.interrupt ? "true" : "false"}" aria-label="Page ${i + 1} interrupt on activity" title="Take over the panel on TX/RX, then resume rotation">${p.interrupt ? "INTERRUPT" : "ROTATE"}</button>
         <span class="lcd-dur"><input class="mini" data-lcdpage="${i}" data-lcdkey="duration" value="${esc(p.duration || "")}" inputmode="numeric" aria-label="Page ${i + 1} hold seconds"> s</span>
         <button type="button" class="netdel" data-lcdpagedel="${i}" aria-label="Remove page ${i + 1}">✕</button>
       </div>
-      ${lines}${warn}${palette}
+      ${lines}${warn}${preview}${palette}
     </section>`;
 }
 
@@ -516,9 +582,19 @@ function updatePageWarning(i) {
   el.classList.toggle("hide", bad.length === 0);
 }
 
+// lcdLegend is the token reference: every token, what it shows, and its source.
+// It is generated from LCD_TOKEN_HELP so it can never drift from the palette or
+// the renderer. Rendered as a real <dl> inside <details> for accessible reading.
+function lcdLegend() {
+  const items = LCD_TOKEN_HELP.map(([tk, desc]) =>
+    `<dt>{${esc(tk)}}</dt><dd>${esc(desc)}</dd>`).join("");
+  return `<details class="lcd-legend"><summary>TOKEN REFERENCE</summary><dl>${items}</dl></details>`;
+}
+
 function panelLCD() {
   const l = edit.lcd || (edit.lcd = lcdFrom({}));
   const rows = Math.max(1, parseInt(l.rows, 10) || 4);
+  const cols = l.cols || "20";
   const panel = card("PANEL",
     lcdToggleRow("enabled", "Driver enabled", "ENABLED", "DISABLED") +
     input("lcd", "i2c_bus", { label: "I2C bus" }) +
@@ -526,13 +602,24 @@ function panelLCD() {
     row("Rows", lcdSelect("rows", [["2", "2 rows"], ["4", "4 rows"]], l.rows)) +
     row("Columns", lcdSelect("cols", [["16", "16 columns"], ["20", "20 columns"]], l.cols)) +
     input("lcd", "scroll_speed", { label: "Scroll speed", unit: "ms" }) +
-    lcdToggleRow("activity_interrupt", "Interrupt on activity", "ON", "OFF"));
-  const help = note("Lines fill in from <b>{tokens}</b> — e.g. <code>{callsign}</code>, <code>{status}</code>, <code>{lh_call}</code>. A line wider than the panel scrolls. Characters outside plain ASCII show as <code>?</code>.");
+    lcdToggleRow("activity_interrupt", "Interrupt on activity", "ON", "OFF") +
+    input("lcd", "linger_secs", { label: "Interrupt linger", unit: "s" }));
+  const help = note("Lines fill in from <b>{tokens}</b> — e.g. <code>{callsign}</code>, <code>{status}</code>, <code>{source}</code>. A line wider than the panel scrolls; characters outside plain ASCII show as <code>?</code>. A page may have at most as many lines as the panel has rows.");
   const disabled = l.enabled ? "" : note("The driver is <b>disabled</b> — pages are saved but nothing is drawn until you enable it above.");
-  const pages = (l.pages || []).map((p, i) => pageCard(p, i, rows)).join("");
+  const pages = (l.pages || []).map((p, i) => pageCard(p, i, rows, cols, (l.pages || []).length)).join("");
   const add = `<button type="button" class="btn ghost mini-btn" id="lcd-add-page">+ ADD PAGE</button>`;
-  return `<div class="grid2">${panel}<div class="stack">${help}${disabled}</div></div>` +
+  return `<div class="grid2">${panel}<div class="stack">${help}${lcdLegend()}${disabled}</div></div>` +
     `<div class="stack" style="margin-top:16px;">${pages || note("No pages yet — add one to show something on the panel.")}${add}</div>`;
+}
+
+// updatePagePreview refreshes one page's live preview in place (no re-render) so
+// typing in a line input never steals focus, mirroring updatePageWarning.
+function updatePagePreview(i) {
+  const el = document.querySelector(`[data-lcdpreview="${i}"]`);
+  if (!el) return;
+  const l = edit.lcd || {};
+  const rows = Math.max(1, parseInt(l.rows, 10) || 4);
+  el.textContent = lcdPreviewText(l.pages[i], rows, parseInt(l.cols, 10) || 20);
 }
 
 // ensureLcdLine pads a page's lines array so index ri is assignable.
@@ -719,6 +806,319 @@ function panelExpert(c, h) {
 
 function panelPending(what) {
   return note(`<b>${esc(what)}</b> settings aren't wired yet — a later slice of the configuration store (<a href="https://github.com/KN4OQW/waypoint/issues/1">waypoint#1</a>).`);
+}
+
+// --- Network (host / OS) -------------------------------------------------
+// The Network tab's first slice is read-only STATUS: the node's live host
+// networking (interfaces, IPv4, DNS, Wi-Fi, NTP) parsed from nmcli/timedatectl and
+// served at /api/network/status. The Wi-Fi / VLAN / static-IP EDIT surface (which
+// writes the store and applies through the confirm-or-revert guard) lands in the
+// next slice; the confirm countdown bar (showNetworkConfirmBar) is wired now so
+// that surface has nothing left to build on the safety path.
+// statRow renders a read-only status field. The input carries an aria-label (the
+// visible <label> is not programmatically associated in this codebase's idiom), so
+// each value is self-describing to a screen reader.
+function statRow(label, value) {
+  const v = value == null || value === "" ? "—" : value;
+  return `<div class="row"><label>${esc(label)}</label><input value="${esc(v)}" readonly aria-label="${esc(label)}"></div>`;
+}
+function panelNetwork() {
+  const live = netStatusSection();
+  const editors = netEdit ? `${netHostCard()}${netEthCard()}${netWifiCard()}${netVlanCard()}` : note("Loading network configuration…");
+  // The network Apply is SEPARATE from the radio Apply: it routes through the
+  // confirm-or-revert guard (save → guarded apply → countdown). No direct-apply
+  // escape hatch exists for host networking.
+  const actions = `<div class="net-actions" style="display:flex; gap:12px; align-items:center; margin-top:6px;">
+      <button type="button" id="net-apply"${netDirty ? "" : " disabled"} style="padding:8px 18px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">APPLY NETWORK</button>
+      <span class="note" style="margin:0;">Applies through confirm-or-revert — you'll get a countdown to keep the change before it auto-reverts.</span>
+    </div>`;
+  const hint = note("Editing here writes the store and, on <b>Apply Network</b>, renders NetworkManager keyfiles behind a confirm-or-revert guard so a bad change can't strand the node. Waypoint only manages its own <code>waypoint-*</code> profiles; your hand-made connections are never touched.");
+  return `<div class="grid2">${live}<div class="stack">${editors}</div></div>${actions}${hint}`;
+}
+
+// netStatusSection is the live, read-only host-network state (unchanged from the
+// status-only slice): what the box is actually doing right now.
+function netStatusSection() {
+  if (!netStatus) return card("LIVE STATUS", note("Fetching live network status…"));
+  const s = netStatus;
+  const host = card("HOST (LIVE)", statRow("Hostname", s.hostname) + statRow("NTP", ntpText(s.ntp)) + (s.wifi ? statRow("Wi-Fi", `${s.wifi.ssid} · ${s.wifi.signal}%`) : ""));
+  const devs = (s.devices || []).filter((d) => d.type === "ethernet" || d.type === "wifi");
+  const devCards = devs.length ? devs.map(deviceCard).join("") : note("No live Ethernet or Wi-Fi interfaces reported.");
+  return `${host}${devCards}`;
+}
+function ntpText(ntp) {
+  if (!ntp) return "—";
+  const state = ntp.enabled ? (ntp.synchronized ? "synchronized" : "enabled, not yet synced") : "disabled";
+  return ntp.server ? `${state} · ${ntp.server}` : state;
+}
+function deviceCard(d) {
+  const title = `${d.name} · ${d.type.toUpperCase()} (LIVE)`;
+  const conn = d.connection ? d.connection + (d.managed ? " (waypoint)" : "") : "—";
+  return card(title,
+    statRow("State", d.state) +
+    statRow("Profile", conn) +
+    statRow("IPv4", d.ipv4 + (d.method ? ` (${d.method})` : "")) +
+    statRow("Gateway", d.gateway) +
+    statRow("DNS", (d.dns || []).join(", ")) +
+    statRow("MAC", d.mac));
+}
+
+// --- Network editable config (goes through confirm-or-revert) ------------
+// netEdit is the working copy of GET /api/network/config, kept separate from the
+// radio `edit`/`dirty` state so a network change never rides the radio Apply (it
+// must go through the guard). buildNetEdit normalizes the view into it.
+function ipBlock(src) {
+  return {
+    method: (src && src.method) || "auto",
+    address: (src && src.address) || "", prefix: (src && src.prefix) || "",
+    gateway: (src && src.gateway) || "",
+    dns: ((src && src.dns) || []).slice(),
+    search_domains: ((src && src.search_domains) || []).slice(),
+  };
+}
+function buildNetEdit(cfg) {
+  cfg = cfg || {};
+  netEdit = {
+    host: { hostname: (cfg.host && cfg.host.hostname) || "", timezone: (cfg.host && cfg.host.timezone) || "" },
+    ntp: { enabled: cfg.ntp ? cfg.ntp.enabled !== false : true, servers: ((cfg.ntp && cfg.ntp.servers) || []).slice() },
+    connections: (cfg.connections || []).map((c) => ({
+      name: c.name, type: c.type, interface: c.interface || "", autoconnect: c.autoconnect !== false,
+      priority: c.priority || "", _managed: true, ipv4: ipBlock(c.ipv4),
+      ssid: c.ssid || "", hidden: !!c.hidden, country: c.country || "", has_psk: !!c.has_psk, psk: "",
+    })),
+    vlans: (cfg.vlans || []).map((v) => ({ parent: v.parent || "", id: v.id || "", name: v.name || "", ipv4: ipBlock(v.ipv4) })),
+  };
+  // Ensure an Ethernet and a Wi-Fi slot exist so the cards always render; these
+  // placeholders are only persisted once actually configured (netPersist).
+  netEthConn(); netWifiConn();
+  netDirty = false;
+  netHostDirty = false;
+}
+function netConn(type, mk) {
+  let c = netEdit.connections.find((x) => x.type === type);
+  if (!c) { c = mk(); netEdit.connections.push(c); }
+  return c;
+}
+function netBlankConn(over) {
+  return Object.assign({ name: "", type: "", interface: "", autoconnect: true, priority: "", _managed: false,
+    ipv4: { method: "auto", address: "", prefix: "", gateway: "", dns: [], search_domains: [] },
+    ssid: "", hidden: false, country: "", has_psk: false, psk: "" }, over);
+}
+function netEthConn() { return netConn("ethernet", () => netBlankConn({ name: "eth0", type: "ethernet", interface: "eth0" })); }
+function netWifiConn() { return netConn("wifi", () => netBlankConn({ name: "wifi", type: "wifi" })); }
+function netMarkDirty() { netDirty = true; document.getElementById("net-apply") && (document.getElementById("net-apply").disabled = false); }
+
+// netPersist decides whether a connection is written on Apply. A Wi-Fi profile
+// needs an SSID; an Ethernet profile is persisted once it deviates from plain
+// DHCP (static, a DNS/search override, or a priority) or is already managed — a
+// pure-DHCP unmanaged Ethernet needs no waypoint-* profile at all (NM's default
+// handles it), and switching a managed static profile back to DHCP with no
+// overrides drops it, handing the interface back to NM's default DHCP.
+function netPersist(c) {
+  if (c.type === "wifi") return !!(c.ssid && c.ssid.trim());
+  const ip = c.ipv4 || {};
+  return c._managed || ip.method === "manual" || (ip.dns || []).length > 0 || (ip.search_domains || []).length > 0 || (c.priority && c.priority !== "0");
+}
+// netToPayload maps the flat edit shape to the store MODEL shape (nested wifi/
+// ipv4), dropping view-only keys (has_psk, _managed) so the server's
+// DisallowUnknownFields decode accepts it. A blank PSK is sent as "" and the
+// server preserves the stored one (write-only secret).
+function netToPayload(c) {
+  const p = {
+    name: c.name, type: c.type, interface: c.interface || "", autoconnect: !!c.autoconnect,
+    priority: c.priority || "",
+    ipv4: {
+      method: c.ipv4.method || "auto", address: c.ipv4.address || "", prefix: c.ipv4.prefix || "",
+      gateway: c.ipv4.gateway || "", dns: (c.ipv4.dns || []).slice(), search_domains: (c.ipv4.search_domains || []).slice(),
+    },
+  };
+  if (c.type === "wifi") p.wifi = { ssid: c.ssid || "", psk: c.psk || "", hidden: !!c.hidden, country: (c.country || "").toUpperCase() };
+  return p;
+}
+// vlanToPayload maps an edited VLAN to the store MODEL shape (id as a number).
+function vlanToPayload(v) {
+  return {
+    parent: (v.parent || "").trim(), id: parseInt(v.id, 10) || 0, name: v.name || "",
+    ipv4: {
+      method: v.ipv4.method || "auto", address: v.ipv4.address || "", prefix: v.ipv4.prefix || "",
+      gateway: v.ipv4.gateway || "", dns: (v.ipv4.dns || []).slice(), search_domains: (v.ipv4.search_domains || []).slice(),
+    },
+  };
+}
+// netIPv4Target resolves the ipv4 object an editor scope points at:
+// "conn:<type>" → the ethernet/wifi connection; "vlan:<idx>" → that VLAN.
+function netIPv4Target(scope) {
+  const sep = scope.indexOf(":");
+  const kind = scope.slice(0, sep), ref = scope.slice(sep + 1);
+  if (kind === "vlan") return netEdit.vlans[+ref].ipv4;
+  return netConnByType(ref).ipv4;
+}
+function netMarkHostDirty() { netHostDirty = true; const b = document.getElementById("host-apply"); if (b) b.disabled = false; }
+function listToText(a) { return (a || []).join(", "); }
+function textToList(s) { return String(s || "").split(/[\s,]+/).filter(Boolean); }
+
+// ipv4Editor renders the shared DHCP/Static IPv4 sub-form. `scope` identifies the
+// target ipv4 object for the event handlers ("conn:ethernet", "conn:wifi",
+// "vlan:<idx>"); `label` names it for screen readers.
+function ipv4Editor(ip, scope, label) {
+  const isStatic = ip.method === "manual";
+  const methodSel = row("IPv4 method",
+    `<select data-netmethod="${esc(scope)}" aria-label="IPv4 method for ${esc(label)}">
+       <option value="auto"${isStatic ? "" : " selected"}>DHCP (automatic)</option>
+       <option value="manual"${isStatic ? " selected" : ""}>Static</option>
+     </select>`);
+  const staticFields = isStatic
+    ? row("IP address", `<input data-netip="${esc(scope)}" data-ipkey="address" value="${esc(ip.address)}" placeholder="192.168.1.50" aria-label="IP address for ${esc(label)}">`) +
+      row("Prefix (CIDR)", `<input data-netip="${esc(scope)}" data-ipkey="prefix" value="${esc(ip.prefix)}" placeholder="24" aria-label="Network prefix length for ${esc(label)}">`) +
+      row("Gateway", `<input data-netip="${esc(scope)}" data-ipkey="gateway" value="${esc(ip.gateway)}" placeholder="192.168.1.1" aria-label="Default gateway for ${esc(label)}">`)
+    : "";
+  const dnsLabel = isStatic ? "DNS servers" : "DNS override (optional)";
+  const dns = row(dnsLabel, `<input data-netdns="${esc(scope)}" value="${esc(listToText(ip.dns))}" placeholder="1.1.1.1, 8.8.8.8" aria-label="${esc(dnsLabel)} for ${esc(label)}">`) +
+    (isStatic ? "" : note("With DHCP, listing DNS servers here <b>replaces</b> the ones the DHCP server hands out (ignore-auto-dns)."));
+  const search = row("Search domains (optional)", `<input data-netsearch="${esc(scope)}" value="${esc(listToText(ip.search_domains))}" placeholder="lan, example.org" aria-label="DNS search domains for ${esc(label)}">`);
+  return methodSel + staticFields + dns + search;
+}
+function netEthCard() {
+  const c = netEthConn();
+  return card("ETHERNET (waypoint-eth0)", ipv4Editor(c.ipv4, "conn:ethernet", "Ethernet"));
+}
+function netWifiCard() {
+  const c = netWifiConn();
+  const creds =
+    row("SSID (network name)", `<input data-netwifi="wifi" data-wkey="ssid" value="${esc(c.ssid)}" placeholder="Your Wi-Fi name" aria-label="Wi-Fi SSID">`) +
+    row("Passphrase", `<input data-netpsk="wifi" type="password" value="${esc(c.psk)}" placeholder="${c.has_psk ? "•••••• unchanged" : "Wi-Fi passphrase"}" aria-label="Wi-Fi passphrase">`) +
+    switchRow("Hidden network", "nethidden", "wifi", c.hidden) +
+    row("Regulatory country", `<input data-netwifi="wifi" data-wkey="country" value="${esc(c.country)}" maxlength="2" placeholder="US" aria-label="Regulatory country code">`);
+  return card("WI-FI (waypoint-wifi)", creds) + netScanSection() + card("WI-FI IPv4", ipv4Editor(c.ipv4, "conn:wifi", "Wi-Fi"));
+}
+
+// switchRow renders an accessible on/off switch: a role="switch" pill with
+// aria-checked, focusable and Enter/Space-operable (see the panels keydown handler).
+// dataAttr is the data-* hook name; ref is the value passed to the handler.
+function switchRow(label, dataAttr, ref, on) {
+  return `<div class="toggle-row"><span class="name" id="sw-${esc(dataAttr)}-${esc(ref)}">${esc(label)}</span>` +
+    `<span class="pill ${on ? "on" : "off"}" data-${esc(dataAttr)}="${esc(ref)}" role="switch" aria-checked="${on ? "true" : "false"}" aria-labelledby="sw-${esc(dataAttr)}-${esc(ref)}" tabindex="0" style="cursor:pointer;">${on ? "ON" : "OFF"}</span></div>`;
+}
+
+// netHostCard: hostname, timezone (searchable via a datalist), NTP enable + servers.
+// These APPLY DIRECTLY (no guard — they can't strand the node), so the card has its
+// own Apply button distinct from the guarded network apply.
+function netHostCard() {
+  const h = netEdit.host, n = netEdit.ntp;
+  const tzOptions = (netTimezones || []).map((z) => `<option value="${esc(z)}"></option>`).join("");
+  const liveTz = netStatus && netStatus.timezone ? ` <span class="note" style="margin:0">(now: ${esc(netStatus.timezone)})</span>` : "";
+  const body =
+    row("Hostname", `<input data-hostf="1" data-hkey="hostname" value="${esc(h.hostname)}" placeholder="${esc((netStatus && netStatus.hostname) || "waypoint")}" aria-label="Hostname">`) +
+    row("Timezone", `<input list="tz-list" data-hostf="1" data-hkey="timezone" value="${esc(h.timezone)}" placeholder="Region/City" aria-label="Timezone (type to search)"><datalist id="tz-list">${tzOptions}</datalist>${liveTz}`) +
+    switchRow("NTP time sync", "netntp", "1", n.enabled) +
+    row("NTP servers (optional)", `<input data-ntpservers="1" value="${esc(listToText(n.servers))}" placeholder="pool.ntp.org, time.cloudflare.com" aria-label="NTP servers">`) +
+    `<div style="margin-top:10px;"><button type="button" id="host-apply"${netHostDirty ? "" : " disabled"} style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">APPLY HOST SETTINGS</button> <span class="note" style="margin:0;">Applies immediately (hostname, timezone &amp; NTP can't strand the node).</span></div>`;
+  return card("HOST · TIME · NTP", body);
+}
+
+// netVlanCard: the VLAN list. Each VLAN is a tagged interface on a parent, with its
+// own IPv4 block. VLANs render NM type=vlan keyfiles and go through the CONFIRM-OR-
+// REVERT guard (a bad VLAN can cut the uplink), so they save with "Apply Network".
+function netVlanCard() {
+  const vlans = netEdit.vlans || [];
+  const blocks = vlans.map((v, i) => {
+    const head = `<div class="toggle-row"><span class="name">VLAN ${esc(v.id || "?")}${v.name ? " · " + esc(v.name) : ""} <span class="note" style="margin:0">(waypoint-vlan${esc(v.id || "?")})</span></span>` +
+      `<button type="button" class="pill off" data-vlandel="${i}" style="cursor:pointer;" aria-label="Remove VLAN ${esc(v.id || "")}">REMOVE</button></div>`;
+    const fields =
+      row("Parent interface", `<input data-vlanf="${i}" data-vkey="parent" value="${esc(v.parent)}" placeholder="eth0" aria-label="VLAN ${esc(v.id || "")} parent interface">`) +
+      row("VLAN id (1–4094)", `<input data-vlanf="${i}" data-vkey="id" type="number" min="1" max="4094" value="${esc(v.id)}" placeholder="50" aria-label="VLAN id">`) +
+      row("Label (optional)", `<input data-vlanf="${i}" data-vkey="name" value="${esc(v.name)}" placeholder="iot" aria-label="VLAN label">`) +
+      ipv4Editor(v.ipv4, "vlan:" + i, "VLAN " + (v.id || (i + 1)));
+    return `<div style="border-top:1px solid var(--line,rgba(128,128,128,0.25)); padding-top:8px; margin-top:8px;">${head}${fields}</div>`;
+  }).join("");
+  const empty = vlans.length ? "" : note("No VLANs. Add one to put a tagged interface on a parent device.");
+  const add = `<div style="margin-top:10px;"><button type="button" id="vlan-add" style="padding:6px 14px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--accent); border:1px solid var(--accent); border-radius:6px;">+ ADD VLAN</button></div>`;
+  return card("VLANs", empty + blocks + add);
+}
+function netScanSection() {
+  const rows = (netScanResults || []).map((n) => {
+    const lock = n.security ? "🔒" : "";
+    const inuse = n.in_use ? ' <span style="color:var(--accent)">· connected</span>' : "";
+    return `<div class="toggle-row"><span class="name">${esc(n.ssid)} ${lock} <span style="opacity:0.6">${n.signal}%</span>${inuse}</span>` +
+      `<button type="button" class="pill off" data-netjoin="${esc(n.ssid)}" data-netsec="${esc(n.security)}" style="cursor:pointer;" aria-label="Join Wi-Fi network ${esc(n.ssid)}">JOIN</button></div>`;
+  }).join("");
+  const body = (netScanResults && netScanResults.length) ? rows : note("No networks found yet — press Rescan, or enter an SSID above for a hidden network.");
+  const refresh = `<div style="margin-top:8px;"><button type="button" id="net-scan-refresh" style="padding:6px 14px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--accent); border:1px solid var(--accent); border-radius:6px;">RESCAN</button></div>`;
+  return card("NEARBY NETWORKS", body + refresh);
+}
+
+// showNetworkConfirmBar renders the "Keep these settings?" countdown after a
+// network apply. The rollback is enforced SERVER-SIDE on a timer (the node reverts
+// even if this page never loads again); this bar is just the operator's chance to
+// make the change permanent before the deadline. Confirm POSTs the token; letting
+// it hit zero lets the server roll back on its own.
+function showNetworkConfirmBar(deadlineISO, token) {
+  const deadline = Date.parse(deadlineISO);
+  if (isNaN(deadline)) return;
+  clearInterval(netCountdown);
+  hideNetworkConfirmBar();
+
+  // Build the bar's DOM once. role="alert" announces the warning a single time;
+  // the per-second countdown lives in an aria-hidden span so it is NOT re-announced
+  // every tick (only the visible number changes). The message text is meaningful
+  // without the exact seconds, so a screen-reader user still understands the stakes.
+  const bar = el("div");
+  bar.id = "net-confirm-bar";
+  bar.setAttribute("role", "alert");
+  bar.setAttribute("aria-live", "assertive");
+  bar.style.cssText = "position:fixed; left:0; right:0; bottom:0; z-index:50; padding:13px 18px; display:flex; align-items:center; gap:16px; font-family:var(--mono); font-size:13px; background:rgba(255,107,107,0.10); border-top:1px solid var(--warn); color:var(--warn);";
+
+  const msg = el("span");
+  msg.innerHTML = `<b>Keep these network settings?</b> The node reverts automatically (in <span id="net-count" aria-hidden="true">…</span>) unless you confirm it is still reachable.`;
+  bar.appendChild(msg);
+
+  if (token) {
+    const btn = el("button", "", "Keep settings");
+    btn.type = "button";
+    btn.setAttribute("aria-label", "Keep these network settings and cancel the automatic revert");
+    btn.style.cssText = "margin-left:auto; padding:6px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--warn); color:#000; border:none; border-radius:6px;";
+    btn.onclick = () => confirmNetwork(token);
+    bar.appendChild(btn);
+  }
+  document.body.appendChild(bar);
+  // Move focus to the confirm control so a keyboard user lands on the decision.
+  const btn = bar.querySelector("button");
+  if (btn) btn.focus();
+
+  const count = bar.querySelector("#net-count");
+  const tick = () => {
+    const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+    if (count) count.textContent = left + "s";
+    if (left <= 0) {
+      clearInterval(netCountdown);
+      netCountdown = null;
+      // A meaningful state change — replacing the alert's content announces it once.
+      bar.textContent = "Network change reverted — the confirm window elapsed, so the node rolled back to its previous settings.";
+      setTimeout(hideNetworkConfirmBar, 4000);
+      loadNetwork();
+    }
+  };
+  tick();
+  netCountdown = setInterval(tick, 1000);
+}
+function hideNetworkConfirmBar() {
+  const bar = document.getElementById("net-confirm-bar");
+  if (bar) bar.remove();
+  clearInterval(netCountdown);
+  netCountdown = null;
+}
+async function confirmNetwork(token) {
+  if (!token) { banner("This browser doesn't hold the confirm token for the pending change — confirm from the tab that applied it, or let it revert.", "bad"); return; }
+  try {
+    const r = await fetch("/api/network/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+    if (!r.ok) throw new Error((await r.text()).trim());
+    sessionStorage.removeItem("wp-net-token");
+    hideNetworkConfirmBar();
+    banner("Network settings kept.", "ok");
+    loadNetwork();
+  } catch (err) {
+    banner("Confirm failed: " + String(err.message || err), "bad");
+  }
 }
 
 // The Gateways tab: one card per cross-mode transcoding bridge (MMDVM_CM). Each
@@ -946,7 +1346,7 @@ function renderPanel() {
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
     case "gateways":     box.innerHTML = panelGateways(); break;
-    case "network":      box.innerHTML = panelPending("Network & Wi-Fi"); break;
+    case "network":      box.innerHTML = panelNetwork(); break;
     default:             box.innerHTML = "";
   }
 }
@@ -1038,6 +1438,9 @@ function selectTab(id) {
   document.getElementById("desc").textContent = t.desc;
   renderNav();
   renderPanel();
+  // The Network tab shows live system state, fetched on demand (not part of the
+  // store config load).
+  if (id === "network") loadNetwork();
 }
 
 function renderThemes() {
@@ -1111,12 +1514,125 @@ async function load() {
     dmrMasters = await fetch("/api/dmr/masters").then((r) => r.json()) || [];
     if (state.tab === "brandmeister") renderPanel();
   } catch { /* offline — the master dropdowns show what's cached (may be empty) */ }
+  // Host-network status is live system state, fetched separately from the store
+  // config. Refresh whenever the Network tab is showing.
+  if (state.tab === "network") loadNetwork();
+  // Resume a confirm-or-revert countdown if a network apply is mid-window (e.g. the
+  // page reloaded after applying). The deadline comes from the server; the token is
+  // held in sessionStorage by the tab that applied.
+  try {
+    const nc = await fetch("/api/network/config").then((r) => r.json());
+    if (nc && nc.pending_confirm) showNetworkConfirmBar(nc.pending_confirm.deadline, sessionStorage.getItem("wp-net-token"));
+  } catch { /* no store / offline */ }
+}
+
+// loadNetwork fetches the live status, the editable config, and a Wi-Fi scan, then
+// re-renders the Network tab. Config is rebuilt into netEdit only when there are no
+// unsaved edits, so a background refresh never clobbers what the operator is typing.
+async function loadNetwork() {
+  const [st, cfg, scan] = await Promise.allSettled([
+    fetch("/api/network/status").then((r) => r.json()),
+    fetch("/api/network/config").then((r) => r.json()),
+    fetch("/api/network/wifi/scan").then((r) => r.json()),
+  ]);
+  netStatus = st.status === "fulfilled" ? st.value : null;
+  netScanResults = scan.status === "fulfilled" && Array.isArray(scan.value) ? scan.value : [];
+  // Only rebuild netEdit when there are no unsaved edits of EITHER kind, so a
+  // background refresh never clobbers what the operator is typing.
+  if (cfg.status === "fulfilled" && !netDirty && !netHostDirty) buildNetEdit(cfg.value);
+  else if (!netEdit) buildNetEdit({});
+  if (!netTimezones.length) {
+    try { netTimezones = (await fetch("/api/network/timezones").then((r) => r.json())) || []; } catch { /* picker still accepts a typed zone */ }
+  }
+  if (state.tab === "network") renderPanel();
+}
+
+// netConnByType resolves (creating if needed) the single managed connection of a
+// type — the editor surfaces one Ethernet + one Wi-Fi profile.
+function netConnByType(type) { return type === "wifi" ? netWifiConn() : netEthConn(); }
+
+async function rescanWiFi() {
+  const btn = document.getElementById("net-scan-refresh");
+  if (btn) { btn.textContent = "SCANNING…"; btn.disabled = true; }
+  try { netScanResults = (await fetch("/api/network/wifi/scan").then((r) => r.json())) || []; } catch { /* keep previous list */ }
+  if (state.tab === "network") renderPanel();
+}
+
+// applyNetwork saves the edited config to the store then triggers the guarded
+// apply: it never applies directly. The response carries a confirm token +
+// deadline; the token is stashed in sessionStorage (so a page reload can still
+// confirm) and the countdown bar is shown. If the operator does nothing, the
+// server rolls back on its own timer.
+async function applyNetwork() {
+  if (netApplying || !netEdit) return;
+  netApplying = true;
+  const btn = document.getElementById("net-apply");
+  if (btn) { btn.textContent = "APPLYING…"; btn.disabled = true; }
+  try {
+    const payload = {
+      connections: netEdit.connections.filter(netPersist).map(netToPayload),
+      vlans: (netEdit.vlans || []).map(vlanToPayload),
+    };
+    let r = await fetch("/api/network/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    if (!r.ok) throw new Error((await r.text()).trim());
+    r = await fetch("/api/network/apply", { method: "POST" });
+    if (!r.ok) throw new Error((await r.text()).trim());
+    const j = await r.json();
+    sessionStorage.setItem("wp-net-token", j.token);
+    netDirty = false;
+    showNetworkConfirmBar(j.deadline, j.token);
+    banner("Network change applied — confirm to keep it before it reverts.", "ok");
+  } catch (err) {
+    banner("Network apply failed: " + String(err.message || err), "bad");
+  } finally {
+    netApplying = false;
+    await loadNetwork();
+  }
+}
+
+// applyHost saves and applies the host/NTP settings DIRECTLY (no guard — they
+// can't strand the node). Idempotent server-side, so a no-op apply is harmless.
+async function applyHost() {
+  if (netApplyingHost || !netEdit) return;
+  netApplyingHost = true;
+  const btn = document.getElementById("host-apply");
+  if (btn) { btn.textContent = "APPLYING…"; btn.disabled = true; }
+  try {
+    const payload = { host: { hostname: (netEdit.host.hostname || "").trim(), timezone: (netEdit.host.timezone || "").trim() }, ntp: { enabled: !!netEdit.ntp.enabled, servers: (netEdit.ntp.servers || []).slice() } };
+    let r = await fetch("/api/network/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    if (!r.ok) throw new Error((await r.text()).trim());
+    r = await fetch("/api/network/host/apply", { method: "POST" });
+    if (!r.ok) throw new Error((await r.text()).trim());
+    const j = await r.json();
+    netHostDirty = false;
+    banner(j.changed ? "Host settings applied." : "Host settings already in effect (no change).", "ok");
+  } catch (err) {
+    banner("Host apply failed: " + String(err.message || err), "bad");
+  } finally {
+    netApplyingHost = false;
+    await loadNetwork();
+  }
 }
 
 // text edits update the working copy; toggles flip a bool and re-render.
 document.getElementById("panels").addEventListener("input", (e) => {
   const t = e.target;
   if (!t.dataset) return;
+  // --- network editable fields (connections + VLANs: guarded apply) ---
+  if (t.dataset.netmethod != null) {
+    netIPv4Target(t.dataset.netmethod).method = t.value;
+    netMarkDirty(); renderPanel();
+    return;
+  }
+  if (t.dataset.netip != null) { netIPv4Target(t.dataset.netip)[t.dataset.ipkey] = t.value.trim(); netMarkDirty(); return; }
+  if (t.dataset.netdns != null) { netIPv4Target(t.dataset.netdns).dns = textToList(t.value); netMarkDirty(); return; }
+  if (t.dataset.netsearch != null) { netIPv4Target(t.dataset.netsearch).search_domains = textToList(t.value); netMarkDirty(); return; }
+  if (t.dataset.netwifi != null) { netConnByType(t.dataset.netwifi)[t.dataset.wkey] = t.value; netMarkDirty(); return; }
+  if (t.dataset.netpsk != null) { netConnByType(t.dataset.netpsk).psk = t.value; netMarkDirty(); return; }
+  if (t.dataset.vlanf != null) { netEdit.vlans[+t.dataset.vlanf][t.dataset.vkey] = t.value; netMarkDirty(); return; }
+  // --- host/NTP fields (direct apply) ---
+  if (t.dataset.hostf != null) { netEdit.host[t.dataset.hkey] = t.value; netMarkHostDirty(); return; }
+  if (t.dataset.ntpservers != null) { netEdit.ntp.servers = textToList(t.value); netMarkHostDirty(); return; }
   if (t.dataset.sec) {
     let v = t.value;
     if (t.dataset.kind === "mhz") { const f = parseFloat(v); v = isNaN(f) ? "" : String(Math.round(f * 1e6)); }
@@ -1135,10 +1651,11 @@ document.getElementById("panels").addEventListener("input", (e) => {
     renderPanel();
     return;
   }
-  // LCD rows/cols selects — rows changes the line-input count, so re-render.
+  // LCD rows/cols selects — rows changes the line-input count and cols changes the
+  // preview width, so either re-renders the page cards.
   if (t.dataset.lcdDim != null) {
     setField("lcd", t.dataset.lcdDim, t.value);
-    if (t.dataset.lcdDim === "rows") renderPanel();
+    renderPanel();
     return;
   }
   // LCD page name / duration.
@@ -1147,12 +1664,12 @@ document.getElementById("panels").addEventListener("input", (e) => {
     dirty.add("lcd"); refreshActions();
     return;
   }
-  // LCD page line: update the model and refresh just this page's token warning.
+  // LCD page line: update the model, refresh this page's token warning + preview.
   if (t.dataset.lcdline != null) {
     const pi = +t.dataset.lcdline, ri = +t.dataset.lcdrow;
     ensureLcdLine(pi, ri);
     edit.lcd.pages[pi].lines[ri] = t.value;
-    dirty.add("lcd"); updatePageWarning(pi); refreshActions();
+    dirty.add("lcd"); updatePageWarning(pi); updatePagePreview(pi); refreshActions();
     return;
   }
   // DMR Master (primary) selector — the primary is the no-prefix catch-all.
@@ -1182,6 +1699,32 @@ document.getElementById("panels").addEventListener("input", (e) => {
   }
 });
 document.getElementById("panels").addEventListener("click", (e) => {
+  // --- network editable controls (separate state; guarded apply) ---
+  const nh = e.target.closest("[data-nethidden]");
+  if (nh) { const c = netConnByType(nh.dataset.nethidden); c.hidden = !c.hidden; netMarkDirty(); renderPanel(); return; }
+  const nj = e.target.closest("[data-netjoin]");
+  if (nj) {
+    const c = netWifiConn();
+    c.ssid = nj.dataset.netjoin;
+    c.psk = ""; c.has_psk = false; // a joined network needs its own passphrase entered
+    netMarkDirty(); renderPanel();
+    const psk = document.querySelector('[data-netpsk="wifi"]');
+    if (psk) psk.focus();
+    return;
+  }
+  if (e.target.id === "net-scan-refresh") { rescanWiFi(); return; }
+  if (e.target.id === "net-apply") { applyNetwork(); return; }
+  // NTP enable switch (direct-apply state).
+  const nnt = e.target.closest("[data-netntp]");
+  if (nnt) { netEdit.ntp.enabled = !netEdit.ntp.enabled; netMarkHostDirty(); renderPanel(); return; }
+  // VLAN add / remove (guarded-apply state).
+  if (e.target.id === "vlan-add") {
+    (netEdit.vlans = netEdit.vlans || []).push({ parent: "eth0", id: "", name: "", ipv4: { method: "auto", address: "", prefix: "", gateway: "", dns: [], search_domains: [] } });
+    netMarkDirty(); renderPanel(); return;
+  }
+  const vd = e.target.closest("[data-vlandel]");
+  if (vd) { netEdit.vlans.splice(+vd.dataset.vlandel, 1); netMarkDirty(); renderPanel(); return; }
+  if (e.target.id === "host-apply") { applyHost(); return; }
   const tg = e.target.closest("[data-toggle]");
   if (tg) {
     const [sec, key] = tg.dataset.toggle.split(".");
@@ -1195,12 +1738,23 @@ document.getElementById("panels").addEventListener("click", (e) => {
   // LCD per-page enable toggle.
   const lpe = e.target.closest("[data-lcdpageen]");
   if (lpe) { const p = edit.lcd.pages[+lpe.dataset.lcdpageen]; p.enabled = !p.enabled; dirty.add("lcd"); renderPanel(); refreshActions(); return; }
+  // LCD per-page interrupt toggle (take over the panel on activity vs rotate).
+  const lpi = e.target.closest("[data-lcdpageint]");
+  if (lpi) { const p = edit.lcd.pages[+lpi.dataset.lcdpageint]; p.interrupt = !p.interrupt; dirty.add("lcd"); renderPanel(); refreshActions(); return; }
+  // LCD reorder page (swap with the neighbour in the given direction).
+  const lpm = e.target.closest("[data-lcdmove]");
+  if (lpm) {
+    const i = +lpm.dataset.lcdpageidx, j = lpm.dataset.lcdmove === "up" ? i - 1 : i + 1;
+    const ps = edit.lcd.pages;
+    if (j >= 0 && j < ps.length) { [ps[i], ps[j]] = [ps[j], ps[i]]; dirty.add("lcd"); renderPanel(); refreshActions(); }
+    return;
+  }
   // LCD remove page.
   const lpd = e.target.closest("[data-lcdpagedel]");
   if (lpd) { edit.lcd.pages.splice(+lpd.dataset.lcdpagedel, 1); dirty.add("lcd"); renderPanel(); refreshActions(); return; }
   // LCD add page.
   if (e.target.id === "lcd-add-page") {
-    (edit.lcd.pages = edit.lcd.pages || []).push({ enabled: true, name: "Page " + (edit.lcd.pages.length + 1), duration: "8", lines: [] });
+    (edit.lcd.pages = edit.lcd.pages || []).push({ enabled: true, name: "Page " + (edit.lcd.pages.length + 1), duration: "8", interrupt: false, lines: [] });
     dirty.add("lcd"); renderPanel(); refreshActions();
     return;
   }
@@ -1216,6 +1770,26 @@ document.getElementById("panels").addEventListener("click", (e) => {
     const firstEnabled = (edit.networks || []).find((n) => n.enabled) || {};
     (edit.routes = edit.routes || []).push({ slot: "2", tg: "", network: firstEnabled.name || "" });
     dirty.add("routes"); renderPanel(); refreshActions();
+  }
+});
+// Keyboard support for the network role="switch" pills (Wi-Fi hidden, NTP enable):
+// Enter/Space toggle them like a native checkbox, and focus is restored after the
+// re-render so the keyboard user stays put.
+document.getElementById("panels").addEventListener("keydown", (e) => {
+  const t = e.target;
+  if (!t.dataset) return;
+  if (e.key !== "Enter" && e.key !== " ") return;
+  if (t.dataset.nethidden != null) {
+    e.preventDefault();
+    const type = t.dataset.nethidden;
+    const c = netConnByType(type); c.hidden = !c.hidden; netMarkDirty(); renderPanel();
+    const again = document.querySelector('[data-nethidden="' + type + '"]');
+    if (again) again.focus();
+  } else if (t.dataset.netntp != null) {
+    e.preventDefault();
+    netEdit.ntp.enabled = !netEdit.ntp.enabled; netMarkHostDirty(); renderPanel();
+    const again = document.querySelector("[data-netntp]");
+    if (again) again.focus();
   }
 });
 // Track the focused LCD line input so the token palette inserts into the right

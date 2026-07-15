@@ -14,9 +14,12 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
+	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/KN4OQW/waypoint/internal/config"
@@ -28,6 +31,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/lcd/hd44780"
 	"github.com/KN4OQW/waypoint/internal/m17hosts"
 	"github.com/KN4OQW/waypoint/internal/mqtt"
+	"github.com/KN4OQW/waypoint/internal/netconfig"
 	"github.com/KN4OQW/waypoint/internal/nxdnhosts"
 	"github.com/KN4OQW/waypoint/internal/p25hosts"
 	"github.com/KN4OQW/waypoint/internal/store"
@@ -39,18 +43,43 @@ import (
 var Version = "dev"
 
 type server struct {
-	hub        *hub.Hub
-	demo       bool
-	started    time.Time
-	store      *store.Store
-	storePath  string
-	paths      config.Paths // where each daemon reads its generated INI (render targets)
-	ysfHosts   string       // cached YSF reflector hostlist (JSON)
-	p25Hosts   string       // cached P25 reflector (talkgroup) hostlist (JSON)
-	nxdnHosts  string       // cached NXDN reflector (talkgroup) hostlist (JSON)
-	dstarHosts string       // cached D-Star reflector hostlist (JSON)
-	m17Hosts   string       // cached M17 reflector hostlist (space/tab text)
-	dmrHosts   string       // cached DMR master hostlist (DMR_Hosts.txt, space/tab text)
+	hub       *hub.Hub
+	demo      bool
+	started   time.Time
+	store     *store.Store
+	storePath string
+	paths     config.Paths // where each daemon reads its generated INI (render targets)
+
+	// Host/OS networking domain (docs/config-coverage.md §4). netKeyfileDir is
+	// where the NetworkManager keyfile renderer writes waypoint-*.nmconnection;
+	// netGuard runs the confirm-or-revert apply (a bad network change can strand
+	// the node, so it is guarded, unlike the radio apply); netConfirmTimeout is the
+	// rollback window handed to each apply.
+	netKeyfileDir     string
+	netConfirmTimeout time.Duration
+	netBackend        string // "composite" (NM + keyfile) or "keyfile" (fallback)
+	timesyncdConf     string // rendered systemd-timesyncd drop-in path (NTP direct apply)
+	netGuard          *netconfig.Guard
+	// Wi-Fi scan cache + timezone list cache (netScanMu guards both).
+	netScanMu  sync.Mutex
+	netScan    []netconfig.WiFiScanResult
+	netScanAt  time.Time
+	timezones  []string
+	ysfHosts   string // cached YSF reflector hostlist (JSON)
+	p25Hosts   string // cached P25 reflector (talkgroup) hostlist (JSON)
+	nxdnHosts  string // cached NXDN reflector (talkgroup) hostlist (JSON)
+	dstarHosts string // cached D-Star reflector hostlist (JSON)
+	m17Hosts   string // cached M17 reflector hostlist (space/tab text)
+	dmrHosts   string // cached DMR master hostlist (DMR_Hosts.txt, space/tab text)
+
+	// Native LCD renderer lifecycle. The renderer captures its config at start, so
+	// a config change (enable, geometry, pages) only reaches the panel when the
+	// renderer is torn down and restarted — reloadLCD does that on apply. Guarded
+	// because apply runs on an HTTP goroutine while the renderer runs on its own.
+	lcdMu     sync.Mutex
+	lcdCancel context.CancelFunc // stops the running renderer (nil when not running)
+	lcdDone   chan struct{}      // closed when the stopped renderer has released the device
+	lcdCfg    config.LCD         // config the running renderer was started with (for change detection)
 }
 
 // m17Reflectors serves the cached M17 reflector hostlist for the settings-page
@@ -187,6 +216,17 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// The native LCD driver validates its page geometry on save: a page may not
+	// declare more lines than the panel has rows (SetLCD → ValidateLCD), so an
+	// invalid page set is rejected here rather than silently clipped on the panel.
+	if section == "lcd" {
+		if err := config.SetLCD(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	// Cross-mode bridges: YSF2DMR/NXDN2DMR carry a redacted DMR-master password, so
 	// the same write-only-secret rule applies — a blank field keeps the stored one
 	// (SetCrossBridge). Routing all five through it is uniform and harmless: the
@@ -236,6 +276,10 @@ func (s *server) configApply(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	_ = s.store.RecordApply("api", map[string]any{"restarted": restarted})
+	// The native LCD driver renders no INI and restarts no unit, so it is absent
+	// from targets/restarted — bring the panel in line with the applied config
+	// here (a no-op unless the LCD section changed).
+	s.reloadLCD(m)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"applied": true, "restarted": restarted})
 }
@@ -528,27 +572,65 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 // startLCD launches the native HD44780 renderer as a hub subscriber when the
 // config enables it, returning whether it started. It replays the event backlog
 // so the panel opens with current state, then drives the renderer from a ticker
-// (at the scroll cadence) until ctx is canceled. When disabled it does nothing.
-// There is no real display device yet (stage 5), so it runs against a headless
-// noop — device unavailability is never fatal to the daemon (design §7).
-func (s *server) startLCD(ctx context.Context, m *config.Model) bool {
+// (at the scroll cadence) until its context is canceled. When disabled it does
+// nothing. Device unavailability is never fatal to the daemon (design §7): a
+// panel that fails to open falls back to a headless noop. Records the renderer's
+// cancel/done handles and the config it started with so reloadLCD can stop it.
+// The caller must hold lcdMu.
+func (s *server) startLCD(parent context.Context, m *config.Model) bool {
+	s.lcdCfg = m.LCD
 	if !m.LCD.Enabled {
 		return false
 	}
 	dev := newLCDDevice(m.LCD)
 	r := lcd.NewRenderer(m.LCD, lcdInfo(m, Version, s.started), dev, func() string { return hostIPv4(net.InterfaceAddrs) })
-	ch, backlog, cancel := s.hub.Subscribe()
+	ch, backlog, unsub := s.hub.Subscribe()
 	for _, e := range backlog {
 		r.Handle(e)
 	}
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
 	go func() {
-		defer cancel()
+		defer close(done) // signals the device is released (r.Run closes it on return)
+		defer unsub()
 		ticker := time.NewTicker(tickInterval(m.LCD))
 		defer ticker.Stop()
 		_ = r.Run(ctx, ch, ticker.C)
 	}()
+	s.lcdCancel, s.lcdDone = cancel, done
 	log.Printf("lcd: renderer started on %s@%s (%sx%s, %d pages)", m.LCD.I2CBus, m.LCD.I2CAddress, m.LCD.Rows, m.LCD.Cols, len(m.LCD.Pages))
 	return true
+}
+
+// stopLCD cancels the running renderer and waits for it to release the I2C device
+// before returning, so a subsequent start reopens a free bus. No-op when nothing
+// is running. The caller must hold lcdMu.
+func (s *server) stopLCD() {
+	if s.lcdCancel == nil {
+		return
+	}
+	s.lcdCancel()
+	<-s.lcdDone
+	s.lcdCancel, s.lcdDone = nil, nil
+}
+
+// reloadLCD brings the renderer in line with the current config, restarting it
+// only when the LCD section actually changed (so an unrelated apply never blinks
+// the panel). This is what makes the panel reflect an edit-pages-then-apply flow
+// without a daemon restart: the renderer captures its config at start, so a
+// change requires a stop+start. Safe to call from the apply HTTP goroutine.
+func (s *server) reloadLCD(m *config.Model) {
+	s.lcdMu.Lock()
+	defer s.lcdMu.Unlock()
+	if s.lcdCancel != nil && reflect.DeepEqual(s.lcdCfg, m.LCD) {
+		return // running with the same config — nothing to do
+	}
+	if s.lcdCancel == nil && !m.LCD.Enabled {
+		s.lcdCfg = m.LCD // stopped and still disabled — record config, stay stopped
+		return
+	}
+	s.stopLCD()
+	s.startLCD(context.Background(), m)
 }
 
 // newLCDDevice opens the real HD44780 over the configured PCF8574 I2C backpack,
@@ -572,12 +654,19 @@ func lcdInfo(m *config.Model, version string, started time.Time) lcd.Info {
 			modes = append(modes, strings.ToUpper(md.Key))
 		}
 	}
+	host, err := os.Hostname()
+	if err != nil {
+		host = ""
+	}
 	return lcd.Info{
 		Callsign: m.General.Callsign,
 		DMRID:    m.General.ID,
 		Modes:    modes,
 		Version:  version,
 		Started:  started,
+		Hostname: host,
+		FreqRX:   m.Modem.RXFreqHz,
+		FreqTX:   m.Modem.TXFreqHz,
 	}
 }
 
@@ -655,6 +744,10 @@ func main() {
 	dmrHosts := flag.String("dmr-hosts", "/usr/local/etc/DMR_Hosts.txt", "cached DMR master hostlist path (DMR_Hosts.txt)")
 	dmrHostsURL := flag.String("dmr-hosts-url", dmrhosts.DefaultURL, "DMR master hostlist source URL")
 	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
+	nmKeyfileDir := flag.String("nm-keyfile-dir", "/etc/NetworkManager/system-connections", "directory for rendered NetworkManager keyfiles (waypoint-*.nmconnection)")
+	netConfirmTimeout := flag.Duration("network-confirm-timeout", netconfig.DefaultConfirmTimeout, "confirm-or-revert rollback window for a network apply")
+	netBackend := flag.String("network-backend", "composite", "network rollback backend: composite (NM D-Bus checkpoint + keyfile snapshot) or keyfile (fallback, no live-device rollback)")
+	timesyncdConf := flag.String("timesyncd-conf", "/etc/systemd/timesyncd.conf.d/waypoint.conf", "rendered systemd-timesyncd drop-in for NTP servers")
 	flag.Parse()
 
 	st, err := store.Open(*storePath)
@@ -673,7 +766,11 @@ func main() {
 			YSF2DMR:       *ysf2dmrINI, DMR2YSF: *dmr2ysfINI, YSF2NXDN: *ysf2nxdnINI, DMR2NXDN: *dmr2nxdnINI, NXDN2DMR: *nxdn2dmrINI,
 		},
 		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts,
+		netKeyfileDir: *nmKeyfileDir, netConfirmTimeout: *netConfirmTimeout, netBackend: *netBackend,
+		timesyncdConf: *timesyncdConf,
 	}
+	// The confirm-or-revert guard for network applies (needs s.netKeyfileDir set).
+	s.netGuard = s.newNetGuard()
 	if err := s.seedStore(); err != nil {
 		log.Printf("config store seed skipped: %v", err)
 	}
@@ -687,7 +784,9 @@ func main() {
 	if m, err := config.Load(s.store); err != nil {
 		log.Printf("lcd: config load failed, renderer not started: %v", err)
 	} else {
+		s.lcdMu.Lock()
 		s.startLCD(context.Background(), m)
+		s.lcdMu.Unlock()
 	}
 
 	if *demoMode {
@@ -732,6 +831,14 @@ func main() {
 	mux.HandleFunc("/api/dstar/reflectors", s.dstarReflectors)
 	mux.HandleFunc("/api/m17/reflectors", s.m17Reflectors)
 	mux.HandleFunc("/api/dmr/masters", s.dmrMasters)
+	// Host/OS networking domain (docs/config-coverage.md §4).
+	mux.HandleFunc("/api/network/status", s.networkStatus)
+	mux.HandleFunc("/api/network/wifi/scan", s.networkWiFiScan)
+	mux.HandleFunc("/api/network/timezones", s.networkTimezones)
+	mux.HandleFunc("/api/network/config", s.networkConfig)
+	mux.HandleFunc("/api/network/apply", s.networkApply)
+	mux.HandleFunc("/api/network/confirm", s.networkConfirm)
+	mux.HandleFunc("/api/network/host/apply", s.networkHostApply)
 	mux.Handle("/", http.FileServerFS(ui.FS()))
 
 	mode := "live, mqtt " + *broker

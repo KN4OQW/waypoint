@@ -1,8 +1,31 @@
 # Native HD44780 LCD driver — design
 
-**Status:** design for review · not yet implemented
+**Status:** implemented (pure layers + UI + hardware seam) · the template system
+below is the user-defined page model — pages are data, not code.
 **Owner decision recap:** templated-token lines · a new `lcd` store section ·
 design-doc-first (this file) before code.
+
+## 0. Template system (the user-defined page model)
+
+Pages are **data the operator authors**, not code. Each page is a name, an enable,
+a hold duration, an optional `interrupt` flag, and up to *R* template lines. A
+template line is literal text plus `{tokens}` (§5). The renderer is
+**geometry-agnostic**: it expands a page against live state and truncates/pads each
+line to the configured cols and the page to the configured rows, so the *same*
+pages render on a 20×2 bench panel and a 20×4 alike. The one rule the type can't
+express — a page must not declare more lines than the panel has rows — is enforced
+at **save time** by `ValidateLCD` (the error names the geometry, e.g.
+`page "Idle" has 3 lines but the panel is 20x2 (max 2 rows)`), never silently
+clipped. `DefaultLCD` seeds an Idle / Activity / Network set, every page ≤2 lines
+so the default set is valid at both geometries out of the box.
+
+An `interrupt=true` page takes over the panel immediately on TX/RX and returns to
+the rotation after the transmission plus `linger_secs`; interrupt pages are
+excluded from the idle rotation (they show only during activity). With no operator
+interrupt page defined, a synthesized fallback still surfaces activity. The pure
+render contract is `renderPage(rows, cols, page, state, info, ip, now) → [R strings
+of C cols]` — token expansion + truncation, no hardware, fully unit-tested with a
+fake state.
 
 ## 1. Why this exists (and how it differs from `display`)
 
@@ -70,21 +93,26 @@ type LCD struct {
     Rows              string    `json:"rows"`          // 2 or 4
     Cols              string    `json:"cols"`          // 16 or 20
     ScrollSpeed       string    `json:"scroll_speed"`  // ms per scroll step for over-wide lines
-    ActivityInterrupt bool      `json:"activity_interrupt"` // jump to a caller page while keyed
+    ActivityInterrupt bool      `json:"activity_interrupt"` // master switch for interrupt pages
+    LingerSecs        string    `json:"linger_secs"`   // hold an interrupt page this long after key-up
     Pages             []LCDPage `json:"pages"`
 }
 
 type LCDPage struct {
-    Enabled  bool     `json:"enabled"`
-    Name     string   `json:"name"`
-    Duration string   `json:"duration"`  // seconds this page holds before rotating
-    Lines    []string `json:"lines"`     // one templated string per row; extra rows blank
+    Enabled   bool     `json:"enabled"`
+    Name      string   `json:"name"`
+    Duration  string   `json:"duration"`  // seconds this page holds before rotating
+    Interrupt bool     `json:"interrupt"` // take over on TX/RX; excluded from normal rotation
+    Lines     []string `json:"lines"`     // one templated string per row; extra rows blank
 }
 ```
 
 `DefaultLCD()`: `Enabled=false`, `/dev/i2c-1`, `0x27`, 20×4, `ScrollSpeed=300`,
-`ActivityInterrupt=true`, and two starter pages (Idle, Last Heard) so a
-first-time operator has something to see. Backfilled on older stores exactly like
+`ActivityInterrupt=true`, `LingerSecs=3`, and a three-page starter set — **Idle**
+(`{callsign}`/`{freq_rx}`+`{time}`), **Activity** (`interrupt=true`;
+`{mode}`+`{source}`/`{tg}`), **Network** (`{ip}`/`{hostname}`). Every page has ≤2
+lines so the set is valid on the 20×2 bench panel and a 20×4. Writes to the section
+go through `SetLCD` (merge + `ValidateLCD`); backfilled on older stores exactly like
 `display`/`m17` were.
 
 ## 5. Token engine
@@ -95,19 +123,33 @@ data that actually exists on the plane / in config):
 | Token | Source | Idle/missing fallback |
 |---|---|---|
 | `{callsign}` `{dmr_id}` | config `general.callsign` / `.id` | — |
-| `{ip}` | host lookup (**new**, small helper; first non-loopback v4) | `no-ip` |
+| `{ip}` | host lookup (first non-loopback v4) | `no-ip` |
+| `{hostname}` | `os.Hostname()` | `-` |
+| `{freq_rx}` `{freq_tx}` | config `modem.rx_freq_hz`/`.tx_freq_hz`, rendered MHz | `-` |
 | `{time}` `{date}` `{uptime}` `{version}` | clock + health | — |
 | `{mode}` | `activeMode` | `IDLE` |
 | `{modes}` | enabled modes from config, joined | — |
 | `{status}` | `Listening` when idle; `RX DMR TG91 W1ABC` when keyed | `Listening` |
-| `{lh_call}` `{lh_tg}` `{lh_mode}` | `lastHeard` | `—` |
-| `{lh_ber}` `{lh_rssi}` `{lh_ago}` | `lastHeard` (`ago` = now−at) | `—` |
+| `{source}` `{tg}` | in-progress call when keyed, else `lastHeard` | `-` |
+| `{rssi}` `{ber}` | `lastHeard` (measured at key-up — most recent) | `-` |
+| `{lh_call}` `{lh_tg}` `{lh_mode}` | `lastHeard` | `-` |
+| `{lh_ber}` `{lh_rssi}` `{lh_ago}` | `lastHeard` (`ago` = now−at) | `-` |
+
+`{source}`/`{tg}` read the live call while keyed (who's talking now) and hold the
+last contact once clear; `{rssi}`/`{ber}` have a data source only at key-up, so
+they always reflect the most recent transmission. Every token, its meaning, and its
+source is documented in the UI's collapsible **token reference** legend.
 
 Rules:
 - Unknown token → renders empty **and** the UI flags it on the page card (so a
   typo is visible, never a silent blank).
 - Non-ASCII in a template is stripped/replaced (`?`) — HD44780 CGROM is not
-  UTF-8. Documented in the UI.
+  UTF-8. `sanitizeASCII` replaces any rune outside `0x20`–`0x7E`. Documented in the
+  UI. **Confirmed on glass** (2026-07-14, docs/on-hardware-report.md): `°`/`—`
+  render as `?`; ASCII descenders `g j p q y` render cleanly. **ROM-A00 caveat:** on
+  a Japanese-ROM (A00) panel two *ASCII* code points differ — `\` (0x5C) shows as
+  `¥` and `~` (0x7E) as `→` — a panel-ROM property, not the software; avoid `\`/`~`
+  for portable output (A02 panels show them normally).
 - Optional later: `{lh_rssi_bar}` using HD44780 CGRAM custom glyphs for a signal
   bar (8 programmable chars). Deferred; noted so the render buffer reserves it.
 
@@ -123,6 +165,13 @@ Rules:
   synthesized caller page (`{status}` + last-heard-style lines) until
   `*_voice_end` + a short linger, then resume rotation where it paused. This is
   the "who's talking right now" behavior operators expect from Pi-Star/WPSD.
+- **Reload on apply:** the renderer captures its config at start, so a config
+  change only reaches the panel when it is torn down and restarted. `POST
+  /api/config/apply` calls `reloadLCD`, which restarts the renderer **only when the
+  `lcd` section actually changed** (an unrelated apply never blinks the panel).
+  This is what makes edit-pages-then-Apply update the glass without a daemon
+  restart (validated on hardware 2026-07-14; the LCD section renders no INI and no
+  unit, so without this it silently never took — see report finding F6).
 - **Diffed writes:** keep the last text buffer; only `WriteLine` rows that
   changed, so the bus isn't hammered every tick (HD44780 over I2C is slow).
 
@@ -151,23 +200,29 @@ type LCDDevice interface {
 New tab `lcd` (label "LCD", after Setup). `panelLCD()`:
 
 - **Card "PANEL"** — Enabled toggle · I2C bus · I2C address · Rows (2/4) ·
-  Columns (16/20) · Scroll speed · Activity-interrupt toggle.
+  Columns (16/20) · Scroll speed · Activity-interrupt toggle · Interrupt linger (s).
+  A collapsible **token reference** legend documents every token and its source.
 - **Card per page** (reuse the routing-table add/remove pattern):
   ```
-  ┌ PAGE: Idle          [ENABLED]  dur [ 8 ]s   ✕ ┐
-  │ row1  [ {callsign}   {mode}                 ] │
-  │ row2  [ {status}                            ] │
-  │ row3  [ LH {lh_call} {lh_tg}                ] │
-  │ row4  [ {time}      up {uptime}             ] │
-  │ tokens: {callsign} {mode} {status} {lh_call}… │  ← click to insert
-  └───────────────────────────────────────────────┘
+  ┌ ▲ ▼  Idle       [ENABLED] [ROTATE] dur [ 8 ]s  ✕ ┐
+  │ row1  [ {callsign}   {mode}                    ] │
+  │ row2  [ {freq_rx}    {time}                    ] │
+  │ ┌ PREVIEW (20×2) ─────────┐                      │
+  │ │ KN4OQW DMR              │  ← live, client-side  │
+  │ │ 433.1250 15:04          │                      │
+  │ └─────────────────────────┘                      │
+  │ tokens: {callsign} {mode} {source} {tg} …        │  ← click to insert
+  └──────────────────────────────────────────────────┘
   [ + ADD PAGE ]
   ```
-  Line-input count follows Rows. A **token palette** below each page inserts at the
-  caret. A live **preview** box rendering the page against sample state is a nice
-  v1.5 (optional), not required for the first cut.
-- Edit state + PUT plumbing is identical to existing sections (`lcd` routes through
-  the generic `SetSection`; no per-field handlers beyond the page add/remove).
+  Per-page controls: **▲ ▼** reorder, **[ENABLED]** toggle, **[ROTATE]/[INTERRUPT]**
+  toggle, hold duration, remove. Line-input count follows Rows. A **token palette**
+  inserts at the caret. A live **preview** box renders the page client-side against
+  a sample snapshot at the configured geometry — the JS mirrors the Go renderer
+  (token expand → ASCII sanitize → truncate/pad). All controls are real
+  buttons/inputs with `aria-label`/`aria-pressed`; the preview is a labeled region.
+- PUT routes through `SetLCD` (merge + geometry `ValidateLCD`), so an invalid page
+  set is rejected with a 400 naming the geometry rather than silently clipped.
 
 ## 9. Testing & validation
 

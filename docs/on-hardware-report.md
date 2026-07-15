@@ -100,7 +100,7 @@ render-only modes, that the mode section renders live).
 | **P25** | ✅ | ✅ | ✅ opens P25/Rpt network | ✅ | ✅ | n/a |
 | **NXDN** | ✅ | ✅ | ✅ loaded 346 reflectors + net open | ✅ | ✅ | n/a |
 | **M17** | ✅ | ✅ | ✅ opens M17/Rpt network (journal) | ✅ | ✅ | n/a |
-| **Display** | ✅ (`Display=HD44780` + `[HD44780]` block) | n/a | **SKIP** — no `i2cdetect`, no LCD attached | ✅ | ✅ | n/a |
+| **Display** | ✅ (`Display=HD44780` + `[HD44780]` block) | n/a | n/a — inert parity INI (no `[Display]` parser in the fork). Physical panel now driven by the **native** LCD driver: see the LCD section below | ✅ | ✅ | n/a |
 | **POCSAG** | ✅ (`[POCSAG] Enable=1` + DAPNETGateway.ini) | ⚠️→**FIXED** | **SKIP** — no seeded DAPNET AuthKey (not invented) | ✅ | ✅ | ✅ AuthKey preserved |
 | **FM** | ✅ (`[FM] Enable=1`, CTCSS 127.3) | n/a (no daemon) | n/a | ✅ | n/a | n/a |
 | **YSF2DMR** | ✅ | ✅ (binary runs) | ✅ starts; master-login **SKIP** (no seeded creds) | ⚠️ daemon stays up (see F2) | ✅ | ✅ pwd preserved |
@@ -164,6 +164,88 @@ produces no periodic heartbeat, so the dashboard's live pane stays empty until
 traffic. The modem RX path is proven live by the handshake above. An actual
 over-the-air QSO is a **manual follow-up** (a radio cannot be keyed from here).
 
+## LCD (native HD44780 driver) — on-glass validation (2026-07-14)
+
+**Build:** waypointd `9768d40-lcd2` — the `feature/lcd-templates` user-defined
+template system **plus** the apply-reloads-LCD fix (F6 below). Cross-compiled
+`GOOS=linux GOARCH=arm64 CGO_ENABLED=0`, sha256 `b82d1e44…185f61fc`, verified
+byte-identical after `scp` before install; prior binary saved as
+`waypointd.bak.prelcd`. `restore.sh` + `waypoint-backup-2026-07-13.tgz` from the
+previous run confirmed present and parse-checked before starting.
+
+**Panel:** a physical **20×2 HD44780** on a **PCF8574 I2C backpack**, now attached
+to the bench Pi — the hardware absent from the 2026-07-13 run. This closes manual
+follow-up #3 and the Display SKIP above.
+
+**Recon:** `i2cdetect -y 1` → backpack ACKs at **0x27** (sole device on the bus).
+`i2c-dev` already enabled (`dtparam=i2c_arm=on` in `config.txt`; `/dev/i2c-1`
+present; `i2c_dev`+`i2c_bcm2835` loaded) — **no reboot needed**.
+
+**Configured entirely via the API** — `PUT /api/config/lcd`
+(`enabled=true`, `i2c_address=0x27`, `rows=2 cols=20`, the default page set) then
+`POST /api/config/apply`. The LCD section drives no INI, so nothing was
+hand-edited. The renderer bound the **real** device — the journal shows
+`lcd: renderer started on /dev/i2c-1@0x27 (2x20, 3 pages)` with **no**
+`unavailable, disabled` line, i.e. `hd44780.Open`'s probe ACKed at 0x27 and the
+driver did **not** fall back to the headless noop.
+
+**Init timing that worked (clean, no garbage):** the datasheet 4-bit handshake in
+`internal/lcd/hd44780/hd44780.go` — 50 ms power-on settle; three `0x30` nibbles at
+5 ms / 1 ms / 1 ms; `0x20` (enter 4-bit) at 1 ms; function-set/display-off/clear
+(2 ms)/entry-mode/display-on. On glass: display cleared, backlight on, both rows
+clean — no block/garbage row (the classic 4-bit-init failure mode was **not**
+present), so these values are confirmed good on this panel.
+
+| Check | Method | Result |
+|---|---|---|
+| **a. init** | glass: clear + backlight + no garbage | ✅ **PASS** (operator-confirmed) |
+| **b. idle rotation** | glass: pages cycle at their durations | ✅ **PASS** — Idle ↔ Network alternate ~6 s |
+| **c. live tokens** | glass: `{ip}`/`{hostname}`/`{time}` | ✅ **PASS** — `172.16.50.13` / `wpsd` / clock matches |
+| **d. activity interrupt** | demo feed → voice traffic on the real panel | ✅ **PASS (demo-sourced)** — the `interrupt=true` Activity page takes over on each call (`DMR <call>` / `TG <tg>`) and releases to rotation after linger. **RF-from-a-real-radio: MANUAL** (a radio can't be keyed from here) |
+| **e. reconfigure round-trip** | API edit a line + reorder pages + apply | ✅ **PASS** — renderer hot-reloads (F6); daemon **PID unchanged** (no restart); `GET` reflects the new order + edit |
+| **f. failure honesty** | point at wrong `0x3f` + apply | ✅ **PASS** — `lcd: I2C /dev/i2c-1@0x3f unavailable, disabled: probe: input/output error`, falls back to noop, **daemon stays up**, apply **8.1 s (no stall)**; restoring `0x27` rebinds the real device |
+| **Character set** | glass: `°`, `—`, descenders, `\`, `~` | ✅ **PASS** — see below |
+
+### Character-set handling (HD44780 ROM gotcha)
+
+The driver's `sanitizeASCII` (`internal/lcd/tokens.go`) is the defined fallback:
+any rune outside printable ASCII (`0x20`–`0x7E`) is replaced with `?` **before**
+it reaches the panel — the HD44780 CGROM is not UTF-8. Verified on glass with the
+template `T=45°C hi—there`: both `°` (U+00B0) and `—` (U+2014) rendered as `?`
+(`T=45?C hi?there`). Lowercase descenders `g j p q y` render cleanly (they are
+plain ASCII, present in every HD44780 ROM).
+
+**ROM-A00 caveat (documented, not a driver bug):** this panel is **ROM A00
+(Japanese)**, where two *ASCII* code points differ from glyph: `\` (0x5C) renders
+as **¥** and `~` (0x7E) as **→**. The driver passes these through (they are inside
+printable ASCII), so the substitution is a property of the panel's ROM, not the
+software — an A02 (European) panel shows `\`/`~` normally. Recommendation: avoid
+`\` and `~` in templates for portable output. `{` and `}` are reserved for tokens,
+so they rarely appear literally. No mapping change was made: normalizing `\`/`~`
+would be wrong on A02 panels, and the ROM can't be probed.
+
+### Finding F6 — LCD renderer didn't reconfigure on apply (FIXED in this branch)
+
+The renderer started **once at daemon boot** and captured its config; `configApply`
+renders INIs and restarts gateway units but the LCD section drives **no INI and no
+unit**, so it was never in the restart set. Consequence: enabling the driver, or
+editing pages/geometry, through the UI + Apply reached the store but **never the
+glass** — the panel only updated on a full `waypointd` restart. For a feature whose
+entire UX is "edit pages, Apply, watch the panel," that made it effectively
+unusable without an SSH restart (same shape as the DAPNET F1 lesson: a store change
+that silently doesn't take).
+
+**Fix** (`cmd/waypointd/main.go`): `reloadLCD(m)` on apply — it diffs the applied
+`LCD` config against the running renderer's and, only when it changed, cancels the
+renderer (which releases the I2C device), waits for it to stop, and starts a fresh
+one from the new config. An unrelated apply (e.g. a DMR change) leaves the panel
+untouched, so it never blinks needlessly. Guarded by a mutex (apply runs on an HTTP
+goroutine, the renderer on its own). Tests: `TestReloadLCD` (start-on-enable,
+no-op-when-unchanged, restart-on-edit, stop-on-disable), race-clean. **Verified on
+hardware:** edit + reorder + apply updated the glass with the daemon **PID
+unchanged** (no restart), and enabling the driver via API + apply lit the panel
+with no restart.
+
 ## Exit state & restore path
 
 - Node left **running Waypoint**, restored to its original mode selection
@@ -178,10 +260,90 @@ over-the-air QSO is a **manual follow-up** (a radio cannot be keyed from here).
   services, reboot). It also carries a commented **FULL WPSD RESTORE** block
   (unmask `mmdvmhost`/`dmrgateway`/`pistar-*`, restore `/etc` configs) for
   reverting the node to stock WPSD by hand.
+- **LCD run (2026-07-14):** the panel is physical hardware, so the LCD driver is
+  left **enabled** on 0x27 (20×2) with the default Idle/Activity/Network page set —
+  the validated working state. waypointd is `9768d40-lcd2`, prior binary at
+  `waypointd.bak.prelcd`. Mode selection unchanged (DMR only). `restore.sh` still
+  rolls the config back (it predates the LCD section, which then backfills to
+  disabled on restore — the driver degrades to noop if the panel is later removed).
+
+## Host network — confirm-or-revert guard (2026-07-14)
+
+The host/OS networking domain's **confirm-or-revert** apply was validated on the
+bench Pi. This is the safety property the whole domain hinges on: a bad network
+apply can strand the node, so an apply checkpoints, activates the change, and
+**automatically rolls back on a server-side timer** unless the admin confirms in
+time — the revert must not depend on the admin's HTTP session surviving (the
+apply may sever it).
+
+- **Build/run:** the branch tip cross-compiled `GOOS=linux GOARCH=arm64`, run as
+  a *separate* test daemon (`/tmp/waypointd-hwtest`, port 8074, throwaway store —
+  the production waypointd and its config.db were untouched) with
+  `-nm-keyfile-dir /etc/NetworkManager/system-connections -network-backend
+  composite -network-confirm-timeout 40s`. NM 1.52.1. Everything driven through
+  the API (`PUT /api/network/config`, `POST /api/network/apply|confirm`).
+- **Backend proven:** the `composite` backend = NetworkManager's native D-Bus
+  checkpoint (`CheckpointCreate/Rollback/Destroy` via `busctl`, verified working
+  as root on NM 1.52.1) restoring **live device state**, composed with the
+  keyfile snapshot for on-disk consistency. This is the H1 "preferred once
+  validated on the bench NM version" path — now validated.
+- **Ownership honored:** the stock `Wired connection 1` profile was never edited
+  or deleted; only `waypoint-eth0`/`waypoint-wifi` were written, and all
+  `waypoint-*` profiles were removed at the end (node left on stock DHCP,
+  reachable).
+
+Baseline: `eth0` at `172.16.50.13/24` gw `172.16.50.1` (my SSH path — so the
+test ran **detached** on the Pi to survive the link flipping).
+
+| Test | Scenario | Expected | Result |
+|---|---|---|---|
+| **A** | Managed static → DHCP, **do NOT confirm**; wait past the 40 s window | server-side timer rolls back to the pre-apply static; node reachable | **PASS** — after the window `eth0=172.16.50.13`, active `waypoint-eth0`, gateway reachable |
+| **B** | Managed static → DHCP, **confirm within the window** | change sticks (DHCP); no rollback after the window | **PASS** — `waypoint-eth0.method=auto` stuck, still `auto` + reachable 45 s past the old deadline |
+| **C** | Configure Wi-Fi with a sentinel PSK; exercise the full PUT→GET→apply path | PSK never in any API response or log | **PASS** — 0 occurrences across `GET /api/network/config`, `/status`, `/wifi/scan`, **and** the daemon log; view shows `has_psk:true`; the secret lives only in the `0600` keyfile |
+
+Notes:
+- Test A specifically exercised **our** 40 s guard timer (NM's own rollback
+  backstop is armed at 40 s + 30 s grace, so it had not yet fired when the node
+  was already back — the server-side revert stands on its own).
+- Test C proves the **secret-handling** path (redaction in the view + never
+  logged), which is the security-relevant guarantee. Live Wi-Fi *association*
+  was not performed — the test harness has no real AP credential (none was
+  invented). The scan endpoint against the live radio returned nearby networks
+  correctly (dedup, signal, security, in-use).
+- The auto-rollback now emits a journal line (`network apply auto-rolled back:
+  no confirm before the deadline…`) so the operator sees a server-side revert.
+
+### VLAN, NTP, hostname (2026-07-14, part 2)
+
+The rest of the host-network surface — VLANs (through the confirm-or-revert guard)
+and the DIRECT-apply host settings (NTP, hostname) — was validated on the bench Pi
+(NM 1.52.1, composite backend, throwaway daemon on port 8075, production config.db
+untouched). The script saved the as-found hostname/NTP state and **restored it at
+the end** (host settings apply directly and mutate the real system).
+
+| Test | Scenario | Expected | Result |
+|---|---|---|---|
+| **V-A** | Create VLAN 50 on eth0 (static 10.50.0.2/24), **do NOT confirm** | server-side timer rolls back — the `eth0.50` interface and `waypoint-vlan50` keyfile removed | **PASS** — `eth0.50` came up at 10.50.0.2 on apply; after the 40 s window both the interface and keyfile were gone |
+| **V-B** | Same VLAN 50, **confirm within the window** | it sticks | **PASS** — `eth0.50 = 10.50.0.2` still present 45 s past the old deadline |
+| **NTP** | Set `pool.ntp.org` + `time.cloudflare.com`, enable, direct apply | drop-in written, `timedatectl NTP=yes`, clock synchronizes | **PASS** — `/etc/systemd/timesyncd.conf.d/waypoint.conf` rendered `NTP=pool.ntp.org time.cloudflare.com`; `NTP=yes`, `NTPSynchronized=yes`, server `pool.ntp.org` |
+| **Hostname** | Change hostname, re-apply the same value | hostname changes; a repeat apply is a no-op | **PASS** — `hostnamectl --static` → `waypoint-bench`; second apply returned `changed=false` (idempotent) |
+
+Notes:
+- The VLAN is a *tagged child* of `eth0` (`eth0.50`), not `eth0` itself, so this
+  path never risked the SSH uplink — but it still exercised the full guard
+  (checkpoint → activate `nmcli connection up waypoint-vlan50` → rollback/confirm).
+- mDNS reflection could not be checked — `avahi-resolve` is not installed on this
+  image; the static hostname change via `hostnamectl` was confirmed directly.
+- Cleanup verified: hostname back to `wpsd`, the waypoint timesyncd drop-in removed,
+  `set-ntp` restored, no `waypoint-*` profiles left, `eth0` still `172.16.50.13`.
 
 ## Manual follow-ups
 1. Over-the-air QSO per mode (requires keying a radio).
-2. POCSAG/DG-ID/bridge **network logins** need real credentials — none were
+2. Host network: a live **Wi-Fi association** on the bench Pi needs the AP's real
+   PSK (not seeded); the credential-handling path is proven, association is not.
+3. POCSAG/DG-ID/bridge **network logins** need real credentials — none were
    seeded, so none were invented or registered.
-3. LCD/HD44780 hardware drive — verify on a node with a PCF8574 backpack
-   (`i2cdetect` was absent here and no display is attached).
+4. LCD/HD44780 hardware drive — **DONE (2026-07-14)**: a 20×2 HD44780 on a PCF8574
+   backpack (0x27) was attached and the native driver validated on glass — see the
+   *LCD (native HD44780 driver)* section above. The only remaining LCD MANUAL is the
+   RF-from-a-real-radio activity interrupt (validated via the demo feed instead).

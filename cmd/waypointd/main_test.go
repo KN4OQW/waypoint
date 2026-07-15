@@ -178,3 +178,54 @@ func TestStartLCD(t *testing.T) {
 		t.Fatal("startLCD did not start with the driver enabled")
 	}
 }
+
+// reloadLCD makes the renderer track config changes: it starts a stopped-and-now-
+// enabled driver, is a no-op when the LCD section is unchanged, and stops a
+// now-disabled driver — all without a daemon restart (the apply path).
+func TestReloadLCD(t *testing.T) {
+	s := &server{hub: hub.New(), started: time.Now()}
+
+	// Disabled → nothing running.
+	s.reloadLCD(&config.Model{LCD: config.LCD{Enabled: false}})
+	if s.lcdCancel != nil {
+		t.Fatal("reloadLCD started a renderer for a disabled driver")
+	}
+
+	// Enable via reload → renderer starts. The done channel identifies this run.
+	on := &config.Model{LCD: config.DefaultLCD()}
+	on.LCD.Enabled = true
+	s.reloadLCD(on)
+	if s.lcdCancel == nil {
+		t.Fatal("reloadLCD did not start the enabled renderer")
+	}
+	firstDone := s.lcdDone
+
+	// Same config again → no restart (same run, done channel unchanged and open).
+	same := &config.Model{LCD: on.LCD}
+	s.reloadLCD(same)
+	if s.lcdDone != firstDone {
+		t.Error("reloadLCD restarted the renderer for an unchanged config")
+	}
+
+	// Change a page → restart: a new run (new done channel) and the old one stopped.
+	edited := &config.Model{LCD: on.LCD}
+	edited.LCD.Pages = append([]config.LCDPage(nil), on.LCD.Pages...)
+	edited.LCD.Pages[0].Duration = "11"
+	s.reloadLCD(edited)
+	if s.lcdDone == firstDone {
+		t.Error("reloadLCD did not restart the renderer after a page edit")
+	}
+	select {
+	case <-firstDone: // closed → the previous renderer stopped and released the device
+	default:
+		t.Error("reloadLCD left the previous renderer running after a restart")
+	}
+
+	// Disable via reload → renderer stops.
+	off := &config.Model{LCD: edited.LCD}
+	off.LCD.Enabled = false
+	s.reloadLCD(off)
+	if s.lcdCancel != nil {
+		t.Error("reloadLCD did not stop the renderer when disabled")
+	}
+}
