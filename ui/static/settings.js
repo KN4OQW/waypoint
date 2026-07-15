@@ -385,14 +385,18 @@ function input(sec, key, opts = {}) {
   if (opts.unit) return row(opts.label, `<div class="unit">${inp}<span class="u">${esc(opts.unit)}</span></div>`);
   return row(opts.label, inp);
 }
+// Toggles render as real <button>s (keyboard-operable, Enter/Space) with
+// aria-pressed exposing on/off state to screen readers — so status is never
+// carried by the accent colour alone. The descriptive label is the button's
+// accessible name; aria-pressed carries the state.
 function toggle(sec, key, label, onTxt, offTxt) {
   const on = !!(edit[sec] || {})[key];
-  const pill = `<span class="pill ${on ? "on" : "off"}" data-toggle="${esc(sec)}.${esc(key)}" style="cursor:pointer;">${on ? esc(onTxt || "ON") : esc(offTxt || "OFF")}</span>`;
+  const pill = `<button type="button" class="pill ${on ? "on" : "off"}" data-toggle="${esc(sec)}.${esc(key)}" aria-pressed="${on}" aria-label="${esc(label)}">${on ? esc(onTxt || "ON") : esc(offTxt || "OFF")}</button>`;
   return row(label, pill);
 }
 function toggleRow(sec, key, name) {
   const on = !!(edit[sec] || {})[key];
-  return `<div class="toggle-row"><span class="name">${esc(name)}</span><span class="pill ${on ? "on" : "off"}" data-toggle="${esc(sec)}.${esc(key)}" style="cursor:pointer;">${on ? "ON" : "OFF"}</span></div>`;
+  return `<div class="toggle-row"><span class="name">${esc(name)}</span><button type="button" class="pill ${on ? "on" : "off"}" data-toggle="${esc(sec)}.${esc(key)}" aria-pressed="${on}" aria-label="${esc(name)}">${on ? "ON" : "OFF"}</button></div>`;
 }
 function note(html) { return `<div class="note">${html}</div>`; }
 // extLink renders an external dashboard/manager link — a pure UI affordance (no
@@ -404,7 +408,7 @@ function extLink(href, text) { return `<a class="ext" href="${esc(href)}" target
 // "allow other DMR IDs" fields are two framings of the same setting.
 function nodeLockRow() {
   const on = !!(edit.dmr || {}).self_only;
-  return `<div class="toggle-row"><span class="name">Node Lock (Private / Public)</span><span class="pill ${on ? "on" : "off"}" data-toggle="dmr.self_only" style="cursor:pointer;">${on ? "PRIVATE" : "PUBLIC"}</span></div>`;
+  return `<div class="toggle-row"><span class="name">Node Lock (Private / Public)</span><button type="button" class="pill ${on ? "on" : "off"}" data-toggle="dmr.self_only" aria-pressed="${on}" aria-label="Node Lock (Private / Public)">${on ? "PRIVATE" : "PUBLIC"}</button></div>`;
 }
 
 // --- panels --------------------------------------------------------------
@@ -444,14 +448,17 @@ function panelModes() {
   const names = { dstar: "D-Star", dmr: "DMR", ysf: "System Fusion", p25: "P25", nxdn: "NXDN", m17: "M17", pocsag: "POCSAG", fm: "FM" };
   const cards = order.map((k) => {
     const on = !!(edit.modes || {})[k];
+    // A whole mode tile is one big toggle: a real <button> so it's reachable by
+    // Tab and flips on Enter/Space. aria-pressed carries the enabled state; the
+    // "ENABLED/DISABLED" text and the LED both back up the accent colour.
     return `
-    <div class="mode-card ${on ? "on" : ""}" data-toggle="modes.${k}" style="cursor:pointer;">
+    <button type="button" class="mode-card ${on ? "on" : ""}" data-toggle="modes.${k}" aria-pressed="${on}" aria-label="${esc(names[k])} mode">
       <div class="mode-top">
         <div><div class="mode-name">${esc(names[k])}</div><div class="mode-desc">${esc(k.toUpperCase())}</div></div>
-        <div class="track"><div class="knob"></div></div>
+        <div class="track" aria-hidden="true"><div class="knob"></div></div>
       </div>
-      <div class="mode-foot"><span class="d"></span><span class="s">${on ? "ENABLED" : "DISABLED"}</span></div>
-    </div>`;
+      <div class="mode-foot"><span class="d" aria-hidden="true"></span><span class="s">${on ? "ENABLED" : "DISABLED"}</span></div>
+    </button>`;
   }).join("");
   return `<div class="modes-grid">${cards}</div>`;
 }
@@ -679,7 +686,7 @@ function ensureNet(type) {
   return n;
 }
 
-const enPill = (type, n) => `<span class="pill ${n && n.enabled ? "on" : "off"}" data-neten="${type}" style="cursor:pointer;">${n && n.enabled ? "ENABLED" : "DISABLED"}</span>`;
+const enPill = (type, n) => { const on = !!(n && n.enabled); return `<button type="button" class="pill ${on ? "on" : "off"}" data-neten="${type}" aria-pressed="${on}" aria-label="${esc(type)} network enabled">${on ? "ENABLED" : "DISABLED"}</button>`; };
 const netField = (type, key, n, ph, pw) =>
   `<input data-netf="${type}" data-nkey="${key}"${pw ? ' type="password"' : ""} value="${esc(n ? (n[key] || "") : "")}" placeholder="${esc(ph || "")}">`;
 
@@ -762,10 +769,10 @@ function panelBrandmeister() {
   for (let i = 0; i <= 15; i++) ccOpts += `<option value="${i}"${String(i) === String(cc) ? " selected" : ""}>${i}</option>`;
   const general = `<section class="card">
       <div class="card-head"><span class="sq"></span><span class="t">General DMR Settings</span></div>
-      <div class="toggle-row"><span class="name">DMR Roaming Beacon</span><span class="pill ${d.beacons ? "on" : "off"}" data-toggle="dmr.beacons" style="cursor:pointer;">${d.beacons ? "ON" : "OFF"}</span></div>
+      <div class="toggle-row"><span class="name">DMR Roaming Beacon</span><button type="button" class="pill ${d.beacons ? "on" : "off"}" data-toggle="dmr.beacons" aria-pressed="${!!d.beacons}" aria-label="DMR Roaming Beacon">${d.beacons ? "ON" : "OFF"}</button></div>
       ${row("DMR Color Code", `<select data-sec="dmr" data-key="color_code">${ccOpts}</select>`)}
-      <div class="toggle-row"><span class="name">DMR EmbeddedLCOnly</span><span class="pill ${d.embedded_lc_only ? "on" : "off"}" data-toggle="dmr.embedded_lc_only" style="cursor:pointer;">${d.embedded_lc_only ? "ON" : "OFF"}</span></div>
-      <div class="toggle-row"><span class="name">DMR DumpTAData</span><span class="pill ${d.dump_ta_data ? "on" : "off"}" data-toggle="dmr.dump_ta_data" style="cursor:pointer;">${d.dump_ta_data ? "ON" : "OFF"}</span></div>
+      <div class="toggle-row"><span class="name">DMR EmbeddedLCOnly</span><button type="button" class="pill ${d.embedded_lc_only ? "on" : "off"}" data-toggle="dmr.embedded_lc_only" aria-pressed="${!!d.embedded_lc_only}" aria-label="DMR EmbeddedLCOnly">${d.embedded_lc_only ? "ON" : "OFF"}</button></div>
+      <div class="toggle-row"><span class="name">DMR DumpTAData</span><button type="button" class="pill ${d.dump_ta_data ? "on" : "off"}" data-toggle="dmr.dump_ta_data" aria-pressed="${!!d.dump_ta_data}" aria-label="DMR DumpTAData">${d.dump_ta_data ? "ON" : "OFF"}</button></div>
       ${nodeLockRow()}
       ${note("<b>Private</b> locks TX to this node's own DMR ID; <b>Public</b> allows other DMR IDs through the hotspot.")}
     </section>`;
@@ -780,11 +787,11 @@ function routingTable() {
   const netOpts = (sel) => nets.map((n) => `<option value="${esc(n.name)}"${n.name === sel ? " selected" : ""}>${esc(n.name)} (${esc(n.type)})</option>`).join("");
   const rows = routes.map((r, j) => `
     <div class="route-row">
-      ${slotSelect(r.slot, `data-rtslot="${j}"`)}
-      <input class="mini" data-rttg="${j}" value="${esc(r.tg)}" placeholder="dialed TG">
+      ${slotSelect(r.slot, `data-rtslot="${j}" aria-label="Route ${j + 1} time slot"`)}
+      <input class="mini" data-rttg="${j}" value="${esc(r.tg)}" placeholder="dialed TG" aria-label="Route ${j + 1} dialed talkgroup">
       <span class="arr" aria-hidden="true">→</span>
-      <select class="mini" data-rtnet="${j}">${netOpts(r.network)}</select>
-      <button class="netdel" data-rtdel="${j}" title="Remove route">✕</button>
+      <select class="mini" data-rtnet="${j}" aria-label="Route ${j + 1} gateway">${netOpts(r.network)}</select>
+      <button class="netdel" data-rtdel="${j}" aria-label="Remove route ${j + 1}">✕</button>
     </div>`).join("");
   const body = routes.length
     ? `<div class="route-head"><span>Slot</span><span>Dialed TG</span><span></span><span>Gateway</span><span></span></div>${rows}`
@@ -1327,6 +1334,36 @@ function panelFm() {
   return `<div class="grid2">${access}<div class="stack">${timing}${audio}</div></div>`;
 }
 
+// enhanceA11y wires every rendered form control to an accessible name so screen
+// readers announce it and axe-core's label/select-name rules pass. Rows are
+// built as `<label>text</label><control>` without a `for=` (the control's id is
+// generated), so we associate them after render; any control still nameless
+// (route/table fields) falls back to its placeholder. Run after every render.
+let a11yCounter = 0;
+function enhanceA11y() {
+  const box = document.getElementById("panels");
+  box.querySelectorAll(".row").forEach((rowEl) => {
+    const label = rowEl.querySelector(":scope > label");
+    const ctrl = rowEl.querySelector("input, select, textarea");
+    if (!label || !ctrl) return;
+    // A <label for> can only target labelable elements; toggle buttons carry
+    // their own aria-label, so skip them here.
+    if (!ctrl.id) ctrl.id = "wp-f-" + (a11yCounter++);
+    if (!label.getAttribute("for")) label.setAttribute("for", ctrl.id);
+  });
+  box.querySelectorAll("input, select, textarea").forEach((ctrl) => {
+    if (namedControl(ctrl)) return;
+    const ph = ctrl.getAttribute("placeholder");
+    if (ph) ctrl.setAttribute("aria-label", ph);
+  });
+}
+function namedControl(c) {
+  if (c.getAttribute("aria-label") || c.getAttribute("aria-labelledby") || c.getAttribute("title")) return true;
+  if (c.closest("label")) return true;
+  if (c.id && document.querySelector(`label[for="${CSS.escape(c.id)}"]`)) return true;
+  return false;
+}
+
 function renderPanel() {
   const c = state.config || {};
   const box = document.getElementById("panels");
@@ -1349,6 +1386,7 @@ function renderPanel() {
     case "network":      box.innerHTML = panelNetwork(); break;
     default:             box.innerHTML = "";
   }
+  enhanceA11y();
 }
 
 // --- apply / reset -------------------------------------------------------
@@ -1367,9 +1405,12 @@ function banner(msg, kind) {
   if (!b) {
     b = el("div");
     b.id = "save-banner";
+    b.setAttribute("role", "status");
+    b.setAttribute("aria-live", "polite");
     b.style.cssText = "margin:0 0 18px; padding:11px 14px; border-radius:8px; font-family:var(--mono); font-size:12px;";
     document.getElementById("panels").before(b);
   }
+  b.setAttribute("role", kind === "bad" ? "alert" : "status");
   b.textContent = msg;
   b.style.background = kind === "bad" ? "rgba(255,107,107,0.08)" : "var(--accent-soft)";
   b.style.color = kind === "bad" ? "var(--bad)" : "var(--accent)";
@@ -1421,8 +1462,12 @@ function renderNav() {
   const nav = document.getElementById("nav");
   nav.querySelectorAll(".nav-item").forEach((n) => n.remove());
   TABS.forEach((t) => {
-    const item = el("button", "nav-item" + (t.id === state.tab ? " on" : ""));
-    item.innerHTML = `<div class="bar"></div><div class="tag">${esc(t.tag)}</div><div><div class="label">${esc(t.label)}</div><div class="sub">${esc(t.sub)}</div></div>`;
+    const on = t.id === state.tab;
+    const item = el("button", "nav-item" + (on ? " on" : ""));
+    item.type = "button";
+    if (on) item.setAttribute("aria-current", "page");
+    item.setAttribute("aria-label", t.label + " — " + t.sub);
+    item.innerHTML = `<div class="bar" aria-hidden="true"></div><div class="tag" aria-hidden="true">${esc(t.tag)}</div><div><div class="label">${esc(t.label)}</div><div class="sub">${esc(t.sub)}</div></div>`;
     item.onclick = () => selectTab(t.id);
     nav.appendChild(item);
   });
@@ -1450,8 +1495,11 @@ function renderThemes() {
   applyTheme(cur);
   THEMES.forEach((th) => {
     const s = el("button", "swatch" + (th.key === cur ? " on" : ""));
+    s.type = "button";
     s.title = th.key;
-    s.innerHTML = `<span class="dot" style="background:${th.color}; box-shadow:0 0 7px ${th.color};"></span>`;
+    s.setAttribute("aria-label", th.key + " theme");
+    s.setAttribute("aria-pressed", String(th.key === cur));
+    s.innerHTML = `<span class="dot" style="background:${th.color}; box-shadow:0 0 7px ${th.color};" aria-hidden="true"></span>`;
     s.onclick = () => { applyTheme(th.key); localStorage.setItem("wp-theme", th.key); renderThemes(); };
     box.appendChild(s);
   });
@@ -1473,8 +1521,9 @@ function renderStatus() {
   leds.innerHTML = "";
   (c.modes || []).forEach((m) => {
     const d = el("div", "led-mode" + (m.enabled ? " on" : ""));
-    d.title = m.name;
-    d.innerHTML = `<span class="d"></span><span class="a">${esc(m.key.toUpperCase())}</span>`;
+    d.title = m.name + (m.enabled ? " enabled" : " disabled");
+    d.setAttribute("aria-label", m.name + (m.enabled ? " enabled" : " disabled"));
+    d.innerHTML = `<span class="d" aria-hidden="true"></span><span class="a">${esc(m.key.toUpperCase())}</span>`;
     leds.appendChild(d);
   });
 }

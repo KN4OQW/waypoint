@@ -1,0 +1,65 @@
+name: a11y
+
+# Accessibility is a merge gate (issue #7). This runs axe-core against the live
+# dashboard and every settings/wizard tab, in all three themes, and fails on any
+# WCAG 2.1 A/AA violation.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  axe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Build waypointd
+        run: go build -o waypointd ./cmd/waypointd
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install a11y harness
+        working-directory: ui/a11y
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: ui/a11y
+        run: npx playwright install --with-deps chromium
+
+      - name: Start demo daemon
+        run: |
+          ./waypointd -demo -addr 127.0.0.1:8073 -store "$RUNNER_TEMP/a11y.db" \
+            > "$RUNNER_TEMP/waypointd.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/wp.pid"
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8073/api/health > /dev/null; then
+              echo "daemon up"; exit 0
+            fi
+            sleep 1
+          done
+          echo "daemon did not come up"; cat "$RUNNER_TEMP/waypointd.log"; exit 1
+
+      - name: Run axe-core accessibility scan
+        working-directory: ui/a11y
+        env:
+          BASE: http://127.0.0.1:8073
+        run: npm run scan
+
+      - name: Show daemon log on failure
+        if: failure()
+        run: cat "$RUNNER_TEMP/waypointd.log" || true
+
+      - name: Stop demo daemon
+        if: always()
+        run: kill "$(cat "$RUNNER_TEMP/wp.pid")" 2>/dev/null || true
