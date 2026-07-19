@@ -33,7 +33,7 @@ Rationale for the split: the g4klx daemons are actively maintained upstream and 
 - Single schema-versioned document in SQLite; explicit migrations.
 - Gateway INI files are **compiled outputs** of the store — regenerated deterministically, diffable, never parsed back.
 - The store keeps settings for disabled modes (the incumbent "Apply Changes ate my DMR password" family is structurally impossible).
-- **Override layer**: `/etc/waypoint/overrides.d/` drop-ins merge last into generated configs; hostfile prepend/append hooks. Overrides are surfaced in the UI, not fought by the updater.
+- **Override layer** ([RFC-0005](rfcs/0005-override-layer.md)): `overrides.d/<daemon>.d/*.conf` drop-ins merge last into generated configs (section/key merge, `!unset`, lexical precedence); hostfile `prepend.d`/`append.d` hooks. Overrides are surfaced read-only in the UI, not fought by the updater.
 - **Profiles**: named snapshots of the network/mode subset of the store; one-click switch; import/export as signed JSON files.
 
 ### Supervisor

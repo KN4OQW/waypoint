@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -363,5 +365,71 @@ func TestReloadLCD(t *testing.T) {
 	s.reloadLCD(off)
 	if s.lcdCancel != nil {
 		t.Error("reloadLCD did not stop the renderer when disabled")
+	}
+}
+
+// GET /api/overrides reports the override records that shape the current render,
+// names the override root, and returns [] (not null) when nothing is overridden
+// (RFC-0005 / issue #2).
+func TestOverridesEndpoint(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	etc := t.TempDir()
+	ovr := t.TempDir()
+	s := &server{
+		store: st,
+		paths: config.Paths{
+			MMDVM: filepath.Join(etc, "MMDVM-Host.ini"), DMRGateway: filepath.Join(etc, "DMRGateway.ini"),
+			YSFGateway: filepath.Join(etc, "YSFGateway.ini"), P25Gateway: filepath.Join(etc, "P25Gateway.ini"),
+			NXDNGateway: filepath.Join(etc, "NXDNGateway.ini"), DStarGateway: filepath.Join(etc, "dstargateway.cfg"),
+			M17Gateway: filepath.Join(etc, "M17Gateway.ini"), OverridesDir: ovr,
+		},
+	}
+
+	// No fragments yet: empty (non-null) report.
+	rec := httptest.NewRecorder()
+	s.overridesView(rec, httptest.NewRequest("GET", "/api/overrides", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var empty struct {
+		Dir       string           `json:"dir"`
+		Overrides []config.Applied `json:"overrides"`
+		Warnings  []string         `json:"warnings"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &empty); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	if empty.Dir != ovr {
+		t.Errorf("dir = %q, want %q", empty.Dir, ovr)
+	}
+	if empty.Overrides == nil || len(empty.Overrides) != 0 {
+		t.Errorf("expected empty (non-null) overrides, got %#v", empty.Overrides)
+	}
+
+	// Drop in a fragment; it must appear in the report with its provenance.
+	if err := os.MkdirAll(filepath.Join(ovr, "mmdvm.d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ovr, "mmdvm.d", "10-local.conf"), []byte("[General]\nTimeout=777"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	s.overridesView(rec, httptest.NewRequest("GET", "/api/overrides", nil))
+	var got struct {
+		Overrides []config.Applied `json:"overrides"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	if len(got.Overrides) != 1 {
+		t.Fatalf("expected 1 override record, got %d: %+v", len(got.Overrides), got.Overrides)
+	}
+	a := got.Overrides[0]
+	if a.Daemon != "mmdvm" || a.Section != "General" || a.Key != "Timeout" || a.New != "777" || a.Source != "10-local.conf" {
+		t.Errorf("override record wrong: %+v", a)
 	}
 }

@@ -12,10 +12,11 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/KN4OQW/waypoint/internal/hostfile"
 )
 
 // DefaultURL is the WPSD-maintained DMR master hostlist (the same lineage as the
@@ -68,19 +69,10 @@ func Fetch(ctx context.Context, url, path string) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".dmrhosts-*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(body); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
+	// Wrap the downloaded list in the operator's local prepend/append hooks
+	// (RFC-0005 / issue #2) so local masters survive every refresh. With no hooks
+	// the file is written exactly as downloaded.
+	return hostfile.WriteWithHooks(path, body, "dmrhosts")
 }
 
 type httpError struct{ code int }

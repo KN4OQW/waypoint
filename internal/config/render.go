@@ -21,6 +21,11 @@ type Paths struct {
 	DStarGateway  string
 	M17Gateway    string
 	DAPNETGateway string // POCSAG paging gateway (rendered only when POCSAG mode is enabled)
+	// OverridesDir is the root of the operator's override drop-ins (RFC-0005 /
+	// issue #2): per-daemon fragments live under <OverridesDir>/<daemon>.d/*.conf and
+	// merge last into each rendered INI. Empty disables the override layer entirely
+	// (the render is emitted verbatim) — the default in tests and demo mode.
+	OverridesDir string
 	// The cross-mode bridge INIs (MMDVM_CM: YSF2DMR/DMR2YSF/YSF2NXDN/DMR2NXDN/
 	// NXDN2DMR) once had Paths fields here. The per-bridge-daemon model is retired in
 	// favour of the RFC-0003 bus architecture: RenderTargets no longer emits a bridge
@@ -52,6 +57,22 @@ const (
 	unitNXDN2DMR = "waypoint-nxdn2dmr.service"
 )
 
+// Per-daemon override namespaces (RFC-0005). Each render target owns a daemon key
+// naming its override drop-in directory (<OverridesDir>/<key>.d/). The key is
+// short and stable — it appears in operators' directory layouts and in the
+// Overrides UI — so it must not change casually.
+const (
+	daemonMMDVM         = "mmdvm"
+	daemonDMRGateway    = "dmrgateway"
+	daemonYSFGateway    = "ysfgateway"
+	daemonDGIdGateway   = "dgidgateway"
+	daemonP25Gateway    = "p25gateway"
+	daemonNXDNGateway   = "nxdngateway"
+	daemonDStarGateway  = "dstargateway"
+	daemonM17Gateway    = "m17gateway"
+	daemonDAPNETGateway = "dapnetgateway"
+)
+
 // retiredBridgeUnits are the cross-mode transcoding bridge daemons (MMDVM_CM)
 // retired in favour of the RFC-0003 bus architecture. RenderTargets no longer
 // contributes a target for them, so apply never restarts them; instead apply stops
@@ -70,6 +91,7 @@ func RetiredBridgeUnits() []string { return append([]string(nil), retiredBridgeU
 type RenderTarget struct {
 	Path   string              // where the daemon reads its INI
 	Unit   string              // systemd unit to restart when this file changes
+	Daemon string              // override namespace: <OverridesDir>/<Daemon>.d/*.conf (RFC-0005)
 	Render func(*Model) string // pure renderer for this file
 }
 
@@ -83,18 +105,18 @@ type RenderTarget struct {
 // adding a second one. The apply loop then restarts exactly one YSF unit; the
 // deploy's systemd Conflicts= between the two units stops the other daemon.
 func (m *Model) RenderTargets(paths Paths) []RenderTarget {
-	ysf := RenderTarget{Path: paths.YSFGateway, Unit: unitYSFGateway, Render: (*Model).RenderYSFGateway}
+	ysf := RenderTarget{Path: paths.YSFGateway, Unit: unitYSFGateway, Daemon: daemonYSFGateway, Render: (*Model).RenderYSFGateway}
 	if m.YSFGW.EnableDGId {
-		ysf = RenderTarget{Path: paths.DGIdGateway, Unit: unitDGIdGateway, Render: (*Model).RenderDGIdGateway}
+		ysf = RenderTarget{Path: paths.DGIdGateway, Unit: unitDGIdGateway, Daemon: daemonDGIdGateway, Render: (*Model).RenderDGIdGateway}
 	}
 	targets := []RenderTarget{
-		{Path: paths.MMDVM, Unit: unitMMDVM, Render: (*Model).RenderMMDVM},
-		{Path: paths.DMRGateway, Unit: unitDMRGateway, Render: (*Model).RenderDMRGateway},
+		{Path: paths.MMDVM, Unit: unitMMDVM, Daemon: daemonMMDVM, Render: (*Model).RenderMMDVM},
+		{Path: paths.DMRGateway, Unit: unitDMRGateway, Daemon: daemonDMRGateway, Render: (*Model).RenderDMRGateway},
 		ysf,
-		{Path: paths.P25Gateway, Unit: unitP25Gateway, Render: (*Model).RenderP25Gateway},
-		{Path: paths.NXDNGateway, Unit: unitNXDNGateway, Render: (*Model).RenderNXDNGateway},
-		{Path: paths.DStarGateway, Unit: unitDStarGateway, Render: (*Model).RenderDStarGateway},
-		{Path: paths.M17Gateway, Unit: unitM17Gateway, Render: (*Model).RenderM17Gateway},
+		{Path: paths.P25Gateway, Unit: unitP25Gateway, Daemon: daemonP25Gateway, Render: (*Model).RenderP25Gateway},
+		{Path: paths.NXDNGateway, Unit: unitNXDNGateway, Daemon: daemonNXDNGateway, Render: (*Model).RenderNXDNGateway},
+		{Path: paths.DStarGateway, Unit: unitDStarGateway, Daemon: daemonDStarGateway, Render: (*Model).RenderDStarGateway},
+		{Path: paths.M17Gateway, Unit: unitM17Gateway, Daemon: daemonM17Gateway, Render: (*Model).RenderM17Gateway},
 	}
 	// POCSAG's DAPNETGateway is gated on the POCSAG mode enable, NOT always-on.
 	// Unlike the digital-mode gateways (YSF/P25/NXDN/M17/D-Star) — which idle
@@ -105,7 +127,7 @@ func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 	// stretched every Apply to ~45s. Gate it like a bridge: POCSAG off ⇒ no target
 	// ⇒ apply neither writes DAPNETGateway.ini nor restarts the unit.
 	if m.Modes.POCSAG {
-		targets = append(targets, RenderTarget{Path: paths.DAPNETGateway, Unit: unitDAPNETGateway, Render: (*Model).RenderDAPNETGateway})
+		targets = append(targets, RenderTarget{Path: paths.DAPNETGateway, Unit: unitDAPNETGateway, Daemon: daemonDAPNETGateway, Render: (*Model).RenderDAPNETGateway})
 	}
 	// The cross-mode transcoding bridges (MMDVM_CM) used to append here when enabled.
 	// The per-bridge-daemon model is retired for the RFC-0003 bus architecture, so no
@@ -116,16 +138,60 @@ func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 	return targets
 }
 
-// WriteFiles renders every target and writes its INI atomically (write to a
-// temp file in the same directory, then rename). A crash mid-apply therefore
-// never leaves a daemon reading a half-written config.
-func (m *Model) WriteFiles(paths Paths) error {
+// WriteFiles renders every target, merges the operator's override fragments last
+// (RFC-0005), and writes the result atomically (write to a temp file in the same
+// directory, then rename). A crash mid-apply therefore never leaves a daemon
+// reading a half-written config. Override warnings (malformed fragment lines) are
+// returned flattened so the caller can surface them — the override layer never
+// drops a line silently.
+func (m *Model) WriteFiles(paths Paths) (warnings []string, err error) {
 	for _, t := range m.RenderTargets(paths) {
-		if err := writeAtomic(t.Path, t.Render(m)); err != nil {
-			return err
+		content, _, w, err := m.renderMerged(t, paths.OverridesDir)
+		if err != nil {
+			return warnings, err
+		}
+		warnings = append(warnings, w...)
+		if err := writeAtomic(t.Path, content); err != nil {
+			return warnings, err
 		}
 	}
-	return nil
+	return warnings, nil
+}
+
+// renderMerged renders one target and applies its override fragments. With no
+// OverridesDir (tests, demo) or no Daemon key the render is returned verbatim, so
+// the override layer is provably inert until an operator drops in a fragment.
+func (m *Model) renderMerged(t RenderTarget, overridesDir string) (content string, applied []Applied, warnings []string, err error) {
+	content = t.Render(m)
+	if overridesDir == "" || t.Daemon == "" {
+		return content, nil, nil, nil
+	}
+	frags, warnings, err := LoadFragments(filepath.Join(overridesDir, t.Daemon+".d"))
+	if err != nil {
+		return content, nil, warnings, err
+	}
+	if len(frags) == 0 {
+		return content, nil, warnings, nil
+	}
+	merged, applied := ApplyOverrides(t.Daemon, content, frags)
+	return merged, applied, warnings, nil
+}
+
+// Overrides reports, per daemon, the override records that shape the current
+// store's render — what the next Apply will actually write (RFC-0005). It renders
+// but writes nothing, so it is the read model for GET /api/overrides and the
+// Overrides UI panel. Records are returned in render-target order (daemon), then
+// section/key within each daemon.
+func (m *Model) Overrides(paths Paths) (applied []Applied, warnings []string, err error) {
+	for _, t := range m.RenderTargets(paths) {
+		_, a, w, err := m.renderMerged(t, paths.OverridesDir)
+		if err != nil {
+			return applied, warnings, err
+		}
+		applied = append(applied, a...)
+		warnings = append(warnings, w...)
+	}
+	return applied, warnings, nil
 }
 
 func writeAtomic(path, content string) error {
