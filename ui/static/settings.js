@@ -39,6 +39,7 @@ let p25Refs = [];           // cached P25 talkgroup list for the startup-TG pick
 let nxdnRefs = [];          // cached NXDN talkgroup list for the startup-TG picker
 let dstarRefs = [];         // cached D-Star reflector list for the startup picker
 let m17Refs = [];           // cached M17 reflector list for the startup picker
+let overridesData = null;   // GET /api/overrides — the override layer's effective records (read-only, RFC-0005)
 let netStatus = null;       // live host-network state from /api/network/status (read-only)
 let netEdit = null;          // working copy of /api/network/config (editable)
 let netDirty = false;        // unsaved connection/VLAN edits (guarded Apply Network)
@@ -781,7 +782,45 @@ function panelExpert(c, h) {
   const rows = card("VERSIONS",
     `<div class="row"><label>Dashboard (waypointd)</label><input value="${esc((h && h.version) || "—")}" readonly></div>` +
     `<div class="row"><label>Config store</label><input value="${esc((c.sources && c.sources.store) || "—")}" readonly></div>`);
-  return `<div class="grid2">${rows}${note("Raw INI editing and power controls land in a later slice. Config now lives in the store; the INIs are regenerated on Apply — <a href='https://github.com/KN4OQW/waypoint/issues/29'>waypoint#29</a>.")}</div>`;
+  return `<div class="grid2">${rows}${note("Raw INI editing and power controls land in a later slice. Config now lives in the store; the INIs are regenerated on Apply — <a href='https://github.com/KN4OQW/waypoint/issues/29'>waypoint#29</a>.")}</div>${panelOverrides()}`;
+}
+
+// panelOverrides renders the read-only Override layer view (RFC-0005 / issue #2):
+// the drop-in fragments that merge last into the generated INIs and survive every
+// update. Data comes from GET /api/overrides, loaded lazily when the Expert tab
+// opens. "Visible, not fought" — the operator sees exactly what their overrides
+// change and which fragment wins.
+function panelOverrides() {
+  const d = overridesData;
+  if (!d) return card("OVERRIDES", note("Loading override layer…"));
+  const dirLine = note(`Override drop-ins live under <code>${esc(d.dir || "—")}/&lt;daemon&gt;.d/*.conf</code> and host-file hooks under <code>&lt;hostfile&gt;.prepend.d/</code> · <code>.append.d/</code>. They merge last into the generated files and are never touched by an update (<a href="https://github.com/KN4OQW/waypoint/issues/2">waypoint#2</a>).`);
+  const warn = (d.warnings && d.warnings.length)
+    ? note(`<b>${d.warnings.length} malformed override line(s) ignored:</b><br>${d.warnings.map(esc).join("<br>")}`)
+    : "";
+  const list = d.overrides || [];
+  if (!list.length) {
+    return card("OVERRIDES", dirLine + note("No overrides active — the generated configuration is exactly what the store renders.") + warn);
+  }
+  // Group by daemon so each generated file's overrides read together.
+  const byDaemon = {};
+  list.forEach((o) => { (byDaemon[o.daemon] = byDaemon[o.daemon] || []).push(o); });
+  const groups = Object.keys(byDaemon).sort().map((daemon) => {
+    const rows = byDaemon[daemon].map(overrideRow).join("");
+    return `<div class="card"><div class="card-head"><span class="sq"></span><span class="t">${esc(daemon)}</span></div>${rows}</div>`;
+  }).join("");
+  return card("OVERRIDES", dirLine + warn) + `<div class="stack">${groups}</div>`;
+}
+
+// overrideRow renders one effective override as a read-only status line:
+// section · key, the rendered→effective transition (or REMOVED / ADDED), and the
+// winning fragment filename (the provenance).
+function overrideRow(o) {
+  let change;
+  if (o.unset) change = `<s>${esc(o.old)}</s> <b>REMOVED</b>`;
+  else if (o.added) change = `<b>${esc(o.new)}</b> <span class="note" style="display:inline">ADDED</span>`;
+  else change = `<s>${esc(o.old)}</s> → <b>${esc(o.new)}</b>`;
+  const label = `[${o.section}] ${o.key}`;
+  return `<div class="row"><label>${esc(label)}</label><span style="font-family:var(--mono); font-size:12px;">${change} <span class="note" style="display:inline; opacity:.7;">· ${esc(o.source)}</span></span></div>`;
 }
 
 function panelPending(what) {
@@ -1452,6 +1491,9 @@ function selectTab(id) {
   // The Network tab shows live system state, fetched on demand (not part of the
   // store config load).
   if (id === "network") loadNetwork();
+  // The Expert tab's override view is fetched on demand (read-only, RFC-0005),
+  // re-fetched each open so it reflects the current store render.
+  if (id === "expert") loadOverrides();
 }
 
 function renderThemes() {
@@ -1560,6 +1602,17 @@ async function loadNetwork() {
     try { netTimezones = (await fetch("/api/network/timezones").then((r) => r.json())) || []; } catch { /* picker still accepts a typed zone */ }
   }
   if (state.tab === "network") renderPanel();
+}
+
+// loadOverrides fetches the read-only override-layer view (RFC-0005) for the
+// Expert tab. Failures degrade to an empty view rather than blocking the tab.
+async function loadOverrides() {
+  try {
+    overridesData = await fetch("/api/overrides").then((r) => r.json());
+  } catch {
+    overridesData = { dir: "", overrides: [], warnings: [] };
+  }
+  if (state.tab === "expert") renderPanel();
 }
 
 // netConnByType resolves (creating if needed) the single managed connection of a

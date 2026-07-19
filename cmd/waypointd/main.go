@@ -281,9 +281,13 @@ func (s *server) configApply(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	targets := m.RenderTargets(s.paths)
-	if err := m.WriteFiles(s.paths); err != nil {
+	warnings, err := m.WriteFiles(s.paths)
+	if err != nil {
 		http.Error(w, "render: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	for _, wn := range warnings {
+		log.Printf("overrides: %s", wn) // malformed fragment line — surfaced, never silently dropped
 	}
 	restarted, err := s.restartUnits(restartSet(targets))
 	if err != nil {
@@ -303,6 +307,15 @@ func (s *server) configApply(w http.ResponseWriter, _ *http.Request) {
 	s.reloadLCD(m)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"applied": true, "restarted": restarted, "stopped": stopped})
+}
+
+// overridesRoot returns the override drop-in root, or "" in demo mode so a demo
+// run never merges a real node's overrides into its synthetic config (RFC-0005).
+func overridesRoot(dir string, demo bool) string {
+	if demo {
+		return ""
+	}
+	return dir
 }
 
 // restartSet is the deduped, ordered list of units to restart for a set of
@@ -676,6 +689,37 @@ func (s *server) history(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(evs)
 }
 
+// overridesView serves GET /api/overrides: the override records that shape the
+// current store's render — what the next Apply will actually write (RFC-0005 /
+// issue #2). Read-only (overrides are edited on disk in v1); behind the same
+// session wall as every config route. The response names the override root so the
+// UI can tell the operator where fragments live, and surfaces any malformed-line
+// warnings rather than dropping them silently.
+func (s *server) overridesView(w http.ResponseWriter, _ *http.Request) {
+	m, err := config.Load(s.store)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	applied, warnings, err := m.Overrides(s.paths)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if applied == nil {
+		applied = []config.Applied{} // never null — the client always gets an array
+	}
+	if warnings == nil {
+		warnings = []string{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"dir":       s.paths.OverridesDir,
+		"overrides": applied,
+		"warnings":  warnings,
+	})
+}
+
 // startLCD launches the native HD44780 renderer as a hub subscriber when the
 // config enables it, returning whether it started. It replays the event backlog
 // so the panel opens with current state, then drives the renderer from a ticker
@@ -832,6 +876,7 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/config", s.configView)
 	mux.HandleFunc("/api/config/apply", s.configApply)
 	mux.HandleFunc("/api/config/", s.configView) // PUT /api/config/{section}
+	mux.HandleFunc("/api/overrides", s.overridesView)
 	mux.HandleFunc("/api/ysf/reflectors", s.ysfReflectors)
 	mux.HandleFunc("/api/p25/reflectors", s.p25Reflectors)
 	mux.HandleFunc("/api/nxdn/reflectors", s.nxdnReflectors)
@@ -878,6 +923,7 @@ func main() {
 	dstargwINI := flag.String("dstargateway-ini", "/home/pi-star/waypoint/etc/dstargateway.cfg", "dstargateway.cfg render target")
 	m17gwINI := flag.String("m17gateway-ini", "/home/pi-star/waypoint/etc/M17Gateway.ini", "M17Gateway.ini render target")
 	dapnetgwINI := flag.String("dapnetgateway-ini", "/home/pi-star/waypoint/etc/DAPNETGateway.ini", "DAPNETGateway.ini render target (POCSAG paging gateway)")
+	overridesDir := flag.String("overrides-dir", "/home/pi-star/waypoint/overrides.d", "root of operator override drop-ins: <dir>/<daemon>.d/*.conf merge last into each rendered INI (RFC-0005 / issue #2)")
 	// The cross-mode bridge render-target flags (ysf2dmr-ini … nxdn2dmr-ini) are
 	// retired with the per-bridge-daemon model (RFC-0003 bus architecture). No bridge
 	// INI is rendered any more; apply stops any bridge daemon still running instead.
@@ -933,6 +979,9 @@ func main() {
 			MMDVM: *mmdvmINI, DMRGateway: *dmrgwINI, YSFGateway: *ysfgwINI, DGIdGateway: *dgidgwINI,
 			P25Gateway: *p25gwINI, NXDNGateway: *nxdngwINI, DStarGateway: *dstargwINI, M17Gateway: *m17gwINI,
 			DAPNETGateway: *dapnetgwINI,
+			// Demo mode must never pick up a real node's overrides: point the layer at an
+			// empty path so the render is emitted verbatim (RFC-0005).
+			OverridesDir: overridesRoot(*overridesDir, *demoMode),
 		},
 		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts,
 		netKeyfileDir: *nmKeyfileDir, netConfirmTimeout: *netConfirmTimeout, netBackend: *netBackend,
