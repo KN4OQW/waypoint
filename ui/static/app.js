@@ -11,6 +11,35 @@ const state = {
   networks: new Map(),   // network name -> state string
 };
 
+// DMR talkgroup number -> name, for resolving "TG 3112" to "TG 3112 · Texas
+// Statewide" inline (RFC-0010 / issue #8). Loaded once from /api/dmr/talkgroups;
+// a number not in the map falls back to the raw id, so a missing list degrades to
+// bare numbers, never to a blank.
+let tgNames = {};
+async function loadNames() {
+  try {
+    const list = await (await fetch("/api/dmr/talkgroups")).json();
+    if (Array.isArray(list)) {
+      const idx = {};
+      for (const t of list) idx[t.id] = t.name;
+      tgNames = idx;
+      renderOnAir();
+      renderLastHeard();
+    }
+  } catch { /* offline — the dashboard still shows raw TG numbers */ }
+}
+
+// tgLabel resolves a DMR group talkgroup destination ("TG 3112") to include its
+// name. Only DMR group calls are resolved — a private-call number is a user ID,
+// not a talkgroup, and other modes carry reflector names already.
+function tgLabel(mode, dest) {
+  if (mode !== "DMR" || !dest) return dest;
+  const m = /^TG\s*(\d+)$/.exec(dest);
+  if (!m) return dest;
+  const name = tgNames[m[1]];
+  return name ? `${dest} · ${name}` : dest;
+}
+
 // Theme is shared with the settings page via localStorage "wp-theme".
 const THEMES = [
   { key: "phosphor", color: "#35d07f", attr: "" },
@@ -122,7 +151,7 @@ function renderOnAir() {
   box.className = "onair active";
   box.innerHTML =
     `<span class="dir"><span aria-hidden="true">${dir}</span><span class="sr-only">${dirWord}</span></span><div>` +
-    `<span class="who">${esc(e.source)}<span class="arrow" aria-hidden="true">→</span><span class="sr-only"> to </span>${esc(e.dest)}</span>` +
+    `<span class="who">${esc(e.source)}<span class="arrow" aria-hidden="true">→</span><span class="sr-only"> to </span>${esc(tgLabel(e.mode, e.dest))}</span>` +
     `<span class="meta">${esc(e.mode)}${e.slot ? " slot " + e.slot : ""}${e.network ? " · " + esc(e.network) : ""}</span>` +
     `</div>`;
 }
@@ -133,7 +162,7 @@ function renderLastHeard() {
     .slice(0, 12);
   $("#lastheard-empty").hidden = rows.length > 0;
   $("#lastheard tbody").innerHTML = rows.map((e) =>
-    `<tr><td><span class="call">${esc(e.source)}</span></td><td>${esc(e.dest)}</td>` +
+    `<tr><td><span class="call">${esc(e.source)}</span></td><td>${esc(tgLabel(e.mode, e.dest))}</td>` +
     `<td>${esc(e.mode)}${e.slot ? "·S" + e.slot : ""}</td>` +
     `<td class="num">${e.seconds ? e.seconds.toFixed(1) + "s" : "—"}</td>` +
     `<td class="num">${e.ber != null && e.type === "rf_voice_end" ? e.ber.toFixed(1) + "%" : "—"}</td>` +
@@ -152,12 +181,13 @@ function renderNetworks() {
 function logEvent(e) {
   const tbody = $("#eventlog tbody");
   const cls = e.type.startsWith("rf") ? "ev-rf" : e.type.startsWith("net") ? "ev-net" : "";
+  const dest = tgLabel(e.mode, e.dest); // resolve DMR TG numbers to names inline
   let text;
   switch (e.type) {
-    case "rf_voice_start": text = `${e.source} keyed up → ${e.dest} (${e.mode}${e.slot ? " S" + e.slot : ""})`; break;
-    case "rf_voice_end":   text = `${e.source} → ${e.dest}, ${e.seconds}s, BER ${e.ber}%, RSSI ${e.rssi} dBm`; break;
-    case "net_voice_start":text = `${e.source} → ${e.dest} from ${e.network}`; break;
-    case "net_voice_end":  text = `${e.source} → ${e.dest}, ${e.seconds}s (network)`; break;
+    case "rf_voice_start": text = `${e.source} keyed up → ${dest} (${e.mode}${e.slot ? " S" + e.slot : ""})`; break;
+    case "rf_voice_end":   text = `${e.source} → ${dest}, ${e.seconds}s, BER ${e.ber}%, RSSI ${e.rssi} dBm`; break;
+    case "net_voice_start":text = `${e.source} → ${dest} from ${e.network}`; break;
+    case "net_voice_end":  text = `${e.source} → ${dest}, ${e.seconds}s (network)`; break;
     case "link":           text = `${e.network}: ${e.detail}`; break;
     case "mode":           text = `mode ${e.mode}${e.detail ? " — " + e.detail : ""}`; break;
     default:               text = e.detail || e.type;
@@ -268,6 +298,7 @@ applyTheme(localStorage.getItem("wp-theme") || "phosphor");
 renderThemes();
 loadHealth();
 loadCallsign();
+loadNames(); // DMR talkgroup names, for inline resolution (RFC-0010)
 loadHistory().then(connect); // seed persistent history, then attach the live tail
 loadStatus(); // server-computed truth (feed, on-air self-heal, gateways)
 setInterval(loadStatus, 2000); // reflect gateway kill/restart within the #5 window
