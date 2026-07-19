@@ -2,6 +2,7 @@ package updater
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -168,6 +169,37 @@ func TestBootCheck(t *testing.T) {
 	f3 := &fakeSystem{live: "1.4.0"}
 	if out, err := BootCheck(f3, 1); err != nil || out.Reverted {
 		t.Errorf("no-marker boot check should be a no-op: %+v %v", out, err)
+	}
+}
+
+// The exact update.json the release CI emits (RFC-0015 / #14) must parse as a
+// Manifest and drive a plan — a guard on the CI↔engine contract, so a change to
+// either the manifest shape or the GOOS/GOARCH keys is caught here.
+func TestManifestJSONFromCI(t *testing.T) {
+	const ci = `{
+	  "version": "v1.3.0",
+	  "min_version": "",
+	  "notes_url": "https://github.com/KN4OQW/waypoint/releases/tag/v1.3.0",
+	  "artifacts": {
+	    "linux/amd64": { "url": "https://x/download/v1.3.0/waypointd-linux-amd64", "sha256": "aa" },
+	    "linux/arm":   { "url": "https://x/download/v1.3.0/waypointd-linux-arm6",  "sha256": "bb" },
+	    "linux/arm64": { "url": "https://x/download/v1.3.0/waypointd-linux-arm64", "sha256": "cc" }
+	  }
+	}`
+	var m Manifest
+	if err := json.Unmarshal([]byte(ci), &m); err != nil {
+		t.Fatalf("CI manifest did not parse: %v", err)
+	}
+	if m.Version != "v1.3.0" {
+		t.Errorf("version = %q, want v1.3.0", m.Version)
+	}
+	// A Pi Zero (GOARM=6) node reports platform "linux/arm"; the arm6 asset must apply.
+	p := PlanUpdate("v1.2.0", m, "linux/arm")
+	if !p.Available || p.Artifact.URL == "" || p.Artifact.SHA256 != "bb" {
+		t.Fatalf("linux/arm node should update to the arm6 artifact: %+v", p)
+	}
+	if PlanUpdate("v1.3.0", m, "linux/arm64").Available {
+		t.Errorf("same version should not update")
 	}
 }
 

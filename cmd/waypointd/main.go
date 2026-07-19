@@ -1393,7 +1393,16 @@ func main() {
 	// until the TLS PR serves HTTPS and flips this default, so a pre-TLS build over
 	// plain HTTP does not set a flag that would make the cookie unusable (RFC-0002).
 	secureCookie := flag.Bool("secure-cookie", false, "set the session cookie Secure flag (enable once TLS is serving HTTPS)")
+	showVersion := flag.Bool("version", false, "print the waypointd version and exit (RFC-0015 / issue #14)")
 	flag.Parse()
+
+	// `waypointd -version` (or --version) prints the stamped version and exits, before
+	// any daemon startup. It reads the same main.Version that /api/health reports and
+	// the release tag stamps, so the CLI, the API, and the release page agree (#14).
+	if *showVersion {
+		fmt.Printf("waypointd %s\n", Version)
+		os.Exit(0)
+	}
 
 	// `waypointd -verify <file> -verify-pubkey <key>` verifies a signed artifact and
 	// exits, before any daemon startup (RFC-0013).
