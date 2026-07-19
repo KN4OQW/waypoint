@@ -167,6 +167,31 @@ function esc(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// loadHistory seeds the dashboard from the server's persistent event record
+// (RFC-0004) before the live stream attaches, so a freshly-opened tab renders the
+// same history as every other client and survives daemon restarts — the fix for
+// the old per-browser-session history (#68). Best-effort: if it fails the live SSE
+// stream still populates the dashboard going forward.
+async function loadHistory() {
+  try {
+    const r = await fetch("/api/history?limit=500");
+    if (!r.ok) return;
+    const events = await r.json();
+    if (!Array.isArray(events)) return;
+    // The server returns newest-first; replay oldest-first so the event log prepends
+    // into newest-first order and lastheard/networks settle on their latest values,
+    // exactly as the live stream would have built them.
+    for (let i = events.length - 1; i >= 0; i--) handle(events[i]);
+    // History must not imply a live transmission: a trailing voice_start in the
+    // record doesn't mean someone is keyed up right now. Clear on-air and let the
+    // live stream set it.
+    state.active = null;
+    renderOnAir();
+  } catch {
+    /* history is best-effort; the live SSE stream still populates the dashboard */
+  }
+}
+
 function connect() {
   const es = new EventSource("/api/events");
   es.onopen = () => setConn(true);
@@ -178,5 +203,5 @@ applyTheme(localStorage.getItem("wp-theme") || "phosphor");
 renderThemes();
 loadHealth();
 loadCallsign();
-connect();
+loadHistory().then(connect); // seed persistent history, then attach the live tail
 setInterval(renderLastHeard, 15000); // keep "ago" fresh

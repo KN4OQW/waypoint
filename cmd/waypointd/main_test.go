@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/KN4OQW/waypoint/internal/config"
+	"github.com/KN4OQW/waypoint/internal/events"
 	"github.com/KN4OQW/waypoint/internal/hub"
 	"github.com/KN4OQW/waypoint/internal/store"
 )
@@ -156,8 +157,11 @@ func TestHealthHandler(t *testing.T) {
 	}
 }
 
-func TestEventsStreamsBacklogAndLive(t *testing.T) {
+func TestEventsStreamsLiveTail(t *testing.T) {
 	s := newTestServer(false)
+	// A pre-subscribe event lands in the hub backlog. Since /api/events is now a
+	// pure live tail (history is served by /api/history, RFC-0004), it must NOT be
+	// replayed to the SSE client — only events published after subscribe are sent.
 	s.hub.Publish(hub.Event{Time: time.Now(), Type: "mode", Mode: "IDLE"})
 
 	req := httptest.NewRequest("GET", "/api/events", nil)
@@ -183,15 +187,73 @@ func TestEventsStreamsBacklogAndLive(t *testing.T) {
 			got = append(got, strings.TrimPrefix(sc.Text(), "data: "))
 		}
 	}
-	if len(got) != 2 {
-		t.Fatalf("expected 2 events (backlog + live), got %d: %v", len(got), got)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 event (live only, no backlog replay), got %d: %v", len(got), got)
 	}
 	var e hub.Event
-	if err := json.Unmarshal([]byte(got[1]), &e); err != nil {
+	if err := json.Unmarshal([]byte(got[0]), &e); err != nil {
 		t.Fatalf("live event is not JSON: %v", err)
 	}
 	if e.Source != "KN4OQW" {
 		t.Errorf("unexpected live event: %+v", e)
+	}
+}
+
+// GET /api/history serves the persistent record newest-first, honours the type
+// filter, and returns [] (not null) when the store is empty (RFC-0004).
+func TestHistoryEndpoint(t *testing.T) {
+	s := newTestServer(false)
+	ev, err := events.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ev.Close()
+	s.evStore = ev
+	base := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	if err := ev.Insert([]hub.Event{
+		{Time: base, Type: "mode", Mode: "DMR"},
+		{Time: base.Add(time.Second), Type: "rf_voice_start", Source: "KN4OQW", Dest: "TG 91"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unfiltered: newest-first.
+	rec := httptest.NewRecorder()
+	s.history(rec, httptest.NewRequest("GET", "/api/history", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var got []hub.Event
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(got) != 2 || got[0].Type != "rf_voice_start" {
+		t.Fatalf("want 2 events newest-first, got %+v", got)
+	}
+
+	// Type filter is exact.
+	rec = httptest.NewRecorder()
+	s.history(rec, httptest.NewRequest("GET", "/api/history?type=mode", nil))
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if len(got) != 1 || got[0].Type != "mode" {
+		t.Fatalf("type filter: want 1 mode event, got %+v", got)
+	}
+
+	// A bad since is a 400.
+	rec = httptest.NewRecorder()
+	s.history(rec, httptest.NewRequest("GET", "/api/history?since=not-a-time", nil))
+	if rec.Code != 400 {
+		t.Errorf("bad since: want 400, got %d", rec.Code)
+	}
+
+	// Empty store serializes as [], never null.
+	empty, _ := events.Open(":memory:")
+	defer empty.Close()
+	s.evStore = empty
+	rec = httptest.NewRecorder()
+	s.history(rec, httptest.NewRequest("GET", "/api/history", nil))
+	if b := strings.TrimSpace(rec.Body.String()); b != "[]" {
+		t.Errorf("empty history must be [], got %q", b)
 	}
 }
 
