@@ -144,6 +144,10 @@ func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg, dpg *INI) *Model {
 		// display-free defaults (with starter pages), like the gateway sections that
 		// have no seed file. The store is authoritative from then on.
 		LCD: DefaultLCD(),
+		// History drives no INI either; a seeded model gets the 7-day retention
+		// default so a fresh store starts with a real prune window, not the zero
+		// value (which reads as keep-forever). See RFC-0004.
+		History: DefaultHistory(),
 	}
 	return m
 }

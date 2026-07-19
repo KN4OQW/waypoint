@@ -84,6 +84,11 @@ func fixture() *Model {
 		// comparison stays balanced. Its own store round-trip is covered by
 		// TestLCDStoreRoundTrip.
 		LCD: DefaultLCD(),
+		// History drives no INI either (store-only, RFC-0004), so like LCD it takes
+		// the value fromINI/Import assigns — DefaultHistory() — to keep the
+		// render→parse→fromINI comparison balanced. Its own store round-trip and
+		// validation are covered by TestHistoryStoreRoundTrip.
+		History: DefaultHistory(),
 	}
 }
 
@@ -589,6 +594,68 @@ func TestSetLCDValidatesGeometry(t *testing.T) {
 	// SetLCD keeps SetSection's contract: unknown fields are rejected.
 	if err := SetLCD(s, []byte(`{"bogus":1}`), "test"); err == nil {
 		t.Error("SetLCD should reject an unknown field")
+	}
+}
+
+// History is store-only (drives no INI), so it round-trips through Save/Load like
+// LCD. This covers RFC-0004's config-surface property: a non-default retention
+// survives the round-trip unchanged, and editing it leaves every other section
+// byte-identical (isolation).
+func TestHistoryStoreRoundTrip(t *testing.T) {
+	s := memStore(t)
+	m := fixture()
+	m.History = History{RetentionDays: 30}
+	if err := m.Save(s, "seed"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(m.History, got.History) {
+		t.Fatalf("History store round-trip lost data:\n want %+v\n  got %+v", m.History, got.History)
+	}
+	// Isolation: the History write must not have disturbed an unrelated section.
+	if !reflect.DeepEqual(m.General, got.General) {
+		t.Errorf("History round-trip perturbed General:\n want %+v\n  got %+v", m.General, got.General)
+	}
+}
+
+// SetHistory validates on the merged result (retention_days >= 0), keeps
+// SetSection's merge-and-reject-unknown contract, and treats 0 as a legal
+// keep-forever value.
+func TestSetHistoryValidates(t *testing.T) {
+	s := memStore(t)
+	if err := s.Set("history", DefaultHistory(), "seed"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A negative retention is rejected and the store is left unchanged.
+	if err := SetHistory(s, []byte(`{"retention_days":-1}`), "test"); err == nil {
+		t.Fatal("negative retention_days must be rejected")
+	}
+	m, _ := Load(s)
+	if m.History.RetentionDays != DefaultHistoryRetentionDays {
+		t.Errorf("rejected save must not mutate the store: retention_days=%d", m.History.RetentionDays)
+	}
+
+	// A positive window commits.
+	if err := SetHistory(s, []byte(`{"retention_days":14}`), "test"); err != nil {
+		t.Fatalf("valid retention write rejected: %v", err)
+	}
+	m, _ = Load(s)
+	if m.History.RetentionDays != 14 {
+		t.Errorf("valid write did not commit: retention_days=%d", m.History.RetentionDays)
+	}
+
+	// 0 is legal — keep forever (prune disabled).
+	if err := SetHistory(s, []byte(`{"retention_days":0}`), "test"); err != nil {
+		t.Fatalf("retention_days=0 (keep forever) must be accepted: %v", err)
+	}
+
+	// SetHistory keeps SetSection's contract: unknown fields are rejected.
+	if err := SetHistory(s, []byte(`{"bogus":1}`), "test"); err == nil {
+		t.Error("SetHistory should reject an unknown field")
 	}
 }
 

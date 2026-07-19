@@ -20,6 +20,7 @@ const TABS = [
   { id: "modes",        tag: "MD", label: "Modes",        sub: "Digital Modes",        crumb: "MODES / DIGITAL",         title: "Digital Mode Control",  desc: "Which digital voice / data modes MMDVM-Host handles. Toggling one restarts the stack on Apply." },
   { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Routing",   crumb: "BRIDGES / GATEWAYS",      title: "Cross-Mode Gateways",   desc: "Cross-mode routing is being redesigned as a bus system (RFC-0003)." },
   { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "SYSTEM / NETWORK",        title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
+  { id: "station",      tag: "ST", label: "Station",      sub: "History & Beacon",     crumb: "SYSTEM / STATION",        title: "Station Settings",      desc: "Node-wide operating policy: how long the persistent last-heard / event history is kept (pruned nightly), and — coming soon — automatic callsign identification." },
   { id: "expert",       tag: "SY", label: "Expert",       sub: "System & Config",      crumb: "SYSTEM / EXPERT",         title: "Expert & System",       desc: "Firmware versions and low-level configuration." },
 ];
 
@@ -80,6 +81,10 @@ function buildEdit(c) {
     m17gw: m17gwFrom(c.m17 || {}),
     pocsag: pocsagFrom(c.pocsag || {}),
     fm: fmFrom(c.fm || {}),
+    // Event-history retention (Station Settings tab). Kept as a number so the PUT
+    // body carries retention_days as JSON number, not string (the store field is
+    // an int). Falls back to the 7-day default if the view somehow omits it.
+    history: { retention_days: (c.history || {}).retention_days ?? 7 },
   };
   dirty = new Set();
   refreshActions();
@@ -1280,6 +1285,21 @@ function panelFm() {
   return `<div class="grid2">${access}<div class="stack">${timing}${audio}</div></div>`;
 }
 
+// panelStation is the Station Settings tab: node-wide operating policy that isn't
+// a mode or a network. Today it holds event-history retention (RFC-0004); the
+// callsign-beacon feature will land beside it here as its own card/section.
+function panelStation() {
+  const h = edit.history || (edit.history = { retention_days: 7 });
+  const days = h.retention_days ?? 7;
+  const retention = card("EVENT HISTORY",
+    row("Retention window",
+      `<div class="unit"><input data-sec="history" data-key="retention_days" data-kind="int" inputmode="numeric" value="${esc(days)}"><span class="u">days</span></div>`) +
+    note("How long this node keeps its persistent last-heard and event log (stored on-device). <b>0 keeps history forever.</b> Older events are pruned nightly; a longer window uses more SD-card space."));
+  const beacon = card("CALLSIGN BEACON",
+    note("Automatic callsign identification will be configured here. <span style=\"color:var(--muted)\">Not yet available.</span>"));
+  return `<div class="grid2">${retention}${beacon}</div>`;
+}
+
 // enhanceA11y wires every rendered form control to an accessible name so screen
 // readers announce it and axe-core's label/select-name rules pass. Rows are
 // built as `<label>text</label><control>` without a `for=` (the control's id is
@@ -1326,6 +1346,7 @@ function renderPanel() {
     case "pocsag":       box.innerHTML = panelPocsag(); break;
     case "fm":           box.innerHTML = panelFm(); break;
     case "modes":        box.innerHTML = panelModes(); break;
+    case "station":      box.innerHTML = panelStation(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
     case "gateways":     box.innerHTML = panelGateways(); break;
@@ -1630,6 +1651,10 @@ document.getElementById("panels").addEventListener("input", (e) => {
   if (t.dataset.sec) {
     let v = t.value;
     if (t.dataset.kind === "mhz") { const f = parseFloat(v); v = isNaN(f) ? "" : String(Math.round(f * 1e6)); }
+    // int-typed fields (e.g. history.retention_days) must reach the store as a JSON
+    // number: a blank or non-numeric entry floors to 0 (which the store reads as
+    // "keep forever" for retention).
+    else if (t.dataset.kind === "int") { const n = parseInt(v, 10); v = isNaN(n) || n < 0 ? 0 : n; }
     setField(t.dataset.sec, t.dataset.key, v);
     return;
   }
