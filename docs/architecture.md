@@ -40,7 +40,7 @@ Rationale for the split: the g4klx daemons are actively maintained upstream and 
 ### Supervisor
 - Owns systemd units for stack daemons; derives desired-state from the config store.
 - Subscribes to the MQTT bus for liveness/status; enforces reconnect policies for DMR masters, APRS-IS, DAPNET (papering over upstream gaps: MMDVM-Host #682, APRSGateway #1, DAPNETGateway #10).
-- Publishes normalized status to `waypoint/status/#` topics — Home Assistant-friendly. The status pipeline ([RFC-0008](rfcs/0008-status-pipeline.md)) folds the structured event stream into one self-healing status value (a stranded TX expires on a watchdog; gateway liveness is probed, not inferred), served at `GET /api/status`, over a WebSocket, and republished retained — no log scraping.
+- Publishes normalized status to `waypoint/status/#` topics — Home Assistant-friendly. The status pipeline ([RFC-0008](rfcs/0008-status-pipeline.md)) folds the structured event stream into one self-healing status value (a stranded TX expires on a watchdog; gateway liveness is probed, not inferred), served at `GET /api/status`, over a WebSocket, and republished retained — no log scraping. Home Assistant MQTT Discovery ([RFC-0011](rfcs/0011-home-assistant-discovery.md)) makes those topics zero-YAML entities under one device, with availability via an MQTT Last-Will. Topic scheme: [docs/mqtt-topics.md](mqtt-topics.md).
 
 ### Hardware ops
 - Board detection: USB VID/PID table + GPIO serial probe (`MMDVM_HS_*`, full MMDVM, DVMega).

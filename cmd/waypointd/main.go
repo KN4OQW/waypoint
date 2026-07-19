@@ -539,6 +539,27 @@ func safeFilename(name string) string {
 	return b.String()
 }
 
+// defaultNodeID derives a stable HA-discovery node id from the OS hostname
+// (sanitized to a topic/id-safe token), falling back to "waypoint" when the
+// hostname is unavailable or empty after sanitizing (RFC-0011).
+func defaultNodeID() string {
+	h, err := os.Hostname()
+	if err != nil {
+		return "waypoint"
+	}
+	var b strings.Builder
+	for _, r := range strings.ToLower(h) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 0 {
+		return "waypoint"
+	}
+	return b.String()
+}
+
 // overridesRoot returns the override drop-in root, or "" in demo mode so a demo
 // run never merges a real node's overrides into its synthetic config (RFC-0005).
 func overridesRoot(dir string, demo bool) string {
@@ -1245,6 +1266,9 @@ func main() {
 	broker := flag.String("mqtt-broker", "127.0.0.1:1883", "MMDVM-Host MQTT broker host:port (live mode)")
 	mqttName := flag.String("mqtt-name", "mmdvm", "MMDVM-Host [MQTT] Name (topic prefix)")
 	statusPrefix := flag.String("status-topic-prefix", "waypoint/status", "MQTT prefix for the normalized status republish (RFC-0008)")
+	haDiscovery := flag.Bool("ha-discovery", true, "publish Home Assistant MQTT discovery so entities appear with zero YAML (RFC-0011)")
+	haPrefix := flag.String("ha-discovery-prefix", "homeassistant", "Home Assistant MQTT discovery prefix")
+	nodeID := flag.String("node-id", defaultNodeID(), "device id + MQTT node segment for HA discovery (stable across restarts)")
 	statusTick := flag.Duration("status-watchdog-tick", time.Second, "how often the status aggregator runs its stranded-transmission watchdog")
 	probeInterval := flag.Duration("gateway-probe-interval", time.Second, "how often the supervisor probes gateway liveness (RFC-0008; keep < 2s for the #5 acceptance)")
 	mqttUser := flag.String("mqtt-user", "", "MQTT username (optional)")
@@ -1396,9 +1420,37 @@ func main() {
 		go s.runLivenessProbe(context.Background(), *probeInterval)
 		// Republish the normalized status onto retained waypoint/status/# topics for
 		// Home Assistant and other consumers (RFC-0008). Best-effort, live mode only.
-		pub := mqtt.NewPublisher(mqtt.Options{Broker: *broker, Name: *mqttName, Username: *mqttUser, Password: *mqttPass})
+		// When HA discovery is on, the publisher also carries the offline Last-Will +
+		// online-on-connect availability (RFC-0011).
 		prefix := *statusPrefix
+		avail := ""
+		if *haDiscovery {
+			avail = status.AvailabilityTopic(prefix)
+		}
+		pub := mqtt.NewPublisher(mqtt.Options{Broker: *broker, Name: *mqttName, Username: *mqttUser, Password: *mqttPass}, avail)
 		s.agg.OnChange(func(st status.Status) { status.Republish(st, prefix, pub.Publish) })
+		// Home Assistant MQTT discovery (RFC-0011): publish a retained config for each
+		// entity, pointing HA at the status topics — zero YAML. Configs are published
+		// once per topic as the entity first appears (gateways/networks show up over
+		// time); retained, so HA gets them whenever it connects.
+		if *haDiscovery {
+			haOpts := status.DiscoveryOptions{Prefix: *haPrefix, NodeID: *nodeID, StatePrefix: prefix, Version: Version}
+			var seenMu sync.Mutex
+			seen := map[string]bool{}
+			publishDiscovery := func(st status.Status) {
+				for _, d := range status.DiscoveryConfigs(st, haOpts) {
+					seenMu.Lock()
+					dup := seen[d.Topic]
+					seen[d.Topic] = true
+					seenMu.Unlock()
+					if !dup {
+						pub.Publish(d.Topic, d.Payload)
+					}
+				}
+			}
+			publishDiscovery(s.agg.Snapshot()) // the always-present mode/tx/feed entities now
+			s.agg.OnChange(publishDiscovery)
+		}
 		// Keep the reflector hostlists fresh for the gateways + pickers. The YSF
 		// list honors the "UPPERCASE Hostfiles" toggle, read from the store each
 		// refresh (both YSFGateway and DGIdGateway consume this same file).

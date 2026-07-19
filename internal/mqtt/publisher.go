@@ -19,7 +19,12 @@ type Publisher struct {
 // NewPublisher connects a retained-status publisher to the broker. It returns even
 // if the broker is momentarily down (connect-retry is on); publishes made before
 // the link is up are dropped, which is fine — the next status change republishes.
-func NewPublisher(opts Options) *Publisher {
+//
+// When availabilityTopic is non-empty (HA discovery, RFC-0011), the connection
+// registers a retained "offline" Last-Will on it and publishes "online" on every
+// (re)connect, so Home Assistant marks the device unavailable the moment the node
+// drops and available again when it returns.
+func NewPublisher(opts Options, availabilityTopic string) *Publisher {
 	co := mqtt.NewClientOptions().
 		AddBroker("tcp://" + opts.Broker).
 		SetClientID("waypointd-status").
@@ -31,6 +36,12 @@ func NewPublisher(opts Options) *Publisher {
 	if opts.Username != "" {
 		co.SetUsername(opts.Username)
 		co.SetPassword(opts.Password)
+	}
+	if availabilityTopic != "" {
+		co.SetWill(availabilityTopic, "offline", 0, true) // retained LWT
+		co.SetOnConnectHandler(func(c mqtt.Client) {
+			c.Publish(availabilityTopic, 0, true, "online")
+		})
 	}
 	client := mqtt.NewClient(co)
 	if tok := client.Connect(); tok.WaitTimeout(5*time.Second) && tok.Error() != nil {
