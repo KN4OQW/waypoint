@@ -18,3 +18,15 @@ func FS() fs.FS {
 	}
 	return sub
 }
+
+// AuthPage returns the self-contained pre-auth screen (the claim/login page,
+// RFC-0002). The auth subsystem serves it at the top-level route before a session
+// exists — it is the one asset reachable pre-auth, so it inlines its own CSS and
+// JS and pulls in no gated sub-resources. The daemon hands it to auth.Options.
+func AuthPage() []byte {
+	b, err := static.ReadFile("static/auth.html")
+	if err != nil {
+		panic(err) // embed layout is fixed at compile time
+	}
+	return b
+}

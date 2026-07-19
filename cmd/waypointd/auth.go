@@ -8,6 +8,7 @@ import (
 
 	"github.com/KN4OQW/waypoint/internal/auth"
 	"github.com/KN4OQW/waypoint/internal/store"
+	"github.com/KN4OQW/waypoint/ui"
 )
 
 // resetMarkerPaths are the boot-partition reset markers checked at daemon start.
@@ -101,5 +102,9 @@ func buildAuth(st *store.Store, secureCookie bool) (*auth.Auth, error) {
 		// A failed reset is security-relevant; do not silently start claimed.
 		return nil, err
 	}
-	return auth.New(as, auth.Options{SecureCookie: secureCookie}), nil
+	return auth.New(as, auth.Options{
+		SecureCookie: secureCookie,
+		// The pre-auth screen the gate serves at "/" while unclaimed or logged out.
+		AuthPage: ui.AuthPage(),
+	}), nil
 }
