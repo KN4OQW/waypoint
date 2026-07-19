@@ -82,6 +82,12 @@ type server struct {
 	dmrHosts   string // cached DMR master hostlist (DMR_Hosts.txt, space/tab text)
 	dmrTGs     string // cached DMR talkgroup-name list (RFC-0010)
 
+	// Atomic-update surface (RFC-0014 / issue #13). update holds the manifest URL,
+	// release key, and OS seams; updateArgs is the `-update` invocation the apply
+	// endpoint launches detached. Both nil/empty disables the update API.
+	update     *updateConfig
+	updateArgs []string
+
 	// Native LCD renderer lifecycle. The renderer captures its config at start, so
 	// a config change (enable, geometry, pages) only reaches the panel when the
 	// renderer is torn down and restarted — reloadLCD does that on apply. Guarded
@@ -1295,6 +1301,9 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/network/apply", s.networkApply)
 	mux.HandleFunc("/api/network/confirm", s.networkConfirm)
 	mux.HandleFunc("/api/network/host/apply", s.networkHostApply)
+	// Atomic-update endpoints (RFC-0014 / issue #13), behind the session wall.
+	mux.HandleFunc("/api/update/check", s.updateCheck)
+	mux.HandleFunc("/api/update/apply", s.updateApply)
 	// First-boot claim + session endpoints (RFC-0002). These are the only routes
 	// the gate serves before authentication (claim while unclaimed, session while
 	// claimed); everything else above is behind the wall.
@@ -1364,6 +1373,16 @@ func main() {
 	verifyFile := flag.String("verify", "", "verify a signed artifact against a minisign key and exit (RFC-0013); use with -verify-pubkey")
 	verifySig := flag.String("verify-sig", "", "the .minisig for -verify (default <file>.minisig)")
 	verifyPubkey := flag.String("verify-pubkey", "", "minisign public key (file path) for -verify")
+	// Atomic-update engine (RFC-0014 / issue #13). The three mode flags each run and
+	// exit; the rest configure the manifest source, release key, and OS seams.
+	updateMode := flag.Bool("update", false, "run the transactional update (verify, stage, atomic swap, health-gated confirm-or-revert) and exit (RFC-0014)")
+	updateCheckMode := flag.Bool("update-check", false, "report whether a newer signed release is available and exit; changes nothing")
+	updateBootCheck := flag.Bool("update-boot-check", false, "ExecStartPre boot hook: revert an update swapped but never confirmed (power-loss safety) and exit")
+	updateURL := flag.String("update-url", defaultUpdateURL, "signed update-manifest URL (RFC-0014)")
+	releasePubkey := flag.String("release-pubkey", "", "minisign public key (file path) that signs the update manifest and artifacts (RFC-0013); empty = unverified (not recommended)")
+	updateBinary := flag.String("update-binary", "/home/pi-star/waypoint/bin/waypointd", "path to the live waypointd binary the update swaps atomically")
+	updateUnit := flag.String("update-unit", "waypointd.service", "systemd unit the updater restarts")
+	updateMarker := flag.String("update-marker", "/home/pi-star/waypoint/update.marker", "in-flight-update marker path (power-loss recovery)")
 	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
 	eventsPath := flag.String("events-store", "/home/pi-star/waypoint/events.db", "path to the SQLite event-history store (RFC-0004); a config.db sibling")
 	nmKeyfileDir := flag.String("nm-keyfile-dir", "/etc/NetworkManager/system-connections", "directory for rendered NetworkManager keyfiles (waypoint-*.nmconnection)")
@@ -1380,6 +1399,22 @@ func main() {
 	// exits, before any daemon startup (RFC-0013).
 	if *verifyFile != "" {
 		runVerify(*verifyFile, *verifySig, *verifyPubkey)
+	}
+
+	// The update modes (RFC-0014) each run as a standalone invocation and exit,
+	// before any daemon startup: -update does the transactional install (surviving
+	// the service restart it triggers), -update-check reports availability, and
+	// -update-boot-check is the ExecStartPre power-loss revert.
+	if *updateMode || *updateCheckMode || *updateBootCheck {
+		cfg := newUpdateConfig(*updateURL, *releasePubkey, *updateBinary, *updateUnit, *updateMarker, *addr, *useTLS)
+		switch {
+		case *updateBootCheck:
+			runUpdateBootCheck(cfg)
+		case *updateCheckMode:
+			runUpdateCheck(cfg)
+		default:
+			runUpdate(cfg)
+		}
 	}
 
 	st, err := store.Open(*storePath)
@@ -1419,6 +1454,24 @@ func main() {
 	}
 	// The confirm-or-revert guard for network applies (needs s.netKeyfileDir set).
 	s.netGuard = s.newNetGuard()
+
+	// Atomic-update surface (RFC-0014). The API endpoints reuse the same config the
+	// CLI modes build; updateArgs is the detached `-update` invocation apply launches,
+	// carrying the same manifest/key/seam flags so the child behaves identically.
+	updCfg := newUpdateConfig(*updateURL, *releasePubkey, *updateBinary, *updateUnit, *updateMarker, *addr, *useTLS)
+	s.update = &updCfg
+	s.updateArgs = []string{
+		"-update",
+		"-update-url", *updateURL,
+		"-update-binary", *updateBinary,
+		"-update-unit", *updateUnit,
+		"-update-marker", *updateMarker,
+		"-addr", *addr,
+		fmt.Sprintf("-tls=%t", *useTLS),
+	}
+	if *releasePubkey != "" {
+		s.updateArgs = append(s.updateArgs, "-release-pubkey", *releasePubkey)
+	}
 	if err := s.seedStore(); err != nil {
 		log.Printf("config store seed skipped: %v", err)
 	}
