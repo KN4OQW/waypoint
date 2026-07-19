@@ -4,23 +4,24 @@ package config
 // secrets removed. Passwords never appear — a network reports only whether one
 // is set. This is what GET /api/config returns.
 type View struct {
-	Sources  Sources       `json:"sources"`
-	General  ViewGeneral   `json:"general"`
-	Display  ViewDisplay   `json:"display"`
-	DMR      ViewDMR       `json:"dmr"`
-	Modes    []ViewMode    `json:"modes"`
-	Networks []ViewNetwork `json:"networks"`
-	Routes   []ViewRoute   `json:"routes"`
-	YSF      ViewYSF       `json:"ysf"`
-	P25      ViewP25       `json:"p25"`
-	NXDN     ViewNXDN      `json:"nxdn"`
-	DStar    ViewDStar     `json:"dstar"`
-	M17      ViewM17       `json:"m17"`
-	POCSAG   ViewPOCSAG    `json:"pocsag"`
-	FM       ViewFM        `json:"fm"`
-	LCD      ViewLCD       `json:"lcd"`
-	History  ViewHistory   `json:"history"`
-	ReadOnly bool          `json:"read_only"`
+	Sources       Sources           `json:"sources"`
+	General       ViewGeneral       `json:"general"`
+	Display       ViewDisplay       `json:"display"`
+	DMR           ViewDMR           `json:"dmr"`
+	Modes         []ViewMode        `json:"modes"`
+	Networks      []ViewNetwork     `json:"networks"`
+	Routes        []ViewRoute       `json:"routes"`
+	YSF           ViewYSF           `json:"ysf"`
+	P25           ViewP25           `json:"p25"`
+	NXDN          ViewNXDN          `json:"nxdn"`
+	DStar         ViewDStar         `json:"dstar"`
+	M17           ViewM17           `json:"m17"`
+	POCSAG        ViewPOCSAG        `json:"pocsag"`
+	FM            ViewFM            `json:"fm"`
+	LCD           ViewLCD           `json:"lcd"`
+	History       ViewHistory       `json:"history"`
+	HomeAssistant ViewHomeAssistant `json:"homeassistant"`
+	ReadOnly      bool              `json:"read_only"`
 	// The cross-mode transcoding bridges (MMDVM_CM) are no longer projected here.
 	// The per-bridge-daemon model is retired for the RFC-0003 bus architecture, so
 	// the settings page shows a placeholder instead of bridge cards. The bridge store
@@ -73,6 +74,14 @@ type ViewLCD struct {
 // retention (RFC-0004). No secrets — a straight projection of the History section.
 type ViewHistory struct {
 	RetentionDays int `json:"retention_days"`
+}
+
+// ViewHomeAssistant is the Station Settings tab's read model for the Home
+// Assistant MQTT-discovery integration (#9). No secrets — a straight projection of
+// the HomeAssistant section.
+type ViewHomeAssistant struct {
+	Enabled         bool   `json:"enabled"`
+	DiscoveryPrefix string `json:"discovery_prefix"`
 }
 
 type ViewLCDPage struct {
@@ -445,5 +454,9 @@ func (m *Model) View(storePath string) *View {
 		})
 	}
 	v.History = ViewHistory{RetentionDays: m.History.RetentionDays}
+	v.HomeAssistant = ViewHomeAssistant{
+		Enabled:         m.HomeAssistant.Enabled,
+		DiscoveryPrefix: m.HomeAssistant.DiscoveryPrefix,
+	}
 	return v
 }

@@ -89,6 +89,8 @@ func fixture() *Model {
 		// render→parse→fromINI comparison balanced. Its own store round-trip and
 		// validation are covered by TestHistoryStoreRoundTrip.
 		History: DefaultHistory(),
+		// HomeAssistant is store-only too (#9); balanced with the Import default.
+		HomeAssistant: DefaultHomeAssistant(),
 	}
 }
 
@@ -656,6 +658,38 @@ func TestSetHistoryValidates(t *testing.T) {
 	// SetHistory keeps SetSection's contract: unknown fields are rejected.
 	if err := SetHistory(s, []byte(`{"bogus":1}`), "test"); err == nil {
 		t.Error("SetHistory should reject an unknown field")
+	}
+}
+
+// HomeAssistant is store-only (#9) and round-trips through Save/Load like the
+// other Station Settings sections; the generic SetSection path (unknown-field
+// rejection, merge) covers its write.
+func TestHomeAssistantStoreRoundTrip(t *testing.T) {
+	s := memStore(t)
+	m := fixture()
+	m.HomeAssistant = HomeAssistant{Enabled: true, DiscoveryPrefix: "ha-custom"}
+	if err := m.Save(s, "seed"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HomeAssistant != m.HomeAssistant {
+		t.Fatalf("HomeAssistant round-trip lost data:\n want %+v\n  got %+v", m.HomeAssistant, got.HomeAssistant)
+	}
+
+	// A partial write merges (enabling without resending the prefix keeps it) and
+	// unknown fields are rejected.
+	if _, err := SetSection(s, "homeassistant", []byte(`{"enabled":false}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = Load(s)
+	if got.HomeAssistant.Enabled || got.HomeAssistant.DiscoveryPrefix != "ha-custom" {
+		t.Errorf("partial write did not merge: %+v", got.HomeAssistant)
+	}
+	if _, err := SetSection(s, "homeassistant", []byte(`{"bogus":1}`), "test"); err == nil {
+		t.Error("homeassistant should reject an unknown field")
 	}
 }
 

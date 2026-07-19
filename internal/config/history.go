@@ -22,6 +22,17 @@ func DefaultHistory() History {
 	return History{RetentionDays: DefaultHistoryRetentionDays}
 }
 
+// DefaultHADiscoveryPrefix is Home Assistant's own default discovery topic root.
+const DefaultHADiscoveryPrefix = "homeassistant"
+
+// DefaultHomeAssistant is the off-by-default integration a fresh store seeds and
+// an older store backfills to (#9). Disabled so a node never publishes discovery
+// topics until the operator opts in; the prefix is Home Assistant's default so it
+// works out of the box once enabled.
+func DefaultHomeAssistant() HomeAssistant {
+	return HomeAssistant{Enabled: false, DiscoveryPrefix: DefaultHADiscoveryPrefix}
+}
+
 // ValidateHistory enforces the one rule the type cannot: retention cannot be
 // negative. 0 is legal and means keep forever (the nightly prune is disabled);
 // any positive count is a day window.

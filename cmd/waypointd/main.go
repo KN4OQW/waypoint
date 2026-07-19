@@ -28,6 +28,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/dmrhosts"
 	"github.com/KN4OQW/waypoint/internal/dstarhosts"
 	"github.com/KN4OQW/waypoint/internal/events"
+	"github.com/KN4OQW/waypoint/internal/hadiscovery"
 	"github.com/KN4OQW/waypoint/internal/hub"
 	"github.com/KN4OQW/waypoint/internal/lcd"
 	"github.com/KN4OQW/waypoint/internal/lcd/hd44780"
@@ -555,6 +556,18 @@ func (s *server) backfillDefaults() error {
 		}
 		log.Printf("config store: backfilled history defaults")
 	}
+	// Home Assistant discovery arrived after history (#9): a store seeded before it
+	// lacks the row, so backfill the off-by-default integration so Load never
+	// returns a zero value and the publisher stays dormant until opted in.
+	if _, ok, err := s.store.Get("homeassistant"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("homeassistant", config.DefaultHomeAssistant(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled homeassistant defaults")
+	}
 	return nil
 }
 
@@ -1009,6 +1022,32 @@ func main() {
 		go dstarhosts.Run(context.Background(), *dstarHostsURL, *dstarHosts, 6*time.Hour)
 		go m17hosts.Run(context.Background(), *m17HostsURL, *m17Hosts, 6*time.Hour)
 		go dmrhosts.Run(context.Background(), *dmrHostsURL, *dmrHosts, 6*time.Hour)
+
+		// Home Assistant MQTT discovery (#9): when enabled, publish the hotspot as an
+		// HA device to the same broker the MMDVM-Host feed rides. Read once at boot —
+		// toggling it takes effect on the next daemon restart. Only in live mode: demo
+		// has no broker to publish to.
+		if m, err := config.Load(s.store); err != nil {
+			log.Printf("ha: config load failed, discovery not started: %v", err)
+		} else if m.HomeAssistant.Enabled {
+			dev := hadiscovery.DeviceInfo{
+				Callsign:  m.General.Callsign,
+				DMRID:     m.General.ID,
+				Version:   Version,
+				ConfigURL: m.General.URL,
+			}
+			go func() {
+				if err := hadiscovery.Run(context.Background(), s.hub, hadiscovery.Options{
+					Broker:          *broker,
+					Username:        *mqttUser,
+					Password:        *mqttPass,
+					DiscoveryPrefix: m.HomeAssistant.DiscoveryPrefix,
+					Device:          dev,
+				}); err != nil {
+					log.Printf("ha discovery stopped: %v", err)
+				}
+			}()
+		}
 	}
 
 	mode := "live, mqtt " + *broker
