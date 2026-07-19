@@ -234,20 +234,87 @@ func writePlaceholder(w http.ResponseWriter, body string) {
 	_, _ = w.Write([]byte(body))
 }
 
-// Minimal, self-contained placeholder pages. The real claim and login screens are
-// the frontend PR; these exist so a browser hitting the device pre-claim or
-// pre-login sees something rather than a raw JSON error, without pulling in any
-// gated asset.
-const claimPlaceholder = `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
-	`<meta name="viewport" content="width=device-width,initial-scale=1"><title>Claim this Waypoint device</title></head>` +
-	`<body><h1>This Waypoint device is unclaimed</h1>` +
-	`<p>Set an admin username and password to claim it. The claim UI ships in a later release; ` +
-	`until then, claim via <code>POST /api/claim</code> with a JSON body <code>{"username","password"}</code>.</p>` +
-	`</body></html>`
+// The first-run claim and login screens (RFC-0009). Served pre-auth by the gate,
+// so they are fully self-contained — no gated asset, no CDN — and phone-first
+// (a device is set up next to the radio, usually on a phone). They post JSON to
+// the existing /api/claim and /api/session and redirect to / on success. Dark is
+// the default; they honour the operator's saved theme/mode via localStorage so a
+// returning login matches the app.
+var claimPlaceholder = authScreen(
+	"claim", "Claim this device",
+	"Set an admin username and password. This is the only account until you add more — there are no default credentials.",
+	"/api/claim", "Claim device", true)
 
-const loginPlaceholder = `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
-	`<meta name="viewport" content="width=device-width,initial-scale=1"><title>Log in to Waypoint</title></head>` +
-	`<body><h1>Log in</h1>` +
-	`<p>This device is claimed. The login UI ships in a later release; ` +
-	`until then, log in via <code>POST /api/session</code> with a JSON body <code>{"username","password"}</code>.</p>` +
-	`</body></html>`
+var loginPlaceholder = authScreen(
+	"login", "Log in",
+	"Enter your admin credentials to manage this Waypoint node.",
+	"/api/session", "Log in", false)
+
+// authScreen builds a self-contained first-run page. withConfirm adds a
+// confirm-password field and the 8-char client-side check (the API enforces the
+// floor too); endpoint is where the form POSTs.
+func authScreen(kind, heading, sub, endpoint, submit string, withConfirm bool) string {
+	confirmField := ""
+	confirmJS := ""
+	if withConfirm {
+		confirmField = `<label>Confirm password<input id="confirm" type="password" autocomplete="new-password" required minlength="8"></label>`
+		confirmJS = `if(p!==document.getElementById('confirm').value){return show('Passwords do not match');}
+      if(p.length<8){return show('Password must be at least 8 characters');}`
+	}
+	pwAutocomplete := "current-password"
+	if withConfirm {
+		pwAutocomplete = "new-password"
+	}
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Waypoint · ` + heading + `</title>
+<script>(function(){try{var m=localStorage.getItem("wp-mode");if(m===null&&window.matchMedia&&matchMedia("(prefers-color-scheme: light)").matches)m="light";if(m==="light")document.documentElement.setAttribute("data-mode","light");var t=localStorage.getItem("wp-theme");if(t&&t!=="phosphor")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+<style>
+  :root{--accent:#35d07f;--accent-soft:rgba(53,208,127,.13);--bg:#06070a;--panel:#0f1218;--panel-line:#1c222c;--field:#0a0d12;--field-line:#262c38;--ink:#e4ebf4;--ink-head:#eef2f7;--muted:#8a94a6;--bad:#ff6b6b;--mono:ui-monospace,"SF Mono",Consolas,Menlo,monospace;--sans:system-ui,-apple-system,"Segoe UI",Arial,sans-serif;}
+  :root[data-theme="amber"]{--accent:#f0a935;--accent-soft:rgba(240,169,53,.13);}
+  :root[data-theme="ice"]{--accent:#4db8ff;--accent-soft:rgba(77,184,255,.13);}
+  :root[data-mode="light"]{--accent:#12a35a;--accent-soft:rgba(18,163,90,.12);--bg:#eef1f6;--panel:#fff;--panel-line:#dde3ec;--field:#f5f7fb;--field-line:#ccd4e0;--ink:#1a2130;--ink-head:#0e1420;--muted:#566072;--bad:#cc3333;}
+  :root[data-mode="light"][data-theme="amber"]{--accent:#9a5d05;--accent-soft:rgba(154,93,5,.12);}
+  :root[data-mode="light"][data-theme="ice"]{--accent:#1f77c9;--accent-soft:rgba(31,119,201,.12);}
+  *{box-sizing:border-box;}html,body{margin:0;padding:0;}
+  body{background:radial-gradient(ellipse 90% 60% at 78% -10%,var(--accent-soft),transparent 55%),var(--bg);color:var(--ink);font-family:var(--sans);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+  .card{width:100%;max-width:380px;background:var(--panel);border:1px solid var(--panel-line);border-radius:14px;padding:26px 24px 28px;}
+  .brand{display:flex;align-items:center;gap:11px;margin-bottom:20px;}
+  .brand svg{flex:none;}
+  .brand b{font-size:15px;font-weight:700;letter-spacing:2.5px;color:var(--ink-head);}
+  h1{margin:0 0 6px;font-size:22px;font-weight:600;color:var(--ink-head);}
+  .sub{margin:0 0 20px;font-size:13.5px;line-height:1.5;color:var(--muted);}
+  label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;margin-bottom:14px;}
+  input{display:block;width:100%;margin-top:6px;background:var(--field);border:1px solid var(--field-line);border-radius:8px;padding:12px;color:var(--ink);font-size:15px;font-family:var(--mono);min-height:44px;}
+  input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+  button{width:100%;margin-top:8px;background:var(--accent);color:#04120a;border:0;border-radius:8px;padding:13px;font-size:14px;font-weight:600;font-family:var(--mono);letter-spacing:.5px;cursor:pointer;min-height:48px;}
+  button:focus-visible{outline:2px solid var(--ink-head);outline-offset:2px;}
+  .err{margin:0 0 14px;color:var(--bad);font-size:13px;font-family:var(--mono);}
+  a{color:var(--accent);}
+</style></head>
+<body>
+  <form id="f" class="card" autocomplete="on">
+    <div class="brand"><svg width="24" height="24" viewBox="0 0 512 512" fill="var(--accent)" aria-hidden="true"><path d="M256 474 C201 410 138 362 138 284 A118 118 0 0 1 374 284 C374 362 311 410 256 474 Z"></path></svg><b>WAYPOINT</b></div>
+    <h1>` + heading + `</h1>
+    <p class="sub">` + sub + `</p>
+    <p class="err" id="err" role="alert" hidden></p>
+    <label>Username<input id="username" name="username" autocomplete="username" required autofocus></label>
+    <label>Password<input id="password" name="password" type="password" autocomplete="` + pwAutocomplete + `" required></label>
+    ` + confirmField + `
+    <button type="submit">` + submit + `</button>
+  </form>
+<script>
+  var f=document.getElementById("f"),err=document.getElementById("err");
+  function show(m){err.textContent=m;err.hidden=false;return false;}
+  f.addEventListener("submit",function(e){
+    e.preventDefault();err.hidden=true;
+    var u=document.getElementById("username").value.trim(),p=document.getElementById("password").value;
+    if(!u)return show("Enter a username");
+    ` + confirmJS + `
+    fetch("` + endpoint + `",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})})
+      .then(function(r){if(r.ok){location.href="/";return;}return r.json().then(function(j){show((j&&j.error)||"Request failed");});})
+      .catch(function(){show("Network error — check the connection and try again");});
+  });
+</script>
+</body></html>`
+}
