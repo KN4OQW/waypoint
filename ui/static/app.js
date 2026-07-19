@@ -170,7 +170,14 @@ function esc(s) {
 function connect() {
   const es = new EventSource("/api/events");
   es.onopen = () => setConn(true);
-  es.onerror = () => setConn(false); // EventSource auto-reconnects
+  es.onerror = () => {
+    // EventSource hides the HTTP status and just retries, so a session that
+    // expired mid-stream would otherwise leave a silently-frozen dashboard. Probe a
+    // gated route: if the session is gone the shared client routes to the login
+    // screen; a transient blip is left to the automatic reconnect (RFC-0002).
+    setConn(false);
+    if (window.wpSession) window.wpSession.reauthCheck();
+  };
   es.onmessage = (m) => handle(JSON.parse(m.data));
 }
 

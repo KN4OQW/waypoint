@@ -538,21 +538,31 @@ type healthResponse struct {
 	Time    string `json:"time"`
 	Uptime  string `json:"uptime"`
 	Demo    bool   `json:"demo"`
+	Claimed bool   `json:"claimed"`
 	Detail  string `json:"detail,omitempty"`
 }
 
+// health is intentionally unauthenticated in both claim states (RFC-0002): it
+// returns liveness, the version stamp, and the claim state — never configuration
+// or activity. The claim flag is what lets the pre-auth page tell "this device
+// still needs claiming" from "this device is claimed, log in" without probing a
+// gated route.
 func (s *server) health(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	detail := ""
 	if s.demo {
 		detail = demo.Banner()
 	}
+	// s.auth is nil in unit tests that exercise the handler in isolation; treat a
+	// missing auth subsystem as unclaimed rather than panicking.
+	claimed := s.auth != nil && s.auth.Claimed()
 	_ = json.NewEncoder(w).Encode(healthResponse{
 		Status:  "ok",
 		Version: Version,
 		Time:    time.Now().UTC().Format(time.RFC3339),
 		Uptime:  time.Since(s.started).Round(time.Second).String(),
 		Demo:    s.demo,
+		Claimed: claimed,
 		Detail:  detail,
 	})
 }

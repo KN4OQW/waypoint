@@ -173,7 +173,7 @@ func (a *Auth) gateUnclaimed(w http.ResponseWriter, r *http.Request, next http.H
 	case r.Method == http.MethodPost && r.URL.Path == "/api/claim":
 		next.ServeHTTP(w, r)
 	case isPageAsset(r):
-		writePlaceholder(w, claimPlaceholder)
+		a.writeAuthPage(w, claimPlaceholder)
 	default:
 		writeErrorMode(w, http.StatusForbidden, "device is unclaimed", "claim")
 	}
@@ -195,10 +195,24 @@ func (a *Auth) gateClaimed(w http.ResponseWriter, r *http.Request, next http.Han
 	// Unauthenticated: the login page is the only asset served; everything else,
 	// including the SSE stream and the config API, is 401.
 	if isPageAsset(r) {
-		writePlaceholder(w, loginPlaceholder)
+		a.writeAuthPage(w, loginPlaceholder)
 		return
 	}
 	writeErrorMode(w, http.StatusUnauthorized, "authentication required", "login")
+}
+
+// writeAuthPage serves the pre-auth screen at the top-level route: the wired UI
+// asset when present, else the built-in fallback. Both claim and login states
+// serve the same page — it branches on GET /api/health's claim flag — so the gate
+// does not need to know which screen the client will render.
+func (a *Auth) writeAuthPage(w http.ResponseWriter, fallback string) {
+	if len(a.authPage) > 0 {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(a.authPage)
+		return
+	}
+	writePlaceholder(w, fallback)
 }
 
 // isPageAsset reports whether the request is for the top-level HTML page. Pre-auth

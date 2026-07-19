@@ -36,6 +36,14 @@ type Auth struct {
 	// be unusable over plain HTTP during bring-up (RFC-0002).
 	secureCookie bool
 
+	// authPage is the pre-auth HTML the gate serves at the top-level route while
+	// unclaimed (the claim screen) or claimed-without-a-session (the login screen).
+	// It is one self-contained page that branches on GET /api/health's claim flag,
+	// so the same bytes serve both states. The daemon wires the embedded UI asset
+	// here; when it is nil (auth's own unit tests, which don't pull in the UI) the
+	// gate falls back to the minimal built-in placeholders below.
+	authPage []byte
+
 	// claimed is the cached claim state. The gate consults it on every request, so
 	// it is read far more than it changes; it is loaded once from the store and
 	// invalidated on claim and on reset.
@@ -54,6 +62,11 @@ type Options struct {
 	IdleWindow   time.Duration
 	FailDelay    time.Duration
 	SecureCookie bool
+
+	// AuthPage is the pre-auth HTML served at the top-level route (the claim/login
+	// screen). The daemon passes the embedded UI asset; leave it nil to fall back to
+	// the built-in placeholders.
+	AuthPage []byte
 }
 
 // New builds an Auth over the given store, migrating the auth tables if needed.
@@ -88,6 +101,7 @@ func New(s *Store, opts Options) *Auth {
 		damper:       newDamper(now, failDelay),
 		idleWindow:   idle,
 		secureCookie: opts.SecureCookie,
+		authPage:     opts.AuthPage,
 	}
 }
 

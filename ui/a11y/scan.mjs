@@ -19,6 +19,14 @@ const BASE = process.env.BASE || "http://127.0.0.1:8073";
 const THEMES = (process.env.A11Y_THEMES || "phosphor,amber,ice").split(",").map((s) => s.trim()).filter(Boolean);
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
 
+// The device is gated behind the RFC-0002 claim state machine, so the dashboard and
+// settings only render for an authenticated session. The harness drives a fresh
+// (unclaimed) demo daemon: the first context claims the device (scanning the claim
+// screen on the way in), and every later context logs in (scanning the login
+// screen), so the claim and login pages are covered by the same gate that renders
+// the app. Credentials are throwaway — the daemon store is discarded after the run.
+const CREDS = { username: "a11yadmin", password: "a11y-scan-pass" };
+
 // Every settings/wizard tab (mirrors the TABS list in settings.js).
 const TABS = [
   "general", "setup", "lcd", "dmr", "dstar", "ysf", "p25", "nxdn",
@@ -51,6 +59,31 @@ function report(label, result) {
   }
 }
 
+// enterApp scans whichever pre-auth screen the gate is serving (claim on a fresh
+// device, login once it is claimed) and then authenticates through it, landing on
+// the dashboard with a live session. Claiming is one-way, so across a run the first
+// context claims and the rest log in — this handles either without the caller
+// caring which. Both screens are held to the same WCAG bar as the app.
+async function enterApp(page, theme) {
+  await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
+  await page.waitForSelector("body[data-mode]", { timeout: 10000 }); // set once /api/health resolves
+  const mode = await page.evaluate(() => document.body.dataset.mode);
+  await analyze(page, `auth:${mode} (${theme})`);
+
+  if (mode === "claim") {
+    await page.fill("#claim-username", CREDS.username);
+    await page.fill("#claim-password", CREDS.password);
+    await page.fill("#claim-confirm", CREDS.password);
+    await page.click("#claim-submit");
+  } else {
+    await page.fill("#login-username", CREDS.username);
+    await page.fill("#login-password", CREDS.password);
+    await page.click("#login-submit");
+  }
+  // Auth navigates to the app on success; the dashboard shell carries `.app`.
+  await page.waitForSelector(".app", { timeout: 10000 });
+}
+
 async function analyze(page, label) {
   // Toggle every off-state control on, so we also exercise the "enabled" accent
   // styling (pills, mode tiles) that the default render leaves off.
@@ -69,6 +102,9 @@ for (const theme of THEMES) {
   const context = await browser.newContext();
   await context.addInitScript((t) => localStorage.setItem("wp-theme", t), theme);
   const page = await context.newPage();
+
+  // Claim/log in through the pre-auth screen (scans it), landing on the dashboard.
+  await enterApp(page, theme);
 
   // Dashboard.
   await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });

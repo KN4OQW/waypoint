@@ -1,0 +1,13 @@
+{
+  "name": "waypoint-ui-tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser-driven functional tests for the Waypoint claim/login UI (RFC-0002).",
+  "scripts": {
+    "test": "node auth.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.61.1"
+  }
+}

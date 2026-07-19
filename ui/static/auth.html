@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Waypoint · Sign in</title>
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<style>
+  /* The pre-auth screen (RFC-0002 first-boot claim / login). Self-contained and
+     offline-safe: no external font or CDN, since this is the very first surface a
+     freshly imaged hotspot serves — it must render with no internet. Shares the
+     dashboard's "Nocturne" phosphor theme (the same :root variables, WCAG-AA tuned)
+     so claiming the device already looks like the app it drops you into. */
+  :root {
+    --accent: #35d07f; --accent-soft: rgba(53,208,127,0.13); --accent-glow: rgba(53,208,127,0.4);
+    --bg: #06070a; --panel: #0f1218; --panel-line: #1c222c; --field: #0a0d12; --field-line: #262c38;
+    --ink: #e4ebf4; --ink-head: #eef2f7; --ink-body: #c7cfdb; --label: #8a94a6; --muted: #7f8a99; --dim: #828c9b; --faint: #767f8c;
+    --bad: #ff6b6b; --warn: #ff9f45;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", "Cascadia Code", Consolas, Menlo, monospace;
+    --sans: "Space Grotesk", system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  }
+  :root[data-theme="amber"] { --accent: #f0a935; --accent-soft: rgba(240,169,53,0.13); --accent-glow: rgba(240,169,53,0.45); }
+  :root[data-theme="ice"]   { --accent: #4db8ff; --accent-soft: rgba(77,184,255,0.13); --accent-glow: rgba(77,184,255,0.45); }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: radial-gradient(ellipse 90% 60% at 78% -10%, var(--accent-soft), transparent 55%), var(--bg);
+    color: var(--ink-body); font-family: var(--sans); min-height: 100vh;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  ::selection { background: var(--accent-soft); }
+  a { color: var(--accent); }
+  a:focus-visible, button:focus-visible, input:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px;
+  }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  @keyframes wpblink { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+  .wrap { width: 100%; max-width: 420px; }
+
+  .brand { display: flex; align-items: center; gap: 12px; justify-content: center; margin-bottom: 22px; }
+  .brand-name { font-size: 18px; font-weight: 700; letter-spacing: 3px; color: var(--ink-head); }
+  .brand-sub { font-family: var(--mono); font-size: 9.5px; letter-spacing: 2px; color: var(--dim); margin-top: 2px; }
+
+  .card { background: var(--panel); border: 1px solid var(--panel-line); border-radius: 13px; padding: 26px 26px 24px; }
+  .card-tag { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .card-tag .sq { width: 6px; height: 6px; background: var(--accent); border-radius: 1px; flex: none; }
+  .card-tag .t { font-family: var(--mono); font-size: 10px; letter-spacing: 2.5px; color: var(--accent); }
+  h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; letter-spacing: -.2px; color: var(--ink-head); }
+  .lede { margin: 0 0 20px; font-size: 13px; line-height: 1.55; color: var(--muted); }
+
+  .field { margin-bottom: 15px; }
+  label { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: 1.5px; color: var(--label); margin-bottom: 7px; text-transform: uppercase; }
+  input[type="text"], input[type="password"] {
+    width: 100%; background: var(--field); border: 1px solid var(--field-line); border-radius: 8px;
+    padding: 11px 13px; color: var(--ink); font-family: var(--mono); font-size: 14px; letter-spacing: .3px;
+  }
+  input::placeholder { color: var(--faint); }
+  input:focus-visible { border-color: var(--accent); }
+  input[aria-invalid="true"] { border-color: var(--bad); }
+  .hint { font-family: var(--mono); font-size: 10.5px; color: var(--dim); margin-top: 6px; letter-spacing: .3px; }
+  .field-error { font-family: var(--mono); font-size: 11px; color: var(--bad); margin-top: 6px; letter-spacing: .3px; min-height: 0; }
+
+  button.submit {
+    width: 100%; margin-top: 8px; padding: 12px 14px; border: 0; border-radius: 8px; cursor: pointer;
+    background: var(--accent); color: var(--bg); font-family: var(--mono); font-size: 12px; font-weight: 700;
+    letter-spacing: 1.5px; text-transform: uppercase; box-shadow: 0 0 18px var(--accent-soft);
+  }
+  button.submit:hover { filter: brightness(1.07); }
+  button.submit[disabled] { opacity: .55; cursor: default; box-shadow: none; }
+
+  /* Form-level error/notice banner (bad creds, 409, network trouble). role=alert. */
+  .notice { border-radius: 8px; padding: 11px 13px; margin-bottom: 18px; font-family: var(--mono); font-size: 12px; line-height: 1.5; letter-spacing: .2px; }
+  .notice.bad { background: rgba(255,107,107,0.08); border: 1px solid rgba(255,107,107,0.4); color: var(--bad); }
+  .notice.info { background: var(--accent-soft); border: 1px solid var(--accent); color: var(--accent); }
+  [hidden] { display: none !important; }
+
+  .foot { text-align: center; margin-top: 18px; font-family: var(--mono); font-size: 10px; color: var(--faint); letter-spacing: .4px; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="brand">
+    <svg width="30" height="30" viewBox="0 0 512 512" style="flex:none;" fill="var(--accent)" aria-hidden="true"><path d="M256 474 C201 410 138 362 138 284 A118 118 0 0 1 374 284 C374 362 311 410 256 474 Z"></path><path d="M247 302 L265 302 L259 128 L253 128 Z"></path><circle cx="256" cy="110" r="16"></circle><g fill="none" stroke="var(--accent)" stroke-width="13" stroke-linecap="round"><path d="M216 80 Q188 110 216 140"></path><path d="M196 60 Q156 110 196 160"></path><path d="M296 80 Q324 110 296 140"></path><path d="M316 60 Q356 110 316 160"></path></g><circle cx="256" cy="288" r="46" fill="#0b0d12"></circle></svg>
+    <div>
+      <div class="brand-name">WAYPOINT</div>
+      <div class="brand-sub">HOTSPOT CONTROL</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <!-- Form-level notice: 409 (claimed elsewhere), bad credentials, lockout,
+         network trouble. role=alert so a screen reader announces it on change. -->
+    <div id="notice" class="notice bad" role="alert" hidden></div>
+
+    <!-- CLAIM (unclaimed device) ------------------------------------------- -->
+    <form id="claim-form" novalidate hidden>
+      <div class="card-tag"><span class="sq" aria-hidden="true"></span><span class="t">FIRST-BOOT CLAIM</span></div>
+      <h1>Claim this device</h1>
+      <p class="lede">This Waypoint device has no owner yet. Set an admin username and password to claim it — there are no default credentials, and no one can configure the node until you do.</p>
+
+      <div class="field">
+        <label for="claim-username">Admin username</label>
+        <input id="claim-username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required aria-describedby="claim-username-err">
+        <p id="claim-username-err" class="field-error" role="alert"></p>
+      </div>
+      <div class="field">
+        <label for="claim-password">Password</label>
+        <input id="claim-password" name="new-password" type="password" autocomplete="new-password" required aria-describedby="claim-password-hint claim-password-err">
+        <p id="claim-password-hint" class="hint">At least 8 characters. Choose something long — this is the only credential to the node.</p>
+        <p id="claim-password-err" class="field-error" role="alert"></p>
+      </div>
+      <div class="field">
+        <label for="claim-confirm">Confirm password</label>
+        <input id="claim-confirm" name="confirm-password" type="password" autocomplete="new-password" required aria-describedby="claim-confirm-err">
+        <p id="claim-confirm-err" class="field-error" role="alert"></p>
+      </div>
+      <button id="claim-submit" class="submit" type="submit">Claim device</button>
+    </form>
+
+    <!-- LOGIN (claimed device, no session) --------------------------------- -->
+    <form id="login-form" novalidate hidden>
+      <div class="card-tag"><span class="sq" aria-hidden="true"></span><span class="t">SIGN IN</span></div>
+      <h1>Log in</h1>
+      <p class="lede">This device is claimed. Enter the admin credentials to manage it.</p>
+
+      <div class="field">
+        <label for="login-username">Username</label>
+        <input id="login-username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+      </div>
+      <div class="field">
+        <label for="login-password">Password</label>
+        <input id="login-password" name="current-password" type="password" autocomplete="current-password" required>
+      </div>
+      <button id="login-submit" class="submit" type="submit">Log in</button>
+    </form>
+
+    <!-- Shown briefly on first paint until /api/health resolves the mode. -->
+    <p id="loading" class="lede" role="status">Checking device status…</p>
+  </div>
+
+  <div class="foot">WAYPOINT · <span id="foot-version">hotspot control</span></div>
+</main>
+
+<script>
+"use strict";
+/* Pre-auth screen logic (RFC-0002). One page serves both the first-boot claim and
+   the login screen; GET /api/health's `claimed` flag picks which. On success the
+   server sets the session cookie, so we hand straight off to the app with a full
+   navigation — no second login. Self-contained: no shared app scripts are reachable
+   before a session exists, so everything the page needs lives here. */
+
+// Apply the operator's saved dashboard theme so the claim screen already matches
+// the app they are about to enter (the swatch picker lives inside the app).
+(function () {
+  var t = null;
+  try { t = localStorage.getItem("wp-theme"); } catch (e) { /* private mode */ }
+  if (t === "amber" || t === "ice") document.documentElement.setAttribute("data-theme", t);
+})();
+
+var $ = function (id) { return document.getElementById(id); };
+var MIN_PASSWORD = 8; // mirrors internal/auth minPasswordLen (server-enforced floor)
+
+// Where to land after auth. Only same-origin, root-relative paths are honoured, so
+// a crafted ?next cannot bounce the operator off-device after they authenticate.
+function nextTarget() {
+  var raw = new URLSearchParams(location.search).get("next") || "/";
+  if (raw.charAt(0) !== "/" || raw.charAt(1) === "/") return "/";
+  return raw;
+}
+function enterApp() { location.assign(nextTarget()); }
+
+function showNotice(msg, kind) {
+  var n = $("notice");
+  n.className = "notice " + (kind || "bad");
+  n.textContent = msg;
+  n.hidden = !msg;
+}
+function clearNotice() { showNotice("", "bad"); }
+
+function setFieldError(inputId, errId, msg) {
+  var input = $(inputId), err = $(errId);
+  if (err) err.textContent = msg || "";
+  if (input) {
+    if (msg) input.setAttribute("aria-invalid", "true");
+    else input.removeAttribute("aria-invalid");
+  }
+}
+
+// Read the server's JSON error message, falling back to a generic line so a
+// non-JSON body (proxy error page, etc.) never surfaces as "[object Object]".
+async function serverError(resp, fallback) {
+  try {
+    var body = await resp.json();
+    if (body && typeof body.error === "string" && body.error) return body.error;
+  } catch (e) { /* not JSON */ }
+  return fallback;
+}
+
+function busy(btn, on, labelOn) {
+  btn.disabled = on;
+  if (on) { btn.dataset.label = btn.textContent; btn.textContent = labelOn; }
+  else if (btn.dataset.label) { btn.textContent = btn.dataset.label; }
+}
+
+// --- claim ---------------------------------------------------------------
+function validateClaim(u, p, c) {
+  var ok = true;
+  setFieldError("claim-username", "claim-username-err", "");
+  setFieldError("claim-password", "claim-password-err", "");
+  setFieldError("claim-confirm", "claim-confirm-err", "");
+  if (!u.trim()) { setFieldError("claim-username", "claim-username-err", "Enter an admin username."); ok = false; }
+  if (p.length < MIN_PASSWORD) { setFieldError("claim-password", "claim-password-err", "Use at least " + MIN_PASSWORD + " characters."); ok = false; }
+  if (c !== p) { setFieldError("claim-confirm", "claim-confirm-err", "Passwords do not match."); ok = false; }
+  return ok;
+}
+
+async function submitClaim(ev) {
+  ev.preventDefault();
+  clearNotice();
+  var u = $("claim-username").value, p = $("claim-password").value, c = $("claim-confirm").value;
+  if (!validateClaim(u, p, c)) return;
+  var btn = $("claim-submit");
+  busy(btn, true, "Claiming…");
+  try {
+    var resp = await fetch("/api/claim", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: u.trim(), password: p }),
+    });
+    if (resp.status === 201) { enterApp(); return; }        // claimed + session cookie set
+    // Someone else owns it now. 409 is the true concurrent-claim race (both arrived
+    // while unclaimed, the store let one win); 401 is the gate turning the claim away
+    // because the device was already claimed before this submit — the claim route is
+    // not served once claimed. Either way the device is claimed: switch to login.
+    if (resp.status === 409 || resp.status === 401) {
+      showNotice("This device has already been claimed from another browser. Log in with those credentials instead.", "info");
+      showMode("login");
+      var lu = $("login-username"); if (lu) lu.focus();
+      return;
+    }
+    if (resp.status === 400) { showNotice(await serverError(resp, "Those details were rejected. Check the fields and try again."), "bad"); }
+    else { showNotice(await serverError(resp, "Could not claim the device (server error). Try again."), "bad"); }
+  } catch (e) {
+    showNotice("Could not reach the device. Check the connection and try again.", "bad");
+  } finally {
+    busy(btn, false);
+  }
+}
+
+// --- login ---------------------------------------------------------------
+async function submitLogin(ev) {
+  ev.preventDefault();
+  clearNotice();
+  var u = $("login-username").value, p = $("login-password").value;
+  if (!u.trim() || !p) { showNotice("Enter your username and password.", "bad"); return; }
+  var btn = $("login-submit");
+  busy(btn, true, "Signing in…");
+  try {
+    var resp = await fetch("/api/session", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: u.trim(), password: p }),
+    });
+    if (resp.ok) { enterApp(); return; }
+    // A generic message on 401 by design — never reveal whether it was the username
+    // or the password that was wrong (mirrors the server's single failLogin message).
+    if (resp.status === 401) { showNotice("Invalid username or password.", "bad"); }
+    else if (resp.status === 429) { showNotice("Too many attempts. Wait a moment, then try again.", "bad"); }
+    else { showNotice(await serverError(resp, "Could not sign in (server error). Try again."), "bad"); }
+  } catch (e) {
+    showNotice("Could not reach the device. Check the connection and try again.", "bad");
+  } finally {
+    busy(btn, false);
+  }
+}
+
+// --- mode selection ------------------------------------------------------
+function showMode(mode) {
+  $("loading").hidden = true;
+  $("claim-form").hidden = mode !== "claim";
+  $("login-form").hidden = mode !== "login";
+  document.body.dataset.mode = mode;                        // hook for the test harness
+  document.title = mode === "claim" ? "Waypoint · Claim this device" : "Waypoint · Sign in";
+  var first = mode === "claim" ? $("claim-username") : $("login-username");
+  if (first) first.focus();
+}
+
+async function init() {
+  $("claim-form").addEventListener("submit", submitClaim);
+  $("login-form").addEventListener("submit", submitLogin);
+  try {
+    var h = await (await fetch("/api/health")).json();
+    if (h && h.version) $("foot-version").textContent = "waypointd " + h.version;
+    showMode(h && h.claimed ? "login" : "claim");
+  } catch (e) {
+    // Health should always answer (it is unauthenticated); if it somehow does not,
+    // fall back to the login screen — the safer default, since a claimed device is
+    // the steady state and claiming is a one-time event.
+    showMode("login");
+  }
+}
+
+init();
+</script>
+</body>
+</html>
