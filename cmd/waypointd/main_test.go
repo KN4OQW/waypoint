@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net"
 	"net/http/httptest"
 	"os"
@@ -539,5 +541,101 @@ func TestProfilesAPI(t *testing.T) {
 	s.profilesRouter(rec, httptest.NewRequest("POST", "/api/profiles/Imported/activate", nil))
 	if rec.Code != 404 {
 		t.Errorf("activate of deleted profile should 404, got %d", rec.Code)
+	}
+}
+
+// The config-import API (RFC-0007 / issue #4): scan a mounted incumbent card
+// (preview, no write), then apply (bulk-write to the store). Also the upload path.
+func TestImportAPI(t *testing.T) {
+	const mmdvm = "[General]\nCallsign=W1ABC\nId=3161234\nDuplex=1\n[Info]\nRXFrequency=438800000\nTXFrequency=431000000\n[DMR]\nEnable=1\nId=3161234\n[System Fusion]\nEnable=1\n"
+	const dmrgw = "[DMR Network 1]\nName=BM_United_States_3103\nEnabled=1\nAddress=3103.master.brandmeister.network\nPassword=passw0rd\nPort=62031\nId=3161234\n"
+
+	// A mounted card at <dir>/etc.
+	card := t.TempDir()
+	etc := filepath.Join(card, "etc")
+	if err := os.MkdirAll(etc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(etc, "mmdvmhost"), []byte(mmdvm), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(etc, "dmrgateway"), []byte(dmrgw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := &server{store: st}
+
+	// Scan (dir): report + preview, and the store is NOT written.
+	rec := httptest.NewRecorder()
+	s.importScan(rec, httptest.NewRequest("POST", "/api/import/scan", strings.NewReader(`{"dir":"`+card+`"}`)))
+	if rec.Code != 200 {
+		t.Fatalf("scan: %d %s", rec.Code, rec.Body.String())
+	}
+	var scan struct {
+		Report  config.MigrationReport `json:"report"`
+		Preview map[string]any         `json:"preview"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &scan); err != nil {
+		t.Fatal(err)
+	}
+	if scan.Report.Platform != "Pi-Star" && !strings.HasPrefix(scan.Report.Platform, "Pi-Star") && scan.Report.Platform != "unknown" {
+		t.Logf("platform: %q", scan.Report.Platform)
+	}
+	if len(scan.Report.Modes) == 0 {
+		t.Errorf("scan report has no modes")
+	}
+	// Scan wrote nothing: the store has no general section yet.
+	if _, ok, _ := st.Get("general"); ok {
+		t.Error("scan must not write to the store")
+	}
+	// The preview must not leak the network password.
+	if strings.Contains(rec.Body.String(), "passw0rd") {
+		t.Errorf("scan preview leaked a secret")
+	}
+
+	// Apply (dir): the store now carries the callsign.
+	rec = httptest.NewRecorder()
+	s.importApply(rec, httptest.NewRequest("POST", "/api/import/apply", strings.NewReader(`{"dir":"`+card+`"}`)))
+	if rec.Code != 200 {
+		t.Fatalf("apply: %d %s", rec.Code, rec.Body.String())
+	}
+	m, err := config.Load(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.General.Callsign != "W1ABC" || m.General.ID != "3161234" {
+		t.Errorf("import did not populate the store: %+v", m.General)
+	}
+	if !m.Modes.DMR || !m.Modes.YSF {
+		t.Errorf("modes not imported: %+v", m.Modes)
+	}
+	if len(m.Networks) != 1 || m.Networks[0].Password != "passw0rd" {
+		t.Errorf("network not imported with secret: %+v", m.Networks)
+	}
+
+	// Upload path: same mapping from multipart files.
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("files", "mmdvmhost")
+	fw.Write([]byte(mmdvm))
+	mw.Close()
+	st2, _ := store.Open(":memory:")
+	defer st2.Close()
+	s2 := &server{store: st2}
+	req := httptest.NewRequest("POST", "/api/import/apply", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	rec = httptest.NewRecorder()
+	s2.importApply(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("upload apply: %d %s", rec.Code, rec.Body.String())
+	}
+	m2, _ := config.Load(st2)
+	if m2.General.Callsign != "W1ABC" {
+		t.Errorf("upload import did not populate the store: %+v", m2.General)
 	}
 }

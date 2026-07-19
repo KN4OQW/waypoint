@@ -533,6 +533,100 @@ func overridesRoot(dir string, demo bool) string {
 	return dir
 }
 
+// importScan reads an incumbent Pi-Star/WPSD card (mounted dir or uploaded files),
+// maps it to a model, and returns the migration report plus a redacted preview —
+// writing nothing (RFC-0007 / issue #4). The operator reviews before committing.
+func (s *server) importScan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	contents, names, platform, err := readImportInput(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	m, report, err := config.Migrate(contents, names, platform)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// preview is the SAME redacted view the config API serves — secrets appear only
+	// as has_* booleans, never in the scan response.
+	writeJSON(w, map[string]any{"report": report, "preview": m.View(s.storePath)})
+}
+
+// importApply re-reads the incumbent input, maps it, and bulk-writes the model to
+// the store in one transaction (RFC-0007). It does not restart daemons — the
+// operator sees the imported config in the settings UI, then Applies to go live.
+func (s *server) importApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	contents, names, platform, err := readImportInput(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	m, report, err := config.Migrate(contents, names, platform)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := m.SaveAtomic(s.store, "import"); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"imported": true, "report": report})
+}
+
+// readImportInput accepts either a multipart upload of incumbent config files
+// (matched to roles by name) or a JSON body {"dir": "/mnt/…"} naming a mounted
+// card. Both converge on the (contents, names, platform) triple Migrate consumes.
+func readImportInput(r *http.Request) (contents map[string][]byte, names map[string]string, platform string, err error) {
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		if err := r.ParseMultipartForm(8 << 20); err != nil {
+			return nil, nil, "", fmt.Errorf("invalid upload: %w", err)
+		}
+		contents = map[string][]byte{}
+		names = map[string]string{}
+		for _, fhs := range r.MultipartForm.File {
+			for _, fh := range fhs {
+				role := config.RoleForFilename(fh.Filename)
+				if role == "" {
+					continue // not a recognized incumbent config file
+				}
+				f, oerr := fh.Open()
+				if oerr != nil {
+					return nil, nil, "", oerr
+				}
+				b, rerr := io.ReadAll(io.LimitReader(f, 4<<20))
+				f.Close()
+				if rerr != nil {
+					return nil, nil, "", rerr
+				}
+				contents[role] = b
+				names[role] = fh.Filename
+			}
+		}
+		if len(contents) == 0 {
+			return nil, nil, "", fmt.Errorf("no recognized Pi-Star/WPSD config files in the upload")
+		}
+		return contents, names, "unknown", nil
+	}
+	var body struct {
+		Dir string `json:"dir"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		return nil, nil, "", fmt.Errorf("invalid body")
+	}
+	if strings.TrimSpace(body.Dir) == "" {
+		return nil, nil, "", fmt.Errorf("provide a directory path (dir) or upload files")
+	}
+	return config.Locate(body.Dir)
+}
+
 // restartSet is the deduped, ordered list of units to restart for a set of
 // render targets. Two modes sharing a unit collapse to one restart.
 func restartSet(targets []config.RenderTarget) []string {
@@ -1095,6 +1189,8 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/profiles", s.profilesView)          // GET list, POST capture (RFC-0006)
 	mux.HandleFunc("/api/profiles/import", s.profilesImport) // more specific than /api/profiles/
 	mux.HandleFunc("/api/profiles/", s.profilesRouter)       // {name}[/activate|/export], DELETE
+	mux.HandleFunc("/api/import/scan", s.importScan)         // preview an incumbent card (RFC-0007)
+	mux.HandleFunc("/api/import/apply", s.importApply)       // commit the migration
 	mux.HandleFunc("/api/ysf/reflectors", s.ysfReflectors)
 	mux.HandleFunc("/api/p25/reflectors", s.p25Reflectors)
 	mux.HandleFunc("/api/nxdn/reflectors", s.nxdnReflectors)
