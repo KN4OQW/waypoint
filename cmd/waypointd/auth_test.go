@@ -147,6 +147,8 @@ var allRoutes = []route{
 	{"POST", "/api/network/apply"},
 	{"POST", "/api/network/confirm"},
 	{"POST", "/api/network/host/apply"},
+	{"GET", "/api/update/check"},
+	{"POST", "/api/update/apply"},
 	{"POST", "/api/claim"},
 	{"POST", "/api/session"},
 	{"GET", "/"},
