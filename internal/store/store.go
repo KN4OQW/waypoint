@@ -90,6 +90,16 @@ CREATE TABLE IF NOT EXISTS applies (
 // Close releases the database handle.
 func (s *Store) Close() error { return s.db.Close() }
 
+// DB returns the underlying database handle. It exists for subsystems that own
+// dedicated tables outside the settings key tree — the auth subsystem (RFC-0002)
+// keeps the admin credential and sessions in their own tables so they never touch
+// the config surface (never a settings key, never in the config view, never in a
+// profile). Those tables share this one connection (SetMaxOpenConns(1)), so their
+// writes serialize with config writes rather than contending for the file lock.
+// Config code must not reach through this to the settings/applies tables — use the
+// typed Get/Set/All methods for those.
+func (s *Store) DB() *sql.DB { return s.db }
+
 // Get returns the raw JSON value for key and whether it was present.
 func (s *Store) Get(key string) (json.RawMessage, bool, error) {
 	var v string
