@@ -48,6 +48,13 @@ type Model struct {
 	YSF2NXDN YSF2NXDN `json:"ysf2nxdn"`
 	DMR2NXDN DMR2NXDN `json:"dmr2nxdn"`
 	NXDN2DMR NXDN2DMR `json:"nxdn2dmr"`
+	// Mode buses (RFC-0003): the topology object that supersedes the per-pair
+	// cross-mode bridges above. Buses[] names the endpoints, Attachments[] carries
+	// each mode onto a bus with its translation params. These are ordinary store
+	// rows (disabling a bus flips Bus.Enabled and deletes no attachment). No
+	// renderer/daemon consumes them yet — this PR is the model/store seam only.
+	Buses       []Bus        `json:"buses"`
+	Attachments []Attachment `json:"attachments"`
 	// LCD is the Waypoint-native HD44780 driver (store-only; drives no INI).
 	LCD LCD `json:"lcd"`
 	// History is the event-history retention policy (store-only; drives no INI).
@@ -133,6 +140,69 @@ type NXDN2DMR struct {
 	Options  string `json:"options"`  // DMR options line sent at login; empty omits it
 	TG       string `json:"tg"`       // target talkgroup ([DMR Network] StartupDstId)
 	NXDNTG   string `json:"nxdn_tg"`  // NXDN-side listen talkgroup ([NXDN Network] TG)
+}
+
+// Mode is the digital voice mode an attachment carries onto a bus. Only the
+// reframe-tier tokens (DMR, YSF, NXDN) are attachable in RFC-0003's committed
+// scope; the transcode-tier tokens (D-Star, P25, M17) and YSF-VW exist so
+// ValidateBuses can name the exact refusal ("no converter for D-Star<->DMR" vs
+// "transcode tier not available") rather than a generic "invalid". Token values
+// match the Modes json keys (model.go Modes) so the two never drift.
+type Mode string
+
+const (
+	ModeDMR   Mode = "dmr"
+	ModeYSF   Mode = "ysf"
+	ModeNXDN  Mode = "nxdn"
+	ModeDStar Mode = "dstar"
+	ModeP25   Mode = "p25"
+	ModeM17   Mode = "m17"
+	ModeYSFVW Mode = "ysf-vw" // YSF full-rate (VW); outside the DN reframe envelope (RFC-0003 §2 rule 3)
+	// Analog/data modes: never bus-capable (no MMDVM_CM converter). Enumerated only
+	// so a refusal can name them (ValidateBuses).
+	ModeFM     Mode = "fm"
+	ModePOCSAG Mode = "pocsag"
+)
+
+// Bus is a named, operator-created hub (RFC-0003 §4). Modes attach to it via
+// Attachment rows; voice entering from one attached mode is reframed and
+// re-emitted to every other attachment. Disabling a bus flips Enabled and
+// deletes nothing (RFC-0001 disable-preserves-data): the attachment rows keyed
+// to a disabled bus survive untouched, so re-enabling restores the topology.
+type Bus struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+}
+
+// Attachment carries one mode onto one bus with that edge's translation params
+// (RFC-0003 §3). It holds NO secret: CredentialsRef names an existing Networks[]
+// entry (the DMR attachment rides the local DMRGateway loopback and authenticates
+// through that network, never its own master — RFC-0003 §3), so an address or
+// password never lives on an attachment.
+//
+// The translation fields are grouped by mode. A field is only meaningful for its
+// mode; the others stay zero. Where an RFC-0003 store-side name and a CM INI key
+// differ, the RFC name wins and the CM key is noted (ground-truthed against
+// juribeparada/MMDVM_CM DMR2YSF/YSF2DMR/NXDN2DMR .ini).
+type Attachment struct {
+	BusID          string `json:"bus_id"`          // the Bus.ID this mode attaches to
+	Mode           Mode   `json:"mode"`            // dmr | ysf | nxdn (reframe tier); other tokens refused at write
+	CredentialsRef string `json:"credentials_ref"` // names a Networks[] entry; empty = no upstream credential (e.g. a YSF reflector)
+
+	// DMR translation params (rides the local DMRGateway loopback 62031/62032).
+	Slot      string            `json:"slot,omitempty"`       // DMR timeslot "1"|"2" — Waypoint-side (the CM DMR bridges terminate one fixed loopback slot; no single CM INI key)
+	DefaultTG string            `json:"default_tg,omitempty"` // CM [DMR Network] DefaultDstTG (DMR2YSF) / StartupDstId (YSF2DMR, NXDN2DMR)
+	TGMap     map[string]string `json:"tg_map,omitempty"`     // source-mode target -> DMR TG — Waypoint-side (CM expresses this via TGListFile, not a key)
+
+	// YSF translation params (attaches as DN, RFC-0003 §2 rule 3).
+	Target            string `json:"target,omitempty"`             // reflector / DG-ID target — Waypoint-side (the CM YSF side connects through the YSF gateway)
+	WiresXPassthrough bool   `json:"wiresx_passthrough,omitempty"` // CM [YSF Network] EnableWiresX
+
+	// NXDN translation params.
+	ID        string `json:"id,omitempty"`         // CM [NXDN Network] Id
+	TG        string `json:"tg,omitempty"`         // CM [NXDN Network] TG
+	DefaultID string `json:"default_id,omitempty"` // CM [NXDN Network] DefaultID
 }
 
 // M17 holds MMDVM-Host's [M17] mode parameters (its enable flag is in Modes,
@@ -493,33 +563,35 @@ type DMRRoute struct {
 // can never drift apart.
 func (m *Model) sections() map[string]any {
 	return map[string]any{
-		"general":  &m.General,
-		"modem":    &m.Modem,
-		"display":  &m.Display,
-		"dmr":      &m.DMR,
-		"dmrnet":   &m.DMRNet,
-		"modes":    &m.Modes,
-		"networks": &m.Networks,
-		"routes":   &m.Routes,
-		"ysf":      &m.YSF,
-		"ysfgw":    &m.YSFGW,
-		"p25":      &m.P25,
-		"p25gw":    &m.P25GW,
-		"nxdn":     &m.NXDN,
-		"nxdngw":   &m.NXDNGW,
-		"dstar":    &m.DStar,
-		"dstargw":  &m.DStarGW,
-		"m17":      &m.M17,
-		"m17gw":    &m.M17GW,
-		"pocsag":   &m.POCSAG,
-		"fm":       &m.FM,
-		"ysf2dmr":  &m.YSF2DMR,
-		"dmr2ysf":  &m.DMR2YSF,
-		"ysf2nxdn": &m.YSF2NXDN,
-		"dmr2nxdn": &m.DMR2NXDN,
-		"nxdn2dmr": &m.NXDN2DMR,
-		"lcd":      &m.LCD,
-		"history":  &m.History,
+		"general":     &m.General,
+		"modem":       &m.Modem,
+		"display":     &m.Display,
+		"dmr":         &m.DMR,
+		"dmrnet":      &m.DMRNet,
+		"modes":       &m.Modes,
+		"networks":    &m.Networks,
+		"routes":      &m.Routes,
+		"ysf":         &m.YSF,
+		"ysfgw":       &m.YSFGW,
+		"p25":         &m.P25,
+		"p25gw":       &m.P25GW,
+		"nxdn":        &m.NXDN,
+		"nxdngw":      &m.NXDNGW,
+		"dstar":       &m.DStar,
+		"dstargw":     &m.DStarGW,
+		"m17":         &m.M17,
+		"m17gw":       &m.M17GW,
+		"pocsag":      &m.POCSAG,
+		"fm":          &m.FM,
+		"ysf2dmr":     &m.YSF2DMR,
+		"dmr2ysf":     &m.DMR2YSF,
+		"ysf2nxdn":    &m.YSF2NXDN,
+		"dmr2nxdn":    &m.DMR2NXDN,
+		"nxdn2dmr":    &m.NXDN2DMR,
+		"buses":       &m.Buses,
+		"attachments": &m.Attachments,
+		"lcd":         &m.LCD,
+		"history":     &m.History,
 	}
 }
 

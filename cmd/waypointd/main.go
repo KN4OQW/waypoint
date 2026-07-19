@@ -265,6 +265,26 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// Mode buses (RFC-0003): buses[] and attachments[] write through the attach-time
+	// validator, not the generic merge — an invalid bus (dangling bus_id/credentials_ref,
+	// a mode on two buses, a non-reframe mode set) is refused here so it can never be
+	// persisted. The reason is the human-readable string the validator returns.
+	if section == "buses" {
+		if err := config.SetBuses(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if section == "attachments" {
+		if err := config.SetAttachments(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	// Cross-mode bridges: YSF2DMR/NXDN2DMR carry a redacted DMR-master password, so
 	// the same write-only-secret rule applies — a blank field keeps the stored one
 	// (SetCrossBridge). Routing all five through it is uniform and harmless: the
@@ -969,6 +989,26 @@ func (s *server) backfillDefaults() error {
 			return err
 		}
 		log.Printf("config store: backfilled history defaults")
+	}
+	// Mode buses (RFC-0003) arrived after the LCD driver: a store seeded before them
+	// lacks both sections. Backfill the empty defaults so Load never returns a nil
+	// surprise; a fresh node starts with no buses.
+	for _, bf := range []struct {
+		key string
+		val any
+	}{
+		{"buses", config.DefaultBuses()},
+		{"attachments", config.DefaultAttachments()},
+	} {
+		if _, ok, err := s.store.Get(bf.key); err != nil || !ok {
+			if err != nil {
+				return err
+			}
+			if err := s.store.Set(bf.key, bf.val, "backfill"); err != nil {
+				return err
+			}
+			log.Printf("config store: backfilled %s defaults", bf.key)
+		}
 	}
 	return nil
 }
