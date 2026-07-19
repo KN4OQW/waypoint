@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Waypoint · Dashboard</title>
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
+<script>
+  /* Apply the saved theme + mode before first paint so a light-mode reload never
+     flashes dark (RFC-0009). Dark is the default; prefers-color-scheme is only a
+     first-visit hint, and the explicit choice (localStorage) wins thereafter. */
+  (function () {
+    try {
+      var m = localStorage.getItem("wp-mode");
+      if (m === null && window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches) m = "light";
+      if (m === "light") document.documentElement.setAttribute("data-mode", "light");
+      var t = localStorage.getItem("wp-theme");
+      if (t && t !== "phosphor") document.documentElement.setAttribute("data-theme", t);
+    } catch (e) { /* storage blocked — dark default */ }
+  })();
+</script>
 <style>
   /* Waypoint dashboard — shares the settings page's "Nocturne" phosphor theme so
      the two pages read as one app. Self-contained and offline-safe: no external
@@ -17,11 +31,36 @@
        on the darkest panels; the old #5a6472/#4a5361 sat at ~3:1 and failed. */
     --ink: #e4ebf4; --ink-head: #eef2f7; --ink-body: #c7cfdb; --label: #8a94a6; --muted: #7f8a99; --dim: #828c9b; --faint: #767f8c;
     --bad: #ff6b6b; --warn: #ff9f45;
+    /* Semantic surfaces (RFC-0009): named so the light theme can re-map every
+       surface, not just the accent. Dark values below; light overrides follow. */
+    --chip-bg: #0c0f15; --chip-line: #1a1f28; --tag-bg: #0c0f15; --card-t: #aeb7c4;
+    --stat-k: #525c6a; --stat-v: #dfe6f0; --led-off: #252b34;
+    --swatch-bg: #0b0e13; --swatch-on: #12161d;
+    --scroll-track: #0a0c10; --scroll-thumb: #232a35;
+    --statusbar-bg: rgba(9,11,15,.72);
     --mono: "IBM Plex Mono", ui-monospace, "SF Mono", "Cascadia Code", Consolas, Menlo, monospace;
     --sans: "Space Grotesk", system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
   }
   :root[data-theme="amber"] { --accent: #f0a935; --accent-soft: rgba(240,169,53,0.13); --accent-glow: rgba(240,169,53,0.45); }
   :root[data-theme="ice"]   { --accent: #4db8ff; --accent-soft: rgba(77,184,255,0.13); --accent-glow: rgba(77,184,255,0.45); }
+  /* Light mode (RFC-0009): dark is the default; data-mode="light" re-maps every
+     structural surface + the text ramp to a light palette, and darkens the accent
+     so accent-coloured text clears 4.5:1 on a white panel. Composes with the accent
+     themes (the [data-mode][data-theme] rules below win by specificity). */
+  :root[data-mode="light"] {
+    --accent: #12a35a; --accent-soft: rgba(18,163,90,0.12); --accent-glow: rgba(18,163,90,0.30);
+    --bg: #eef1f6; --panel: #ffffff; --panel-line: #dde3ec; --field: #f5f7fb; --field-line: #ccd4e0;
+    --side: #f3f5f9; --side-line: #dde3ec; --row-line: #e7ebf2;
+    --ink: #1a2130; --ink-head: #0e1420; --ink-body: #333b49; --label: #566072; --muted: #5c6472; --dim: #616a78; --faint: #6b7380;
+    --bad: #cc3333; --warn: #9a5f08;
+    --chip-bg: #f0f3f8; --chip-line: #dde3ec; --tag-bg: #f0f3f8; --card-t: #566072;
+    --stat-k: #6b7380; --stat-v: #1a2130; --led-off: #c2cad6;
+    --swatch-bg: #eef1f6; --swatch-on: #ffffff;
+    --scroll-track: #e7ebf2; --scroll-thumb: #c2cad6;
+    --statusbar-bg: rgba(255,255,255,0.82);
+  }
+  :root[data-mode="light"][data-theme="amber"] { --accent: #9a5d05; --accent-soft: rgba(154,93,5,0.12); --accent-glow: rgba(154,93,5,0.30); }
+  :root[data-mode="light"][data-theme="ice"]   { --accent: #1f77c9; --accent-soft: rgba(31,119,201,0.12); --accent-glow: rgba(31,119,201,0.30); }
 
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -49,19 +88,19 @@
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
     clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
-  ::-webkit-scrollbar-track { background: #0a0c10; }
-  ::-webkit-scrollbar-thumb { background: #232a35; border-radius: 6px; border: 2px solid #0a0c10; }
+  ::-webkit-scrollbar-track { background: var(--scroll-track); }
+  ::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 6px; border: 2px solid var(--scroll-track); }
   @keyframes wpblink { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 
   .app { min-height: 100vh; display: grid; grid-template-columns: 264px 1fr; }
 
   /* sidebar — identical to settings */
-  aside { border-right: 1px solid var(--side-line); background: linear-gradient(180deg, var(--side), #08090d); display: flex; flex-direction: column; min-height: 100vh; }
+  aside { border-right: 1px solid var(--side-line); background: var(--side); display: flex; flex-direction: column; min-height: 100vh; }
   .brand { padding: 22px 22px 20px; border-bottom: 1px solid var(--side-line); }
   .brand-row { display: flex; align-items: center; gap: 11px; }
   .brand-name { font-size: 16px; font-weight: 700; letter-spacing: 2.5px; color: var(--ink-head); }
   .brand-sub { font-family: var(--mono); font-size: 9.5px; letter-spacing: 2px; color: var(--dim); margin-top: 1px; }
-  .callsign-chip { margin-top: 16px; display: flex; align-items: center; justify-content: space-between; background: #0c0f15; border: 1px solid #1a1f28; border-radius: 7px; padding: 8px 11px; }
+  .callsign-chip { margin-top: 16px; display: flex; align-items: center; justify-content: space-between; background: var(--chip-bg); border: 1px solid var(--chip-line); border-radius: 7px; padding: 8px 11px; }
   .chip-k { font-family: var(--mono); font-size: 9px; letter-spacing: 1.5px; color: var(--dim); }
   .chip-v { font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--accent); letter-spacing: 1px; }
   .online { display: flex; align-items: center; gap: 6px; }
@@ -74,7 +113,7 @@
   .nav-item { display: flex; align-items: center; gap: 12px; padding: 10px; margin: 2px 0; border-radius: 8px; cursor: pointer; position: relative; background: transparent; border: 0; width: 100%; text-align: left; }
   .nav-item:hover { background: rgba(255,255,255,0.02); text-decoration: none; }
   .nav-item .bar { position: absolute; left: -12px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: transparent; }
-  .nav-item .tag { flex: none; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 7px; font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: .5px; border: 1px solid var(--field-line); color: var(--muted); background: #0c0f15; }
+  .nav-item .tag { flex: none; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 7px; font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: .5px; border: 1px solid var(--field-line); color: var(--muted); background: var(--tag-bg); }
   .nav-item .label { font-size: 13.5px; font-weight: 500; color: var(--ink-body); letter-spacing: .2px; }
   .nav-item .sub { font-family: var(--mono); font-size: 9.5px; letter-spacing: .5px; color: var(--dim); margin-top: 1px; }
   .nav-item.on { background: var(--accent-soft); }
@@ -85,19 +124,21 @@
   .theme-pick { padding: 14px 18px 18px; border-top: 1px solid var(--side-line); }
   .theme-head { font-family: var(--mono); font-size: 9px; letter-spacing: 2px; color: var(--faint); margin-bottom: 9px; }
   .swatches { display: flex; gap: 7px; }
-  .swatch { flex: 1; display: flex; align-items: center; justify-content: center; padding: 9px 0; border-radius: 7px; cursor: pointer; background: #0b0e13; border: 1px solid #1a1f28; }
+  .swatch { flex: 1; display: flex; align-items: center; justify-content: center; padding: 9px 0; border-radius: 7px; cursor: pointer; background: var(--swatch-bg); border: 1px solid var(--chip-line); }
   .swatch .dot { width: 12px; height: 12px; border-radius: 50%; }
-  .swatch.on { background: #12161d; }
+  .swatch.on { background: var(--swatch-on); }
+  .swatch.mode-toggle { flex: 1 1 100%; font-family: var(--mono); font-size: 11px; letter-spacing: 1px; color: var(--ink-body); margin-bottom: 7px; padding: 8px 0; }
+  .swatch.mode-toggle.light { color: var(--accent); }
 
   /* main — identical shell to settings */
   main { min-width: 0; display: flex; flex-direction: column; max-height: 100vh; overflow: hidden; }
-  .statusbar { border-bottom: 1px solid var(--side-line); background: rgba(9,11,15,.72); backdrop-filter: blur(6px); padding: 13px 30px; display: flex; align-items: center; gap: 28px; flex-wrap: wrap; }
+  .statusbar { border-bottom: 1px solid var(--side-line); background: var(--statusbar-bg); backdrop-filter: blur(6px); padding: 13px 30px; display: flex; align-items: center; gap: 28px; flex-wrap: wrap; }
   .stat { display: flex; flex-direction: column; gap: 2px; }
-  .stat .k { font-family: var(--mono); font-size: 9px; letter-spacing: 1.5px; color: #525c6a; }
-  .stat .v { font-family: var(--mono); font-size: 13px; font-weight: 600; color: #dfe6f0; }
+  .stat .k { font-family: var(--mono); font-size: 9px; letter-spacing: 1.5px; color: var(--stat-k); }
+  .stat .v { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--stat-v); }
   .stat .v.accent { color: var(--accent); }
   .conn-led { margin-left: auto; display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 9.5px; letter-spacing: 1px; color: var(--muted); }
-  .conn-led .d { width: 8px; height: 8px; border-radius: 50%; background: #252b34; }
+  .conn-led .d { width: 8px; height: 8px; border-radius: 50%; background: var(--led-off); }
   .conn-led.up .d { background: var(--accent); box-shadow: 0 0 7px var(--accent-glow); }
   .conn-led.down .d { background: var(--bad); box-shadow: 0 0 7px rgba(255,107,107,.5); }
 
@@ -108,12 +149,47 @@
   .pagehead p { margin: 7px 0 0; font-size: 13.5px; color: var(--muted); max-width: 560px; line-height: 1.5; }
 
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
-  @media (max-width: 900px) { .app { grid-template-columns: 1fr; } aside { min-height: auto; } .grid2 { grid-template-columns: 1fr; } }
+  /* Responsive (RFC-0009): tablet collapses the fixed sidebar to a top bar and
+     goes single-column; phone tightens padding/type, keeps every touch target
+     >= 44px, and scrolls wide tables inside their card so the page body never
+     scrolls sideways. */
+  @media (max-width: 1023px) {
+    .app { grid-template-columns: 1fr; }
+    /* min-width:0 lets the grid item shrink to the column so the nav's overflow-x
+       engages instead of the tab strip stretching the page (RFC-0009). */
+    aside { min-height: auto; min-width: 0; border-right: 0; border-bottom: 1px solid var(--side-line); }
+    main { max-height: none; overflow: visible; }
+    .grid2 { grid-template-columns: 1fr; }
+    /* Nav becomes a horizontal scroll strip — the mobile tab pattern (settings has
+       ~17 tabs; the dashboard's two just sit in a row). */
+    nav { display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 6px; max-width: 100%; -webkit-overflow-scrolling: touch; }
+    .nav-head { display: none; }
+    .nav-item { width: auto; flex: none; }
+    .nav-item .bar { display: none; } /* the active-rail bar is for the vertical list only */
+    .theme-pick { border-top: 0; }
+  }
+  @media (max-width: 640px) {
+    .brand, .theme-pick { padding-left: 14px; padding-right: 14px; }
+    .statusbar { padding: 10px 14px; gap: 12px 18px; }
+    .scroll { padding: 16px 14px 48px; }
+    .pagehead { flex-wrap: wrap; margin-bottom: 18px; }
+    .pagehead h1 { font-size: 21px; }
+    .card { padding: 4px 14px 14px; }
+    /* Wide tables scroll inside their wrapper; the page never scrolls sideways. */
+    .tscroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .tscroll table { min-width: 420px; }
+    /* Comfortable tap targets on the theme swatches + nav on a phone. */
+    .swatch { min-height: 44px; }
+    .nav-item { min-height: 44px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
 
   .card { background: var(--panel); border: 1px solid var(--panel-line); border-radius: 11px; padding: 6px 22px 18px; margin-bottom: 20px; }
   .card-head { display: flex; align-items: center; gap: 8px; padding: 16px 0 6px; }
   .card-head .sq { width: 6px; height: 6px; background: var(--accent); border-radius: 1px; }
-  .card-head .t { font-family: var(--mono); font-size: 11px; letter-spacing: 2px; color: #aeb7c4; }
+  .card-head .t { font-family: var(--mono); font-size: 11px; letter-spacing: 2px; color: var(--card-t); }
   .empty { font-family: var(--mono); font-size: 12px; color: var(--dim); padding: 6px 0 10px; }
 
   /* on air */
@@ -204,10 +280,12 @@
       <div class="grid2">
         <section class="card" aria-labelledby="lh-h">
           <div class="card-head"><span class="sq" aria-hidden="true"></span><span class="t" id="lh-h">LAST HEARD</span></div>
+          <div class="tscroll">
           <table id="lastheard" aria-label="Last heard stations">
             <thead><tr><th scope="col">Station</th><th scope="col">Dest</th><th scope="col">Mode</th><th scope="col">Dur</th><th scope="col">BER</th><th scope="col">When</th></tr></thead>
             <tbody></tbody>
           </table>
+          </div>
           <p class="empty" id="lastheard-empty">Nothing heard yet.</p>
         </section>
 
@@ -225,7 +303,7 @@
 
       <section class="card" aria-labelledby="ev-h">
         <div class="card-head"><span class="sq" aria-hidden="true"></span><span class="t" id="ev-h">EVENT LOG</span></div>
-        <div class="loglimit" tabindex="0" role="region" aria-label="Event log">
+        <div class="loglimit tscroll" tabindex="0" role="region" aria-label="Event log">
           <table id="eventlog" aria-label="Event log entries">
             <thead><tr><th scope="col">Time</th><th scope="col">Event</th></tr></thead>
             <tbody></tbody>

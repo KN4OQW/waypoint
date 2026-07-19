@@ -22,10 +22,37 @@ function applyTheme(key) {
   if (th.attr) document.documentElement.setAttribute("data-theme", th.attr);
   else document.documentElement.removeAttribute("data-theme");
 }
+// Dark is the default; "light" is a mode that composes with the accent theme
+// (RFC-0009). Persisted separately so both survive a reload.
+function currentMode() {
+  const m = localStorage.getItem("wp-mode");
+  if (m) return m;
+  return (window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
+}
+function applyMode(mode) {
+  if (mode === "light") document.documentElement.setAttribute("data-mode", "light");
+  else document.documentElement.removeAttribute("data-mode");
+}
 function renderThemes() {
   const box = $("#swatches");
   box.innerHTML = "";
   const cur = localStorage.getItem("wp-theme") || "phosphor";
+  const mode = currentMode();
+  // Dark/Light toggle first, then the accent swatches.
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "swatch mode-toggle" + (mode === "light" ? " light" : "");
+  toggle.title = mode === "light" ? "Switch to dark" : "Switch to light";
+  toggle.setAttribute("aria-label", "Toggle light mode");
+  toggle.setAttribute("aria-pressed", String(mode === "light"));
+  toggle.textContent = mode === "light" ? "☀ Light" : "☾ Dark";
+  toggle.onclick = () => {
+    const next = currentMode() === "light" ? "dark" : "light";
+    localStorage.setItem("wp-mode", next);
+    applyMode(next);
+    renderThemes();
+  };
+  box.appendChild(toggle);
   THEMES.forEach((th) => {
     const s = document.createElement("button");
     s.type = "button";
@@ -236,6 +263,7 @@ async function loadStatus() {
   renderGateways(s.gateways);
 }
 
+applyMode(currentMode());
 applyTheme(localStorage.getItem("wp-theme") || "phosphor");
 renderThemes();
 loadHealth();
