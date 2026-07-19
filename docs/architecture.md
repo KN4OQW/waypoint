@@ -50,7 +50,7 @@ Rationale for the split: the g4klx daemons are actively maintained upstream and 
 ### API
 - REST for config/actions (OpenAPI-documented), WebSocket for event streams.
 - The bundled dashboard is a client of the public API with no private endpoints — third-party displays and apps are first-class by construction.
-- AuthN: first-boot device claim sets the admin credential; session cookies + token auth for API clients; HTTPS default (self-signed at claim time, ACME optional).
+- AuthN: first-boot device claim sets the admin credential; session cookies + token auth for API clients; **HTTPS by default** ([RFC-0012](rfcs/0012-https-by-default.md)) — a per-device self-signed cert minted on first start (or Let's Encrypt for a public hostname), the session cookie's `Secure` flag auto-on under TLS, and an HTTP→HTTPS redirect. See [docs/tls.md](tls.md).
 
 ## Web UI
 - Svelte SPA, static assets embedded in the daemon binary (single-artifact deploy).

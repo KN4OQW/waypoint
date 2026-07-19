@@ -1261,7 +1261,13 @@ func main() {
 		os.Exit(runResetClaim(os.Args[2:]))
 	}
 
-	addr := flag.String("addr", "127.0.0.1:8073", "listen address for the API and UI")
+	addr := flag.String("addr", "127.0.0.1:8073", "HTTPS listen address for the API and UI (plaintext when -tls=false)")
+	useTLS := flag.Bool("tls", true, "serve HTTPS with a self-signed device cert (RFC-0012); set false only behind a TLS-terminating proxy")
+	tlsDir := flag.String("tls-dir", "/home/pi-star/waypoint/tls", "directory holding the self-signed device cert/key (minted on first start)")
+	httpRedirectAddr := flag.String("http-redirect-addr", "", "optional HTTP listener that 301-redirects to HTTPS, e.g. :80 (empty disables it)")
+	acmeDomain := flag.String("acme-domain", "", "public hostname for a Let's Encrypt cert instead of self-signed (requires :80 + :443 reachable)")
+	acmeEmail := flag.String("acme-email", "", "contact email for the Let's Encrypt account (optional)")
+	acmeDir := flag.String("acme-dir", "/home/pi-star/waypoint/acme", "cache directory for Let's Encrypt certificates")
 	demoMode := flag.Bool("demo", false, "publish synthetic traffic (no radio required); always labeled in /api/health")
 	broker := flag.String("mqtt-broker", "127.0.0.1:1883", "MMDVM-Host MQTT broker host:port (live mode)")
 	mqttName := flag.String("mqtt-name", "mmdvm", "MMDVM-Host [MQTT] Name (topic prefix)")
@@ -1363,11 +1369,17 @@ func main() {
 		log.Printf("profiles table init skipped: %v", err)
 	}
 
+	// The session cookie's Secure flag turns on automatically whenever the daemon
+	// serves TLS (RFC-0012), so it can never drift out of sync with the transport;
+	// with -tls=false the operator sets -secure-cookie iff their proxy speaks HTTPS.
+	tlsServing := *useTLS || *acmeDomain != ""
+	secureCookieOn := *secureCookie || tlsServing
+
 	// First-boot claim state machine + sessions (RFC-0002). buildAuth also consumes
 	// any boot-partition reset marker before the server starts serving, so a device
 	// booted with a marker comes up unclaimed. A failure here is fatal: starting
 	// with an unknown/inconsistent auth state could expose config surfaces.
-	s.auth, err = buildAuth(st, *secureCookie)
+	s.auth, err = buildAuth(st, secureCookieOn)
 	if err != nil {
 		log.Fatalf("auth: %v", err)
 	}
@@ -1486,5 +1498,31 @@ func main() {
 		Handler:           s.auth.Gate(s.newMux()),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	log.Fatal(srv.ListenAndServe())
+	// Serve HTTPS by default with the self-signed device cert (RFC-0012), plus the
+	// optional HTTP→HTTPS redirect and the ACME path. -tls=false serves plaintext
+	// for a node behind a TLS-terminating proxy.
+	scheme := "https"
+	if !tlsServing {
+		scheme = "http"
+	}
+	log.Printf("serving %s on %s", scheme, *addr)
+	log.Fatal(listenAndServe(srv, tlsOptions{
+		enabled:      tlsServing,
+		certDir:      *tlsDir,
+		httpsPort:    portOf(*addr),
+		redirectAddr: *httpRedirectAddr,
+		acmeDomain:   *acmeDomain,
+		acmeEmail:    *acmeEmail,
+		acmeDir:      *acmeDir,
+	}))
+}
+
+// portOf returns the port of a listen address ("127.0.0.1:8073" -> "8073"), or ""
+// when it has none — used to build HTTP→HTTPS redirect targets.
+func portOf(addr string) string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return ""
+	}
+	return port
 }
