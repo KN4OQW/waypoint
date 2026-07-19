@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/KN4OQW/waypoint/internal/config"
+	"github.com/KN4OQW/waypoint/internal/dmrtg"
 	"github.com/KN4OQW/waypoint/internal/events"
 	"github.com/KN4OQW/waypoint/internal/hub"
 	"github.com/KN4OQW/waypoint/internal/status"
@@ -719,5 +720,35 @@ func TestStatusAndLivenessProbe(t *testing.T) {
 	}
 	if got.Mode == "" {
 		t.Error("status mode should be set (IDLE at minimum)")
+	}
+}
+
+// GET /api/dmr/talkgroups serves the cached TG-name list, returning [] (not null)
+// when no cache exists (RFC-0010 / issue #8).
+func TestDMRTalkgroupsEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "TGList.txt")
+	os.WriteFile(path, []byte("3112;Texas Statewide\n91;Worldwide\n"), 0o600)
+	s := &server{dmrTGs: path}
+
+	rec := httptest.NewRecorder()
+	s.dmrTalkgroups(rec, httptest.NewRequest("GET", "/api/dmr/talkgroups", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var got []dmrtg.Talkgroup
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != "91" || got[1].Name != "Texas Statewide" {
+		t.Fatalf("talkgroups wrong: %+v", got)
+	}
+
+	// No cache → [] (never null).
+	s2 := &server{dmrTGs: filepath.Join(dir, "nope.txt")}
+	rec = httptest.NewRecorder()
+	s2.dmrTalkgroups(rec, httptest.NewRequest("GET", "/api/dmr/talkgroups", nil))
+	if b := rec.Body.String(); b != "[]\n" {
+		t.Errorf("empty cache should serve [], got %q", b)
 	}
 }

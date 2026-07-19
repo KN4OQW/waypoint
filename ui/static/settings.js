@@ -647,6 +647,7 @@ function insertLcdToken(pi, token) {
 // on demand when its master/enable is set. Routing itself is generated on the
 // node from type + primary — no hand-written rewrites.
 let dmrMasters = []; // cached /api/dmr/masters, for the master dropdowns
+let dmrTGs = [];     // cached /api/dmr/talkgroups, for the searchable TG picker (RFC-0010)
 
 const slotSelect = (sel, attrs) =>
   `<select class="mini" ${attrs}><option value="1"${String(sel) === "1" ? " selected" : ""}>TS1</option><option value="2"${String(sel) !== "1" ? " selected" : ""}>TS2</option></select>`;
@@ -765,10 +766,15 @@ function routingTable() {
   const nets = (edit.networks || []).filter((n) => n.enabled);
   const routes = edit.routes || [];
   const netOpts = (sel) => nets.map((n) => `<option value="${esc(n.name)}"${n.name === sel ? " selected" : ""}>${esc(n.name)} (${esc(n.type)})</option>`).join("");
+  // A searchable TG picker (RFC-0010): the datalist option value embeds both the
+  // number and the name ("3112 · Texas Statewide") so native typeahead filters on
+  // either; the input handler extracts the leading number for storage. Typing a
+  // few characters of the name selects the TG — no thousand-row dropdown.
+  const tgOpts = dmrTGs.map((t) => `<option value="${esc(t.id + " · " + t.name)}"></option>`).join("");
   const rows = routes.map((r, j) => `
     <div class="route-row">
       ${slotSelect(r.slot, `data-rtslot="${j}" aria-label="Route ${j + 1} time slot"`)}
-      <input class="mini" data-rttg="${j}" value="${esc(r.tg)}" placeholder="dialed TG" aria-label="Route ${j + 1} dialed talkgroup">
+      <input class="mini" list="dmr-tgs" data-rttg="${j}" value="${esc(tgDisplay(r.tg))}" placeholder="dialed TG — type a name or number" aria-label="Route ${j + 1} dialed talkgroup (type to search)">
       <span class="arr" aria-hidden="true">→</span>
       <select class="mini" data-rtnet="${j}" aria-label="Route ${j + 1} gateway">${netOpts(r.network)}</select>
       <button class="netdel" data-rtdel="${j}" aria-label="Remove route ${j + 1}">✕</button>
@@ -779,9 +785,25 @@ function routingTable() {
   return `
     <div class="card" style="margin-top:16px;">
       <div class="route-title">TALKGROUP ROUTING</div>
+      <datalist id="dmr-tgs">${tgOpts}</datalist>
       ${body}
       <button class="btn ghost mini-btn" id="route-add"${nets.length ? "" : " disabled"}>+ ADD ROUTE</button>
     </div>`;
+}
+
+// tgDisplay renders a stored TG number as "3112 · Texas Statewide" when the name
+// is known, so a saved route reads legibly; unknown/blank falls back to the raw
+// value (RFC-0010).
+function tgDisplay(tg) {
+  if (!tg) return "";
+  const hit = dmrTGs.find((t) => t.id === String(tg));
+  return hit ? `${hit.id} · ${hit.name}` : String(tg);
+}
+// tgNumber extracts the leading TG number from a picker value ("3112 · Texas
+// Statewide" -> "3112"), so routing stores the number the gateway needs.
+function tgNumber(v) {
+  const m = /^\s*(\d+)/.exec(v || "");
+  return m ? m[1] : (v || "").trim();
 }
 
 function panelExpert(c, h) {
@@ -1696,6 +1718,10 @@ async function load() {
     dmrMasters = await fetch("/api/dmr/masters").then((r) => r.json()) || [];
     if (state.tab === "brandmeister") renderPanel();
   } catch { /* offline — the master dropdowns show what's cached (may be empty) */ }
+  try {
+    dmrTGs = await fetch("/api/dmr/talkgroups").then((r) => r.json()) || [];
+    if (state.tab === "dmr") renderPanel();
+  } catch { /* offline — the TG picker still accepts a typed number */ }
   // Host-network status is live system state, fetched separately from the store
   // config. Refresh whenever the Network tab is showing.
   if (state.tab === "network") loadNetwork();
@@ -2001,7 +2027,7 @@ document.getElementById("panels").addEventListener("input", (e) => {
   }
   // talkgroup routing table: slot / dialed TG / target gateway.
   if (t.dataset.rtslot != null) { edit.routes[+t.dataset.rtslot].slot = t.value; dirty.add("routes"); refreshActions(); return; }
-  if (t.dataset.rttg != null) { edit.routes[+t.dataset.rttg].tg = t.value; dirty.add("routes"); refreshActions(); return; }
+  if (t.dataset.rttg != null) { edit.routes[+t.dataset.rttg].tg = tgNumber(t.value); dirty.add("routes"); refreshActions(); return; }
   if (t.dataset.rtnet != null) { edit.routes[+t.dataset.rtnet].network = t.value; dirty.add("routes"); refreshActions(); return; }
   // per-network field, bound by network type (created on demand).
   if (t.dataset.netf != null) {

@@ -26,6 +26,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/demo"
 	"github.com/KN4OQW/waypoint/internal/dmrhosts"
+	"github.com/KN4OQW/waypoint/internal/dmrtg"
 	"github.com/KN4OQW/waypoint/internal/dstarhosts"
 	"github.com/KN4OQW/waypoint/internal/events"
 	"github.com/KN4OQW/waypoint/internal/hub"
@@ -77,6 +78,7 @@ type server struct {
 	dstarHosts string // cached D-Star reflector hostlist (JSON)
 	m17Hosts   string // cached M17 reflector hostlist (space/tab text)
 	dmrHosts   string // cached DMR master hostlist (DMR_Hosts.txt, space/tab text)
+	dmrTGs     string // cached DMR talkgroup-name list (RFC-0010)
 
 	// Native LCD renderer lifecycle. The renderer captures its config at start, so
 	// a config change (enable, geometry, pages) only reaches the panel when the
@@ -144,6 +146,17 @@ func (s *server) dmrMasters(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(m)
+}
+
+// dmrTalkgroups serves the cached DMR talkgroup-name list for inline name
+// resolution and the searchable TG picker (GET /api/dmr/talkgroups; RFC-0010).
+func (s *server) dmrTalkgroups(w http.ResponseWriter, _ *http.Request) {
+	tgs, err := dmrtg.Talkgroups(s.dmrTGs)
+	if err != nil {
+		tgs = []dmrtg.Talkgroup{} // no cache yet (offline / first boot) → empty list
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(tgs)
 }
 
 // ysfReflectors serves the cached YSF reflector hostlist for the settings-page
@@ -1201,6 +1214,7 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/dstar/reflectors", s.dstarReflectors)
 	mux.HandleFunc("/api/m17/reflectors", s.m17Reflectors)
 	mux.HandleFunc("/api/dmr/masters", s.dmrMasters)
+	mux.HandleFunc("/api/dmr/talkgroups", s.dmrTalkgroups) // TG name list (RFC-0010)
 	// Host/OS networking domain (docs/config-coverage.md §4).
 	mux.HandleFunc("/api/network/status", s.networkStatus)
 	mux.HandleFunc("/api/network/wifi/scan", s.networkWiFiScan)
@@ -1262,6 +1276,8 @@ func main() {
 	m17HostsURL := flag.String("m17-hosts-url", m17hosts.DefaultURL, "M17 reflector hostlist source URL")
 	dmrHosts := flag.String("dmr-hosts", "/usr/local/etc/DMR_Hosts.txt", "cached DMR master hostlist path (DMR_Hosts.txt)")
 	dmrHostsURL := flag.String("dmr-hosts-url", dmrhosts.DefaultURL, "DMR master hostlist source URL")
+	dmrTGs := flag.String("dmr-talkgroups", "/home/pi-star/waypoint/etc/TGList.txt", "cached DMR talkgroup-name list path (RFC-0010)")
+	dmrTGsURL := flag.String("dmr-talkgroups-url", dmrtg.DefaultURL, "DMR talkgroup-name list source URL")
 	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
 	eventsPath := flag.String("events-store", "/home/pi-star/waypoint/events.db", "path to the SQLite event-history store (RFC-0004); a config.db sibling")
 	nmKeyfileDir := flag.String("nm-keyfile-dir", "/etc/NetworkManager/system-connections", "directory for rendered NetworkManager keyfiles (waypoint-*.nmconnection)")
@@ -1305,7 +1321,7 @@ func main() {
 			// empty path so the render is emitted verbatim (RFC-0005).
 			OverridesDir: overridesRoot(*overridesDir, *demoMode),
 		},
-		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts,
+		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts, dmrTGs: *dmrTGs,
 		netKeyfileDir: *nmKeyfileDir, netConfirmTimeout: *netConfirmTimeout, netBackend: *netBackend,
 		timesyncdConf: *timesyncdConf,
 	}
@@ -1398,6 +1414,7 @@ func main() {
 		go dstarhosts.Run(context.Background(), *dstarHostsURL, *dstarHosts, 6*time.Hour)
 		go m17hosts.Run(context.Background(), *m17HostsURL, *m17Hosts, 6*time.Hour)
 		go dmrhosts.Run(context.Background(), *dmrHostsURL, *dmrHosts, 6*time.Hour)
+		go dmrtg.Run(context.Background(), *dmrTGsURL, *dmrTGs, 24*time.Hour)
 	}
 
 	mode := "live, mqtt " + *broker
