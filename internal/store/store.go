@@ -137,6 +137,33 @@ func (s *Store) Set(key string, value any, by string) error {
 	return err
 }
 
+// SetMany writes several settings in a single transaction, attributing every
+// change to by. It is all-or-nothing: either every key is upserted or none is, so
+// a caller that must switch a set of sections together (a profile activation,
+// RFC-0006) can never leave a half-applied hybrid on a crash mid-write. Like Set,
+// it touches only the named keys. Values are raw JSON, stored verbatim.
+func (s *Store) SetMany(values map[string]json.RawMessage, by string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() // no-op after a successful Commit
+	stmt, err := tx.Prepare(
+		`INSERT INTO settings(key, value, updated_at, updated_by) VALUES(?, ?, ?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	at := now()
+	for k, v := range values {
+		if _, err := stmt.Exec(k, string(v), at, by); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // All returns every setting as key -> raw JSON.
 func (s *Store) All() (map[string]json.RawMessage, error) {
 	rows, err := s.db.Query(`SELECT key, value FROM settings`)
