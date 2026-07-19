@@ -54,10 +54,15 @@ func Run(ctx context.Context, h *hub.Hub, opts Options) error {
 			return
 		}
 		log.Printf("mqtt: subscribed to %s on %s", topic, opts.Broker)
-		h.Publish(hub.Event{Time: time.Now().UTC(), Type: "link", Detail: "MMDVM-Host feed connected (" + opts.Broker + ")"})
+		// feed_up drives the status pipeline's Feed health (RFC-0008): the dashboard
+		// shows the MMDVM-Host data plane as connected the moment we (re)subscribe.
+		h.Publish(hub.Event{Time: time.Now().UTC(), Type: "feed_up", Detail: "MMDVM-Host feed connected (" + opts.Broker + ")"})
 	})
 	co.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
 		log.Printf("mqtt: connection to %s lost: %v", opts.Broker, err)
+		// feed_down so the dashboard reflects the lost data plane rather than latching
+		// the last-known state (RFC-0008 — truth, not a stuck value).
+		h.Publish(hub.Event{Time: time.Now().UTC(), Type: "feed_down", Detail: "MMDVM-Host feed lost: " + err.Error()})
 	})
 
 	client := mqtt.NewClient(co)

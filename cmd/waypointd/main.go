@@ -36,6 +36,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/netconfig"
 	"github.com/KN4OQW/waypoint/internal/nxdnhosts"
 	"github.com/KN4OQW/waypoint/internal/p25hosts"
+	"github.com/KN4OQW/waypoint/internal/status"
 	"github.com/KN4OQW/waypoint/internal/store"
 	"github.com/KN4OQW/waypoint/internal/ysfhosts"
 	"github.com/KN4OQW/waypoint/ui"
@@ -50,9 +51,10 @@ type server struct {
 	started   time.Time
 	store     *store.Store
 	storePath string
-	evStore   *events.Store // persistent event history (RFC-0004); nil only in tests
-	auth      *auth.Auth    // first-boot claim state machine + sessions (RFC-0002)
-	paths     config.Paths  // where each daemon reads its generated INI (render targets)
+	evStore   *events.Store      // persistent event history (RFC-0004); nil only in tests
+	auth      *auth.Auth         // first-boot claim state machine + sessions (RFC-0002)
+	paths     config.Paths       // where each daemon reads its generated INI (render targets)
+	agg       *status.Aggregator // live-status fold served by /api/status + WS (RFC-0008); nil only in some tests
 
 	// Host/OS networking domain (docs/config-coverage.md §4). netKeyfileDir is
 	// where the NetworkManager keyfile renderer writes waypoint-*.nmconnection;
@@ -1182,6 +1184,8 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/health", s.health)
 	mux.HandleFunc("/api/events", s.events)
 	mux.HandleFunc("/api/history", s.history)
+	mux.HandleFunc("/api/status", s.statusView) // live status snapshot (RFC-0008)
+	mux.HandleFunc("/api/ws", s.wsStream)       // WebSocket: events + status frames
 	mux.HandleFunc("/api/config", s.configView)
 	mux.HandleFunc("/api/config/apply", s.configApply)
 	mux.HandleFunc("/api/config/", s.configView) // PUT /api/config/{section}
@@ -1226,6 +1230,9 @@ func main() {
 	demoMode := flag.Bool("demo", false, "publish synthetic traffic (no radio required); always labeled in /api/health")
 	broker := flag.String("mqtt-broker", "127.0.0.1:1883", "MMDVM-Host MQTT broker host:port (live mode)")
 	mqttName := flag.String("mqtt-name", "mmdvm", "MMDVM-Host [MQTT] Name (topic prefix)")
+	statusPrefix := flag.String("status-topic-prefix", "waypoint/status", "MQTT prefix for the normalized status republish (RFC-0008)")
+	statusTick := flag.Duration("status-watchdog-tick", time.Second, "how often the status aggregator runs its stranded-transmission watchdog")
+	probeInterval := flag.Duration("gateway-probe-interval", time.Second, "how often the supervisor probes gateway liveness (RFC-0008; keep < 2s for the #5 acceptance)")
 	mqttUser := flag.String("mqtt-user", "", "MQTT username (optional)")
 	mqttPass := flag.String("mqtt-pass", "", "MQTT password (optional)")
 	mmdvmINI := flag.String("mmdvm-ini", "/home/pi-star/waypoint/etc/MMDVM-Host.ini", "MMDVM-Host.ini render target (the file the daemon reads)")
@@ -1289,6 +1296,7 @@ func main() {
 	s := &server{
 		hub: hub.New(), demo: *demoMode, started: time.Now(),
 		store: st, storePath: *storePath, evStore: ev,
+		agg: status.New(status.DefaultTxTTL),
 		paths: config.Paths{
 			MMDVM: *mmdvmINI, DMRGateway: *dmrgwINI, YSFGateway: *ysfgwINI, DGIdGateway: *dgidgwINI,
 			P25Gateway: *p25gwINI, NXDNGateway: *nxdngwINI, DStarGateway: *dstargwINI, M17Gateway: *m17gwINI,
@@ -1349,6 +1357,10 @@ func main() {
 		return h.RetentionDays
 	})
 
+	// The status aggregator folds the event stream into the live status served by
+	// /api/status + the WebSocket (RFC-0008). Runs in both demo and live mode.
+	go s.agg.Run(context.Background(), s.hub, *statusTick)
+
 	if *demoMode {
 		go demo.Run(context.Background(), s.hub)
 	} else {
@@ -1362,6 +1374,15 @@ func main() {
 				log.Printf("mqtt bridge stopped: %v", err)
 			}
 		}()
+		// Supervisor liveness probe: emits gateway_up/gateway_down so a killed or
+		// restarted gateway shows truth within the probe interval — the #5 acceptance,
+		// from systemd state (not log scraping). Live mode only (a demo runs no gateways).
+		go s.runLivenessProbe(context.Background(), *probeInterval)
+		// Republish the normalized status onto retained waypoint/status/# topics for
+		// Home Assistant and other consumers (RFC-0008). Best-effort, live mode only.
+		pub := mqtt.NewPublisher(mqtt.Options{Broker: *broker, Name: *mqttName, Username: *mqttUser, Password: *mqttPass})
+		prefix := *statusPrefix
+		s.agg.OnChange(func(st status.Status) { status.Republish(st, prefix, pub.Publish) })
 		// Keep the reflector hostlists fresh for the gateways + pickers. The YSF
 		// list honors the "UPPERCASE Hostfiles" toggle, read from the store each
 		// refresh (both YSFGateway and DGIdGateway consume this same file).
