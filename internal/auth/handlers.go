@@ -192,6 +192,22 @@ func (a *Auth) gateClaimed(w http.ResponseWriter, r *http.Request, next http.Han
 		next.ServeHTTP(w, r)
 		return
 	}
+	// Claimed-per-cache but unauthenticated: before serving the login experience,
+	// reconcile the cache with the store. A `waypointd reset-claim` (RFC-0002 reset
+	// path a) run against a live daemon wipes the admin credential from the shared
+	// store but cannot reach into this long-lived process's cached claim state — so
+	// the cache would keep the device in login mode, stranding every visitor at a
+	// login screen for a credential that no longer exists, recoverable only by a
+	// restart. Re-reading here, on the cold path we only reach when authentication
+	// has already failed, lets the first request after an out-of-process reset
+	// self-heal the cache back to claim mode. The authenticated hot path above never
+	// pays for this; a store error leaves the cache untouched (fail toward requiring
+	// auth).
+	if claimed, err := a.store.IsClaimed(); err == nil && !claimed {
+		a.invalidateClaimed()
+		a.gateUnclaimed(w, r, next)
+		return
+	}
 	// Unauthenticated: the login page is the only asset served; everything else,
 	// including the SSE stream and the config API, is 401.
 	if isPageAsset(r) {

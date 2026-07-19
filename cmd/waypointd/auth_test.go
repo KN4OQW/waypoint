@@ -548,6 +548,45 @@ func TestResetClaimSubcommand(t *testing.T) {
 	}
 }
 
+// A reset-claim run out-of-process against a LIVE daemon must take effect on that
+// daemon, not only after a restart. The claim-state cache is invalidated on the
+// daemon's own claim/reset, but the reset-claim subcommand writes the shared store
+// from a separate process and cannot reach into this daemon's memory. Without the
+// gate reconciling the cache with the store, the device would keep serving login
+// mode — 401 for the config surface, a login screen at "/" — for a credential that
+// no longer exists, re-claimable only after a restart. This is the same warm-cache
+// Auth throughout (unlike TestResetClaimSubcommand, which rebuilds the env and so
+// only exercises the restart path). Regression test for the hardware finding.
+func TestResetClaimReflectedOnLiveDaemon(t *testing.T) {
+	e := newAuthEnv(t, filepath.Join(t.TempDir(), "config.db"))
+	cookie := e.claim(t, "kn4oqw", "goodpassword")
+	// Warm the claim-state cache to "claimed" through a served request.
+	if code := e.get(t, "/api/config", cookie); code != http.StatusOK {
+		t.Fatalf("claimed GET /api/config = %d, want 200", code)
+	}
+	// Simulate the out-of-process `waypointd reset-claim`: it writes this daemon's
+	// shared store directly, without touching the in-memory cache.
+	if err := e.as.ResetClaim(); err != nil {
+		t.Fatal(err)
+	}
+	// The live daemon (same Auth, still-warm cache) must serve claim mode now, both
+	// to the old cookie (its session was wiped) and to a fresh unauthenticated caller.
+	rec := httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, jsonReq("GET", "/api/config", nil))
+	if denied, mode := gateDenial(rec); !denied || rec.Code != http.StatusForbidden || mode != "claim" {
+		t.Fatalf("post-reset live GET /api/config = %d mode=%q, want 403 claim", rec.Code, mode)
+	}
+	if code := e.get(t, "/api/config", cookie); code != http.StatusForbidden {
+		t.Fatalf("post-reset live GET /api/config with old cookie = %d, want 403", code)
+	}
+	// The top level serves the claim page, and the device is re-claimable in-process
+	// (e.claim asserts the 201 for us).
+	if code := e.get(t, "/", nil); code != http.StatusOK {
+		t.Fatalf("post-reset GET / = %d, want 200 (claim page)", code)
+	}
+	_ = e.claim(t, "n0call", "anotherpassword")
+}
+
 // The boot-partition marker reset wipes the credential, revokes sessions, deletes
 // the marker, and logs loudly.
 func TestResetMarker(t *testing.T) {
