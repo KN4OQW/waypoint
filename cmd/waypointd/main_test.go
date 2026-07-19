@@ -19,6 +19,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/events"
 	"github.com/KN4OQW/waypoint/internal/hub"
+	"github.com/KN4OQW/waypoint/internal/status"
 	"github.com/KN4OQW/waypoint/internal/store"
 )
 
@@ -637,5 +638,86 @@ func TestImportAPI(t *testing.T) {
 	m2, _ := config.Load(st2)
 	if m2.General.Callsign != "W1ABC" {
 		t.Errorf("upload import did not populate the store: %+v", m2.General)
+	}
+}
+
+// GET /api/status returns the aggregator's live snapshot, and the liveness probe
+// emits gateway_up/gateway_down which the aggregator folds — the #5 "kill/restart
+// a gateway → truth" path, exercised with a faked systemctl (RFC-0008).
+func TestStatusAndLivenessProbe(t *testing.T) {
+	// dmrgateway "inactive", the rest "active".
+	down := map[string]bool{"waypoint-dmrgateway.service": true}
+	orig := systemctlRun
+	systemctlRun = func(args ...string) ([]byte, error) {
+		if args[0] == "is-active" {
+			unit := args[len(args)-1]
+			if down[unit] {
+				return []byte("inactive\n"), fmt.Errorf("exit status 3")
+			}
+			return []byte("active\n"), nil
+		}
+		return nil, nil
+	}
+	t.Cleanup(func() { systemctlRun = orig })
+
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	// A minimal enabled config so RenderTargets yields gateway units to probe.
+	if err := st.Set("modes", config.Modes{DMR: true, YSF: true}, "seed"); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	s := &server{
+		hub: hub.New(), store: st, agg: status.New(status.DefaultTxTTL),
+		paths: config.Paths{
+			MMDVM: dir + "/MMDVM-Host.ini", DMRGateway: dir + "/DMRGateway.ini",
+			YSFGateway: dir + "/YSFGateway.ini", P25Gateway: dir + "/P25Gateway.ini",
+			NXDNGateway: dir + "/NXDNGateway.ini", DStarGateway: dir + "/dstargateway.cfg",
+			M17Gateway: dir + "/M17Gateway.ini",
+		},
+	}
+
+	// Feed the aggregator directly from the hub, as main() wires it.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.agg.Run(ctx, s.hub, 10*time.Millisecond)
+
+	// One probe pass emits gateway_up/down per unit.
+	pctx, pcancel := context.WithCancel(context.Background())
+	go s.runLivenessProbe(pctx, 20*time.Millisecond)
+	// Wait for the fold to see the dmrgateway-down event.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		snap := s.agg.Snapshot()
+		if g, ok := snap.Gateways["dmrgateway"]; ok && !g.Up {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	pcancel()
+
+	snap := s.agg.Snapshot()
+	if g, ok := snap.Gateways["dmrgateway"]; !ok || g.Up {
+		t.Errorf("dmrgateway should be probed down: %+v", snap.Gateways)
+	}
+	if g, ok := snap.Gateways["dmrgateway"]; ok && g.Up {
+		t.Errorf("dmrgateway up=true, want down")
+	}
+
+	// GET /api/status serves the snapshot.
+	rec := httptest.NewRecorder()
+	s.statusView(rec, httptest.NewRequest("GET", "/api/status", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status: %d", rec.Code)
+	}
+	var got status.Status
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Mode == "" {
+		t.Error("status mode should be set (IDLE at minimum)")
 	}
 }

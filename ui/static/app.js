@@ -194,9 +194,46 @@ async function loadHistory() {
 
 function connect() {
   const es = new EventSource("/api/events");
-  es.onopen = () => setConn(true);
-  es.onerror = () => setConn(false); // EventSource auto-reconnects
+  es.onerror = () => {}; // EventSource auto-reconnects; the feed LED comes from /api/status
   es.onmessage = (m) => handle(JSON.parse(m.data));
+}
+
+// loadStatus polls the server-computed live status (RFC-0008). This is the
+// authoritative, self-healing truth — the connection LED reflects the actual
+// MMDVM-Host feed (not just an open SSE socket), a stranded transmission that
+// never got a closing event self-clears here, and gateway liveness comes from the
+// supervisor. The SSE stream still drives the event log and last-heard for
+// immediacy; the poll corrects any state the raw stream can't (the #5 fix).
+function renderGateways(gws) {
+  const items = Object.entries(gws || {}).sort((a, b) => a[0].localeCompare(b[0]));
+  $("#gateways-empty").hidden = items.length > 0;
+  $("#gateways").innerHTML = items.map(([name, g]) =>
+    `<li class="${g.up ? "" : "down"}"><span class="dot" aria-hidden="true"></span>${esc(name)}` +
+    `<span class="state">${g.up ? "running ✓" : "not running ✗"}</span></li>`
+  ).join("");
+}
+
+async function loadStatus() {
+  let s;
+  try {
+    s = await (await fetch("/api/status")).json();
+  } catch {
+    setConn(false);
+    return;
+  }
+  setConn(!!(s.feed && s.feed.connected));
+  setMode(s.mode);
+  // On-air is authoritative from the server (self-heals a stranded transmission).
+  if (s.tx) {
+    state.active = {
+      type: s.tx.direction === "network" ? "net_voice_start" : "rf_voice_start",
+      source: s.tx.source, dest: s.tx.dest, mode: s.tx.mode, slot: s.tx.slot, network: s.tx.network,
+    };
+  } else {
+    state.active = null;
+  }
+  renderOnAir();
+  renderGateways(s.gateways);
 }
 
 applyTheme(localStorage.getItem("wp-theme") || "phosphor");
@@ -204,4 +241,6 @@ renderThemes();
 loadHealth();
 loadCallsign();
 loadHistory().then(connect); // seed persistent history, then attach the live tail
+loadStatus(); // server-computed truth (feed, on-air self-heal, gateways)
+setInterval(loadStatus, 2000); // reflect gateway kill/restart within the #5 window
 setInterval(renderLastHeard, 15000); // keep "ago" fresh
