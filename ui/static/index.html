@@ -89,6 +89,14 @@
   .swatch .dot { width: 12px; height: 12px; border-radius: 50%; }
   .swatch.on { background: #12161d; }
 
+  /* session footer — persistent logout control, shared with settings */
+  .session-foot { padding: 12px 18px 18px; border-top: 1px solid var(--side-line); }
+  .logout-btn { display: flex; align-items: center; gap: 9px; width: 100%; padding: 10px 12px; border-radius: 8px;
+    background: #0b0e13; border: 1px solid #1a1f28; color: var(--ink-body); cursor: pointer;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
+  .logout-btn:hover { border-color: var(--field-line); background: #0d1016; color: var(--ink-head); }
+  .logout-btn .lo-ic { font-size: 13px; color: var(--muted); }
+
   /* main — identical shell to settings */
   main { min-width: 0; display: flex; flex-direction: column; max-height: 100vh; overflow: hidden; }
   .statusbar { border-bottom: 1px solid var(--side-line); background: rgba(9,11,15,.72); backdrop-filter: blur(6px); padding: 13px 30px; display: flex; align-items: center; gap: 28px; flex-wrap: wrap; }
@@ -176,6 +184,9 @@
       <div class="theme-head" id="theme-head">DISPLAY THEME</div>
       <div class="swatches" id="swatches" role="group" aria-labelledby="theme-head"></div>
     </div>
+    <div class="session-foot">
+      <button type="button" class="logout-btn" id="logout-btn"><span class="lo-ic" aria-hidden="true">⎋</span><span>Log out</span></button>
+    </div>
   </aside>
 
   <main id="main">
@@ -233,6 +244,7 @@
   </main>
 </div>
 
+<script src="session.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
