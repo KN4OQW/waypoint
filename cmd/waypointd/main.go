@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/KN4OQW/waypoint/internal/auth"
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/demo"
 	"github.com/KN4OQW/waypoint/internal/dmrhosts"
@@ -48,6 +49,7 @@ type server struct {
 	started   time.Time
 	store     *store.Store
 	storePath string
+	auth      *auth.Auth   // first-boot claim state machine + sessions (RFC-0002)
 	paths     config.Paths // where each daemon reads its generated INI (render targets)
 
 	// Host/OS networking domain (docs/config-coverage.md §4). netKeyfileDir is
@@ -743,7 +745,53 @@ func hostIPv4(list func() ([]net.Addr, error)) string {
 	return "no-ip"
 }
 
+// Claimed reports whether the device has been claimed (RFC-0002), from the auth
+// subsystem's cached, store-derived state. It is the state the HTTP gate serves
+// its per-state route allowlist from.
+func (s *server) Claimed() bool { return s.auth.Claimed() }
+
+// newMux registers every route the daemon serves. It is separate from main so the
+// gate integration tests exercise the exact route table the daemon runs, wrapped
+// in the same s.auth.Gate. The claim/session endpoints are the only pre-auth API
+// routes; every other route sits behind the gate and defaults to denied.
+func (s *server) newMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/health", s.health)
+	mux.HandleFunc("/api/events", s.events)
+	mux.HandleFunc("/api/config", s.configView)
+	mux.HandleFunc("/api/config/apply", s.configApply)
+	mux.HandleFunc("/api/config/", s.configView) // PUT /api/config/{section}
+	mux.HandleFunc("/api/ysf/reflectors", s.ysfReflectors)
+	mux.HandleFunc("/api/p25/reflectors", s.p25Reflectors)
+	mux.HandleFunc("/api/nxdn/reflectors", s.nxdnReflectors)
+	mux.HandleFunc("/api/dstar/reflectors", s.dstarReflectors)
+	mux.HandleFunc("/api/m17/reflectors", s.m17Reflectors)
+	mux.HandleFunc("/api/dmr/masters", s.dmrMasters)
+	// Host/OS networking domain (docs/config-coverage.md §4).
+	mux.HandleFunc("/api/network/status", s.networkStatus)
+	mux.HandleFunc("/api/network/wifi/scan", s.networkWiFiScan)
+	mux.HandleFunc("/api/network/timezones", s.networkTimezones)
+	mux.HandleFunc("/api/network/config", s.networkConfig)
+	mux.HandleFunc("/api/network/apply", s.networkApply)
+	mux.HandleFunc("/api/network/confirm", s.networkConfirm)
+	mux.HandleFunc("/api/network/host/apply", s.networkHostApply)
+	// First-boot claim + session endpoints (RFC-0002). These are the only routes
+	// the gate serves before authentication (claim while unclaimed, session while
+	// claimed); everything else above is behind the wall.
+	mux.HandleFunc("/api/claim", s.auth.HandleClaim)
+	mux.HandleFunc("/api/session", s.auth.HandleSession)
+	mux.Handle("/", http.FileServerFS(ui.FS()))
+	return mux
+}
+
 func main() {
+	// Subcommands are dispatched before flag parsing: `waypointd reset-claim`
+	// connects to the store directly and returns the device to claim mode, for an
+	// operator with a shell on the box (RFC-0002 "Reset procedure (a)").
+	if len(os.Args) > 1 && os.Args[1] == "reset-claim" {
+		os.Exit(runResetClaim(os.Args[2:]))
+	}
+
 	addr := flag.String("addr", "127.0.0.1:8073", "listen address for the API and UI")
 	demoMode := flag.Bool("demo", false, "publish synthetic traffic (no radio required); always labeled in /api/health")
 	broker := flag.String("mqtt-broker", "127.0.0.1:1883", "MMDVM-Host MQTT broker host:port (live mode)")
@@ -781,6 +829,10 @@ func main() {
 	netConfirmTimeout := flag.Duration("network-confirm-timeout", netconfig.DefaultConfirmTimeout, "confirm-or-revert rollback window for a network apply")
 	netBackend := flag.String("network-backend", "composite", "network rollback backend: composite (NM D-Bus checkpoint + keyfile snapshot) or keyfile (fallback, no live-device rollback)")
 	timesyncdConf := flag.String("timesyncd-conf", "/etc/systemd/timesyncd.conf.d/waypoint.conf", "rendered systemd-timesyncd drop-in for NTP servers")
+	// The session cookie's Secure flag is gated on TLS being present: it stays off
+	// until the TLS PR serves HTTPS and flips this default, so a pre-TLS build over
+	// plain HTTP does not set a flag that would make the cookie unusable (RFC-0002).
+	secureCookie := flag.Bool("secure-cookie", false, "set the session cookie Secure flag (enable once TLS is serving HTTPS)")
 	flag.Parse()
 
 	st, err := store.Open(*storePath)
@@ -808,6 +860,15 @@ func main() {
 	}
 	if err := s.backfillDefaults(); err != nil {
 		log.Printf("config store backfill skipped: %v", err)
+	}
+
+	// First-boot claim state machine + sessions (RFC-0002). buildAuth also consumes
+	// any boot-partition reset marker before the server starts serving, so a device
+	// booted with a marker comes up unclaimed. A failure here is fatal: starting
+	// with an unknown/inconsistent auth state could expose config surfaces.
+	s.auth, err = buildAuth(st, *secureCookie)
+	if err != nil {
+		log.Fatalf("auth: %v", err)
 	}
 
 	// Native LCD driver: paints a physical HD44780 from the live status plane when
@@ -851,36 +912,21 @@ func main() {
 		go dmrhosts.Run(context.Background(), *dmrHostsURL, *dmrHosts, 6*time.Hour)
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/health", s.health)
-	mux.HandleFunc("/api/events", s.events)
-	mux.HandleFunc("/api/config", s.configView)
-	mux.HandleFunc("/api/config/apply", s.configApply)
-	mux.HandleFunc("/api/config/", s.configView) // PUT /api/config/{section}
-	mux.HandleFunc("/api/ysf/reflectors", s.ysfReflectors)
-	mux.HandleFunc("/api/p25/reflectors", s.p25Reflectors)
-	mux.HandleFunc("/api/nxdn/reflectors", s.nxdnReflectors)
-	mux.HandleFunc("/api/dstar/reflectors", s.dstarReflectors)
-	mux.HandleFunc("/api/m17/reflectors", s.m17Reflectors)
-	mux.HandleFunc("/api/dmr/masters", s.dmrMasters)
-	// Host/OS networking domain (docs/config-coverage.md §4).
-	mux.HandleFunc("/api/network/status", s.networkStatus)
-	mux.HandleFunc("/api/network/wifi/scan", s.networkWiFiScan)
-	mux.HandleFunc("/api/network/timezones", s.networkTimezones)
-	mux.HandleFunc("/api/network/config", s.networkConfig)
-	mux.HandleFunc("/api/network/apply", s.networkApply)
-	mux.HandleFunc("/api/network/confirm", s.networkConfirm)
-	mux.HandleFunc("/api/network/host/apply", s.networkHostApply)
-	mux.Handle("/", http.FileServerFS(ui.FS()))
-
 	mode := "live, mqtt " + *broker
 	if *demoMode {
 		mode = "demo"
 	}
-	log.Printf("waypointd %s (%s) listening on http://%s", Version, mode, *addr)
+	claimState := "claimed"
+	if !s.auth.Claimed() {
+		claimState = "UNCLAIMED (serving claim mode only)"
+	}
+	log.Printf("waypointd %s (%s, %s) listening on http://%s", Version, mode, claimState, *addr)
 	srv := &http.Server{
-		Addr:              *addr,
-		Handler:           mux,
+		Addr: *addr,
+		// The auth gate fronts the entire mux: it is the single seam that enforces
+		// the claim state machine and session requirement, so no handler re-checks
+		// auth (RFC-0002). A route absent from the gate's allowlist defaults to denied.
+		Handler:           s.auth.Gate(s.newMux()),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	log.Fatal(srv.ListenAndServe())
