@@ -499,6 +499,12 @@ func dstarGatewayFromINI(xg *INI) DStarGateway {
 // lost (best-effort + preserve). Per-TG DMRRoute overrides are a Waypoint-native
 // concept and are not reverse-engineered from the file.
 func importNetworks(dg *INI, dmrID string) []Network {
+	// A migration may have no DMRGateway file at all (RFC-0007): no DMRGateway ⇒ no
+	// networks, mirroring how every other absent gateway yields its defaults. The
+	// seed path always passes a non-nil dg, so this only guards the import path.
+	if dg == nil {
+		return nil
+	}
 	var nets []Network
 	for n := 1; n <= 8; n++ {
 		sec := fmt.Sprintf("DMR Network %d", n)

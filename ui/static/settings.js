@@ -43,6 +43,9 @@ let m17Refs = [];           // cached M17 reflector list for the startup picker
 let overridesData = null;   // GET /api/overrides — the override layer's effective records (read-only, RFC-0005)
 let profiles = null;        // saved connection profiles from /api/profiles (RFC-0006)
 let profileBusy = false;    // an activate/save/import is in flight (disables the buttons)
+let importScan = null;      // last /api/import/scan result {report, preview} (RFC-0007)
+let importInput = null;     // remembered scan input to replay on Import: {dir} or {files: FileList}
+let importBusy = false;     // a scan/import is in flight
 let netStatus = null;       // live host-network state from /api/network/status (read-only)
 let netEdit = null;          // working copy of /api/network/config (editable)
 let netDirty = false;        // unsaved connection/VLAN edits (guarded Apply Network)
@@ -785,7 +788,47 @@ function panelExpert(c, h) {
   const rows = card("VERSIONS",
     `<div class="row"><label>Dashboard (waypointd)</label><input value="${esc((h && h.version) || "—")}" readonly></div>` +
     `<div class="row"><label>Config store</label><input value="${esc((c.sources && c.sources.store) || "—")}" readonly></div>`);
-  return `<div class="grid2">${rows}${note("Raw INI editing and power controls land in a later slice. Config now lives in the store; the INIs are regenerated on Apply — <a href='https://github.com/KN4OQW/waypoint/issues/29'>waypoint#29</a>.")}</div>${panelOverrides()}`;
+  return `<div class="grid2">${rows}${note("Raw INI editing and power controls land in a later slice. Config now lives in the store; the INIs are regenerated on Apply — <a href='https://github.com/KN4OQW/waypoint/issues/29'>waypoint#29</a>.")}</div>${panelImport()}${panelOverrides()}`;
+}
+
+// panelImport is the Pi-Star / WPSD migration surface (RFC-0007 / issue #4): point
+// Waypoint at a mounted card (a directory path) or upload the incumbent config
+// files, Scan for a preview + report, then Import to bulk-write the store.
+function panelImport() {
+  const dis = importBusy ? " disabled" : "";
+  const input = card("IMPORT FROM PI-STAR / WPSD", `
+    <div class="row"><label>Mounted card path</label>
+      <input id="import-dir" placeholder="/mnt/sdcard  (or /media/…)" aria-label="Mounted incumbent card path"></div>
+    <div style="display:flex; gap:12px; align-items:center; margin-top:6px; flex-wrap:wrap;">
+      <button type="button" id="import-scan-dir"${dis} style="padding:8px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:6px;">SCAN DIRECTORY</button>
+      <label class="import-upload" style="font-family:var(--mono); font-size:12px; cursor:pointer; text-decoration:underline;">
+        …or upload config files<input id="import-files" type="file" multiple style="display:none;"></label>
+    </div>
+    ${note("Copy the incumbent's <code>/etc/mmdvmhost</code>, <code>/etc/dmrgateway</code> and other gateway config files off the old card, or mount the card and give its path. Nothing is written until you press <b>Import</b>.")}`);
+
+  const result = importScan ? importReport(importScan) : "";
+  return `<div style="margin-top:14px;">${input}${result}</div>`;
+}
+
+function importReport(s) {
+  const rep = s.report || {};
+  const files = (rep.files || []).map((f) =>
+    `<div class="row"><label>${esc(f.role)}</label><span style="font-family:var(--mono); font-size:12px;">${f.found ? "✓ " + esc(f.name) : "— not found"}</span></div>`).join("");
+  const modes = (rep.modes || []).length ? esc((rep.modes || []).join(", ")) : "—";
+  const nets = (rep.networks || []).map((n) =>
+    `<div class="row"><label>${esc(n.name)}</label><span style="font-family:var(--mono); font-size:12px;">${esc(n.type)}${n.custom ? " · <b>custom routing preserved</b>" : ""}${n.enabled ? "" : " · disabled"}</span></div>`).join("") || note("No DMR networks found.");
+  const unmapped = (rep.unmapped || []).length
+    ? `<div class="card"><div class="card-head"><span class="sq"></span><span class="t">WON'T CARRY OVER</span></div>${(rep.unmapped || []).map((u) => `<div class="row"><label>${esc(u.file)} · ${esc(u.section)}</label><span style="font-family:var(--mono); font-size:12px;">${esc(u.what)}</span></div>`).join("")}${note("These incumbent features aren't modeled yet — reconfigure them in Waypoint after importing.")}</div>`
+    : note("Everything found maps to Waypoint — nothing left behind.");
+  const dis = importBusy ? " disabled" : "";
+  const summary = card("SCAN RESULT",
+    `<div class="row"><label>Detected</label><span style="font-family:var(--mono); font-size:12px;">${esc(rep.platform || "unknown")}</span></div>` +
+    `<div class="row"><label>Modes</label><span style="font-family:var(--mono); font-size:12px;">${modes}</span></div>` + files);
+  const apply = `<div style="display:flex; gap:12px; align-items:center; margin-top:10px;">
+      <button type="button" id="import-apply"${dis} style="padding:9px 20px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">IMPORT INTO STORE</button>
+      <span class="note" style="margin:0;">Overwrites your current mode &amp; network config with the scanned values. Passwords carry over from the card; review, then <b>Apply</b> to go live.</span>
+    </div>`;
+  return `<div class="stack" style="margin-top:12px;">${summary}${card("DMR NETWORKS", nets)}${unmapped}</div>${apply}`;
 }
 
 // panelOverrides renders the read-only Override layer view (RFC-0005 / issue #2):
@@ -1745,6 +1788,46 @@ async function importProfile(file) {
   await loadProfiles();
 }
 
+// --- Config import / migration (RFC-0007) --------------------------------
+// buildImportBody turns the remembered input into a fetch body + headers: a JSON
+// {dir} for a mounted path, or multipart for uploaded files.
+function importFetchInit(input) {
+  if (input.dir != null) {
+    return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dir: input.dir }) };
+  }
+  const fd = new FormData();
+  for (const f of input.files) fd.append("files", f, f.name);
+  return { method: "POST", body: fd }; // browser sets the multipart Content-Type + boundary
+}
+
+async function runImportScan(input) {
+  importInput = input;
+  importBusy = true; importScan = null; renderPanel();
+  try {
+    const r = await fetch("/api/import/scan", importFetchInit(input));
+    if (!r.ok) { alert("Scan failed: " + (await r.text())); importInput = null; }
+    else importScan = await r.json();
+  } catch (e) { alert("Scan failed: " + e); importInput = null; }
+  importBusy = false; renderPanel();
+}
+
+async function applyImport() {
+  if (!importInput) return;
+  if (!confirm("Import the scanned config? This overwrites your current mode & network settings. You'll review and Apply afterward.")) return;
+  importBusy = true; renderPanel();
+  try {
+    const r = await fetch("/api/import/apply", importFetchInit(importInput));
+    if (!r.ok) alert("Import failed: " + (await r.text()));
+    else {
+      alert("Imported. Review the settings, then press Apply to regenerate configs and restart the stack.");
+      importScan = null; importInput = null;
+      await load(); // refresh the editor from the freshly-written store
+    }
+  } catch (e) { alert("Import failed: " + e); }
+  importBusy = false;
+  renderPanel();
+}
+
 // netConnByType resolves (creating if needed) the single managed connection of a
 // type — the editor surfaces one Ethernet + one Wi-Fi profile.
 function netConnByType(type) { return type === "wifi" ? netWifiConn() : netEthConn(); }
@@ -1935,6 +2018,15 @@ document.getElementById("panels").addEventListener("click", (e) => {
   if (px) { exportProfile(px.dataset.profExport); return; }
   const pd = e.target.closest("[data-prof-delete]");
   if (pd) { deleteProfile(pd.dataset.profDelete); return; }
+  // --- config import / migration (RFC-0007) ---
+  if (e.target.id === "import-scan-dir") {
+    const el = document.getElementById("import-dir");
+    const dir = (el && el.value || "").trim();
+    if (!dir) { el && el.focus(); return; }
+    runImportScan({ dir });
+    return;
+  }
+  if (e.target.id === "import-apply") { applyImport(); return; }
   const tg = e.target.closest("[data-toggle]");
   if (tg) {
     const [sec, key] = tg.dataset.toggle.split(".");
@@ -1987,6 +2079,10 @@ document.getElementById("panels").addEventListener("change", (e) => {
   if (e.target.id === "prof-import-file") {
     importProfile(e.target.files && e.target.files[0]);
     e.target.value = ""; // allow re-importing the same file
+  }
+  // Incumbent config-file upload → scan (RFC-0007). Keep the FileList to replay on Import.
+  if (e.target.id === "import-files") {
+    if (e.target.files && e.target.files.length) runImportScan({ files: e.target.files });
   }
 });
 // Keyboard support for the network role="switch" pills (Wi-Fi hidden, NTP enable):

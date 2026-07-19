@@ -35,6 +35,7 @@ Rationale for the split: the g4klx daemons are actively maintained upstream and 
 - The store keeps settings for disabled modes (the incumbent "Apply Changes ate my DMR password" family is structurally impossible).
 - **Override layer** ([RFC-0005](rfcs/0005-override-layer.md)): `overrides.d/<daemon>.d/*.conf` drop-ins merge last into generated configs (section/key merge, `!unset`, lexical precedence); hostfile `prepend.d`/`append.d` hooks. Overrides are surfaced read-only in the UI, not fought by the updater.
 - **Profiles** ([RFC-0006](rfcs/0006-connection-profiles.md)): named snapshots of the network/mode subset of the store; atomic one-click switch; import/export as JSON files (secrets scrubbed, hardware fingerprint attached; signing is a follow-up). Identity and calibration are never captured.
+- **Migration** ([RFC-0007](rfcs/0007-config-import.md)): one-time import from a mounted Pi-Star/WPSD card or uploaded config files; reuses the seed-path INI mapper, previews a report of unmappable features, then bulk-writes the store transactionally.
 
 ### Supervisor
 - Owns systemd units for stack daemons; derives desired-state from the config store.

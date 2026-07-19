@@ -546,6 +546,22 @@ func (m *Model) Save(s *store.Store, by string) error {
 	return nil
 }
 
+// SaveAtomic writes every section in a single transaction (store.SetMany), so a
+// bulk write — a config import (RFC-0007) or any all-or-nothing model swap — either
+// lands completely or not at all, never leaving a half-written hybrid. Unlike Save
+// (independent per-section writes), a crash mid-write rolls back to the prior state.
+func (m *Model) SaveAtomic(s *store.Store, by string) error {
+	values := make(map[string]json.RawMessage, len(m.sections()))
+	for key, ptr := range m.sections() {
+		raw, err := json.Marshal(ptr)
+		if err != nil {
+			return err
+		}
+		values[key] = raw
+	}
+	return s.SetMany(values, by)
+}
+
 // SetSection merges a partial JSON body into one section and writes it back,
 // rejecting unknown fields (schema drift is a caller error, not silently kept).
 // It is a merge, not a replace: the current section is loaded first, then the
