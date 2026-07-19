@@ -33,12 +33,14 @@ import (
 	"github.com/KN4OQW/waypoint/internal/lcd"
 	"github.com/KN4OQW/waypoint/internal/lcd/hd44780"
 	"github.com/KN4OQW/waypoint/internal/m17hosts"
+	"github.com/KN4OQW/waypoint/internal/minisign"
 	"github.com/KN4OQW/waypoint/internal/mqtt"
 	"github.com/KN4OQW/waypoint/internal/netconfig"
 	"github.com/KN4OQW/waypoint/internal/nxdnhosts"
 	"github.com/KN4OQW/waypoint/internal/p25hosts"
 	"github.com/KN4OQW/waypoint/internal/status"
 	"github.com/KN4OQW/waypoint/internal/store"
+	"github.com/KN4OQW/waypoint/internal/verifydl"
 	"github.com/KN4OQW/waypoint/internal/ysfhosts"
 	"github.com/KN4OQW/waypoint/ui"
 )
@@ -558,6 +560,55 @@ func defaultNodeID() string {
 		return "waypoint"
 	}
 	return b.String()
+}
+
+// hostfileVerify builds the verification config for reference-data downloads
+// (RFC-0013). With no key path it verifies nothing (plain fetch, today's default);
+// with a key it verifies each list against its <url>.minisig. A key that fails to
+// load is fatal only when verification was required, else it degrades to a warning.
+func hostfileVerify(pubkeyPath string, require bool) verifydl.Verify {
+	v := verifydl.Verify{Require: require}
+	if pubkeyPath == "" {
+		return v
+	}
+	b, err := os.ReadFile(pubkeyPath)
+	if err != nil {
+		log.Printf("hostfile verification: cannot read pubkey %s: %v (downloads unverified)", pubkeyPath, err)
+		return v
+	}
+	pk, err := minisign.ParsePublicKey(string(b))
+	if err != nil {
+		log.Printf("hostfile verification: bad pubkey %s: %v (downloads unverified)", pubkeyPath, err)
+		return v
+	}
+	v.PubKey, v.HasPubKey = pk, true
+	return v
+}
+
+// runVerify implements `waypointd -verify <file> -verify-sig <file.minisig>
+// -verify-pubkey <key>`: verify a signed artifact and exit 0/1 with a clear
+// message. It is the operator/updater-facing entry to the same primitive the
+// atomic updater (#13) uses before applying a release (RFC-0013).
+func runVerify(file, sigPath, pubPath string) {
+	pb, err := os.ReadFile(pubPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "verify: read pubkey: %v\n", err)
+		os.Exit(2)
+	}
+	pk, err := minisign.ParsePublicKey(string(pb))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "verify: bad pubkey: %v\n", err)
+		os.Exit(2)
+	}
+	if sigPath == "" {
+		sigPath = file + ".minisig"
+	}
+	if err := minisign.VerifyFile(pk, file, sigPath); err != nil {
+		fmt.Fprintf(os.Stderr, "verify: REJECTED: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("verify: OK — %s is signed by the trusted key\n", file)
+	os.Exit(0)
 }
 
 // overridesRoot returns the override drop-in root, or "" in demo mode so a demo
@@ -1308,6 +1359,11 @@ func main() {
 	dmrHostsURL := flag.String("dmr-hosts-url", dmrhosts.DefaultURL, "DMR master hostlist source URL")
 	dmrTGs := flag.String("dmr-talkgroups", "/home/pi-star/waypoint/etc/TGList.txt", "cached DMR talkgroup-name list path (RFC-0010)")
 	dmrTGsURL := flag.String("dmr-talkgroups-url", dmrtg.DefaultURL, "DMR talkgroup-name list source URL")
+	hostfilePubkey := flag.String("hostfile-pubkey", "", "minisign public key (file path) to verify signed hostfile/TG downloads against (RFC-0013; empty = no verification)")
+	requireSignedHostfiles := flag.Bool("require-signed-hostfiles", false, "reject any hostfile/TG download that is not verified (RFC-0013)")
+	verifyFile := flag.String("verify", "", "verify a signed artifact against a minisign key and exit (RFC-0013); use with -verify-pubkey")
+	verifySig := flag.String("verify-sig", "", "the .minisig for -verify (default <file>.minisig)")
+	verifyPubkey := flag.String("verify-pubkey", "", "minisign public key (file path) for -verify")
 	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
 	eventsPath := flag.String("events-store", "/home/pi-star/waypoint/events.db", "path to the SQLite event-history store (RFC-0004); a config.db sibling")
 	nmKeyfileDir := flag.String("nm-keyfile-dir", "/etc/NetworkManager/system-connections", "directory for rendered NetworkManager keyfiles (waypoint-*.nmconnection)")
@@ -1319,6 +1375,12 @@ func main() {
 	// plain HTTP does not set a flag that would make the cookie unusable (RFC-0002).
 	secureCookie := flag.Bool("secure-cookie", false, "set the session cookie Secure flag (enable once TLS is serving HTTPS)")
 	flag.Parse()
+
+	// `waypointd -verify <file> -verify-pubkey <key>` verifies a signed artifact and
+	// exits, before any daemon startup (RFC-0013).
+	if *verifyFile != "" {
+		runVerify(*verifyFile, *verifySig, *verifyPubkey)
+	}
 
 	st, err := store.Open(*storePath)
 	if err != nil {
@@ -1477,8 +1539,12 @@ func main() {
 		go nxdnhosts.Run(context.Background(), *nxdnHostsURL, *nxdnHosts, 6*time.Hour)
 		go dstarhosts.Run(context.Background(), *dstarHostsURL, *dstarHosts, 6*time.Hour)
 		go m17hosts.Run(context.Background(), *m17HostsURL, *m17Hosts, 6*time.Hour)
-		go dmrhosts.Run(context.Background(), *dmrHostsURL, *dmrHosts, 6*time.Hour)
-		go dmrtg.Run(context.Background(), *dmrTGsURL, *dmrTGs, 24*time.Hour)
+		// Verified reference-data downloads (RFC-0013): when a trusted key is
+		// configured, dmrhosts/dmrtg verify each list against its <url>.minisig before
+		// it replaces the cache; a tampered list is rejected and the cache kept.
+		hostVerify := hostfileVerify(*hostfilePubkey, *requireSignedHostfiles)
+		go dmrhosts.Run(context.Background(), *dmrHostsURL, *dmrHosts, 6*time.Hour, hostVerify)
+		go dmrtg.Run(context.Background(), *dmrTGsURL, *dmrTGs, 24*time.Hour, hostVerify)
 	}
 
 	mode := "live, mqtt " + *broker

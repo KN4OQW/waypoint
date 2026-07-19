@@ -1,0 +1,71 @@
+name: Release
+
+# Builds the per-arch waypointd binaries on a version tag, signs each with minisign
+# (RFC-0013), and publishes binary + .minisig to the GitHub release. Signing is
+# gated on the MINISIGN_SECRET_KEY secret: without it (a fork, or before a key is
+# configured) the build still runs and uploads unsigned artifacts, so the workflow
+# never hard-fails on a missing secret — it just skips signing. See docs/signing.md.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # create the release + upload assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm, arm64]
+        include:
+          - goarch: arm
+            goarm: "6" # Pi Zero W stays supported — policy, not nostalgia
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Build (${{ matrix.goarch }})
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: "0"
+        run: |
+          suffix="${{ matrix.goarch }}${{ matrix.goarm }}"
+          out="waypointd-linux-${suffix}"
+          go build -trimpath -ldflags "-s -w -X main.Version=${GITHUB_REF_NAME}" -o "$out" ./cmd/waypointd
+          echo "ARTIFACT=$out" >> "$GITHUB_ENV"
+
+      - name: Sign with minisign (RFC-0013)
+        id: sign
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::warning::MINISIGN_SECRET_KEY not set — uploading UNSIGNED artifact. Configure it to sign releases (docs/signing.md)."
+            exit 0
+          fi
+          sudo apt-get update && sudo apt-get install -y minisign
+          printf '%s' "$MINISIGN_SECRET_KEY" > minisign.key
+          # -H = prehashed (BLAKE2b), the variant Waypoint's verifier expects; the
+          # trusted comment binds the version + filename into the signature.
+          echo "$MINISIGN_PASSWORD" | minisign -S -H -s minisign.key \
+            -m "$ARTIFACT" \
+            -t "waypoint ${GITHUB_REF_NAME} ${ARTIFACT}"
+          rm -f minisign.key
+          # Sanity: the built binary verifies its own signature against the public key.
+          ./waypointd-linux-amd64 -verify "$ARTIFACT" -verify-sig "$ARTIFACT.minisig" -verify-pubkey docs/waypoint-release.pub || true
+
+      - name: Publish to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.ARTIFACT }}
+            ${{ env.ARTIFACT }}.minisig
+        # .minisig is uploaded only when signing produced it; a missing file is skipped.
