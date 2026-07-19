@@ -1,0 +1,46 @@
+name: ui-tests
+
+# Browser-driven functional tests for the first-boot claim / login UI (RFC-0002,
+# issue #10): claim → app, client validation, the 409/401 already-claimed surface,
+# generic bad-login handling, and the 401 → login → back-to-where-you-were flow.
+# The harness spawns its own throwaway daemons (claim is one-way), so no long-lived
+# daemon step is needed here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  auth-flows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Build waypointd
+        run: go build -o waypointd ./cmd/waypointd
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install UI test harness
+        working-directory: ui/tests
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: ui/tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Run claim/login functional tests
+        working-directory: ui/tests
+        env:
+          WAYPOINTD: ${{ github.workspace }}/waypointd
+        run: npm test

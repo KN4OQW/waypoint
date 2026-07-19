@@ -35,8 +35,17 @@ exits non-zero.
 | `A11Y_THEMES` | `phosphor,amber,ice` | Themes to scan. |
 | `PLAYWRIGHT_CHROMIUM` | *(unset)* | Explicit Chromium binary; omit to use Playwright's own. |
 
+The device is gated behind the RFC-0002 claim state machine, so the dashboard and
+settings only render for an authenticated session. The harness drives a *fresh*
+(unclaimed) daemon: the first theme context claims the device (scanning the claim
+screen on the way in), and the rest log in (scanning the login screen), so the
+pre-auth screens are covered by the same run — throwaway credentials, discarded with
+the store.
+
 ## What it checks
 
+- **Claim / login** (`/` pre-auth) — the first-boot claim screen and the login
+  screen (RFC-0002).
 - **Dashboard** (`/`) — live status, on-air, last-heard, networks, event log.
 - **Settings / wizard** (`/settings.html`) — every tab (`general`, `setup`,
   `lcd`, `dmr`, `dstar`, `ysf`, `p25`, `nxdn`, `m17`, `pocsag`, `fm`, `modes`,
