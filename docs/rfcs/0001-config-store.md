@@ -1,8 +1,8 @@
 # RFC-0001: The Configuration Store
 
-- Status: **proposed**
+- Status: **accepted** (2026-07-19)
 - Author: KN4OQW
-- Comment window: 14 days from PR open
+- Comment window: 14 days from PR open (elapsed; accepted by sole maintainer)
 - Implements requirements: #1 (lossless round-trip), #2 (override layer), #3 (profiles)
 
 ## Summary
