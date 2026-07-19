@@ -433,3 +433,111 @@ func TestOverridesEndpoint(t *testing.T) {
 		t.Errorf("override record wrong: %+v", a)
 	}
 }
+
+// The connection-profiles API (RFC-0006 / issue #3): capture the current store as
+// a profile, list it, export a scrubbed artifact, import it back, activate it
+// (which re-renders + restarts), and delete it.
+func TestProfilesAPI(t *testing.T) {
+	// Fake systemctl so activate's re-render/restart works under `go test`.
+	orig := systemctlRun
+	systemctlRun = func(args ...string) ([]byte, error) {
+		if args[0] == "is-active" {
+			return []byte("inactive\n"), fmt.Errorf("exit status 3")
+		}
+		return nil, nil
+	}
+	t.Cleanup(func() { systemctlRun = orig })
+
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := config.InitProfiles(st); err != nil {
+		t.Fatal(err)
+	}
+	// Seed a real config incl. a secret, so export scrubbing is exercised.
+	if err := st.Set("pocsag", config.POCSAG{AuthKey: "TOP-SECRET", Frequency: "439987500"}, "seed"); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	s := &server{
+		store: st,
+		paths: config.Paths{
+			MMDVM: dir + "/MMDVM-Host.ini", DMRGateway: dir + "/DMRGateway.ini",
+			YSFGateway: dir + "/YSFGateway.ini", P25Gateway: dir + "/P25Gateway.ini",
+			NXDNGateway: dir + "/NXDNGateway.ini", DStarGateway: dir + "/dstargateway.cfg",
+			M17Gateway: dir + "/M17Gateway.ini",
+		},
+	}
+
+	// Capture the current store as "BM DMR".
+	rec := httptest.NewRecorder()
+	s.profilesView(rec, httptest.NewRequest("POST", "/api/profiles", strings.NewReader(`{"name":"BM DMR"}`)))
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// List shows it.
+	rec = httptest.NewRecorder()
+	s.profilesView(rec, httptest.NewRequest("GET", "/api/profiles", nil))
+	var list []profileSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Name != "BM DMR" || !list[0].Active {
+		t.Fatalf("list wrong: %+v", list)
+	}
+
+	// Export: scrubbed artifact, no secret.
+	rec = httptest.NewRecorder()
+	s.profilesRouter(rec, httptest.NewRequest("GET", "/api/profiles/BM%20DMR/export", nil))
+	if rec.Code != 200 {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "TOP-SECRET") {
+		t.Errorf("export leaked the secret:\n%s", rec.Body.String())
+	}
+	artifact := rec.Body.String()
+
+	// Import the artifact under a new name (edit the name field).
+	imported := strings.Replace(artifact, `"name":"BM DMR"`, `"name":"Imported"`, 1)
+	rec = httptest.NewRecorder()
+	s.profilesImport(rec, httptest.NewRequest("POST", "/api/profiles/import", strings.NewReader(imported)))
+	if rec.Code != 201 {
+		t.Fatalf("import: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Importing a name that already exists is a 409 without ?overwrite=1.
+	rec = httptest.NewRecorder()
+	s.profilesImport(rec, httptest.NewRequest("POST", "/api/profiles/import", strings.NewReader(imported)))
+	if rec.Code != 409 {
+		t.Errorf("duplicate import should 409, got %d", rec.Code)
+	}
+
+	// Activate the imported profile — its blank AuthKey must PRESERVE the store's.
+	rec = httptest.NewRecorder()
+	s.profilesRouter(rec, httptest.NewRequest("POST", "/api/profiles/Imported/activate", nil))
+	if rec.Code != 200 {
+		t.Fatalf("activate: %d %s", rec.Code, rec.Body.String())
+	}
+	var pg config.POCSAG
+	if _, err := st.GetInto("pocsag", &pg); err != nil {
+		t.Fatal(err)
+	}
+	if pg.AuthKey != "TOP-SECRET" {
+		t.Errorf("activation of an imported profile blanked the store's secret: %q", pg.AuthKey)
+	}
+
+	// Delete.
+	rec = httptest.NewRecorder()
+	s.profilesRouter(rec, httptest.NewRequest("DELETE", "/api/profiles/Imported", nil))
+	if rec.Code != 200 {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	s.profilesRouter(rec, httptest.NewRequest("POST", "/api/profiles/Imported/activate", nil))
+	if rec.Code != 404 {
+		t.Errorf("activate of deleted profile should 404, got %d", rec.Code)
+	}
+}

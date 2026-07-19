@@ -18,6 +18,7 @@ const TABS = [
   { id: "pocsag",       tag: "PG", label: "POCSAG",       sub: "DAPNET Paging",        crumb: "MODES / POCSAG",          title: "POCSAG (DAPNET)",       desc: "Amateur paging: the paging channel and the DAPNETGateway login (server, callsign, AuthKey). The AuthKey is stored on the node and never shown." },
   { id: "fm",           tag: "FM", label: "FM",           sub: "Analog Voice",         crumb: "MODES / FM",              title: "FM (Analog)",           desc: "Analog FM has no gateway — just the MMDVM-Host [FM] parameters: CTCSS tone, timeout, kerchunk time, audio levels, and access mode." },
   { id: "modes",        tag: "MD", label: "Modes",        sub: "Digital Modes",        crumb: "MODES / DIGITAL",         title: "Digital Mode Control",  desc: "Which digital voice / data modes MMDVM-Host handles. Toggling one restarts the stack on Apply." },
+  { id: "profiles",     tag: "PF", label: "Profiles",     sub: "Saved Setups",         crumb: "SYSTEM / PROFILES",       title: "Connection Profiles",   desc: "Named snapshots of your mode & network setup — save the current one, switch to another in a click, or carry a setup between nodes as a file. Callsign, frequencies and calibration are never part of a profile, so switching can't change your identity or detune the radio." },
   { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Routing",   crumb: "BRIDGES / GATEWAYS",      title: "Cross-Mode Gateways",   desc: "Cross-mode routing is being redesigned as a bus system (RFC-0003)." },
   { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "SYSTEM / NETWORK",        title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
   { id: "station",      tag: "ST", label: "Station",      sub: "History & Beacon",     crumb: "SYSTEM / STATION",        title: "Station Settings",      desc: "Node-wide operating policy: how long the persistent last-heard / event history is kept (pruned nightly), and — coming soon — automatic callsign identification." },
@@ -40,6 +41,8 @@ let nxdnRefs = [];          // cached NXDN talkgroup list for the startup-TG pic
 let dstarRefs = [];         // cached D-Star reflector list for the startup picker
 let m17Refs = [];           // cached M17 reflector list for the startup picker
 let overridesData = null;   // GET /api/overrides — the override layer's effective records (read-only, RFC-0005)
+let profiles = null;        // saved connection profiles from /api/profiles (RFC-0006)
+let profileBusy = false;    // an activate/save/import is in flight (disables the buttons)
 let netStatus = null;       // live host-network state from /api/network/status (read-only)
 let netEdit = null;          // working copy of /api/network/config (editable)
 let netDirty = false;        // unsaved connection/VLAN edits (guarded Apply Network)
@@ -823,6 +826,55 @@ function overrideRow(o) {
   return `<div class="row"><label>${esc(label)}</label><span style="font-family:var(--mono); font-size:12px;">${change} <span class="note" style="display:inline; opacity:.7;">· ${esc(o.source)}</span></span></div>`;
 }
 
+// panelProfiles renders the Connection Profiles tab (RFC-0006 / issue #3): saved
+// setups as cards with Activate / Export / Delete, a "save current setup as…"
+// field, and Import. Data from GET /api/profiles (metadata only — never secrets).
+function panelProfiles() {
+  const save = card("SAVE CURRENT SETUP", `
+    <div class="row">
+      <label>Profile name</label>
+      <input id="prof-name" placeholder="e.g. BM DMR duplex" maxlength="64" aria-label="New profile name">
+    </div>
+    <div style="display:flex; gap:12px; align-items:center; margin-top:6px;">
+      <button type="button" id="prof-save"${profileBusy ? " disabled" : ""} style="padding:8px 18px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">SAVE PROFILE</button>
+      <label class="prof-import" style="font-family:var(--mono); font-size:12px; cursor:pointer; text-decoration:underline;">
+        Import from file…<input id="prof-import-file" type="file" accept=".json,application/json" style="display:none;">
+      </label>
+    </div>`);
+
+  let listHTML;
+  if (profiles === null) listHTML = note("Loading profiles…");
+  else if (!profiles.length) listHTML = note("No profiles yet. Configure your modes and networks, then <b>Save current setup</b> to capture this configuration as a profile you can switch back to.");
+  else listHTML = `<div class="stack">${profiles.map(profileCard).join("")}</div>`;
+
+  const hint = note("Activating a profile writes its saved modes & networks and restarts the stack — the same as an Apply. Exported files have <b>passwords removed</b>; on import you re-enter any that are needed (or the target node keeps its own). Identity and calibration are never in a profile (<a href='https://github.com/KN4OQW/waypoint/blob/main/docs/rfcs/0006-connection-profiles.md'>RFC-0006</a>).");
+  return `<div class="grid2">${save}${hint}</div>${listHTML}`;
+}
+
+function profileCard(p) {
+  const badge = p.active
+    ? `<span class="prof-badge" style="font-family:var(--mono); font-size:11px; color:var(--accent); border:1px solid var(--accent); border-radius:4px; padding:1px 6px;">ACTIVE</span>`
+    : "";
+  const fp = p.fingerprint || {};
+  const fpText = (fp.rx_freq_hz || fp.tx_freq_hz)
+    ? `RX ${mhz(fp.rx_freq_hz)} · TX ${mhz(fp.tx_freq_hz)} MHz`
+    : "";
+  const sens = (p.sensitive && p.sensitive.length)
+    ? `<div class="note" style="margin:6px 0 0;">Needs re-entry on activate: ${p.sensitive.map(esc).join(", ")}</div>`
+    : "";
+  const dis = profileBusy ? " disabled" : "";
+  return `<div class="card">
+    <div class="card-head"><span class="sq"></span><span class="t">${esc(p.name)}</span> ${badge}</div>
+    <div class="row"><label>Captured</label><span style="font-family:var(--mono); font-size:12px; opacity:.8;">${esc(p.updated_at || p.created_at || "—")}${fpText ? " · " + esc(fpText) : ""}</span></div>
+    ${sens}
+    <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
+      <button type="button" data-prof-activate="${esc(p.name)}"${dis} aria-label="Activate profile ${esc(p.name)}"${p.active ? " title='Already active'" : ""} style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">ACTIVATE</button>
+      <button type="button" data-prof-export="${esc(p.name)}" aria-label="Export profile ${esc(p.name)}" style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:6px;">EXPORT</button>
+      <button type="button" data-prof-delete="${esc(p.name)}"${dis} aria-label="Delete profile ${esc(p.name)}" style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:6px;">DELETE</button>
+    </div>
+  </div>`;
+}
+
 function panelPending(what) {
   return note(`<b>${esc(what)}</b> settings aren't wired yet — a later slice of the configuration store (<a href="https://github.com/KN4OQW/waypoint/issues/1">waypoint#1</a>).`);
 }
@@ -1385,6 +1437,7 @@ function renderPanel() {
     case "pocsag":       box.innerHTML = panelPocsag(); break;
     case "fm":           box.innerHTML = panelFm(); break;
     case "modes":        box.innerHTML = panelModes(); break;
+    case "profiles":     box.innerHTML = panelProfiles(); break;
     case "station":      box.innerHTML = panelStation(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
@@ -1494,6 +1547,9 @@ function selectTab(id) {
   // The Expert tab's override view is fetched on demand (read-only, RFC-0005),
   // re-fetched each open so it reflects the current store render.
   if (id === "expert") loadOverrides();
+  // Connection profiles are fetched on demand (RFC-0006), refreshed each open so
+  // the ACTIVE badge reflects the live store.
+  if (id === "profiles") loadProfiles();
 }
 
 function renderThemes() {
@@ -1613,6 +1669,80 @@ async function loadOverrides() {
     overridesData = { dir: "", overrides: [], warnings: [] };
   }
   if (state.tab === "expert") renderPanel();
+}
+
+// --- Connection profiles (RFC-0006) -------------------------------------
+async function loadProfiles() {
+  try {
+    profiles = await fetch("/api/profiles").then((r) => r.json());
+  } catch {
+    profiles = [];
+  }
+  if (state.tab === "profiles") renderPanel();
+}
+
+async function saveProfile() {
+  const el = document.getElementById("prof-name");
+  const name = (el && el.value || "").trim();
+  if (!name) { el && el.focus(); return; }
+  profileBusy = true; renderPanel();
+  try {
+    const r = await fetch("/api/profiles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    if (!r.ok) alert("Save failed: " + (await r.text()));
+  } catch (e) { alert("Save failed: " + e); }
+  profileBusy = false;
+  await loadProfiles();
+}
+
+async function activateProfile(name) {
+  if (!confirm(`Activate "${name}"? This writes its saved modes & networks and restarts the stack.`)) return;
+  profileBusy = true; renderPanel();
+  try {
+    const r = await fetch("/api/profiles/" + encodeURIComponent(name) + "/activate", { method: "POST" });
+    if (!r.ok) alert("Activate failed: " + (await r.text()));
+  } catch (e) { alert("Activate failed: " + e); }
+  profileBusy = false;
+  await loadProfiles();
+}
+
+async function deleteProfile(name) {
+  if (!confirm(`Delete profile "${name}"? This does not change the live configuration.`)) return;
+  profileBusy = true; renderPanel();
+  try {
+    const r = await fetch("/api/profiles/" + encodeURIComponent(name), { method: "DELETE" });
+    if (!r.ok) alert("Delete failed: " + (await r.text()));
+  } catch (e) { alert("Delete failed: " + e); }
+  profileBusy = false;
+  await loadProfiles();
+}
+
+// exportProfile downloads the scrubbed artifact via a temporary anchor so the
+// browser's own save dialog handles the file (no data ever leaves the node except
+// to the operator's disk).
+function exportProfile(name) {
+  const a = document.createElement("a");
+  a.href = "/api/profiles/" + encodeURIComponent(name) + "/export";
+  a.download = name.replace(/[^a-zA-Z0-9_-]+/g, "-") + ".waypoint-profile.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+async function importProfile(file) {
+  if (!file) return;
+  profileBusy = true; renderPanel();
+  try {
+    const text = await file.text();
+    let r = await fetch("/api/profiles/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: text });
+    if (r.status === 409) {
+      if (confirm("A profile with that name already exists. Overwrite it?")) {
+        r = await fetch("/api/profiles/import?overwrite=1", { method: "POST", headers: { "Content-Type": "application/json" }, body: text });
+      } else { profileBusy = false; renderPanel(); return; }
+    }
+    if (!r.ok) alert("Import failed: " + (await r.text()));
+  } catch (e) { alert("Import failed: " + e); }
+  profileBusy = false;
+  await loadProfiles();
 }
 
 // netConnByType resolves (creating if needed) the single managed connection of a
@@ -1797,6 +1927,14 @@ document.getElementById("panels").addEventListener("click", (e) => {
   const vd = e.target.closest("[data-vlandel]");
   if (vd) { netEdit.vlans.splice(+vd.dataset.vlandel, 1); netMarkDirty(); renderPanel(); return; }
   if (e.target.id === "host-apply") { applyHost(); return; }
+  // --- connection profiles (RFC-0006) ---
+  if (e.target.id === "prof-save") { saveProfile(); return; }
+  const pa = e.target.closest("[data-prof-activate]");
+  if (pa) { activateProfile(pa.dataset.profActivate); return; }
+  const px = e.target.closest("[data-prof-export]");
+  if (px) { exportProfile(px.dataset.profExport); return; }
+  const pd = e.target.closest("[data-prof-delete]");
+  if (pd) { deleteProfile(pd.dataset.profDelete); return; }
   const tg = e.target.closest("[data-toggle]");
   if (tg) {
     const [sec, key] = tg.dataset.toggle.split(".");
@@ -1842,6 +1980,13 @@ document.getElementById("panels").addEventListener("click", (e) => {
     const firstEnabled = (edit.networks || []).find((n) => n.enabled) || {};
     (edit.routes = edit.routes || []).push({ slot: "2", tg: "", network: firstEnabled.name || "" });
     dirty.add("routes"); renderPanel(); refreshActions();
+  }
+});
+// Profile import file picker (fires "change", not "click").
+document.getElementById("panels").addEventListener("change", (e) => {
+  if (e.target.id === "prof-import-file") {
+    importProfile(e.target.files && e.target.files[0]);
+    e.target.value = ""; // allow re-importing the same file
   }
 });
 // Keyboard support for the network role="switch" pills (Wi-Fi hidden, NTP enable):

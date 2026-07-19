@@ -275,38 +275,253 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 // affected units (POST /api/config/apply). This is the store made authoritative:
 // the files are regenerated wholesale from the model, never patched in place.
 func (s *server) configApply(w http.ResponseWriter, _ *http.Request) {
-	m, err := config.Load(s.store)
+	restarted, stopped, err := s.applyRender("api")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"applied": true, "restarted": restarted, "stopped": stopped})
+}
+
+// applyRender is the store-to-daemons apply shared by a manual apply and a profile
+// activation (RFC-0006): load the model, regenerate every INI wholesale, restart
+// the affected units, stop retired bridge daemons, journal the apply, and bring
+// the LCD in line. by attributes the journal entry ("api" for a manual apply,
+// "profile:<name>" for an activation). Errors are returned already prefixed.
+func (s *server) applyRender(by string) (restarted, stopped []string, err error) {
+	m, err := config.Load(s.store)
+	if err != nil {
+		return nil, nil, err
+	}
 	targets := m.RenderTargets(s.paths)
 	warnings, err := m.WriteFiles(s.paths)
 	if err != nil {
-		http.Error(w, "render: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, nil, fmt.Errorf("render: %w", err)
 	}
 	for _, wn := range warnings {
 		log.Printf("overrides: %s", wn) // malformed fragment line — surfaced, never silently dropped
 	}
-	restarted, err := s.restartUnits(restartSet(targets))
+	restarted, err = s.restartUnits(restartSet(targets))
 	if err != nil {
-		http.Error(w, "restart: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, nil, fmt.Errorf("restart: %w", err)
 	}
 	// Stop any retired cross-mode bridge daemon (MMDVM_CM) still running from the old
 	// per-bridge surface. The bridges no longer contribute a render target (RFC-0003
 	// bus architecture supersedes them), so they are never restarted; stopping any
 	// that are still active on every apply closes the stale-daemon-on-disable defect
 	// by construction. Best-effort: a stop failure is logged, not fatal to the apply.
-	stopped := s.stopUnitsIfActive(config.RetiredBridgeUnits())
-	_ = s.store.RecordApply("api", map[string]any{"restarted": restarted, "stopped": stopped})
+	stopped = s.stopUnitsIfActive(config.RetiredBridgeUnits())
+	_ = s.store.RecordApply(by, map[string]any{"restarted": restarted, "stopped": stopped})
 	// The native LCD driver renders no INI and restarts no unit, so it is absent
 	// from targets/restarted — bring the panel in line with the applied config
 	// here (a no-op unless the LCD section changed).
 	s.reloadLCD(m)
+	return restarted, stopped, nil
+}
+
+// profileSummary is the metadata a profile list/return carries — never the
+// captured sections (which can hold secrets), so the list endpoint cannot leak.
+type profileSummary struct {
+	Name        string             `json:"name"`
+	CreatedAt   string             `json:"created_at,omitempty"`
+	UpdatedAt   string             `json:"updated_at,omitempty"`
+	Fingerprint config.Fingerprint `json:"fingerprint"`
+	Sensitive   []string           `json:"sensitive,omitempty"`
+	Active      bool               `json:"active"`
+}
+
+func (s *server) summarize(p *config.Profile) profileSummary {
+	active, _ := config.IsActive(s.store, p)
+	return profileSummary{
+		Name: p.Name, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
+		Fingerprint: p.Fingerprint, Sensitive: p.Sensitive, Active: active,
+	}
+}
+
+// profilesView handles /api/profiles: GET lists saved profiles (metadata only),
+// POST captures the current store as a named profile (RFC-0006 / issue #3).
+func (s *server) profilesView(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		list, err := config.ListProfiles(s.store)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		out := []profileSummary{}
+		for _, p := range list {
+			out = append(out, s.summarize(p))
+		}
+		writeJSON(w, out)
+	case http.MethodPost:
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+			http.Error(w, "invalid body", http.StatusBadRequest)
+			return
+		}
+		name, ok := validProfileName(body.Name)
+		if !ok {
+			http.Error(w, "name must be 1–64 characters", http.StatusBadRequest)
+			return
+		}
+		p, err := config.CaptureProfile(s.store, name)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := config.SaveProfile(s.store, p); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		saved, _ := config.GetProfile(s.store, name)
+		w.WriteHeader(http.StatusCreated)
+		writeJSON(w, s.summarize(saved))
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// profilesRouter handles /api/profiles/{name}, /{name}/activate, /{name}/export.
+func (s *server) profilesRouter(w http.ResponseWriter, r *http.Request) {
+	tail := strings.TrimPrefix(r.URL.Path, "/api/profiles/")
+	parts := strings.SplitN(tail, "/", 2)
+	name := parts[0]
+	action := ""
+	if len(parts) == 2 {
+		action = parts[1]
+	}
+	if name == "" {
+		http.Error(w, "profile name required", http.StatusBadRequest)
+		return
+	}
+	switch {
+	case action == "activate" && r.Method == http.MethodPost:
+		s.profileActivate(w, name)
+	case action == "export" && r.Method == http.MethodGet:
+		s.profileExport(w, name)
+	case action == "" && r.Method == http.MethodDelete:
+		removed, err := config.DeleteProfile(s.store, name)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !removed {
+			http.Error(w, "no such profile", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, map[string]any{"deleted": true})
+	default:
+		http.Error(w, "not found", http.StatusNotFound)
+	}
+}
+
+// profileActivate writes a profile's sections atomically, then re-renders and
+// restarts exactly like a manual apply (RFC-0006). Secrets are reconciled by
+// ActivateProfile (a blank secret keeps the stored one).
+func (s *server) profileActivate(w http.ResponseWriter, name string) {
+	p, err := config.GetProfile(s.store, name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if p == nil {
+		http.Error(w, "no such profile", http.StatusNotFound)
+		return
+	}
+	if err := config.ActivateProfile(s.store, p, "profile:"+name); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	restarted, stopped, err := s.applyRender("profile:" + name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"activated": name, "restarted": restarted, "stopped": stopped})
+}
+
+// profileExport returns the scrubbed, fingerprinted export artifact for download.
+func (s *server) profileExport(w http.ResponseWriter, name string) {
+	p, err := config.GetProfile(s.store, name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if p == nil {
+		http.Error(w, "no such profile", http.StatusNotFound)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"applied": true, "restarted": restarted, "stopped": stopped})
+	w.Header().Set("Content-Disposition", `attachment; filename="`+safeFilename(name)+`.waypoint-profile.json"`)
+	_ = json.NewEncoder(w).Encode(p.Export())
+}
+
+// profilesImport stores an export artifact as a profile (never activates).
+// Secrets stay scrubbed; the operator re-enters them, or activation preserves the
+// target node's current secrets. A name collision is 409 unless ?overwrite=1.
+func (s *server) profilesImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var p config.Profile
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&p); err != nil {
+		http.Error(w, "invalid profile artifact", http.StatusBadRequest)
+		return
+	}
+	name, ok := validProfileName(p.Name)
+	if !ok {
+		http.Error(w, "profile has no valid name", http.StatusBadRequest)
+		return
+	}
+	p.Name = name
+	if r.URL.Query().Get("overwrite") != "1" {
+		exists, err := config.ProfileExists(s.store, name)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if exists {
+			http.Error(w, "a profile named "+name+" already exists (use ?overwrite=1)", http.StatusConflict)
+			return
+		}
+	}
+	if err := config.SaveProfile(s.store, &p); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	saved, _ := config.GetProfile(s.store, name)
+	w.WriteHeader(http.StatusCreated)
+	writeJSON(w, s.summarize(saved))
+}
+
+// validProfileName trims and bounds a profile name (1–64 chars after trim).
+func validProfileName(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > 64 {
+		return "", false
+	}
+	return name, true
+}
+
+// safeFilename reduces a profile name to a filesystem-safe export filename.
+func safeFilename(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		case r == ' ':
+			b.WriteByte('-')
+		}
+	}
+	if b.Len() == 0 {
+		return "profile"
+	}
+	return b.String()
 }
 
 // overridesRoot returns the override drop-in root, or "" in demo mode so a demo
@@ -877,6 +1092,9 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/config/apply", s.configApply)
 	mux.HandleFunc("/api/config/", s.configView) // PUT /api/config/{section}
 	mux.HandleFunc("/api/overrides", s.overridesView)
+	mux.HandleFunc("/api/profiles", s.profilesView)          // GET list, POST capture (RFC-0006)
+	mux.HandleFunc("/api/profiles/import", s.profilesImport) // more specific than /api/profiles/
+	mux.HandleFunc("/api/profiles/", s.profilesRouter)       // {name}[/activate|/export], DELETE
 	mux.HandleFunc("/api/ysf/reflectors", s.ysfReflectors)
 	mux.HandleFunc("/api/p25/reflectors", s.p25Reflectors)
 	mux.HandleFunc("/api/nxdn/reflectors", s.nxdnReflectors)
@@ -994,6 +1212,11 @@ func main() {
 	}
 	if err := s.backfillDefaults(); err != nil {
 		log.Printf("config store backfill skipped: %v", err)
+	}
+	// Connection profiles table (RFC-0006 / issue #3). A failure here disables the
+	// profiles surface but must not stop the daemon serving config.
+	if err := config.InitProfiles(st); err != nil {
+		log.Printf("profiles table init skipped: %v", err)
 	}
 
 	// First-boot claim state machine + sessions (RFC-0002). buildAuth also consumes
