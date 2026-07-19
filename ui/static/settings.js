@@ -85,6 +85,11 @@ function buildEdit(c) {
     // body carries retention_days as JSON number, not string (the store field is
     // an int). Falls back to the 7-day default if the view somehow omits it.
     history: { retention_days: (c.history || {}).retention_days ?? 7 },
+    // Home Assistant MQTT discovery (Station Settings tab). Off by default.
+    homeassistant: {
+      enabled: !!(c.homeassistant || {}).enabled,
+      discovery_prefix: (c.homeassistant || {}).discovery_prefix || "homeassistant",
+    },
   };
   dirty = new Set();
   refreshActions();
@@ -1295,9 +1300,15 @@ function panelStation() {
     row("Retention window",
       `<div class="unit"><input data-sec="history" data-key="retention_days" data-kind="int" inputmode="numeric" value="${esc(days)}"><span class="u">days</span></div>`) +
     note("How long this node keeps its persistent last-heard and event log (stored on-device). <b>0 keeps history forever.</b> Older events are pruned nightly; a longer window uses more SD-card space."));
+  const ha = edit.homeassistant || (edit.homeassistant = { enabled: false, discovery_prefix: "homeassistant" });
+  const homeassistant = card("HOME ASSISTANT",
+    toggle("homeassistant", "enabled", "MQTT Discovery", "ENABLED", "DISABLED") +
+    row("Discovery prefix",
+      `<input data-sec="homeassistant" data-key="discovery_prefix" value="${esc(ha.discovery_prefix || "homeassistant")}" placeholder="homeassistant">`) +
+    note("Publishes this hotspot to Home Assistant over MQTT discovery — last-heard, mode, activity and signal entities appear with zero YAML. Uses the same broker as the MMDVM-Host feed; point Home Assistant at that broker. Changing this takes effect on the next daemon restart."));
   const beacon = card("CALLSIGN BEACON",
     note("Automatic callsign identification will be configured here. <span style=\"color:var(--muted)\">Not yet available.</span>"));
-  return `<div class="grid2">${retention}${beacon}</div>`;
+  return `<div class="grid2">${retention}<div class="stack">${homeassistant}${beacon}</div></div>`;
 }
 
 // enhanceA11y wires every rendered form control to an accessible name so screen

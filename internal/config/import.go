@@ -148,6 +148,9 @@ func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg, dpg *INI) *Model {
 		// default so a fresh store starts with a real prune window, not the zero
 		// value (which reads as keep-forever). See RFC-0004.
 		History: DefaultHistory(),
+		// Home Assistant discovery is off by default and drives no INI (#9); seeded
+		// so DiscoveryPrefix starts at Home Assistant's own default.
+		HomeAssistant: DefaultHomeAssistant(),
 	}
 	return m
 }

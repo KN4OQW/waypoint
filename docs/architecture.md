@@ -39,7 +39,7 @@ Rationale for the split: the g4klx daemons are actively maintained upstream and 
 ### Supervisor
 - Owns systemd units for stack daemons; derives desired-state from the config store.
 - Subscribes to the MQTT bus for liveness/status; enforces reconnect policies for DMR masters, APRS-IS, DAPNET (papering over upstream gaps: MMDVM-Host #682, APRSGateway #1, DAPNETGateway #10).
-- Publishes normalized status to `waypoint/status/#` topics — Home Assistant-friendly.
+- Publishes normalized status to `waypoint/status/#` topics — Home Assistant-friendly (MQTT discovery; see [docs/mqtt-topics.md](mqtt-topics.md)).
 
 ### Hardware ops
 - Board detection: USB VID/PID table + GPIO serial probe (`MMDVM_HS_*`, full MMDVM, DVMega).

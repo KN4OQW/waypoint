@@ -54,6 +54,21 @@ type Model struct {
 	// It lives under the Station Settings tab, which a future callsign-beacon
 	// section will share (RFC-0004).
 	History History `json:"history"`
+	// HomeAssistant is the outbound MQTT-discovery integration (store-only; drives
+	// no INI). Off by default; when on, waypointd publishes Home Assistant discovery
+	// + status topics to the same broker it consumes the MMDVM-Host feed from (#9).
+	HomeAssistant HomeAssistant `json:"homeassistant"`
+}
+
+// HomeAssistant configures the Home Assistant MQTT-discovery publisher (#9): when
+// Enabled, waypointd announces the hotspot as a device with last-heard / mode /
+// activity entities on the local MQTT broker, so Home Assistant picks them up with
+// zero YAML. Store-only — it drives no daemon INI. DiscoveryPrefix is Home
+// Assistant's configured discovery topic root (its default is "homeassistant");
+// the publisher targets the same broker as the -mqtt-broker feed.
+type HomeAssistant struct {
+	Enabled         bool   `json:"enabled"`
+	DiscoveryPrefix string `json:"discovery_prefix"` // HA discovery root; "" renders as "homeassistant"
 }
 
 // History is the event-history retention policy (RFC-0004): how long waypointd
@@ -493,33 +508,34 @@ type DMRRoute struct {
 // can never drift apart.
 func (m *Model) sections() map[string]any {
 	return map[string]any{
-		"general":  &m.General,
-		"modem":    &m.Modem,
-		"display":  &m.Display,
-		"dmr":      &m.DMR,
-		"dmrnet":   &m.DMRNet,
-		"modes":    &m.Modes,
-		"networks": &m.Networks,
-		"routes":   &m.Routes,
-		"ysf":      &m.YSF,
-		"ysfgw":    &m.YSFGW,
-		"p25":      &m.P25,
-		"p25gw":    &m.P25GW,
-		"nxdn":     &m.NXDN,
-		"nxdngw":   &m.NXDNGW,
-		"dstar":    &m.DStar,
-		"dstargw":  &m.DStarGW,
-		"m17":      &m.M17,
-		"m17gw":    &m.M17GW,
-		"pocsag":   &m.POCSAG,
-		"fm":       &m.FM,
-		"ysf2dmr":  &m.YSF2DMR,
-		"dmr2ysf":  &m.DMR2YSF,
-		"ysf2nxdn": &m.YSF2NXDN,
-		"dmr2nxdn": &m.DMR2NXDN,
-		"nxdn2dmr": &m.NXDN2DMR,
-		"lcd":      &m.LCD,
-		"history":  &m.History,
+		"general":       &m.General,
+		"modem":         &m.Modem,
+		"display":       &m.Display,
+		"dmr":           &m.DMR,
+		"dmrnet":        &m.DMRNet,
+		"modes":         &m.Modes,
+		"networks":      &m.Networks,
+		"routes":        &m.Routes,
+		"ysf":           &m.YSF,
+		"ysfgw":         &m.YSFGW,
+		"p25":           &m.P25,
+		"p25gw":         &m.P25GW,
+		"nxdn":          &m.NXDN,
+		"nxdngw":        &m.NXDNGW,
+		"dstar":         &m.DStar,
+		"dstargw":       &m.DStarGW,
+		"m17":           &m.M17,
+		"m17gw":         &m.M17GW,
+		"pocsag":        &m.POCSAG,
+		"fm":            &m.FM,
+		"ysf2dmr":       &m.YSF2DMR,
+		"dmr2ysf":       &m.DMR2YSF,
+		"ysf2nxdn":      &m.YSF2NXDN,
+		"dmr2nxdn":      &m.DMR2NXDN,
+		"nxdn2dmr":      &m.NXDN2DMR,
+		"lcd":           &m.LCD,
+		"history":       &m.History,
+		"homeassistant": &m.HomeAssistant,
 	}
 }
 
