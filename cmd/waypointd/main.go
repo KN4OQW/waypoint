@@ -27,6 +27,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/demo"
 	"github.com/KN4OQW/waypoint/internal/dmrhosts"
 	"github.com/KN4OQW/waypoint/internal/dstarhosts"
+	"github.com/KN4OQW/waypoint/internal/events"
 	"github.com/KN4OQW/waypoint/internal/hub"
 	"github.com/KN4OQW/waypoint/internal/lcd"
 	"github.com/KN4OQW/waypoint/internal/lcd/hd44780"
@@ -49,8 +50,9 @@ type server struct {
 	started   time.Time
 	store     *store.Store
 	storePath string
-	auth      *auth.Auth   // first-boot claim state machine + sessions (RFC-0002)
-	paths     config.Paths // where each daemon reads its generated INI (render targets)
+	evStore   *events.Store // persistent event history (RFC-0004); nil only in tests
+	auth      *auth.Auth    // first-boot claim state machine + sessions (RFC-0002)
+	paths     config.Paths  // where each daemon reads its generated INI (render targets)
 
 	// Host/OS networking domain (docs/config-coverage.md §4). netKeyfileDir is
 	// where the NetworkManager keyfile renderer writes waypoint-*.nmconnection;
@@ -223,6 +225,17 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 	// invalid page set is rejected here rather than silently clipped on the panel.
 	if section == "lcd" {
 		if err := config.SetLCD(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// Event-history retention validates on save (retention_days must be >= 0;
+	// 0 = keep forever), so route it through SetHistory rather than the generic
+	// merge (RFC-0004).
+	if section == "history" {
+		if err := config.SetHistory(s.store, body, "api"); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -529,6 +542,19 @@ func (s *server) backfillDefaults() error {
 		}
 		log.Printf("config store: backfilled lcd defaults")
 	}
+	// Event-history retention arrived with the persistent event store (RFC-0004): a
+	// store seeded before it lacks the row, so backfill the 7-day default so Load
+	// never returns a zero (which would read as "keep forever") and the nightly
+	// prune has a real window.
+	if _, ok, err := s.store.Get("history"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("history", config.DefaultHistory(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled history defaults")
+	}
 	return nil
 }
 
@@ -557,7 +583,12 @@ func (s *server) health(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-// events streams the hub over Server-Sent Events: backlog first, then live.
+// events streams the hub over Server-Sent Events as a pure live tail. Initial
+// dashboard history is served separately by GET /api/history from the persistent
+// event store (RFC-0004), so this handler no longer replays the hub's in-memory
+// backlog to browser clients — doing so would double-render every event the
+// client already fetched from /api/history. (The in-memory backlog still serves
+// the LCD renderer, which subscribes to the hub directly, not through this path.)
 func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
@@ -567,7 +598,7 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 
-	ch, backlog, cancel := s.hub.Subscribe()
+	ch, _, cancel := s.hub.Subscribe()
 	defer cancel()
 
 	send := func(e hub.Event) bool {
@@ -582,11 +613,6 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
-	for _, e := range backlog {
-		if !send(e) {
-			return
-		}
-	}
 	keepalive := time.NewTicker(25 * time.Second)
 	defer keepalive.Stop()
 	for {
@@ -604,6 +630,50 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 			fl.Flush()
 		}
 	}
+}
+
+// history serves GET /api/history?since=&type=&limit= from the persistent event
+// store (RFC-0004): the dashboard's initial render, replacing the old
+// backlog-on-connect. It returns a JSON array of events newest-first, the same
+// wire shape the SSE stream emits, so the client feeds them through the same
+// reducer. since accepts an RFC-3339 timestamp or unix milliseconds; type filters
+// one event type; limit is clamped by the store.
+func (s *server) history(w http.ResponseWriter, r *http.Request) {
+	if s.evStore == nil {
+		http.Error(w, "history unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	q := events.HistoryQuery{Type: r.URL.Query().Get("type")}
+	if v := r.URL.Query().Get("since"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			q.Since = t
+		} else if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
+			q.Since = time.UnixMilli(ms)
+		} else {
+			http.Error(w, "invalid since: want RFC-3339 or unix milliseconds", http.StatusBadRequest)
+			return
+		}
+	}
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			http.Error(w, "invalid limit", http.StatusBadRequest)
+			return
+		}
+		q.Limit = n
+	}
+	evs, err := s.evStore.History(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	// Never null: an empty history serializes as [] so the client always gets an
+	// array to iterate.
+	if evs == nil {
+		evs = []hub.Event{}
+	}
+	_ = json.NewEncoder(w).Encode(evs)
 }
 
 // startLCD launches the native HD44780 renderer as a hub subscriber when the
@@ -758,6 +828,7 @@ func (s *server) newMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", s.health)
 	mux.HandleFunc("/api/events", s.events)
+	mux.HandleFunc("/api/history", s.history)
 	mux.HandleFunc("/api/config", s.configView)
 	mux.HandleFunc("/api/config/apply", s.configApply)
 	mux.HandleFunc("/api/config/", s.configView) // PUT /api/config/{section}
@@ -825,6 +896,7 @@ func main() {
 	dmrHosts := flag.String("dmr-hosts", "/usr/local/etc/DMR_Hosts.txt", "cached DMR master hostlist path (DMR_Hosts.txt)")
 	dmrHostsURL := flag.String("dmr-hosts-url", dmrhosts.DefaultURL, "DMR master hostlist source URL")
 	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
+	eventsPath := flag.String("events-store", "/home/pi-star/waypoint/events.db", "path to the SQLite event-history store (RFC-0004); a config.db sibling")
 	nmKeyfileDir := flag.String("nm-keyfile-dir", "/etc/NetworkManager/system-connections", "directory for rendered NetworkManager keyfiles (waypoint-*.nmconnection)")
 	netConfirmTimeout := flag.Duration("network-confirm-timeout", netconfig.DefaultConfirmTimeout, "confirm-or-revert rollback window for a network apply")
 	netBackend := flag.String("network-backend", "composite", "network rollback backend: composite (NM D-Bus checkpoint + keyfile snapshot) or keyfile (fallback, no live-device rollback)")
@@ -841,9 +913,22 @@ func main() {
 	}
 	defer st.Close()
 
+	// Event-history store (RFC-0004). In demo mode it is in-memory so synthetic
+	// traffic never accretes a persistent history on disk; live mode persists to the
+	// events.db sibling of config.db.
+	evPath := *eventsPath
+	if *demoMode {
+		evPath = ":memory:"
+	}
+	ev, err := events.Open(evPath)
+	if err != nil {
+		log.Fatalf("events store: %v", err)
+	}
+	defer ev.Close()
+
 	s := &server{
 		hub: hub.New(), demo: *demoMode, started: time.Now(),
-		store: st, storePath: *storePath,
+		store: st, storePath: *storePath, evStore: ev,
 		paths: config.Paths{
 			MMDVM: *mmdvmINI, DMRGateway: *dmrgwINI, YSFGateway: *ysfgwINI, DGIdGateway: *dgidgwINI,
 			P25Gateway: *p25gwINI, NXDNGateway: *nxdngwINI, DStarGateway: *dstargwINI, M17Gateway: *m17gwINI,
@@ -881,6 +966,20 @@ func main() {
 		s.startLCD(context.Background(), m)
 		s.lcdMu.Unlock()
 	}
+
+	// Persist every hub event to the history store, and prune it nightly to the
+	// operator's retention window (RFC-0004). Both run in demo and live mode — demo
+	// simply persists into the in-memory store opened above. The prune reads the
+	// retention setting from the config store each night, so an edit in Station
+	// Settings takes effect without a restart.
+	go events.Run(context.Background(), s.evStore, s.hub, events.DefaultFlushInterval, events.DefaultBatchSize)
+	go events.RunPrune(context.Background(), s.evStore, 24*time.Hour, func() int {
+		var h config.History
+		if _, err := s.store.GetInto("history", &h); err != nil {
+			return config.DefaultHistoryRetentionDays // fall back to the default window on a read error
+		}
+		return h.RetentionDays
+	})
 
 	if *demoMode {
 		go demo.Run(context.Background(), s.hub)

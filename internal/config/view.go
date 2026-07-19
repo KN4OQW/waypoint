@@ -19,6 +19,7 @@ type View struct {
 	POCSAG   ViewPOCSAG    `json:"pocsag"`
 	FM       ViewFM        `json:"fm"`
 	LCD      ViewLCD       `json:"lcd"`
+	History  ViewHistory   `json:"history"`
 	ReadOnly bool          `json:"read_only"`
 	// The cross-mode transcoding bridges (MMDVM_CM) are no longer projected here.
 	// The per-bridge-daemon model is retired for the RFC-0003 bus architecture, so
@@ -66,6 +67,12 @@ type ViewLCD struct {
 	ActivityInterrupt bool          `json:"activity_interrupt"`
 	LingerSecs        string        `json:"linger_secs"`
 	Pages             []ViewLCDPage `json:"pages"`
+}
+
+// ViewHistory is the Station Settings tab's read model for event-history
+// retention (RFC-0004). No secrets — a straight projection of the History section.
+type ViewHistory struct {
+	RetentionDays int `json:"retention_days"`
 }
 
 type ViewLCDPage struct {
@@ -437,5 +444,6 @@ func (m *Model) View(storePath string) *View {
 			Lines:     append([]string(nil), p.Lines...),
 		})
 	}
+	v.History = ViewHistory{RetentionDays: m.History.RetentionDays}
 	return v
 }

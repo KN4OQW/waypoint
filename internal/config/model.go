@@ -50,6 +50,20 @@ type Model struct {
 	NXDN2DMR NXDN2DMR `json:"nxdn2dmr"`
 	// LCD is the Waypoint-native HD44780 driver (store-only; drives no INI).
 	LCD LCD `json:"lcd"`
+	// History is the event-history retention policy (store-only; drives no INI).
+	// It lives under the Station Settings tab, which a future callsign-beacon
+	// section will share (RFC-0004).
+	History History `json:"history"`
+}
+
+// History is the event-history retention policy (RFC-0004): how long waypointd
+// keeps the persisted event record in events.db before the nightly prune deletes
+// it. Store-only — it drives no daemon INI, so it round-trips through the store
+// (Save/Load), never through INI render/parse, and never appears in RenderTargets
+// (like LCD). RetentionDays == 0 means keep forever (prune disabled); a negative
+// value is rejected at save.
+type History struct {
+	RetentionDays int `json:"retention_days"` // days of event history to keep; 0 = keep forever
 }
 
 // The cross-mode bridges are the transcoding daemons from the MMDVM_CM tree
@@ -505,6 +519,7 @@ func (m *Model) sections() map[string]any {
 		"dmr2nxdn": &m.DMR2NXDN,
 		"nxdn2dmr": &m.NXDN2DMR,
 		"lcd":      &m.LCD,
+		"history":  &m.History,
 	}
 }
 
