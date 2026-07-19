@@ -211,7 +211,11 @@ await test("expired session → login → back to where you were", async (page, 
 
   // Session dies (logout elsewhere / idle expiry). The next gated call is a 401.
   await context.clearCookies();
-  await page.evaluate(() => { fetch("/api/config"); }); // wrapped fetch routes 401 → login
+  // The wrapped fetch routes that 401 to the login page. That redirect can tear
+  // down this evaluate's execution context before the call resolves — a benign
+  // navigation race ("Execution context was destroyed"). The real assertion is the
+  // waitForURL below, so swallow only that rejection rather than letting it flake.
+  await page.evaluate(() => { fetch("/api/config"); }).catch(() => {});
 
   await page.waitForURL(/\/\?next=/, { timeout: 10000 });
   const next = new URL(page.url()).searchParams.get("next");
