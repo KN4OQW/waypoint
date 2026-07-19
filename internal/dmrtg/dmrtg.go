@@ -8,15 +8,15 @@ package dmrtg
 
 import (
 	"context"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/KN4OQW/waypoint/internal/verifydl"
 )
 
 // DefaultURL is a maintained DMR talkgroup list (the WPSD/w0chp lineage, same host
@@ -30,24 +30,17 @@ type Talkgroup struct {
 	Name string `json:"name"`
 }
 
-// Fetch downloads the talkgroup list to path atomically (temp + rename). A failed
-// fetch leaves any previously-cached file intact, so a brief outage never wipes
-// the names the operator can see.
-func Fetch(ctx context.Context, url, path string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
+// Fetch downloads the talkgroup list to path atomically (temp + rename). When a
+// trusted key is configured (RFC-0013), the download is verified against its
+// <url>.minisig signature before it replaces the cache — a tampered list is
+// rejected and the previous cache is kept. A failed fetch always leaves any
+// previously-cached file intact, so a brief outage never wipes the names.
+func Fetch(ctx context.Context, url, path string, v verifydl.Verify) error {
+	v.UserAgent = "Waypoint DMR talkgroup list"
+	if v.HasPubKey && v.SigURL == "" {
+		v.SigURL = url + ".minisig"
 	}
-	req.Header.Set("User-Agent", "Waypoint DMR talkgroup list")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return &httpError{resp.StatusCode}
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	body, err := verifydl.Download(ctx, url, v)
 	if err != nil {
 		return err
 	}
@@ -65,10 +58,6 @@ func Fetch(ctx context.Context, url, path string) error {
 	}
 	return os.Rename(tmp.Name(), path)
 }
-
-type httpError struct{ code int }
-
-func (e *httpError) Error() string { return "dmrtg: HTTP " + http.StatusText(e.code) }
 
 // Talkgroups reads the cached list and returns the parsed talkgroups, sorted by
 // numeric ID. The parser is format-tolerant: each non-comment line is
@@ -142,10 +131,11 @@ func Names(path string) (map[string]string, error) {
 }
 
 // Run fetches the list once at startup and then every interval until ctx is
-// canceled. Fetch failures are logged, not fatal — the cached file keeps working.
-func Run(ctx context.Context, url, path string, interval time.Duration) {
+// canceled. Fetch failures (including a verification failure, RFC-0013) are
+// logged, not fatal — the cached file keeps working.
+func Run(ctx context.Context, url, path string, interval time.Duration, v verifydl.Verify) {
 	fetch := func() {
-		if err := Fetch(ctx, url, path); err != nil {
+		if err := Fetch(ctx, url, path, v); err != nil {
 			log.Printf("dmrtg: fetch failed (using cached list if present): %v", err)
 		} else {
 			log.Printf("dmrtg: updated %s", path)

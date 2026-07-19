@@ -8,15 +8,14 @@ package dmrhosts
 
 import (
 	"context"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/KN4OQW/waypoint/internal/hostfile"
+	"github.com/KN4OQW/waypoint/internal/verifydl"
 )
 
 // DefaultURL is the WPSD-maintained DMR master hostlist (the same lineage as the
@@ -49,23 +48,16 @@ func category(name string) string {
 	}
 }
 
-// Fetch downloads the hostlist to path atomically (temp + rename). A failed
-// fetch leaves any previously-cached file intact.
-func Fetch(ctx context.Context, url, path string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
+// Fetch downloads the hostlist to path atomically. When a trusted key is
+// configured (RFC-0013) the download is verified against its <url>.minisig before
+// it replaces the cache — a tampered list is rejected and the previous cache kept.
+// A failed fetch always leaves any previously-cached file intact.
+func Fetch(ctx context.Context, url, path string, v verifydl.Verify) error {
+	v.UserAgent = "Waypoint DMR hostlist"
+	if v.HasPubKey && v.SigURL == "" {
+		v.SigURL = url + ".minisig"
 	}
-	req.Header.Set("User-Agent", "Waypoint DMR hostlist")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return &httpError{resp.StatusCode}
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	body, err := verifydl.Download(ctx, url, v)
 	if err != nil {
 		return err
 	}
@@ -74,10 +66,6 @@ func Fetch(ctx context.Context, url, path string) error {
 	// the file is written exactly as downloaded.
 	return hostfile.WriteWithHooks(path, body, "dmrhosts")
 }
-
-type httpError struct{ code int }
-
-func (e *httpError) Error() string { return "dmrhosts: HTTP " + http.StatusText(e.code) }
 
 // Masters reads the cached hostlist and returns the parsed masters, sorted by
 // category then name. Malformed lines are skipped. The last three fields of a
@@ -118,9 +106,9 @@ func Masters(path string) ([]Master, error) {
 // Run fetches the hostlist once at startup and then every interval until ctx is
 // canceled. Fetch failures are logged, not fatal — a hotspot may be briefly
 // offline, and the cached file keeps working.
-func Run(ctx context.Context, url, path string, interval time.Duration) {
+func Run(ctx context.Context, url, path string, interval time.Duration, v verifydl.Verify) {
 	fetch := func() {
-		if err := Fetch(ctx, url, path); err != nil {
+		if err := Fetch(ctx, url, path, v); err != nil {
 			log.Printf("dmrhosts: fetch failed (using cached list if present): %v", err)
 		} else {
 			log.Printf("dmrhosts: updated %s", path)
