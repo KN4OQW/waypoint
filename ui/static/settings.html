@@ -110,7 +110,7 @@
 
   .theme-pick { padding: 14px 18px 18px; border-top: 1px solid var(--side-line); }
   .theme-head { font-family: var(--mono); font-size: 9px; letter-spacing: 2px; color: var(--faint); margin-bottom: 9px; }
-  .swatches { display: flex; gap: 7px; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 7px; } /* the full-width mode toggle wraps to its own row above the accent dots */
   .swatch { flex: 1; display: flex; align-items: center; justify-content: center; padding: 9px 0; border-radius: 7px; cursor: pointer; background: var(--swatch-bg); border: 1px solid var(--chip-line); }
   .swatch .dot { width: 12px; height: 12px; border-radius: 50%; }
   .swatch.on { background: var(--swatch-on); }
