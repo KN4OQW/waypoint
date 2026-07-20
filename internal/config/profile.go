@@ -29,6 +29,10 @@ var profileSections = []string{
 	"ysf", "ysfgw", "p25", "p25gw", "nxdn", "nxdngw",
 	"dstar", "dstargw", "m17", "m17gw", "pocsag", "fm",
 	"ysf2dmr", "dmr2ysf", "ysf2nxdn", "dmr2nxdn", "nxdn2dmr",
+	// Mode buses (RFC-0003) are connection topology — "what this node connects to
+	// and how" — and supersede the cross-mode bridges above, so they are captured
+	// by a profile like the bridges they replace.
+	"buses", "attachments",
 }
 
 // profileExcluded is every store section a profile must NOT touch: device
