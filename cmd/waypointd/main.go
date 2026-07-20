@@ -38,6 +38,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/netconfig"
 	"github.com/KN4OQW/waypoint/internal/nxdnhosts"
 	"github.com/KN4OQW/waypoint/internal/p25hosts"
+	"github.com/KN4OQW/waypoint/internal/peering"
 	"github.com/KN4OQW/waypoint/internal/status"
 	"github.com/KN4OQW/waypoint/internal/store"
 	"github.com/KN4OQW/waypoint/internal/verifydl"
@@ -58,6 +59,7 @@ type server struct {
 	auth      *auth.Auth         // first-boot claim state machine + sessions (RFC-0002)
 	paths     config.Paths       // where each daemon reads its generated INI (render targets)
 	agg       *status.Aggregator // live-status fold served by /api/status + WS (RFC-0008); nil only in some tests
+	peering   *peering.Manager   // RFC-0016 LAN pairing manager (nil until initPeering runs / if it fails)
 
 	// Host/OS networking domain (docs/config-coverage.md §4). netKeyfileDir is
 	// where the NetworkManager keyfile renderer writes waypoint-*.nmconnection;
@@ -1347,8 +1349,15 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/config/apply", s.configApply)
 	mux.HandleFunc("/api/config/", s.configView) // PUT /api/config/{section}
 	mux.HandleFunc("/api/overrides", s.overridesView)
-	mux.HandleFunc("/api/buses/validate", s.busesValidate)   // dry-run attach validator (RFC-0003 §2)
-	mux.HandleFunc("/api/buses/migrate", s.busesMigrate)     // seed buses from the dormant bridges (§4)
+	mux.HandleFunc("/api/buses/validate", s.busesValidate)     // dry-run attach validator (RFC-0003 §2)
+	mux.HandleFunc("/api/buses/migrate", s.busesMigrate)       // seed buses from the dormant bridges (§4)
+	mux.HandleFunc("/api/peering/discover", s.peeringDiscover) // RFC-0016 pairing (§3)
+	mux.HandleFunc("/api/peering/initiate", s.peeringInitiate)
+	mux.HandleFunc("/api/peering/confirm", s.peeringConfirm)
+	mux.HandleFunc("/api/peering/cancel", s.peeringCancel)
+	mux.HandleFunc("/api/peering/pending", s.peeringPending)
+	mux.HandleFunc("/api/peering/peers", s.peeringPeers)
+	mux.HandleFunc("/api/peering/revoke", s.peeringRevoke)
 	mux.HandleFunc("/api/profiles", s.profilesView)          // GET list, POST capture (RFC-0006)
 	mux.HandleFunc("/api/profiles/import", s.profilesImport) // more specific than /api/profiles/
 	mux.HandleFunc("/api/profiles/", s.profilesRouter)       // {name}[/activate|/export], DELETE
@@ -1453,6 +1462,7 @@ func main() {
 	updateMarker := flag.String("update-marker", "/home/pi-star/waypoint/update.marker", "in-flight-update marker path (power-loss recovery)")
 	busConfigDir := flag.String("bus-config-dir", "/home/pi-star/waypoint/etc", "directory for rendered mode-bus configs (waypoint-bus-<id>.json), consumed by waypoint-bus@<id>.service (RFC-0003)")
 	peeringDir := flag.String("peering-dir", "/home/pi-star/waypoint/peering", "directory holding LAN-peering cert/key files (node.key, peer-*.crt) referenced by rendered bus peering blocks (RFC-0016)")
+	peeringBootstrapAddr := flag.String("peering-bootstrap-addr", "0.0.0.0:42501", "listen address for the RFC-0016 pairing bootstrap channel (plain TCP; the short code authenticates the exchange)")
 	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
 	eventsPath := flag.String("events-store", "/home/pi-star/waypoint/events.db", "path to the SQLite event-history store (RFC-0004); a config.db sibling")
 	nmKeyfileDir := flag.String("nm-keyfile-dir", "/etc/NetworkManager/system-connections", "directory for rendered NetworkManager keyfiles (waypoint-*.nmconnection)")
@@ -1608,6 +1618,7 @@ func main() {
 	// The status aggregator folds the event stream into the live status served by
 	// /api/status + the WebSocket (RFC-0008). Runs in both demo and live mode.
 	go s.agg.Run(context.Background(), s.hub, *statusTick)
+	s.initPeering(context.Background(), *peeringDir, *peeringBootstrapAddr)
 
 	if *demoMode {
 		go demo.Run(context.Background(), s.hub)
