@@ -12,9 +12,13 @@ Because they are constructed from the upstream frame definitions
 (juribeparada/MMDVM_CM + g4klx/MMDVMHost) rather than captured from a keyed-up
 transmission on the loopback, the AMBE payload is random bits, not real speech —
 which is fine for the reframe/round-trip contract (the layer copies the codec
-bits opaquely). **Prompt 6 replaces these with real sanitized loopback captures**
-from the bench Pi, which will additionally validate that a real daemon accepts
-the constructed frames on the wire.
+bits opaquely).
+
+A **real** sanitized DMR loopback capture now lives in `../capture/` (see
+`TestRealCaptureDMRParrot`), which additionally proves `ParseDMR` accepts frames a
+live MMDVM-Host actually emits and that the reframe is byte-exact on real codec
+bits. The YSF/NXDN synthetic fixtures still await real captures (those modes were
+disabled on the bench modem at capture time); a later prompt replaces them.
 
 - `dmr_voice.bin` — a 55-byte "DMRD" voice frame (3 AMBE codewords).
 - `ysf_voice.bin` — a 155-byte "YSFD" VD-mode-2 voice frame (5 AMBE codewords).
