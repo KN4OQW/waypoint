@@ -314,6 +314,28 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// busesMigrate is the one-shot bridge->bus seeding hook (POST
+// /api/config/buses/migrate, RFC-0003 §4). It reads the dormant bridge sections,
+// seeds buses+attachments (persisting only a valid seed when no buses exist yet),
+// and returns the operator warnings. The dormant sections are never modified. The
+// UI button lands in a later prompt; this is the API seam.
+func (s *server) busesMigrate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	warnings, err := config.ApplyBridgeMigration(s.store, "api")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if warnings == nil {
+		warnings = []string{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"warnings": warnings})
+}
+
 // configApply renders the store to the daemons' INI files and restarts the
 // affected units (POST /api/config/apply). This is the store made authoritative:
 // the files are regenerated wholesale from the model, never patched in place.
@@ -1319,7 +1341,8 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/ws", s.wsStream)       // WebSocket: events + status frames
 	mux.HandleFunc("/api/config", s.configView)
 	mux.HandleFunc("/api/config/apply", s.configApply)
-	mux.HandleFunc("/api/config/", s.configView) // PUT /api/config/{section}
+	mux.HandleFunc("/api/config/buses/migrate", s.busesMigrate) // one-shot bridge->bus seeding (RFC-0003)
+	mux.HandleFunc("/api/config/", s.configView)                // PUT /api/config/{section}
 	mux.HandleFunc("/api/overrides", s.overridesView)
 	mux.HandleFunc("/api/profiles", s.profilesView)          // GET list, POST capture (RFC-0006)
 	mux.HandleFunc("/api/profiles/import", s.profilesImport) // more specific than /api/profiles/
@@ -1388,6 +1411,7 @@ func main() {
 	dstargwINI := flag.String("dstargateway-ini", "/home/pi-star/waypoint/etc/dstargateway.cfg", "dstargateway.cfg render target")
 	m17gwINI := flag.String("m17gateway-ini", "/home/pi-star/waypoint/etc/M17Gateway.ini", "M17Gateway.ini render target")
 	dapnetgwINI := flag.String("dapnetgateway-ini", "/home/pi-star/waypoint/etc/DAPNETGateway.ini", "DAPNETGateway.ini render target (POCSAG paging gateway)")
+	busConfigDir := flag.String("bus-config-dir", "/home/pi-star/waypoint/etc/bus", "directory for per-bus configs (<dir>/<id>.conf, RFC-0003 mode buses)")
 	overridesDir := flag.String("overrides-dir", "/home/pi-star/waypoint/overrides.d", "root of operator override drop-ins: <dir>/<daemon>.d/*.conf merge last into each rendered INI (RFC-0005 / issue #2)")
 	// The cross-mode bridge render-target flags (ysf2dmr-ini … nxdn2dmr-ini) are
 	// retired with the per-bridge-daemon model (RFC-0003 bus architecture). No bridge
@@ -1493,6 +1517,7 @@ func main() {
 			MMDVM: *mmdvmINI, DMRGateway: *dmrgwINI, YSFGateway: *ysfgwINI, DGIdGateway: *dgidgwINI,
 			P25Gateway: *p25gwINI, NXDNGateway: *nxdngwINI, DStarGateway: *dstargwINI, M17Gateway: *m17gwINI,
 			DAPNETGateway: *dapnetgwINI,
+			BusConfigDir:  *busConfigDir,
 			// Demo mode must never pick up a real node's overrides: point the layer at an
 			// empty path so the render is emitted verbatim (RFC-0005).
 			OverridesDir: overridesRoot(*overridesDir, *demoMode),
