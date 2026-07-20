@@ -28,6 +28,11 @@ type Paths struct {
 	// per enabled bus, so this is a directory, not a path. Empty in tests that only
 	// exercise the renderers.
 	BusConfigDir string
+	// PeeringDir is where the peering cert/key files live (RFC-0016): the node's own
+	// key (node.key) and each pinned peer/owner cert (0600, waypointd-owned). The
+	// rendered configs reference files under here by PATH — never PEM content
+	// (RFC-0002 posture). The pairing/transport layer populates the files.
+	PeeringDir string
 	// OverridesDir is the root of the operator's override drop-ins (RFC-0005 /
 	// issue #2): per-daemon fragments live under <OverridesDir>/<daemon>.d/*.conf and
 	// merge last into each rendered INI. Empty disables the override layer entirely
@@ -148,6 +153,7 @@ func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 	// (its config stops being written); its running daemon is stopped by the apply
 	// loop (see RetiredBusUnits). Buses are appended in stable id order so the
 	// render/restart order is deterministic (RFC-0001 pure-render property).
+	peeringDir := paths.PeeringDir
 	for _, b := range busesSortedByID(m.Buses) {
 		if !b.Enabled {
 			continue
@@ -156,16 +162,33 @@ func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 		targets = append(targets, RenderTarget{
 			Path:   filepath.Join(paths.BusConfigDir, busConfigFile(id)),
 			Unit:   busUnit(id),
-			Render: func(mm *Model) string { return mm.renderBusConfig(id) },
+			Render: func(mm *Model) string { return mm.renderBusConfig(id, peeringDir) },
 		})
+		// RFC-0016 member side: one target per (bus, paired peer) membership. Its Unit
+		// is empty — the member config runs on the PEER node, not here; the owner
+		// renders it as a provisioning artifact (a later transport PR delivers it), so
+		// the owner's apply writes the file but restarts nothing (restartSet skips
+		// empty units). A revoked/pending peer contributes no membership, so it renders
+		// no target (and deletes nothing from the store).
+		for _, peerID := range m.busMembersOf(id) {
+			pid := peerID
+			targets = append(targets, RenderTarget{
+				Path:   filepath.Join(paths.BusConfigDir, memberConfigFile(id, pid)),
+				Render: func(mm *Model) string { return mm.renderMemberConfig(id, pid, peeringDir) },
+			})
+		}
 	}
 	return targets
 }
 
 // busUnit / busConfigFile name the templated systemd unit and rendered config
-// file for a bus id.
+// file for a bus id. memberConfigFile names the member-side provisioning config
+// for a (bus, peer) membership (RFC-0016).
 func busUnit(id string) string       { return "waypoint-bus@" + id + ".service" }
 func busConfigFile(id string) string { return "waypoint-bus-" + id + ".json" }
+func memberConfigFile(busID, peerID string) string {
+	return "waypoint-bus-" + busID + "-member-" + peerID + ".json"
+}
 
 // DisabledBusUnits names the templated units for buses that exist but are
 // disabled. Apply stops these (like RetiredBridgeUnits) so disabling a bus in the
@@ -193,7 +216,7 @@ func busesSortedByID(buses []Bus) []Bus {
 // the daemon reads (RFC-0003 §4), assembled from the bus row and its attachments.
 // A missing bus renders an empty object rather than panicking (the target list is
 // built from the same model, so this is defence in depth).
-func (m *Model) renderBusConfig(id string) string {
+func (m *Model) renderBusConfig(id, peeringDir string) string {
 	var bus Bus
 	found := false
 	for _, b := range m.Buses {
@@ -211,11 +234,100 @@ func (m *Model) renderBusConfig(id string) string {
 			bc.Attachments = append(bc.Attachments, a)
 		}
 	}
+	// RFC-0016 owner side: add the peering block + one member row per ACTIVE remote
+	// attachment. A bus with no active remote attachment gets no Peering block, so
+	// it renders byte-identically to Phase 1 (dormant/revoked peers render nothing).
+	if active := m.activeRemoteAttachmentsForBus(id); len(active) > 0 {
+		bp := &BusPeering{
+			Listen:         m.Peering.listen(),
+			KeyPath:        nodeKeyPath(peeringDir),
+			DeadlineMs:     m.Peering.deadline(),
+			JitterBufferMs: m.Peering.jitter(),
+		}
+		for _, ra := range active {
+			p, _ := m.peerByID(ra.PeerID) // guaranteed present: activeRemote filters to paired peers
+			bp.Members = append(bp.Members, BusPeerMember{
+				PeerID:       ra.PeerID,
+				Name:         p.Name,
+				Endpoint:     resolvedEndpoint(p),
+				MDNSInstance: p.MDNSInstance,
+				Fingerprint:  p.Fingerprint,
+				CertPath:     peerCertPath(peeringDir, ra.PeerID),
+				Mode:         ra.Mode,
+				Slot:         ra.Slot, DefaultTG: ra.DefaultTG, TGMap: ra.TGMap,
+				Target: ra.Target, WiresXPassthrough: ra.WiresXPassthrough,
+				ID: ra.ID, TG: ra.TG, DefaultID: ra.DefaultID,
+			})
+		}
+		bc.Peering = bp
+	}
 	raw, err := bc.Marshal()
 	if err != nil {
 		return "{}\n"
 	}
 	return string(raw) + "\n"
+}
+
+// renderMemberConfig is the RFC-0016 member-side config for one membership — a
+// peer (member) contributing its mode(s) to this owner's bus. It renders NOTHING
+// (empty object) when the peer is not paired, so a revoked peer's membership
+// disappears from the render without its rows being deleted from the store.
+func (m *Model) renderMemberConfig(busID, peerID, peeringDir string) string {
+	var bus Bus
+	for _, b := range m.Buses {
+		if b.ID == busID {
+			bus = b
+			break
+		}
+	}
+	if bus.ID == "" {
+		return "{}\n"
+	}
+	mc := MemberBusConfig{
+		Role:  "member",
+		BusID: busID,
+		Owner: MemberOwner{
+			Listen:   m.Peering.listen(),
+			CertPath: ownerCertPath(peeringDir, busID),
+		},
+		KeyPath:         nodeKeyPath(peeringDir),
+		DeadlineMs:      m.Peering.deadline(),
+		JitterBufferMs:  m.Peering.jitter(),
+		HangTimeSeconds: BusConfig{Bus: bus}.HangTimeSeconds,
+	}
+	for _, ra := range m.activeRemoteAttachmentsForBus(busID) {
+		if ra.PeerID != peerID {
+			continue
+		}
+		lb, ok := busLoopbackFor(ra.Mode)
+		if !ok {
+			continue
+		}
+		mc.Attachments = append(mc.Attachments, MemberAttachment{
+			Mode: ra.Mode, Loopback: lb,
+			Slot: ra.Slot, DefaultTG: ra.DefaultTG, TGMap: ra.TGMap,
+			Target: ra.Target, WiresXPassthrough: ra.WiresXPassthrough,
+			ID: ra.ID, TG: ra.TG, DefaultID: ra.DefaultID,
+		})
+	}
+	if len(mc.Attachments) == 0 {
+		return "{}\n" // peer not paired / no modes: renders nothing
+	}
+	return jsonBlock(mc)
+}
+
+// busMembersOf returns the distinct paired peer ids contributing to a bus, in
+// stable order — one member target is rendered per (bus, peer) membership.
+func (m *Model) busMembersOf(busID string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, ra := range m.activeRemoteAttachmentsForBus(busID) {
+		if !seen[ra.PeerID] {
+			seen[ra.PeerID] = true
+			out = append(out, ra.PeerID)
+		}
+	}
+	return out
 }
 
 // WriteFiles renders every target, merges the operator's override fragments last

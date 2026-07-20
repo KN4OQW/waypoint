@@ -60,6 +60,10 @@ type Model struct {
 	// consumes them yet — this is the model/store seam.
 	Peers             []Peer             `json:"peers"`
 	RemoteAttachments []RemoteAttachment `json:"remote_attachments"`
+	// Peering is the node's LAN-peering policy (RFC-0016 §5): the owner mTLS listen
+	// address and the play-out deadline / jitter-buffer defaults the renderer sources
+	// (never hardcoded). Store-only; no secret.
+	Peering Peering `json:"peering"`
 	// LCD is the Waypoint-native HD44780 driver (store-only; drives no INI).
 	LCD LCD `json:"lcd"`
 	// History is the event-history retention policy (store-only; drives no INI).
@@ -597,6 +601,7 @@ func (m *Model) sections() map[string]any {
 		"attachments":        &m.Attachments,
 		"peers":              &m.Peers,
 		"remote_attachments": &m.RemoteAttachments,
+		"peering":            &m.Peering,
 		"lcd":                &m.LCD,
 		"history":            &m.History,
 	}

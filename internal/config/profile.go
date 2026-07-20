@@ -44,7 +44,7 @@ var profileSections = []string{
 // which must never travel in a portable profile, and remote_attachments[]
 // references those peers, so it would dangle if carried without them. Peering is
 // re-established per node by pairing, not by importing a profile.
-var profileExcluded = []string{"general", "modem", "display", "lcd", "history", "peers", "remote_attachments"}
+var profileExcluded = []string{"general", "modem", "display", "lcd", "history", "peers", "remote_attachments", "peering"}
 
 // profileSecretFields registers the secret-bearing fields per section — shared by
 // export scrub and activate reconcile so the two can never drift. The values are

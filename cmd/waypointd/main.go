@@ -1024,6 +1024,7 @@ func (s *server) backfillDefaults() error {
 		{"attachments", config.DefaultAttachments()},
 		{"peers", config.DefaultPeers()},
 		{"remote_attachments", config.DefaultRemoteAttachments()},
+		{"peering", config.DefaultPeering()},
 	} {
 		if _, ok, err := s.store.Get(bf.key); err != nil || !ok {
 			if err != nil {
@@ -1451,6 +1452,7 @@ func main() {
 	updateUnit := flag.String("update-unit", "waypointd.service", "systemd unit the updater restarts")
 	updateMarker := flag.String("update-marker", "/home/pi-star/waypoint/update.marker", "in-flight-update marker path (power-loss recovery)")
 	busConfigDir := flag.String("bus-config-dir", "/home/pi-star/waypoint/etc", "directory for rendered mode-bus configs (waypoint-bus-<id>.json), consumed by waypoint-bus@<id>.service (RFC-0003)")
+	peeringDir := flag.String("peering-dir", "/home/pi-star/waypoint/peering", "directory holding LAN-peering cert/key files (node.key, peer-*.crt) referenced by rendered bus peering blocks (RFC-0016)")
 	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
 	eventsPath := flag.String("events-store", "/home/pi-star/waypoint/events.db", "path to the SQLite event-history store (RFC-0004); a config.db sibling")
 	nmKeyfileDir := flag.String("nm-keyfile-dir", "/etc/NetworkManager/system-connections", "directory for rendered NetworkManager keyfiles (waypoint-*.nmconnection)")
@@ -1522,6 +1524,7 @@ func main() {
 			P25Gateway: *p25gwINI, NXDNGateway: *nxdngwINI, DStarGateway: *dstargwINI, M17Gateway: *m17gwINI,
 			DAPNETGateway: *dapnetgwINI,
 			BusConfigDir:  *busConfigDir,
+			PeeringDir:    *peeringDir,
 			// Demo mode must never pick up a real node's overrides: point the layer at an
 			// empty path so the render is emitted verbatim (RFC-0005).
 			OverridesDir: overridesRoot(*overridesDir, *demoMode),
