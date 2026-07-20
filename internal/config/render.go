@@ -21,6 +21,10 @@ type Paths struct {
 	DStarGateway  string
 	M17Gateway    string
 	DAPNETGateway string // POCSAG paging gateway (rendered only when POCSAG mode is enabled)
+	// BusConfigDir is the directory the per-bus configs are written to:
+	// <BusConfigDir>/<busid>.conf, consumed by waypoint-bus@<busid>.service
+	// (RFC-0003 §4). Each enabled bus contributes exactly one file here.
+	BusConfigDir string
 	// OverridesDir is the root of the operator's override drop-ins (RFC-0005 /
 	// issue #2): per-daemon fragments live under <OverridesDir>/<daemon>.d/*.conf and
 	// merge last into each rendered INI. Empty disables the override layer entirely
@@ -45,6 +49,12 @@ const (
 	unitDStarGateway  = "waypoint-dstargateway.service"
 	unitM17Gateway    = "waypoint-m17gateway.service"
 	unitDAPNETGateway = "waypoint-dapnetgateway.service"
+
+	// unitBusPrefix + <bus id> + ".service" is the systemd instance for one bus
+	// (RFC-0003 §4). One templated unit (waypoint-bus@.service, RenderBusUnit)
+	// serves every bus; each enabled bus is one instance restarted when its config
+	// changes — one hub, one unit, not one per leg.
+	unitBusPrefix = "waypoint-bus@"
 
 	// Cross-mode transcoding bridge units (MMDVM_CM). The per-bridge-daemon model is
 	// retired for the RFC-0003 bus architecture, so RenderTargets no longer restarts
@@ -135,7 +145,36 @@ func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 	// bridge unit, regardless of the (dormant) bridge sections' Enable flags. Apply
 	// instead STOPS any bridge daemon still running from the old surface
 	// (RetiredBridgeUnits), which closes the stale-daemon-on-disable defect.
+	//
+	// Mode buses (RFC-0003 §4): each ENABLED bus contributes exactly ONE target —
+	// its config file plus the waypoint-bus@<id> instance — regardless of how many
+	// modes are attached (a bus with N attachments is one file with N sections, one
+	// supervised hub). A disabled bus contributes no target and its rows are left
+	// untouched in the store (disable deletes nothing).
+	for i := range m.Buses {
+		bus := m.Buses[i] // capture per iteration for the render closure
+		if !bus.Enabled {
+			continue
+		}
+		targets = append(targets, RenderTarget{
+			Path:   busConfigPath(paths.BusConfigDir, bus.ID),
+			Unit:   unitBusPrefix + bus.ID + ".service",
+			Daemon: "", // per-bus override namespaces are out of scope for this PR
+			Render: func(m *Model) string { return m.renderBus(bus) },
+		})
+	}
 	return targets
+}
+
+// busConfigPath is where one bus's config is written: <dir>/<id>.conf. An empty
+// dir (tests, demo) yields a bare "<id>.conf" so render targets still have a
+// stable, comparable path without a filesystem.
+func busConfigPath(dir, id string) string {
+	name := id + ".conf"
+	if dir == "" {
+		return name
+	}
+	return filepath.Join(dir, name)
 }
 
 // WriteFiles renders every target, merges the operator's override fragments last
