@@ -285,6 +285,26 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// Bus LAN peering (RFC-0016): peers carry write-only secrets (the pinned peer
+	// cert + this node's peering key), so blank-preserve them like a network
+	// password; remote attachments write through the peering validator. Both are
+	// refused here rather than persisted invalid.
+	if section == "peers" {
+		if err := config.SetPeers(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if section == "remote_attachments" {
+		if err := config.SetRemoteAttachments(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	// Cross-mode bridges: YSF2DMR/NXDN2DMR carry a redacted DMR-master password, so
 	// the same write-only-secret rule applies — a blank field keeps the stored one
 	// (SetCrossBridge). Routing all five through it is uniform and harmless: the
@@ -1002,6 +1022,8 @@ func (s *server) backfillDefaults() error {
 	}{
 		{"buses", config.DefaultBuses()},
 		{"attachments", config.DefaultAttachments()},
+		{"peers", config.DefaultPeers()},
+		{"remote_attachments", config.DefaultRemoteAttachments()},
 	} {
 		if _, ok, err := s.store.Get(bf.key); err != nil || !ok {
 			if err != nil {

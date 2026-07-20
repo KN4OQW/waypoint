@@ -55,6 +55,11 @@ type Model struct {
 	// renderer/daemon consumes them yet — this PR is the model/store seam only.
 	Buses       []Bus        `json:"buses"`
 	Attachments []Attachment `json:"attachments"`
+	// Bus LAN peering (RFC-0016): paired nodes and the remote edges of local buses.
+	// Ordinary store rows following the RFC-0001 conventions; no transport/render
+	// consumes them yet — this is the model/store seam.
+	Peers             []Peer             `json:"peers"`
+	RemoteAttachments []RemoteAttachment `json:"remote_attachments"`
 	// LCD is the Waypoint-native HD44780 driver (store-only; drives no INI).
 	LCD LCD `json:"lcd"`
 	// History is the event-history retention policy (store-only; drives no INI).
@@ -563,35 +568,37 @@ type DMRRoute struct {
 // can never drift apart.
 func (m *Model) sections() map[string]any {
 	return map[string]any{
-		"general":     &m.General,
-		"modem":       &m.Modem,
-		"display":     &m.Display,
-		"dmr":         &m.DMR,
-		"dmrnet":      &m.DMRNet,
-		"modes":       &m.Modes,
-		"networks":    &m.Networks,
-		"routes":      &m.Routes,
-		"ysf":         &m.YSF,
-		"ysfgw":       &m.YSFGW,
-		"p25":         &m.P25,
-		"p25gw":       &m.P25GW,
-		"nxdn":        &m.NXDN,
-		"nxdngw":      &m.NXDNGW,
-		"dstar":       &m.DStar,
-		"dstargw":     &m.DStarGW,
-		"m17":         &m.M17,
-		"m17gw":       &m.M17GW,
-		"pocsag":      &m.POCSAG,
-		"fm":          &m.FM,
-		"ysf2dmr":     &m.YSF2DMR,
-		"dmr2ysf":     &m.DMR2YSF,
-		"ysf2nxdn":    &m.YSF2NXDN,
-		"dmr2nxdn":    &m.DMR2NXDN,
-		"nxdn2dmr":    &m.NXDN2DMR,
-		"buses":       &m.Buses,
-		"attachments": &m.Attachments,
-		"lcd":         &m.LCD,
-		"history":     &m.History,
+		"general":            &m.General,
+		"modem":              &m.Modem,
+		"display":            &m.Display,
+		"dmr":                &m.DMR,
+		"dmrnet":             &m.DMRNet,
+		"modes":              &m.Modes,
+		"networks":           &m.Networks,
+		"routes":             &m.Routes,
+		"ysf":                &m.YSF,
+		"ysfgw":              &m.YSFGW,
+		"p25":                &m.P25,
+		"p25gw":              &m.P25GW,
+		"nxdn":               &m.NXDN,
+		"nxdngw":             &m.NXDNGW,
+		"dstar":              &m.DStar,
+		"dstargw":            &m.DStarGW,
+		"m17":                &m.M17,
+		"m17gw":              &m.M17GW,
+		"pocsag":             &m.POCSAG,
+		"fm":                 &m.FM,
+		"ysf2dmr":            &m.YSF2DMR,
+		"dmr2ysf":            &m.DMR2YSF,
+		"ysf2nxdn":           &m.YSF2NXDN,
+		"dmr2nxdn":           &m.DMR2NXDN,
+		"nxdn2dmr":           &m.NXDN2DMR,
+		"buses":              &m.Buses,
+		"attachments":        &m.Attachments,
+		"peers":              &m.Peers,
+		"remote_attachments": &m.RemoteAttachments,
+		"lcd":                &m.LCD,
+		"history":            &m.History,
 	}
 }
 

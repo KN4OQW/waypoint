@@ -27,7 +27,13 @@ type View struct {
 	// credentials_ref against Networks[] (also in this view).
 	Buses       []Bus        `json:"buses"`
 	Attachments []Attachment `json:"attachments"`
-	ReadOnly    bool         `json:"read_only"`
+	// Bus LAN peering (RFC-0016). Peers ARE redacted — the pinned peer certificate
+	// and this node's per-peering key are write-only secrets; only the fingerprint
+	// is viewable (PeerView). Remote attachments carry no secret and project
+	// verbatim.
+	Peers             []PeerView         `json:"peers"`
+	RemoteAttachments []RemoteAttachment `json:"remote_attachments"`
+	ReadOnly          bool               `json:"read_only"`
 	// The cross-mode transcoding bridges (MMDVM_CM) are no longer projected here.
 	// The per-bridge-daemon model is retired for the RFC-0003 bus architecture, so
 	// the settings page shows a placeholder instead of bridge cards. The bridge store
@@ -238,6 +244,23 @@ type ViewMode struct {
 // Type + Primary (WPSD-style generation), so no raw rewrite lines are exposed —
 // except Rewrites, which is populated only for a "custom" network (the advanced
 // escape hatch) and empty otherwise.
+// PeerView is the redacted read model for a LAN peer (RFC-0016 §Security posture):
+// the pinned peer certificate and this node's per-peering private key are NEVER
+// serialized — only whether they are set (HasCertificate/HasKey) and the
+// out-of-band-verifiable Fingerprint are exposed, mirroring ViewNetwork's
+// has_password treatment.
+type PeerView struct {
+	ID             string    `json:"id"`
+	Name           string    `json:"name"`
+	Host           string    `json:"host,omitempty"`
+	Port           string    `json:"port,omitempty"`
+	MDNSInstance   string    `json:"mdns_instance,omitempty"`
+	State          PeerState `json:"state"`
+	Fingerprint    string    `json:"fingerprint,omitempty"`
+	HasCertificate bool      `json:"has_certificate"`
+	HasKey         bool      `json:"has_key"`
+}
+
 type ViewNetwork struct {
 	Name        string      `json:"name"`
 	Type        NetworkType `json:"type"`
@@ -456,5 +479,15 @@ func (m *Model) View(storePath string) *View {
 	// never aliases the model's backing arrays.
 	v.Buses = append([]Bus(nil), m.Buses...)
 	v.Attachments = append([]Attachment(nil), m.Attachments...)
+	// Peers are redacted (secrets stripped); remote attachments carry none.
+	v.Peers = make([]PeerView, 0, len(m.Peers))
+	for _, p := range m.Peers {
+		v.Peers = append(v.Peers, PeerView{
+			ID: p.ID, Name: p.Name, Host: p.Host, Port: p.Port, MDNSInstance: p.MDNSInstance,
+			State: p.State, Fingerprint: p.Fingerprint,
+			HasCertificate: p.Certificate != "", HasKey: p.PrivateKey != "",
+		})
+	}
+	v.RemoteAttachments = append([]RemoteAttachment(nil), m.RemoteAttachments...)
 	return v
 }

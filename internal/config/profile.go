@@ -39,7 +39,12 @@ var profileSections = []string{
 // identity + RF frequencies (general), modem calibration (modem), the display and
 // physical LCD panel, and station retention policy (history). Auth is not a config
 // section at all (its own tables), so it needs no entry here.
-var profileExcluded = []string{"general", "modem", "display", "lcd", "history"}
+// Bus LAN peering (RFC-0016) is excluded: peers[] carries node-specific mTLS
+// secrets and this-node identity (a pinned peer cert and this node's peering key),
+// which must never travel in a portable profile, and remote_attachments[]
+// references those peers, so it would dangle if carried without them. Peering is
+// re-established per node by pairing, not by importing a profile.
+var profileExcluded = []string{"general", "modem", "display", "lcd", "history", "peers", "remote_attachments"}
 
 // profileSecretFields registers the secret-bearing fields per section — shared by
 // export scrub and activate reconcile so the two can never drift. The values are
