@@ -354,7 +354,10 @@ func (s *server) applyRender(by string) (restarted, stopped []string, err error)
 	// bus architecture supersedes them), so they are never restarted; stopping any
 	// that are still active on every apply closes the stale-daemon-on-disable defect
 	// by construction. Best-effort: a stop failure is logged, not fatal to the apply.
-	stopped = s.stopUnitsIfActive(config.RetiredBridgeUnits())
+	// Also stop the daemon of any bus that is present but disabled (RFC-0003): an
+	// enabled bus contributes a render target and is (re)started above; a disabled
+	// bus contributes none, so its lingering waypoint-bus@<id> is stopped here.
+	stopped = s.stopUnitsIfActive(append(config.RetiredBridgeUnits(), m.DisabledBusUnits()...))
 	_ = s.store.RecordApply(by, map[string]any{"restarted": restarted, "stopped": stopped})
 	// The native LCD driver renders no INI and restarts no unit, so it is absent
 	// from targets/restarted — bring the panel in line with the applied config
@@ -1321,6 +1324,8 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/config/apply", s.configApply)
 	mux.HandleFunc("/api/config/", s.configView) // PUT /api/config/{section}
 	mux.HandleFunc("/api/overrides", s.overridesView)
+	mux.HandleFunc("/api/buses/validate", s.busesValidate)   // dry-run attach validator (RFC-0003 §2)
+	mux.HandleFunc("/api/buses/migrate", s.busesMigrate)     // seed buses from the dormant bridges (§4)
 	mux.HandleFunc("/api/profiles", s.profilesView)          // GET list, POST capture (RFC-0006)
 	mux.HandleFunc("/api/profiles/import", s.profilesImport) // more specific than /api/profiles/
 	mux.HandleFunc("/api/profiles/", s.profilesRouter)       // {name}[/activate|/export], DELETE

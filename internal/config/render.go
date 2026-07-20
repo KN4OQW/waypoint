@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -21,6 +22,12 @@ type Paths struct {
 	DStarGateway  string
 	M17Gateway    string
 	DAPNETGateway string // POCSAG paging gateway (rendered only when POCSAG mode is enabled)
+	// BusConfigDir is where each enabled mode bus's rendered config is written
+	// (RFC-0003): <BusConfigDir>/waypoint-bus-<id>.json, consumed by
+	// waypoint-bus@<id>.service. Unlike the fixed gateway INIs there is one file
+	// per enabled bus, so this is a directory, not a path. Empty in tests that only
+	// exercise the renderers.
+	BusConfigDir string
 	// OverridesDir is the root of the operator's override drop-ins (RFC-0005 /
 	// issue #2): per-daemon fragments live under <OverridesDir>/<daemon>.d/*.conf and
 	// merge last into each rendered INI. Empty disables the override layer entirely
@@ -135,7 +142,80 @@ func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 	// bridge unit, regardless of the (dormant) bridge sections' Enable flags. Apply
 	// instead STOPS any bridge daemon still running from the old surface
 	// (RetiredBridgeUnits), which closes the stale-daemon-on-disable defect.
+
+	// Mode buses (RFC-0003 §4): one target per ENABLED bus — its rendered config
+	// plus the templated unit that consumes it. A disabled bus contributes none
+	// (its config stops being written); its running daemon is stopped by the apply
+	// loop (see RetiredBusUnits). Buses are appended in stable id order so the
+	// render/restart order is deterministic (RFC-0001 pure-render property).
+	for _, b := range busesSortedByID(m.Buses) {
+		if !b.Enabled {
+			continue
+		}
+		id := b.ID
+		targets = append(targets, RenderTarget{
+			Path:   filepath.Join(paths.BusConfigDir, busConfigFile(id)),
+			Unit:   busUnit(id),
+			Render: func(mm *Model) string { return mm.renderBusConfig(id) },
+		})
+	}
 	return targets
+}
+
+// busUnit / busConfigFile name the templated systemd unit and rendered config
+// file for a bus id.
+func busUnit(id string) string       { return "waypoint-bus@" + id + ".service" }
+func busConfigFile(id string) string { return "waypoint-bus-" + id + ".json" }
+
+// DisabledBusUnits names the templated units for buses that exist but are
+// disabled. Apply stops these (like RetiredBridgeUnits) so disabling a bus in the
+// UI actually stops its daemon — enabled buses contribute a render target and get
+// (re)started, disabled ones would otherwise linger. A deleted bus cannot be
+// enumerated (its row is gone), the same limitation every removed target has.
+func (m *Model) DisabledBusUnits() []string {
+	var out []string
+	for _, b := range busesSortedByID(m.Buses) {
+		if !b.Enabled {
+			out = append(out, busUnit(b.ID))
+		}
+	}
+	return out
+}
+
+// busesSortedByID returns the buses in stable id order without mutating the model.
+func busesSortedByID(buses []Bus) []Bus {
+	out := append([]Bus(nil), buses...)
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// renderBusConfig is the pure renderer for one bus's config file: the BusConfig
+// the daemon reads (RFC-0003 §4), assembled from the bus row and its attachments.
+// A missing bus renders an empty object rather than panicking (the target list is
+// built from the same model, so this is defence in depth).
+func (m *Model) renderBusConfig(id string) string {
+	var bus Bus
+	found := false
+	for _, b := range m.Buses {
+		if b.ID == id {
+			bus, found = b, true
+			break
+		}
+	}
+	if !found {
+		return "{}\n"
+	}
+	bc := BusConfig{Bus: bus}
+	for _, a := range m.Attachments {
+		if a.BusID == id {
+			bc.Attachments = append(bc.Attachments, a)
+		}
+	}
+	raw, err := bc.Marshal()
+	if err != nil {
+		return "{}\n"
+	}
+	return string(raw) + "\n"
 }
 
 // WriteFiles renders every target, merges the operator's override fragments last

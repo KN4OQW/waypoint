@@ -92,6 +92,12 @@ function buildEdit(c) {
     // body carries retention_days as JSON number, not string (the store field is
     // an int). Falls back to the 7-day default if the view somehow omits it.
     history: { retention_days: (c.history || {}).retention_days ?? 7 },
+    // Mode buses (RFC-0003): buses[] and their attachments. Neither carries a
+    // secret — a DMR attachment authenticates through an existing network named by
+    // credentials_ref, never its own password (assert-the-shape: no password field
+    // exists here). tg_map is expanded to editable rows and folded back on save.
+    buses: (c.buses || []).map((b) => ({ id: b.id, name: b.name || "", enabled: !!b.enabled })),
+    attachments: (c.attachments || []).map(attachFrom),
   };
   dirty = new Set();
   refreshActions();
@@ -1263,10 +1269,251 @@ async function confirmNetwork(token) {
 // entering from any attached mode is converted and emitted to the others. The tab
 // remains as a placeholder so the redesign has a home; the bridge store sections
 // are kept dormant (disabling loses nothing — RFC-0001), so no data is lost.
+// --- Buses (RFC-0003) -----------------------------------------------------
+// The Gateways tab is the bus surface: a bus is a named hub that attached modes
+// (DMR/YSF/NXDN) hear each other through. All validity (which modes may share a
+// bus) comes from the server's one validator via /api/buses/validate — the JS
+// never re-implements the converter matrix (RFC-0003 §2). Buses/attachments save
+// and apply through the standard SetSection → render → apply path, so an enabled
+// bus (re)starts waypoint-bus@<id>.service like any other target.
+
+// The modes offered in the attach picker. DMR/YSF/NXDN attach today (reframe
+// tier); D-Star/P25/M17 are offered so the validator can explain why they can't
+// (transcode tier deferred), rather than hiding them.
+const BUS_MODES = [
+  { key: "dmr", label: "DMR" }, { key: "ysf", label: "YSF" }, { key: "nxdn", label: "NXDN" },
+  { key: "dstar", label: "D-Star" }, { key: "p25", label: "P25" }, { key: "m17", label: "M17" },
+];
+const BUS_MODE_LABEL = Object.fromEntries(BUS_MODES.map((m) => [m.key, m.label]));
+
+let attachPicker = null;   // { busId, loading?, opts:[{key,label,ok,reason}] } — open picker state
+let busMigrateMsg = "";    // last migration result/warning line
+let busBusy = {};          // bus name/id -> { winner, loser } while a losing source is held off
+let busBusyTimers = {};    // bus name/id -> timeout id (busy is transient)
+
+// attachFrom normalizes a stored attachment into the edit model, expanding the
+// tg_map object into ordered editable rows (_tgrows).
+function attachFrom(a) {
+  return {
+    bus_id: a.bus_id, mode: a.mode, credentials_ref: a.credentials_ref || "",
+    slot: a.slot || "", default_tg: a.default_tg || "",
+    target: a.target || "", wiresx_passthrough: !!a.wiresx_passthrough,
+    id: a.id || "", tg: a.tg || "", default_id: a.default_id || "",
+    _tgrows: Object.entries(a.tg_map || {}).map(([from, to]) => ({ from, to })),
+  };
+}
+
+// cleanAttachment folds an edit attachment back into the store shape: _tgrows ->
+// tg_map object (dropping blank rows), and only the fields meaningful for the
+// mode. A bus holds NO secret — there is no password field to strip or preserve.
+function cleanAttachment(a) {
+  const out = { bus_id: a.bus_id, mode: a.mode, credentials_ref: a.credentials_ref || "" };
+  if (a.mode === "dmr") {
+    out.slot = a.slot || "";
+    out.default_tg = a.default_tg || "";
+    const map = {};
+    (a._tgrows || []).forEach((r) => { if (String(r.from).trim() && String(r.to).trim()) map[String(r.from).trim()] = String(r.to).trim(); });
+    if (Object.keys(map).length) out.tg_map = map;
+  } else if (a.mode === "ysf") {
+    out.target = a.target || "";
+    out.wiresx_passthrough = !!a.wiresx_passthrough;
+  } else if (a.mode === "nxdn") {
+    out.id = a.id || ""; out.tg = a.tg || ""; out.default_id = a.default_id || "";
+  }
+  return out;
+}
+
 function panelGateways() {
-  const placeholder = card("CROSS-MODE ROUTING",
-    note("Cross-mode routing is being redesigned as a bus system (RFC-0003). The old per-mode transcoding bridges (YSF2DMR, DMR2YSF, YSF2NXDN, DMR2NXDN, NXDN2DMR) have been retired; any settings you saved for them are preserved and will seed the new bus definitions."));
-  return `<div class="stack">${placeholder}</div>`;
+  const buses = edit.buses || [];
+  const migrate = card("MIGRATE FROM RETIRED BRIDGES",
+    note("The old per-mode bridges (YSF2DMR, DMR2YSF, YSF2NXDN, DMR2NXDN, NXDN2DMR) are retired. Migration seeds a bus from whatever you had configured — your saved bridge settings are <b>preserved either way</b>, migration only <b>adds</b> a bus, it never deletes anything.") +
+    `<div class="row"><button type="button" class="btn accent" id="bus-migrate">Migrate bridges → bus</button></div>` +
+    (busMigrateMsg ? note(esc(busMigrateMsg)) : ""));
+  const list = buses.length
+    ? buses.map(busCard).join("")
+    : note("No buses yet. A <b>bus</b> lets its attached modes hear each other (DMR ⇄ YSF ⇄ NXDN), with IDs/talkgroups translated per side. Create one, then attach two or more modes.");
+  const create = `<div class="row"><button type="button" class="btn" id="bus-create">＋ Create bus</button></div>`;
+  return `<div class="stack">${migrate}${list}${create}</div>`;
+}
+
+function busCard(bus) {
+  const atts = (edit.attachments || []).filter((a) => a.bus_id === bus.id);
+  const busy = busBusy[bus.name] || busBusy[bus.id];
+  const busyBadge = busy
+    ? `<span class="pill busy" title="Another source is talking; ${esc(busy.loser)} traffic is held off">busy: via ${esc(busy.winner)}</span>` : "";
+  const enPill = `<button type="button" class="pill ${bus.enabled ? "on" : "off"}" data-busen="${esc(bus.id)}" aria-pressed="${bus.enabled}" aria-label="Bus enabled">${bus.enabled ? "ENABLED" : "DISABLED"}</button>`;
+  const del = atts.length === 0 ? `<button type="button" class="btn danger" data-busdel="${esc(bus.id)}">Delete</button>` : "";
+  const head = `<div class="card-head"><span class="sq"></span><span class="t">${esc(bus.name || bus.id)}</span>${busyBadge}<span class="bus-actions">${enPill}${del}</span></div>`;
+  const nameRow = row("Name", `<input data-busname="${esc(bus.id)}" value="${esc(bus.name)}" placeholder="e.g. Local Bus A">`);
+  const disableNote = bus.enabled ? "" : note("Disabled — its attachments are kept and return when you re-enable it.");
+  const lowNote = (bus.enabled && atts.length < 2) ? note("A bus needs at least two attachments to hub traffic; add another mode before applying.") : "";
+  const attHTML = atts.map((a) => attachmentBlock(a, edit.attachments.indexOf(a))).join("");
+  return `<div class="card bus-card">${head}${nameRow}${disableNote}${lowNote}${attHTML}${attachPickerHTML(bus.id)}</div>`;
+}
+
+function attachmentBlock(a, idx) {
+  const headRow = `<div class="toggle-row"><span class="name">${esc(BUS_MODE_LABEL[a.mode] || a.mode)} attachment</span><button type="button" class="btn" data-attachdel="${idx}">Detach</button></div>`;
+  return `<div class="attach">${headRow}${attachParams(a, idx)}</div>`;
+}
+
+function attachParams(a, idx) {
+  if (a.mode === "dmr") {
+    const slot = a.slot || "2";
+    const slotSel = row("Slot", `<select data-attach="${idx}" data-akey="slot"><option value="1"${slot === "1" ? " selected" : ""}>1</option><option value="2"${slot === "2" ? " selected" : ""}>2</option></select>`);
+    const nets = edit.networks || [];
+    const creds = row("Credentials (DMR network)",
+      `<select data-attach="${idx}" data-akey="credentials_ref"><option value="">(none — rides local DMRGateway)</option>${nets.map((n) => `<option value="${esc(n.name)}"${a.credentials_ref === n.name ? " selected" : ""}>${esc(n.name)}</option>`).join("")}</select>`);
+    return slotSel + attField(idx, "default_tg", "Default TG", "e.g. 91") + creds + tgMapEditor(a, idx);
+  }
+  if (a.mode === "ysf") {
+    const opts = ysfRefs.map((r) => `<option value="${esc(r.name)}">${esc([r.country, r.description].filter(Boolean).join(" · "))}</option>`).join("");
+    const target = row("Reflector / DG-ID", `<input data-attach="${idx}" data-akey="target" list="bus-ysf-refs" value="${esc(a.target || "")}" placeholder="e.g. FCS00290 or a YSF reflector"><datalist id="bus-ysf-refs">${opts}</datalist>`);
+    const wx = `<div class="toggle-row"><span class="name">Wires-X passthrough</span><button type="button" class="pill ${a.wiresx_passthrough ? "on" : "off"}" data-attachbool="${idx}" data-abkey="wiresx_passthrough" aria-pressed="${a.wiresx_passthrough}" aria-label="Wires-X passthrough">${a.wiresx_passthrough ? "ON" : "OFF"}</button></div>`;
+    return target + wx;
+  }
+  if (a.mode === "nxdn") {
+    return attField(idx, "id", "NXDN ID", "network id") + attField(idx, "tg", "TG", "talkgroup") + attField(idx, "default_id", "Default ID", "");
+  }
+  return note("This mode cannot attach in the committed reframe tier.");
+}
+
+function attField(idx, key, label, ph) {
+  const v = (edit.attachments[idx] || {})[key] || "";
+  return row(label, `<input data-attach="${idx}" data-akey="${esc(key)}" value="${esc(v)}" placeholder="${esc(ph || "")}">`);
+}
+
+function tgMapEditor(a, idx) {
+  const rows = (a._tgrows || []).map((r, ri) =>
+    `<div class="row tgmap-row"><input data-tgmap="${idx}" data-tgi="${ri}" data-tgk="from" value="${esc(r.from)}" placeholder="source TG"><span class="arrow">→</span><input data-tgmap="${idx}" data-tgi="${ri}" data-tgk="to" value="${esc(r.to)}" placeholder="DMR TG"><button type="button" class="btn" data-tgdel="${idx}" data-tgi="${ri}" aria-label="Remove mapping">✕</button></div>`).join("");
+  return `<div class="note">TG map — rewrite a source-side talkgroup to a DMR TG (optional)</div>${rows}<div class="row"><button type="button" class="btn" data-tgadd="${idx}">＋ Add mapping</button></div>`;
+}
+
+function attachPickerHTML(busId) {
+  if (!attachPicker || attachPicker.busId !== busId) {
+    return `<div class="row"><button type="button" class="btn" data-attachopen="${esc(busId)}">＋ Attach mode</button></div>`;
+  }
+  if (attachPicker.loading) return note("Checking which modes can attach…");
+  const btns = (attachPicker.opts || []).map((o) =>
+    o.ok
+      ? `<button type="button" class="btn attach-ok" data-attachpick="${esc(o.key)}">${esc(o.label)}</button>`
+      : `<button type="button" class="btn attach-no" disabled title="${esc(o.reason)}">${esc(o.label)} — ${esc(o.reason)}</button>`).join("");
+  return `<div class="attach-picker"><div class="note">Attach a mode (greyed-out modes can't, with the reason shown):</div><div class="picker-row">${btns}</div><div class="row"><button type="button" class="btn" data-attachcancel="1">Cancel</button></div></div>`;
+}
+
+// newBusId mints a short, unique, stable id (bus-N) — the id drives the rendered
+// file name and unit (waypoint-bus@<id>.service), so it must not collide.
+function newBusId() {
+  const ids = new Set((edit.buses || []).map((b) => b.id));
+  let n = 1;
+  while (ids.has("bus-" + n)) n++;
+  return "bus-" + n;
+}
+
+function createBus() {
+  const id = newBusId();
+  (edit.buses = edit.buses || []).push({ id, name: "New Bus " + id.slice(4), enabled: true });
+  dirty.add("buses");
+  attachPicker = null;
+  renderPanel(); refreshActions();
+}
+
+function toggleBus(id) {
+  const b = (edit.buses || []).find((x) => x.id === id);
+  if (!b) return;
+  b.enabled = !b.enabled;
+  dirty.add("buses");
+  renderPanel(); refreshActions();
+}
+
+function deleteBus(id) {
+  const atts = (edit.attachments || []).filter((a) => a.bus_id === id);
+  if (atts.length) return; // guarded in UI; delete only an empty bus
+  edit.buses = (edit.buses || []).filter((b) => b.id !== id);
+  dirty.add("buses");
+  renderPanel(); refreshActions();
+}
+
+function detachMode(idx) {
+  if (!edit.attachments || !edit.attachments[idx]) return;
+  edit.attachments.splice(idx, 1);
+  dirty.add("attachments");
+  renderPanel(); refreshActions();
+}
+
+// openAttachPicker asks the server validator whether each not-yet-attached mode
+// could join this bus, so the picker greys out the impossible ones with the exact
+// reason (RFC-0003 §2). It never decides validity in JS.
+async function openAttachPicker(busId) {
+  attachPicker = { busId, loading: true };
+  renderPanel();
+  const attached = new Set((edit.attachments || []).filter((a) => a.bus_id === busId).map((a) => a.mode));
+  const cands = BUS_MODES.filter((m) => !attached.has(m.key));
+  const opts = await Promise.all(cands.map(async (m) => {
+    const attachments = (edit.attachments || []).map(cleanAttachment).concat([{ bus_id: busId, mode: m.key }]);
+    try {
+      const r = await fetch("/api/buses/validate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ buses: edit.buses || [], attachments }) });
+      const j = await r.json();
+      return { key: m.key, label: m.label, ok: !!j.ok, reason: (j.reason || "").replace(/^bus "[^"]*":\s*/, "") };
+    } catch (e) {
+      return { key: m.key, label: m.label, ok: false, reason: "validation unavailable" };
+    }
+  }));
+  // Only apply if the picker is still open for this bus (user may have cancelled).
+  if (attachPicker && attachPicker.busId === busId) { attachPicker = { busId, opts }; renderPanel(); }
+}
+
+function attachMode(busId, mode) {
+  const a = { bus_id: busId, mode, credentials_ref: "", _tgrows: [] };
+  if (mode === "dmr") { a.slot = "2"; a.default_tg = ""; }
+  else if (mode === "ysf") { a.target = ""; a.wiresx_passthrough = false; }
+  else if (mode === "nxdn") { a.id = ""; a.tg = ""; a.default_id = ""; }
+  (edit.attachments = edit.attachments || []).push(a);
+  attachPicker = null;
+  dirty.add("attachments");
+  renderPanel(); refreshActions();
+}
+
+// runMigration invokes the server-side bridge→bus seeding, which persists the
+// result itself; we reload to show it and report the warnings verbatim. The
+// migrated bus still needs an Apply to start — the copy says so.
+async function runMigration() {
+  busMigrateMsg = "Migrating…";
+  renderPanel();
+  try {
+    const r = await fetch("/api/buses/migrate", { method: "POST" });
+    const j = await r.json();
+    if (!r.ok) { busMigrateMsg = "Migration failed: " + (j.reason || (await r.text())); renderPanel(); return; }
+    const warns = (j.warnings || []).join("  ");
+    if (j.ok) {
+      await load();
+      busMigrateMsg = `Migrated ${j.buses} bus (${j.attachments} attachments). Review it below, then Apply to start it. ${warns}`.trim();
+    } else {
+      busMigrateMsg = warns || "Nothing to migrate.";
+    }
+    renderPanel();
+  } catch (e) {
+    busMigrateMsg = "Migration error: " + String(e);
+    renderPanel();
+  }
+}
+
+// initBusEvents surfaces the daemon's transient bus_busy events on the bus cards
+// (RFC-0003 §5 / issue #65 acceptance #5). The event carries the bus name in
+// `network`, the winner in `source`, the loser in `mode`.
+function initBusEvents() {
+  try {
+    const es = new EventSource("/api/events");
+    es.onmessage = (m) => {
+      let e; try { e = JSON.parse(m.data); } catch (_) { return; }
+      if (e.type !== "bus_busy") return;
+      const key = e.network || "";
+      if (busBusyTimers[key]) clearTimeout(busBusyTimers[key]);
+      busBusy[key] = { winner: e.source || "", loser: e.mode || "" };
+      busBusyTimers[key] = setTimeout(() => { delete busBusy[key]; if (state.tab === "gateways") renderPanel(); }, 2500);
+      if (state.tab === "gateways") renderPanel();
+    };
+    es.onerror = () => {}; // EventSource auto-reconnects
+  } catch (e) { /* no live surfacing if the stream is unavailable */ }
 }
 
 function panelYSF() {
@@ -1554,6 +1801,7 @@ async function apply() {
         : sec === "routes" ? (edit.routes || []).filter((r) => r.tg && r.network)
         : sec === "dstargw" ? cleanDstargw(edit.dstargw)
         : sec === "pocsag" ? cleanPocsag(edit.pocsag)
+        : sec === "attachments" ? (edit.attachments || []).map(cleanAttachment)
         : edit[sec];
       const r = await fetch("/api/config/" + sec, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!r.ok) throw new Error(sec + ": " + (await r.text()).trim());
@@ -1966,6 +2214,10 @@ document.getElementById("panels").addEventListener("input", (e) => {
   // --- host/NTP fields (direct apply) ---
   if (t.dataset.hostf != null) { netEdit.host[t.dataset.hkey] = t.value; netMarkHostDirty(); return; }
   if (t.dataset.ntpservers != null) { netEdit.ntp.servers = textToList(t.value); netMarkHostDirty(); return; }
+  // --- mode buses (RFC-0003) ---
+  if (t.dataset.busname != null) { const b = (edit.buses || []).find((x) => x.id === t.dataset.busname); if (b) { b.name = t.value; dirty.add("buses"); } return; }
+  if (t.dataset.tgmap != null) { const a = edit.attachments[+t.dataset.tgmap]; a._tgrows[+t.dataset.tgi][t.dataset.tgk] = t.value; dirty.add("attachments"); return; }
+  if (t.dataset.attach != null) { edit.attachments[+t.dataset.attach][t.dataset.akey] = t.value; dirty.add("attachments"); return; }
   if (t.dataset.sec) {
     let v = t.value;
     if (t.dataset.kind === "mhz") { const f = parseFloat(v); v = isNaN(f) ? "" : String(Math.round(f * 1e6)); }
@@ -2125,6 +2377,26 @@ document.getElementById("panels").addEventListener("click", (e) => {
     (edit.routes = edit.routes || []).push({ slot: "2", tg: "", network: firstEnabled.name || "" });
     dirty.add("routes"); renderPanel(); refreshActions();
   }
+  // --- mode buses (RFC-0003) ---
+  if (e.target.id === "bus-create") { createBus(); return; }
+  if (e.target.id === "bus-migrate") { runMigration(); return; }
+  const ben = e.target.closest("[data-busen]");
+  if (ben) { toggleBus(ben.dataset.busen); return; }
+  const bdel = e.target.closest("[data-busdel]");
+  if (bdel) { deleteBus(bdel.dataset.busdel); return; }
+  const aopen = e.target.closest("[data-attachopen]");
+  if (aopen) { openAttachPicker(aopen.dataset.attachopen); return; }
+  if (e.target.closest("[data-attachcancel]")) { attachPicker = null; renderPanel(); return; }
+  const apick = e.target.closest("[data-attachpick]");
+  if (apick) { attachMode(attachPicker.busId, apick.dataset.attachpick); return; }
+  const adel = e.target.closest("[data-attachdel]");
+  if (adel) { detachMode(+adel.dataset.attachdel); return; }
+  const abool = e.target.closest("[data-attachbool]");
+  if (abool) { const a = edit.attachments[+abool.dataset.attachbool]; a[abool.dataset.abkey] = !a[abool.dataset.abkey]; dirty.add("attachments"); renderPanel(); refreshActions(); return; }
+  const tgadd = e.target.closest("[data-tgadd]");
+  if (tgadd) { const a = edit.attachments[+tgadd.dataset.tgadd]; (a._tgrows = a._tgrows || []).push({ from: "", to: "" }); dirty.add("attachments"); renderPanel(); refreshActions(); return; }
+  const tgdel = e.target.closest("[data-tgdel]");
+  if (tgdel) { const a = edit.attachments[+tgdel.dataset.tgdel]; a._tgrows.splice(+tgdel.dataset.tgi, 1); dirty.add("attachments"); renderPanel(); refreshActions(); return; }
 });
 // Profile import file picker (fires "change", not "click").
 document.getElementById("panels").addEventListener("change", (e) => {
@@ -2170,3 +2442,4 @@ renderNav();
 renderThemes();
 selectTab((location.hash || "").slice(1) || "general");
 load();
+initBusEvents(); // live bus_busy surfacing on the Buses tab (RFC-0003 §5)

@@ -197,6 +197,25 @@
   .pill.on { color: var(--accent); border: 1px solid var(--accent); }
   .pill.off { color: var(--dim); border: 1px solid var(--pill-line); }
 
+  /* Mode buses (RFC-0003). The bus card reuses .card/.card-head; these add the
+     per-bus controls, the attachment blocks, the attach picker, and the transient
+     live "busy" badge. */
+  .bus-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .btn.danger { color: var(--bad); background: var(--input-bg); border: 1px solid rgba(255,107,107,.4); }
+  .btn.accent { color: var(--accent); background: var(--input-bg); border: 1px solid var(--accent); }
+  .pill.busy { color: var(--warn); border: 1px solid var(--warn); animation: busy-pulse 1.2s ease-in-out infinite; }
+  @keyframes busy-pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+  @media (prefers-reduced-motion: reduce) { .pill.busy { animation: none; } }
+  .attach { border: 1px solid var(--chip-line); border-radius: 8px; padding: 4px 12px 12px; margin-top: 12px; background: var(--swatch-bg); }
+  .attach-picker { border: 1px dashed var(--input-line); border-radius: 8px; padding: 12px; margin-top: 12px; }
+  .picker-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 10px; }
+  .btn.attach-ok { color: var(--accent); border: 1px solid var(--accent); background: var(--input-bg); }
+  .btn.attach-no { color: var(--dim); border: 1px solid var(--pill-line); background: transparent; text-align: left; }
+  .tgmap-row { display: flex; align-items: center; gap: 8px; justify-content: flex-start; }
+  .tgmap-row input { flex: 0 0 120px; max-width: 120px; }
+  .tgmap-row .arrow { flex: 0 0 auto; color: var(--muted); }
+  .tgmap-row .btn { flex: 0 0 auto; }
+
   .modes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 16px; }
   .mode-card { background: var(--panel); border: 1px solid var(--panel-line); border-radius: 11px; padding: 18px 20px; }
   .mode-card.on { border-color: rgba(120,140,160,.28); }
