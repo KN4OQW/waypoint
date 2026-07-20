@@ -98,6 +98,11 @@ function buildEdit(c) {
     // exists here). tg_map is expanded to editable rows and folded back on save.
     buses: (c.buses || []).map((b) => ({ id: b.id, name: b.name || "", enabled: !!b.enabled })),
     attachments: (c.attachments || []).map(attachFrom),
+    // Bus LAN peering (RFC-0016): the redacted peer rows (fingerprints visible,
+    // cert/key never) and the remote (via-peer) attachments. Discovery + pending
+    // pairings are fetched dynamically (they are not config sections).
+    peers: (c.peers || []).map((p) => ({ id: p.id, name: p.name || "", host: p.host || "", port: p.port || "", mdns_instance: p.mdns_instance || "", state: p.state || "", fingerprint: p.fingerprint || "", has_certificate: !!p.has_certificate, has_key: !!p.has_key })),
+    remote_attachments: (c.remote_attachments || []).map((r) => ({ bus_id: r.bus_id, peer_id: r.peer_id, mode: r.mode, target: r.target || "", default_tg: r.default_tg || "", slot: r.slot || "", tg: r.tg || "", id: r.id || "", default_id: r.default_id || "" })),
   };
   dirty = new Set();
   refreshActions();
@@ -1333,22 +1338,41 @@ function panelGateways() {
     ? buses.map(busCard).join("")
     : note("No buses yet. A <b>bus</b> lets its attached modes hear each other (DMR ⇄ YSF ⇄ NXDN), with IDs/talkgroups translated per side. Create one, then attach two or more modes.");
   const create = `<div class="row"><button type="button" class="btn" id="bus-create">＋ Create bus</button></div>`;
-  return `<div class="stack">${migrate}${list}${create}</div>`;
+  return `<div class="stack">${peersCard()}${migrate}${list}${create}</div>`;
 }
 
 function busCard(bus) {
   const atts = (edit.attachments || []).filter((a) => a.bus_id === bus.id);
+  const remotes = (edit.remote_attachments || []).filter((r) => r.bus_id === bus.id);
   const busy = busBusy[bus.name] || busBusy[bus.id];
   const busyBadge = busy
-    ? `<span class="pill busy" title="Another source is talking; ${esc(busy.loser)} traffic is held off">busy: via ${esc(busy.winner)}</span>` : "";
+    ? `<span class="pill busy" title="Another source is talking; ${esc(busy.loser)} traffic is held off">busy: via ${esc(busy.winner)}${busy.node ? " @ " + esc(busy.node) : ""}</span>` : "";
   const enPill = `<button type="button" class="pill ${bus.enabled ? "on" : "off"}" data-busen="${esc(bus.id)}" aria-pressed="${bus.enabled}" aria-label="Bus enabled">${bus.enabled ? "ENABLED" : "DISABLED"}</button>`;
-  const del = atts.length === 0 ? `<button type="button" class="btn danger" data-busdel="${esc(bus.id)}">Delete</button>` : "";
+  const del = (atts.length === 0 && remotes.length === 0) ? `<button type="button" class="btn danger" data-busdel="${esc(bus.id)}">Delete</button>` : "";
   const head = `<div class="card-head"><span class="sq"></span><span class="t">${esc(bus.name || bus.id)}</span>${busyBadge}<span class="bus-actions">${enPill}${del}</span></div>`;
   const nameRow = row("Name", `<input data-busname="${esc(bus.id)}" value="${esc(bus.name)}" placeholder="e.g. Local Bus A">`);
+  // Owner-offline state on a member (RFC-0016 §4), self-clearing (no latch).
+  const down = busDown[bus.name] || busDown[bus.id];
+  const downNote = down ? `<div class="note bus-down"><b>Bus ${esc(bus.name || bus.id)} down</b> — owner ${esc(down)} offline</div>` : "";
   const disableNote = bus.enabled ? "" : note("Disabled — its attachments are kept and return when you re-enable it.");
-  const lowNote = (bus.enabled && atts.length < 2) ? note("A bus needs at least two attachments to hub traffic; add another mode before applying.") : "";
+  const total = atts.length + remotes.length;
+  const lowNote = (bus.enabled && total < 2) ? note("A bus needs at least two attachments to hub traffic; add another mode before applying.") : "";
   const attHTML = atts.map((a) => attachmentBlock(a, edit.attachments.indexOf(a))).join("");
-  return `<div class="card bus-card">${head}${nameRow}${disableNote}${lowNote}${attHTML}${attachPickerHTML(bus.id)}</div>`;
+  const remoteHTML = remotes.map(remoteAttachmentBlock).join("");
+  return `<div class="card bus-card">${head}${downNote}${nameRow}${disableNote}${lowNote}${attHTML}${remoteHTML}${attachPickerHTML(bus.id)}</div>`;
+}
+
+// remoteAttachmentBlock renders a via-peer edge: mode @ peer, DORMANT when the peer
+// is not paired (RFC-0016 — the edge renders nothing until re-paired), with detach.
+function remoteAttachmentBlock(r) {
+  const peer = (edit.peers || []).find((p) => p.id === r.peer_id);
+  const pname = peer ? (peer.name || peer.id) : r.peer_id;
+  const dormant = !peer || peer.state !== "paired";
+  const badge = dormant
+    ? `<span class="pill off" title="peer not paired — this edge is dormant until re-paired">DORMANT</span>`
+    : `<span class="pill on">VIA PEER</span>`;
+  const key = `${r.bus_id}|${r.peer_id}|${r.mode}`;
+  return `<div class="attach remote-attach"><div class="toggle-row"><span class="name">${esc(BUS_MODE_LABEL[r.mode] || r.mode)} @ ${esc(pname)} ${badge}</span><button type="button" class="btn" data-remotedel="${esc(key)}">Detach</button></div></div>`;
 }
 
 function attachmentBlock(a, idx) {
@@ -1397,7 +1421,62 @@ function attachPickerHTML(busId) {
     o.ok
       ? `<button type="button" class="btn attach-ok" data-attachpick="${esc(o.key)}">${esc(o.label)}</button>`
       : `<button type="button" class="btn attach-no" disabled title="${esc(o.reason)}">${esc(o.label)} — ${esc(o.reason)}</button>`).join("");
-  return `<div class="attach-picker"><div class="note">Attach a mode (greyed-out modes can't, with the reason shown):</div><div class="picker-row">${btns}</div><div class="row"><button type="button" class="btn" data-attachcancel="1">Cancel</button></div></div>`;
+  // "Via peer" source (RFC-0016): pick a paired peer, then a mode — greyed with the
+  // peering-specific reasons from the server validator (never re-derived in JS).
+  const paired = (edit.peers || []).filter((p) => p.state === "paired");
+  let peerSection = "";
+  if (paired.length) {
+    const peerBtns = paired.map((p) => `<button type="button" class="btn${attachPicker.remote && attachPicker.remote.peerId === p.id ? " attach-ok" : ""}" data-attachpeer="${esc(p.id)}">via ${esc(p.name || p.id)}</button>`).join("");
+    peerSection = `<div class="note">Or attach a mode from a paired peer:</div><div class="picker-row">${peerBtns}</div>`;
+    const rp = attachPicker.remote;
+    if (rp) {
+      const rbtns = rp.loading ? "Checking…" : (rp.opts || []).map((o) =>
+        o.ok
+          ? `<button type="button" class="btn attach-ok" data-attachrpick="${esc(rp.peerId)}|${esc(o.key)}">${esc(o.label)}</button>`
+          : `<button type="button" class="btn attach-no" disabled title="${esc(o.reason)}">${esc(o.label)} — ${esc(o.reason)}</button>`).join("");
+      peerSection += `<div class="note">via ${esc(peerName(rp.peerId))}:</div><div class="picker-row">${rbtns}</div>`;
+    }
+  }
+  return `<div class="attach-picker"><div class="note">Attach a local mode (greyed-out modes can't, reason shown):</div><div class="picker-row">${btns}</div>${peerSection}<div class="row"><button type="button" class="btn" data-attachcancel="1">Cancel</button></div></div>`;
+}
+
+function peerName(id) { const p = (edit.peers || []).find((x) => x.id === id); return p ? (p.name || p.id) : id; }
+
+// openRemoteAttachPicker validates each of the peer's modes as a remote attachment
+// via the server validator (peering-specific reasons, the union mode-set, and the
+// node cap all come back verbatim) — never decided in JS.
+async function openRemoteAttachPicker(busId, peerId) {
+  attachPicker.remote = { peerId, loading: true };
+  renderPanel();
+  const existing = (edit.remote_attachments || []).map((r) => ({ bus_id: r.bus_id, peer_id: r.peer_id, mode: r.mode }));
+  const have = new Set(existing.filter((r) => r.bus_id === busId && r.peer_id === peerId).map((r) => r.mode));
+  const cands = BUS_MODES.filter((m) => !have.has(m.key));
+  const opts = await Promise.all(cands.map(async (m) => {
+    const remote_attachments = existing.concat([{ bus_id: busId, peer_id: peerId, mode: m.key }]);
+    try {
+      const r = await fetch("/api/buses/validate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ buses: edit.buses || [], attachments: (edit.attachments || []).map(cleanAttachment), remote_attachments }) });
+      const j = await r.json();
+      return { key: m.key, label: m.label, ok: !!j.ok, reason: (j.reason || "").replace(/^bus "[^"]*":\s*/, "") };
+    } catch (e) { return { key: m.key, label: m.label, ok: false, reason: "validation unavailable" }; }
+  }));
+  if (attachPicker && attachPicker.busId === busId && attachPicker.remote && attachPicker.remote.peerId === peerId) {
+    attachPicker.remote = { peerId, opts };
+    renderPanel();
+  }
+}
+
+function attachRemote(busId, peerId, mode) {
+  (edit.remote_attachments = edit.remote_attachments || []).push({ bus_id: busId, peer_id: peerId, mode, target: "", default_tg: "", slot: "", tg: "", id: "", default_id: "" });
+  attachPicker = null;
+  dirty.add("remote_attachments");
+  renderPanel(); refreshActions();
+}
+
+function detachRemote(key) {
+  const [bus_id, peer_id, mode] = key.split("|");
+  edit.remote_attachments = (edit.remote_attachments || []).filter((r) => !(r.bus_id === bus_id && r.peer_id === peer_id && r.mode === mode));
+  dirty.add("remote_attachments");
+  renderPanel(); refreshActions();
 }
 
 // newBusId mints a short, unique, stable id (bus-N) — the id drives the rendered
@@ -1505,15 +1584,175 @@ function initBusEvents() {
     const es = new EventSource("/api/events");
     es.onmessage = (m) => {
       let e; try { e = JSON.parse(m.data); } catch (_) { return; }
-      if (e.type !== "bus_busy") return;
       const key = e.network || "";
-      if (busBusyTimers[key]) clearTimeout(busBusyTimers[key]);
-      busBusy[key] = { winner: e.source || "", loser: e.mode || "" };
-      busBusyTimers[key] = setTimeout(() => { delete busBusy[key]; if (state.tab === "gateways") renderPanel(); }, 2500);
-      if (state.tab === "gateways") renderPanel();
+      const draw = () => { if (state.tab === "gateways") renderPanel(); };
+      if (e.type === "bus_busy") {
+        if (busBusyTimers[key]) clearTimeout(busBusyTimers[key]);
+        // e.node carries the origin node when the source is a remote peer (RFC-0016)
+        busBusy[key] = { winner: e.source || "", loser: e.mode || "", node: e.node || "" };
+        busBusyTimers[key] = setTimeout(() => { delete busBusy[key]; draw(); }, 2500);
+        clearBusDown(key); // any traffic implies the owner is up — self-clear (no latch)
+        draw();
+      } else if (e.type === "bus_voice_start" || e.type === "bus_up") {
+        clearBusDown(key); draw(); // recovery clears the owner-offline state
+      } else if (e.type === "bus_down") {
+        if (busDownTimers[key]) clearTimeout(busDownTimers[key]);
+        busDown[key] = e.source || "the owner"; // e.source = the owner node
+        // failsafe self-clear so a missed recovery event never latches forever
+        busDownTimers[key] = setTimeout(() => { delete busDown[key]; draw(); }, 30000);
+        draw();
+      }
     };
     es.onerror = () => {}; // EventSource auto-reconnects
   } catch (e) { /* no live surfacing if the stream is unavailable */ }
+}
+
+// --- Bus LAN peering (RFC-0016) ------------------------------------------
+let peering = { discovered: null, pending: [], busy: false, msg: "" };
+let busDown = {};        // bus name/id -> owner node label (owner-offline; self-clears, no latch)
+let busDownTimers = {};
+function clearBusDown(key) { if (busDownTimers[key]) { clearTimeout(busDownTimers[key]); delete busDownTimers[key]; } delete busDown[key]; }
+
+// peersCard is the LAN peers surface on the Gateways tab: mDNS discovery + manual
+// add, the paired/revoked list with fingerprints, and revoke. The active pairing
+// (short code + fingerprint) is a prominent modal (peerModal).
+function peersCard() {
+  const peers = edit.peers || [];
+  const paired = peers.filter((p) => p.state === "paired");
+  const other = peers.filter((p) => p.state !== "paired");
+
+  const pairedRows = paired.length
+    ? paired.map((p) => `<div class="toggle-row peer-row"><span class="name">${esc(p.name || p.id)}<span class="peer-fp" title="certificate fingerprint">${esc(shortFp(p.fingerprint))}</span></span><span class="bus-actions"><span class="pill on">PAIRED</span><button type="button" class="btn danger" data-peerrevoke="${esc(p.id)}" data-peername="${esc(p.name || p.id)}">Revoke</button></span></div>`).join("")
+    : note("No paired peers yet. Discover a node or add one by host:port, then pair.");
+  const otherRows = other.map((p) => `<div class="toggle-row peer-row muted"><span class="name">${esc(p.name || p.id)}<span class="peer-fp">${esc(shortFp(p.fingerprint))}</span></span><span class="pill off">${esc((p.state || "").toUpperCase())}</span></div>`).join("");
+
+  let disc = "";
+  if (peering.discovered !== null) {
+    disc = peering.discovered.length
+      ? peering.discovered.map((d) => `<div class="row peer-disc"><label>${esc(d.instance || d.host)}<span class="peer-fp">${esc(d.host)}:${esc(String(d.port))}</span></label><button type="button" class="btn accent" data-peerpair="${esc(d.host)}:${esc(String(d.port))}">Pair</button></div>`).join("")
+      : note("No peers found on the LAN. Add one by host:port below (mDNS may be filtered on your network).");
+  }
+  const discBtn = `<button type="button" class="btn" id="peer-discover"${peering.busy ? " disabled" : ""}>${peering.busy ? "Scanning…" : "Discover peers (mDNS)"}</button>`;
+  const manual = `<div class="row"><input id="peer-manual" placeholder="host:port — e.g. 10.0.0.20:42501" aria-label="peer host and port"><button type="button" class="btn" id="peer-pair-manual">Pair</button></div>`;
+
+  return card("LAN PEERS (RFC-0016)",
+    note("Pair Waypoint nodes on your LAN so a bus can span them. Pairing shows a short code on <b>both</b> screens — enter it to confirm; the certificate fingerprint is shown for out-of-band verification.") +
+    `<div class="row">${discBtn}</div>` + disc + manual +
+    (peering.msg ? note(esc(peering.msg)) : "") +
+    `<div class="note">Paired peers</div>` + pairedRows + otherRows);
+}
+
+function shortFp(fp) {
+  if (!fp) return "";
+  // show the first and last groups so it fits a phone but stays verifiable
+  const g = fp.split(":");
+  return g.length > 6 ? `${g.slice(0, 4).join(":")}…${g.slice(-2).join(":")}` : fp;
+}
+
+// renderPeerModal draws the active pairing (if any) as a prominent, phone-readable
+// overlay: the short code big + copyable, the peer fingerprint alongside, and the
+// confirm/cancel actions — shown on BOTH ends (each end learns of the session via
+// /api/peering/pending). The initiator sees the code; the responder enters it.
+function renderPeerModal() {
+  const root = document.getElementById("peer-modal");
+  if (!root) return;
+  const s = (peering.pending || [])[0];
+  if (!s) { root.hidden = true; root.innerHTML = ""; return; }
+  root.hidden = false;
+  const peer = s.peer_name || s.peer_node || "the other node";
+  const fpRow = s.fingerprint
+    ? `<div class="pair-fp">fingerprint <span class="mono">${esc(s.fingerprint)}</span></div>`
+    : `<div class="pair-fp muted">exchanging certificate…</div>`;
+  let body;
+  if (s.role === "initiator") {
+    body = `<p>Enter this code on <b>${esc(peer)}</b>'s LAN Peers screen, then confirm here.</p>
+      <div class="pair-code"><span class="mono" id="pair-code-val">${esc(s.code || "")}</span><button type="button" class="btn" data-paircopy="${esc(s.code || "")}" aria-label="copy code">Copy</button></div>
+      ${fpRow}
+      <div class="row pair-actions"><button type="button" class="btn accent" data-pairconfirm="${esc(s.sid)}">Confirm pairing</button><button type="button" class="btn" data-paircancel="${esc(s.sid)}">Cancel</button></div>`;
+  } else {
+    body = `<p>Incoming pairing from <b>${esc(peer)}</b>. Enter the code shown on <b>${esc(peer)}</b>:</p>
+      <div class="pair-code"><input class="mono pair-input" id="pair-code-input" inputmode="numeric" maxlength="6" placeholder="000000" aria-label="pairing code"></div>
+      ${fpRow}
+      <div class="row pair-actions"><button type="button" class="btn accent" data-pairenter="${esc(s.sid)}">Confirm</button><button type="button" class="btn" data-paircancel="${esc(s.sid)}">Cancel</button></div>`;
+  }
+  root.innerHTML = `<div class="pair-backdrop"><div class="pair-modal card"><div class="card-head"><span class="sq"></span><span class="t">PAIRING</span></div>${body}</div></div>`;
+}
+
+async function peeringGet(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+async function peeringPost(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  if (!r.ok) throw new Error((await r.text()).trim());
+  return r.status === 204 ? null : r.json();
+}
+
+async function loadPending() {
+  try { peering.pending = await peeringGet("/api/peering/pending") || []; }
+  catch (e) { peering.pending = []; }
+  renderPeerModal();
+}
+
+async function discoverPeers() {
+  peering.busy = true; peering.msg = ""; renderPanel();
+  try { peering.discovered = await peeringGet("/api/peering/discover") || []; }
+  catch (e) { peering.msg = "Discovery unavailable (mDNS off?). Add a peer by host:port."; peering.discovered = []; }
+  peering.busy = false; renderPanel();
+}
+
+async function pairWith(addr) {
+  peering.msg = "";
+  try {
+    await peeringPost("/api/peering/initiate", { addr });
+    await loadPending();
+  } catch (e) { peering.msg = "Could not reach " + addr + ": " + String(e.message || e); renderPanel(); }
+}
+
+async function confirmPair(sid, code) {
+  try {
+    await peeringPost("/api/peering/confirm", { sid, code: code || "" });
+    await loadPending();
+    await load(); // refresh the paired list from the store
+  } catch (e) { peering.msg = "Pairing failed: " + String(e.message || e); renderPeerModal(); renderPanel(); }
+}
+
+async function cancelPair(sid) {
+  try { await peeringPost("/api/peering/cancel", { sid }); } catch (e) {}
+  await loadPending();
+}
+
+async function revokePeer(peerId, peerName) {
+  const buses = remoteBusesFor(peerId);
+  const consequence = buses.length
+    ? `Remote attachments on ${buses.join(", ")} will stop rendering when you Apply.`
+    : "This node will refuse connections from that peer immediately.";
+  if (!confirm(`Revoke pairing with ${peerName}?\n\n${consequence}\n\nRe-pairing later mints fresh keys.`)) return;
+  try {
+    await peeringPost("/api/peering/revoke", { peer_id: peerId });
+    await load();
+  } catch (e) { peering.msg = "Revoke failed: " + String(e.message || e); renderPanel(); }
+}
+
+// remoteBusesFor names the buses a peer contributes a mode to (for the revoke
+// consequence copy).
+function remoteBusesFor(peerId) {
+  const seen = new Set();
+  (edit.remote_attachments || []).filter((r) => r.peer_id === peerId).forEach((r) => {
+    const b = (edit.buses || []).find((x) => x.id === r.bus_id);
+    seen.add("Bus " + (b ? (b.name || b.id) : r.bus_id));
+  });
+  return [...seen];
+}
+
+// startPeeringPoll keeps the pending-pairing modal live on both ends (a responder
+// learns of an incoming request this way) while the operator is on the tab.
+let peeringPollTimer = null;
+function startPeeringPoll() {
+  if (peeringPollTimer) return;
+  peeringPollTimer = setInterval(() => { if (state.tab === "gateways") loadPending(); }, 2000);
+  loadPending();
 }
 
 function panelYSF() {
@@ -2397,7 +2636,33 @@ document.getElementById("panels").addEventListener("click", (e) => {
   if (tgadd) { const a = edit.attachments[+tgadd.dataset.tgadd]; (a._tgrows = a._tgrows || []).push({ from: "", to: "" }); dirty.add("attachments"); renderPanel(); refreshActions(); return; }
   const tgdel = e.target.closest("[data-tgdel]");
   if (tgdel) { const a = edit.attachments[+tgdel.dataset.tgdel]; a._tgrows.splice(+tgdel.dataset.tgi, 1); dirty.add("attachments"); renderPanel(); refreshActions(); return; }
+  // --- via-peer (remote) attach ---
+  const apeer = e.target.closest("[data-attachpeer]");
+  if (apeer && attachPicker) { openRemoteAttachPicker(attachPicker.busId, apeer.dataset.attachpeer); return; }
+  const arpick = e.target.closest("[data-attachrpick]");
+  if (arpick && attachPicker) { const [pid, mode] = arpick.dataset.attachrpick.split("|"); attachRemote(attachPicker.busId, pid, mode); return; }
+  const rdel = e.target.closest("[data-remotedel]");
+  if (rdel) { detachRemote(rdel.dataset.remotedel); return; }
+  // --- LAN peering (RFC-0016) ---
+  if (e.target.id === "peer-discover") { discoverPeers(); return; }
+  if (e.target.id === "peer-pair-manual") { const el = document.getElementById("peer-manual"); const v = (el && el.value || "").trim(); if (v) pairWith(v); else el && el.focus(); return; }
+  const ppair = e.target.closest("[data-peerpair]");
+  if (ppair) { pairWith(ppair.dataset.peerpair); return; }
+  const prev = e.target.closest("[data-peerrevoke]");
+  if (prev) { revokePeer(prev.dataset.peerrevoke, prev.dataset.peername); return; }
 });
+// Pairing modal (its own overlay element, outside #panels).
+document.addEventListener("click", (e) => {
+  const cp = e.target.closest("[data-paircopy]");
+  if (cp) { copyText(cp.dataset.paircopy); cp.textContent = "Copied"; setTimeout(() => { cp.textContent = "Copy"; }, 1200); return; }
+  const pc = e.target.closest("[data-pairconfirm]");
+  if (pc) { confirmPair(pc.dataset.pairconfirm, ""); return; }
+  const pe = e.target.closest("[data-pairenter]");
+  if (pe) { const el = document.getElementById("pair-code-input"); confirmPair(pe.dataset.pairenter, (el && el.value || "").trim()); return; }
+  const px = e.target.closest("[data-paircancel]");
+  if (px) { cancelPair(px.dataset.paircancel); return; }
+});
+function copyText(t) { try { navigator.clipboard.writeText(t); } catch (e) { /* clipboard blocked */ } }
 // Profile import file picker (fires "change", not "click").
 document.getElementById("panels").addEventListener("change", (e) => {
   if (e.target.id === "prof-import-file") {
@@ -2443,3 +2708,12 @@ renderThemes();
 selectTab((location.hash || "").slice(1) || "general");
 load();
 initBusEvents(); // live bus_busy surfacing on the Buses tab (RFC-0003 §5)
+// LAN peering (RFC-0016): a modal overlay for the active pairing, and a poll so a
+// responder learns of an incoming pairing request while on the tab.
+(function initPeeringUI() {
+  const el = document.createElement("div");
+  el.id = "peer-modal";
+  el.hidden = true;
+  document.body.appendChild(el);
+  startPeeringPoll();
+})();

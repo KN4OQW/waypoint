@@ -130,10 +130,22 @@ func Respond(local Identity, req Message, now time.Time) (*Handshake, Message, e
 }
 
 // Phase / Code / SID / Result expose state for the manager and tests.
-func (h *Handshake) Phase() Phase       { return h.phase }
-func (h *Handshake) Code() string       { return h.code }
-func (h *Handshake) SID() string        { return h.sid }
-func (h *Handshake) PeerNode() string   { return h.peer.NodeID }
+func (h *Handshake) Phase() Phase     { return h.phase }
+func (h *Handshake) Code() string     { return h.code }
+func (h *Handshake) SID() string      { return h.sid }
+func (h *Handshake) PeerNode() string { return h.peer.NodeID }
+func (h *Handshake) PeerName() string { return h.peer.Name }
+
+// PeerFingerprint is the fingerprint of the peer's certificate once it has been
+// exchanged (RFC-0016 §3: shown alongside the code for out-of-band verification);
+// "" before the exchange.
+func (h *Handshake) PeerFingerprint() string {
+	if h.peer.CertPEM == "" {
+		return ""
+	}
+	fp, _ := Fingerprint(h.peer.CertPEM)
+	return fp
+}
 func (h *Handshake) FailReason() string { return h.failReason }
 
 // Result returns the paired peer once verified; ok is false in every other state

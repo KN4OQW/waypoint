@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -16,6 +17,10 @@ import (
 type busValidateRequest struct {
 	Buses       []config.Bus        `json:"buses"`
 	Attachments []config.Attachment `json:"attachments"`
+	// RemoteAttachments is the candidate set for a "via peer" attach (RFC-0016).
+	// When present, the response also runs the peering validator so the UI greys a
+	// remote mode with the peering-specific reason strings — never re-derived in JS.
+	RemoteAttachments []config.RemoteAttachment `json:"remote_attachments,omitempty"`
 }
 
 type busValidateResponse struct {
@@ -51,8 +56,38 @@ func (s *server) busesValidate(w http.ResponseWriter, r *http.Request) {
 	resp := busValidateResponse{OK: true}
 	if err := config.ValidateBuses(req.Buses, req.Attachments, m.Networks); err != nil {
 		resp.OK, resp.Reason = false, err.Error()
+	} else if len(req.RemoteAttachments) > 0 {
+		// A "via peer" attach: run the peering validator (structural: union mode-set,
+		// per-node uniqueness, node cap, unknown peer/bus) plus the add-time
+		// paired-peer gate, so the picker greys with the exact peering reasons.
+		if err := config.ValidateRemoteAttachments(req.Buses, req.Attachments, req.RemoteAttachments, m.Peers); err != nil {
+			resp.OK, resp.Reason = false, err.Error()
+		} else if reason := unpairedPeerReason(req.RemoteAttachments, m.Peers); reason != "" {
+			resp.OK, resp.Reason = false, reason
+		}
 	}
 	writeJSON(w, resp)
+}
+
+// unpairedPeerReason returns the "peer not paired" refusal (matching
+// SetRemoteAttachments' add-time gate) if any candidate references a peer that is
+// not in the paired state.
+func unpairedPeerReason(ras []config.RemoteAttachment, peers []config.Peer) string {
+	state := make(map[string]config.PeerState, len(peers))
+	name := make(map[string]string, len(peers))
+	for _, p := range peers {
+		state[p.ID], name[p.ID] = p.State, p.Name
+	}
+	for _, ra := range ras {
+		if st, ok := state[ra.PeerID]; ok && st != config.PeerPaired {
+			n := name[ra.PeerID]
+			if n == "" {
+				n = ra.PeerID
+			}
+			return fmt.Sprintf("peer %s is %s (not paired)", n, st)
+		}
+	}
+	return ""
 }
 
 type busMigrateResponse struct {
