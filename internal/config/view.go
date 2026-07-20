@@ -20,7 +20,14 @@ type View struct {
 	FM       ViewFM        `json:"fm"`
 	LCD      ViewLCD       `json:"lcd"`
 	History  ViewHistory   `json:"history"`
-	ReadOnly bool          `json:"read_only"`
+	// Mode buses (RFC-0003). Buses and their attachments carry NO secret (a bus
+	// authenticates through an existing Networks[] entry named by credentials_ref,
+	// never its own master — §3), so they project verbatim; there is nothing to
+	// redact. The UI reads these to render the Buses surface and resolves
+	// credentials_ref against Networks[] (also in this view).
+	Buses       []Bus        `json:"buses"`
+	Attachments []Attachment `json:"attachments"`
+	ReadOnly    bool         `json:"read_only"`
 	// The cross-mode transcoding bridges (MMDVM_CM) are no longer projected here.
 	// The per-bridge-daemon model is retired for the RFC-0003 bus architecture, so
 	// the settings page shows a placeholder instead of bridge cards. The bridge store
@@ -445,5 +452,9 @@ func (m *Model) View(storePath string) *View {
 		})
 	}
 	v.History = ViewHistory{RetentionDays: m.History.RetentionDays}
+	// Buses/attachments project verbatim (no secrets). Copy the slices so the view
+	// never aliases the model's backing arrays.
+	v.Buses = append([]Bus(nil), m.Buses...)
+	v.Attachments = append([]Attachment(nil), m.Attachments...)
 	return v
 }
