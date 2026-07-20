@@ -21,12 +21,13 @@ import (
 
 // Pending is a pairing awaiting operator action, surfaced to the dashboard.
 type Pending struct {
-	SID      string `json:"sid"`
-	Role     string `json:"role"` // "initiator" | "responder"
-	PeerNode string `json:"peer_node,omitempty"`
-	PeerName string `json:"peer_name,omitempty"`
-	Code     string `json:"code,omitempty"` // the initiator's displayed code (responder shows "" until entered)
-	Addr     string `json:"addr,omitempty"`
+	SID         string `json:"sid"`
+	Role        string `json:"role"` // "initiator" | "responder"
+	PeerNode    string `json:"peer_node,omitempty"`
+	PeerName    string `json:"peer_name,omitempty"`
+	Code        string `json:"code,omitempty"`        // the initiator's displayed code (responder shows "" until entered)
+	Fingerprint string `json:"fingerprint,omitempty"` // the peer cert fingerprint once exchanged (out-of-band check)
+	Addr        string `json:"addr,omitempty"`
 }
 
 // Manager owns this node's pairing identity and its in-flight sessions.
@@ -198,7 +199,7 @@ func (m *Manager) Pending() []Pending {
 	out := make([]Pending, 0, len(m.sessions))
 	for _, s := range m.sessions {
 		s.mu.Lock()
-		p := Pending{SID: s.hs.SID(), PeerNode: s.hs.PeerNode(), Addr: s.addr}
+		p := Pending{SID: s.hs.SID(), PeerNode: s.hs.PeerNode(), PeerName: s.hs.PeerName(), Fingerprint: s.hs.PeerFingerprint(), Addr: s.addr}
 		if s.role == Initiator {
 			p.Role, p.Code = "initiator", s.hs.Code()
 		} else {
