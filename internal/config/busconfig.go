@@ -27,6 +27,11 @@ type BusConfig struct {
 	// this long after its last voice frame before another source may key up
 	// (RFC-0003 §5 rule 2). Zero means use DefaultBusHangTime.
 	HangTimeSeconds float64 `json:"hang_time_seconds,omitempty"`
+
+	// Peering is the owner-side LAN-peering block (RFC-0016), present only when this
+	// bus has at least one active (paired) remote attachment. Absent on a purely
+	// local bus, so a bus without peering renders byte-identically to Phase 1.
+	Peering *BusPeering `json:"peering,omitempty"`
 }
 
 // DefaultBusHangTime is the fallback voice hang when the rendered config leaves
