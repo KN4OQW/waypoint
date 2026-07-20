@@ -35,6 +35,7 @@ const releaseTick = 250 * time.Millisecond
 func main() {
 	cfgPath := flag.String("config", "", "path to the rendered bus config JSON (required)")
 	dmridsPath := flag.String("dmrids", "/usr/local/etc/DMRIds.dat", "shared DMR/NXDN id<->callsign table")
+	nodeID := flag.String("node", "", "this node's peering id (RFC-0016; used as the frame envelope origin for loop prevention)")
 	flag.Parse()
 
 	// systemd/journald stamps its own timestamps; keep our lines clean and prefixed.
@@ -84,6 +85,15 @@ func main() {
 		eps[a.Mode] = ep
 		go ep.recv(ctx, frameCh)
 		log.Printf("attached %s: listen 127.0.0.1:%d, peer 127.0.0.1:%d", a.Mode, lb.bind, lb.peer)
+	}
+
+	// RFC-0016 LAN peering: if the rendered config carries a peering block, this
+	// bus is a peered owner — start the pinned mTLS listener + token protocol. A
+	// peering failure is logged, never fatal: the local bus keeps running.
+	if bc.Peering != nil {
+		if err := startOwnerPeering(ctx, bc.Peering, bc.Bus.ID, *nodeID, h, rcfg.HangTime); err != nil {
+			log.Printf("peering: not started: %v", err)
+		}
 	}
 
 	ticker := time.NewTicker(releaseTick)
