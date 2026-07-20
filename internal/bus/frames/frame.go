@@ -67,6 +67,25 @@ func (k Kind) String() string {
 	}
 }
 
+// CodewordsPerFrame is how many AMBE+2 codewords one voice frame of a mode
+// carries on the wire: DMR 3, YSF DN (VD mode 2) 5, NXDN 4 (two 2-codeword
+// blocks). The hub uses this to rate-match a stream when reframing between modes
+// — a DMR frame's 3 codewords do not line up 1:1 with a YSF frame's 5, so the
+// codewords are buffered and repacked at the destination's cadence. Returns 0 for
+// an unknown mode. (These are the counts the cross-mode reframe test pivots on;
+// see frames_test.go ambePerFrame.)
+func CodewordsPerFrame(m Mode) int {
+	switch m {
+	case ModeDMR:
+		return dmrAMBEPerFrm
+	case ModeYSF:
+		return ysfVCHPerFrame
+	case ModeNXDN:
+		return nxdnAMBEPerBlk * 2
+	}
+	return 0
+}
+
 // AMBEBytes is the packed size of one normalized AMBE+2 2450x1150 codeword: the
 // 49 codec-significant bits — a(12) at bit 0, b(12) at bit 12, c(25) at bit 24 —
 // packed MSB-first into 7 bytes (the last 7 bits pad zero). This is the
