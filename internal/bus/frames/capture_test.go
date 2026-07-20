@@ -127,3 +127,50 @@ func TestRealCaptureDMRParrot(t *testing.T) {
 		t.Fatal("DMR->YSF->NXDN->DMR did not preserve the real captured AMBE")
 	}
 }
+
+// TestRealCaptureYSFFromDMRBench validates the frame layer against a REAL YSFD
+// capture produced BY the waypoint-bus daemon on the bench Pi during Phase-1
+// hardware validation (docs/on-hardware-report.md, 2026-07-20): the daemon was
+// fed the real DMR Parrot transmission (dmr_parrot_9990.bin) on the DMR loopback
+// and reframed it to YSF, and this is what emerged on the YSF peer port
+// (127.0.0.1:4200 -> :3200), captured with tcpdump. So unlike the synthetic YSF
+// golden fixture, these are YSFD bytes a real daemon actually emitted, carrying
+// the source callsign KN4OQW resolved from DMR id 3180202 via the shared
+// DMRIds.dat — proving on-hardware ID->callsign resolution and reframe. The
+// capture is a prefix of a longer transmission (header + 9 voice frames; tcpdump
+// bounded it), so it has no terminator.
+func TestRealCaptureYSFFromDMRBench(t *testing.T) {
+	path := filepath.Join("testdata", "capture", "ysf_bench_from_dmr.bin")
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blob) == 0 || len(blob)%ysfdLen != 0 {
+		t.Fatalf("capture is not a whole number of %d-byte YSFD frames: %d bytes", ysfdLen, len(blob))
+	}
+	var nHeader, nVoice int
+	for off := 0; off+ysfdLen <= len(blob); off += ysfdLen {
+		f, err := ParseYSF(blob[off : off+ysfdLen])
+		if err != nil {
+			t.Fatalf("real YSFD frame at %d failed to parse: %v", off, err)
+		}
+		if f.Mode != ModeYSF {
+			t.Fatalf("frame at %d: mode %v, want YSF", off, f.Mode)
+		}
+		if f.SrcCallsign != "KN4OQW" {
+			t.Fatalf("frame at %d: src callsign %q, want KN4OQW (resolved from the DMR id on the bench)", off, f.SrcCallsign)
+		}
+		switch f.Kind {
+		case KindHeader:
+			nHeader++
+		case KindVoice:
+			nVoice++
+			if len(f.AMBE) != ysfVCHPerFrame {
+				t.Fatalf("voice frame at %d carried %d codewords, want %d", off, len(f.AMBE), ysfVCHPerFrame)
+			}
+		}
+	}
+	if nHeader != 1 || nVoice < 1 {
+		t.Fatalf("expected 1 header and >=1 voice frame, got header=%d voice=%d", nHeader, nVoice)
+	}
+}

@@ -43,3 +43,23 @@ preserved verbatim.
 
 Regenerate/extend by re-running the capture on the bench Pi and slicing the pcap;
 keep the header/voice/terminator shape so `TestRealCaptureDMRParrot` still holds.
+
+## `ysf_bench_from_dmr.bin`
+
+Produced BY the `waypoint-bus` daemon on the bench Pi during Phase-1 hardware
+validation (`docs/on-hardware-report.md`, 2026-07-20). The daemon was fed the real
+DMR Parrot transmission above on the DMR loopback and reframed it to YSF; this is
+what emerged on the YSF peer port (`127.0.0.1:4200 -> :3200`), captured with
+tcpdump.
+
+Unlike the synthetic YSF golden fixture, these are YSFD bytes a real daemon
+emitted, carrying source callsign **KN4OQW** resolved from DMR id 3180202 via the
+shared `DMRIds.dat` — proving on-hardware ID->callsign resolution and the
+DMR->YSF reframe. It is a prefix of a longer transmission (voice header + 9 voice
+frames; tcpdump bounded the capture), so it has no terminator. `TestRealCaptureYSFFromDMRBench`
+parses it. The AMBE is the operator's own Parrot test audio (see the sanitization
+note above); addressing is KN4OQW's public RadioID.
+
+YSF/NXDN *modem-side* real captures (a keyed-up C4FM/NXDN transmission decoded by
+MMDVM-Host) remain unavailable: those modes were disabled on the bench modem, so
+their synthetic golden fixtures stand until a modem-side capture is feasible.

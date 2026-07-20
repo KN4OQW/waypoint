@@ -347,3 +347,43 @@ Notes:
    backpack (0x27) was attached and the native driver validated on glass — see the
    *LCD (native HD44780 driver)* section above. The only remaining LCD MANUAL is the
    RF-from-a-real-radio activity interrupt (validated via the demo feed instead).
+
+## Mode buses — Phase 1 (2026-07-20)
+
+RFC-0003 Phase-1 (reframe tier: DMR/YSF/NXDN) validated on the bench Pi. Because
+the bench modem runs one mode at a time and only DMR was keyed-capable, the media
+paths were driven by **deterministic pcap replay through the loopback** (the
+sanctioned method, RFC-0003 Prompt 6) rather than an over-the-air QSO. The store
+was backed up first (`sqlite3 config.db ".backup pre-bus-validation.db"`) and
+**fully restored at the end** — original store, auth, waypointd binary, and
+regenerated INIs; the bench is back to its pre-validation state.
+
+**Stack under test.** waypoint-stack pinned at `634248e`; waypointd built from
+this branch as `bus-phase1-validate` (base `fae6b76` + the `-bus-config-dir` fix
+below) and `waypoint-bus` cross-compiled for armhf (GOARM=7), both deployed to
+`/home/pi-star/waypoint/bin`. Host: WPSD, aarch64 kernel / armhf userland,
+`MMDVM_HS_Dual_Hat` on `/dev/ttyAMA0`. Store at `/home/pi-star/waypoint/config.db`
+(the tracked RFC-0001 path drift — left as-is per the prompt). `DMRIds.dat`:
+309,465 ids, incl. `3180202 → KN4OQW` (the resolution pair used both ways).
+
+| # | Test | Result |
+|---|---|---|
+| **1** | YSF↔DMR reframe + TG/ID translation + `DMRIds.dat` resolution, both ways | **PASS** — YSF→DMR: source callsign **KN4OQW** resolved to id **3180202**, destination set to **TG 91** (the DMR attachment's `default_tg`), AMBE codeword byte-identical through the reframe. DMR→YSF (real Parrot capture): id **3180202** resolved to **KN4OQW** on the YSF frames, real AMBE reframed. Both driven by replay; parsed back with the real `frames` parser. |
+| **2** | Attach P25 / D-Star via API, expect refusal + no persistence | **PASS** — `PUT /api/config/attachments` with P25 → **HTTP 400** `bus "val": transcode tier not available`; with D-Star → **HTTP 400** `bus "val": no converter for D-Star<->DMR`. `GET /api/config` afterward shows attachments unchanged (dmr+ysf) — nothing persisted. |
+| **3** | Loop prevention: no bus frame re-emitted toward YSF during a YSF-sourced tx | **PASS** — loopback capture during the YSF→DMR replay carried traffic **only** on `:4200` (the replayed input) and `:62032→:62031` (the DMR emission); **zero** datagrams on `:3200` (the YSF peer). The bus never emits back toward its source mode. |
+| **4** | Doubling: simultaneous YSF + DMR sources | **PASS (with deviation D4)** — firing both replays at once, **YSF took the token**, the daemon logged `busy: DMR dropped, bus held via YSF`, and exactly **one** `bus_busy` fired (per losing stream, not per frame); the loser produced no voice-start. |
+| **5** | Migrate a `ysf2dmr` bridge (with a password) → bus; creds_ref matches; password never exposed | **PASS** — `POST /api/buses/migrate` seeded a `migrated` bus; the DMR attachment's `credentials_ref` resolved to the matching `Networks[]` entry (`BM_Test`, matched by master address); the seeded bridge password `PhaseOneSecretPW42` appeared **0 times** across `/api/config`, `/api/config/ysf2dmr`, `/api/overrides`, and the rendered bus config on disk. (A dormant NXDN bridge folded onto the same bus — correct: a mode may live on only one bus.) |
+| **6** | Disable/re-enable byte-identical render; unit stop/start; reboot persistence | **PARTIAL** — byte-identical render across disable→apply→re-enable→apply is **PASS** (identical SHA-256). Apply (re)starts `waypoint-bus@<id>.service`, and after a real reboot waypointd + all gateways came back and the enabled bus instance auto-started. **But** the bus daemon crash-loops (see D3): an enabled bus binds the fixed loopback ports the live MMDVM-Host/gateways already own. Secondary (D5): a disabled bus's rendered config is not deleted, and its crash-looping unit is not stopped by the `is-active`-only stop path. |
+
+### Deviations & findings
+
+- **D1 — fix, committed on this branch.** `waypointd` never set `config.Paths.BusConfigDir`, so the Prompt-5 `RenderTargets` bus wiring wrote `waypoint-bus-<id>.json` to a relative path the daemon could not read. Added a `-bus-config-dir` flag (default `/home/pi-star/waypoint/etc`) and wired it. This is the **daemon-side completion of the render wiring merged in PR #93** and should be treated as part of that lineage (cherry-pick target: the bus-render work), not a new feature.
+- **D2 — waypoint-stack, follow-up.** No `waypoint-bus@.service` template unit exists on the box. One was created ad-hoc for this validation; it must be added to **waypoint-stack**, and the render/apply path must also *enable* the instance for boot persistence (nothing does today; the instance was enabled by hand).
+- **D3 — architecture, the major gap.** An enabled bus daemon binds each attached mode's fixed loopback (`62032`, `4200`, …), but on a normal stack those ports are owned by MMDVM-Host and the mode gateways, so the daemon fails to bind and crash-loops. The render emits the bus config + unit but does **not** reconfigure the loopback so the bus is the sole consumer (RFC-0003 §Motivation-2). Phase-1 is therefore validated **in isolation** (gateways stopped, replay); coexisting with the live stack requires the loopback hand-off (which daemon owns which port when a mode is on a bus) to be designed and automated. Highest-priority Phase-2 item.
+- **D4 — event transport, follow-up.** `bus_busy` / `bus_voice_*` are emitted to `waypoint-bus`'s in-process hub and logged to stdout, but nothing forwards them to `waypointd`'s `/api/events` SSE, so the UI's live "busy: via <mode>" badge will not light up in the real deployment yet. The UI and the event *shape* are correct (validated in PR #93); the cross-process transport (MQTT or a socket to waypointd's hub) is unbuilt.
+- **D5 — minor.** On disable, the stale `waypoint-bus-<id>.json` is not removed (WriteFiles doesn't delete de-registered targets), and `stopUnitsIfActive` skips a unit that is `activating`/crash-looping rather than `active`. Both are downstream of D3 (a correctly-wired bus daemon would be `active`, not crash-looping).
+
+### Not covered (blocked/manual)
+
+- **Over-the-air keyed QSO through a fully-wired bus on the live stack** — blocked by D3 (loopback topology). The reframe, addressing, arbitration, and loop-prevention are proven by replay; the last mile is the live-stack port hand-off.
+- **YSF/NXDN modem-side real captures** — those modes are disabled on the bench modem, so no keyed C4FM/NXDN was decoded. The YSF path is instead backed by a real DMR→YSF bench capture (`internal/bus/frames/testdata/capture/ysf_bench_from_dmr.bin`, real Parrot audio reframed, callsign resolved) plus generated-YSF replay.
