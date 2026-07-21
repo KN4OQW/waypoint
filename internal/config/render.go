@@ -33,6 +33,14 @@ type Paths struct {
 	// rendered configs reference files under here by PATH — never PEM content
 	// (RFC-0002 posture). The pairing/transport layer populates the files.
 	PeeringDir string
+	// MQTTBroker is the local mosquitto host:port the bus daemons publish their
+	// events to (RFC-0003 Addendum / D4). Rendered into each bus config so the
+	// broker is never hardcoded in the daemon; empty ⇒ no MQTT block (the daemon
+	// runs without event publishing, e.g. in tests/demo). Mosquitto is localhost.
+	MQTTBroker string
+	// BusTopicPrefix is the MQTT topic root for bus events (default
+	// DefaultBusTopicPrefix, "waypoint/bus"). Rendered alongside the broker.
+	BusTopicPrefix string
 	// OverridesDir is the root of the operator's override drop-ins (RFC-0005 /
 	// issue #2): per-daemon fragments live under <OverridesDir>/<daemon>.d/*.conf and
 	// merge last into each rendered INI. Empty disables the override layer entirely
@@ -167,7 +175,6 @@ func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 	// (its config stops being written); its running daemon is stopped by the apply
 	// loop (see RetiredBusUnits). Buses are appended in stable id order so the
 	// render/restart order is deterministic (RFC-0001 pure-render property).
-	peeringDir := paths.PeeringDir
 	for _, b := range busesSortedByID(m.Buses) {
 		if !b.Enabled {
 			continue
@@ -176,7 +183,7 @@ func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 		targets = append(targets, RenderTarget{
 			Path:   filepath.Join(paths.BusConfigDir, busConfigFile(id)),
 			Unit:   busUnit(id),
-			Render: func(mm *Model) string { return mm.renderBusConfig(id, peeringDir) },
+			Render: func(mm *Model) string { return mm.renderBusConfig(id, paths) },
 		})
 		// RFC-0016 member side: one target per (bus, paired peer) membership. Its Unit
 		// is empty — the member config runs on the PEER node, not here; the owner
@@ -188,7 +195,7 @@ func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 			pid := peerID
 			targets = append(targets, RenderTarget{
 				Path:   filepath.Join(paths.BusConfigDir, memberConfigFile(id, pid)),
-				Render: func(mm *Model) string { return mm.renderMemberConfig(id, pid, peeringDir) },
+				Render: func(mm *Model) string { return mm.renderMemberConfig(id, pid, paths) },
 			})
 		}
 	}
@@ -230,7 +237,8 @@ func busesSortedByID(buses []Bus) []Bus {
 // the daemon reads (RFC-0003 §4), assembled from the bus row and its attachments.
 // A missing bus renders an empty object rather than panicking (the target list is
 // built from the same model, so this is defence in depth).
-func (m *Model) renderBusConfig(id, peeringDir string) string {
+func (m *Model) renderBusConfig(id string, paths Paths) string {
+	peeringDir := paths.PeeringDir
 	var bus Bus
 	found := false
 	for _, b := range m.Buses {
@@ -252,6 +260,9 @@ func (m *Model) renderBusConfig(id, peeringDir string) string {
 	// hand-off ports (a DMR attachment's reserved multiplex port), never a stock
 	// port the live stack owns.
 	bc.Loopbacks = m.busLoopbacksFor(id)
+	// D4: the broker + topic prefix the daemon publishes its events to (RFC-0008
+	// inter-process event plane). Rendered, never hardcoded; absent ⇒ no publishing.
+	bc.MQTT = paths.busMQTT()
 	// RFC-0016 owner side: add the peering block + one member row per ACTIVE remote
 	// attachment. A bus with no active remote attachment gets no Peering block, so
 	// it renders byte-identically to Phase 1 (dormant/revoked peers render nothing).
@@ -290,7 +301,8 @@ func (m *Model) renderBusConfig(id, peeringDir string) string {
 // peer (member) contributing its mode(s) to this owner's bus. It renders NOTHING
 // (empty object) when the peer is not paired, so a revoked peer's membership
 // disappears from the render without its rows being deleted from the store.
-func (m *Model) renderMemberConfig(busID, peerID, peeringDir string) string {
+func (m *Model) renderMemberConfig(busID, peerID string, paths Paths) string {
+	peeringDir := paths.PeeringDir
 	var bus Bus
 	for _, b := range m.Buses {
 		if b.ID == busID {
@@ -311,6 +323,7 @@ func (m *Model) renderMemberConfig(busID, peerID, peeringDir string) string {
 		KeyPath:         nodeKeyPath(peeringDir),
 		DeadlineMs:      m.Peering.deadline(),
 		JitterBufferMs:  m.Peering.jitter(),
+		MQTT:            paths.busMQTT(),
 		HangTimeSeconds: BusConfig{Bus: bus}.HangTimeSeconds,
 	}
 	for _, ra := range m.activeRemoteAttachmentsForBus(busID) {

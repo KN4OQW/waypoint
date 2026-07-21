@@ -791,6 +791,16 @@ func readImportInput(r *http.Request) (contents map[string][]byte, names map[str
 	return config.Locate(body.Dir)
 }
 
+// mqttBrokerFor is the broker rendered into a bus config: empty in demo mode (a
+// demo node has no broker, so its bus configs carry no MQTT block), else the
+// configured broker (D4).
+func mqttBrokerFor(broker string, demo bool) string {
+	if demo {
+		return ""
+	}
+	return broker
+}
+
 // restartSet is the deduped, ordered list of units to restart for a set of
 // render targets. Two modes sharing a unit collapse to one restart.
 func restartSet(targets []config.RenderTarget) []string {
@@ -1541,6 +1551,7 @@ func main() {
 	broker := flag.String("mqtt-broker", "127.0.0.1:1883", "MMDVM-Host MQTT broker host:port (live mode)")
 	mqttName := flag.String("mqtt-name", "mmdvm", "MMDVM-Host [MQTT] Name (topic prefix)")
 	statusPrefix := flag.String("status-topic-prefix", "waypoint/status", "MQTT prefix for the normalized status republish (RFC-0008)")
+	busTopicPrefix := flag.String("bus-topic-prefix", config.DefaultBusTopicPrefix, "MQTT prefix for mode-bus events (D4); the bus daemons publish, waypointd consumes")
 	haDiscovery := flag.Bool("ha-discovery", true, "publish Home Assistant MQTT discovery so entities appear with zero YAML (RFC-0011)")
 	haPrefix := flag.String("ha-discovery-prefix", "homeassistant", "Home Assistant MQTT discovery prefix")
 	nodeID := flag.String("node-id", defaultNodeID(), "device id + MQTT node segment for HA discovery (stable across restarts)")
@@ -1667,6 +1678,11 @@ func main() {
 			DAPNETGateway: *dapnetgwINI,
 			BusConfigDir:  *busConfigDir,
 			PeeringDir:    *peeringDir,
+			// D4: the broker each bus daemon publishes its events to, rendered into the
+			// bus config. Empty in demo mode (no broker), so demo bus configs carry no
+			// MQTT block and the daemon runs without publishing.
+			MQTTBroker:     mqttBrokerFor(*broker, *demoMode),
+			BusTopicPrefix: *busTopicPrefix,
 			// Demo mode must never pick up a real node's overrides: point the layer at an
 			// empty path so the render is emitted verbatim (RFC-0005).
 			OverridesDir: overridesRoot(*overridesDir, *demoMode),
@@ -1757,10 +1773,11 @@ func main() {
 	} else {
 		go func() {
 			if err := mqtt.Run(context.Background(), s.hub, mqtt.Options{
-				Broker:   *broker,
-				Name:     *mqttName,
-				Username: *mqttUser,
-				Password: *mqttPass,
+				Broker:    *broker,
+				Name:      *mqttName,
+				Username:  *mqttUser,
+				Password:  *mqttPass,
+				BusPrefix: *busTopicPrefix, // D4: also ingest waypoint/bus/# as hub events
 			}); err != nil {
 				log.Printf("mqtt bridge stopped: %v", err)
 			}

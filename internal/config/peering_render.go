@@ -153,6 +153,7 @@ type MemberBusConfig struct {
 	KeyPath         string             `json:"key_path"`    // the member's own peering key file — a PATH, never PEM
 	DeadlineMs      int                `json:"deadline_ms"`
 	JitterBufferMs  int                `json:"jitter_buffer_ms"`
+	MQTT            *BusMQTT           `json:"mqtt,omitempty"` // event plane (D4); absent ⇒ no publishing
 	HangTimeSeconds float64            `json:"hang_time_seconds,omitempty"`
 }
 
@@ -187,6 +188,34 @@ type MemberAttachment struct {
 type BusLoopback struct {
 	Bind int `json:"bind"`
 	Peer int `json:"peer"`
+}
+
+// BusMQTT is the local broker + topic prefix a bus daemon publishes its events to
+// (D4). The stack's inter-process event plane is MQTT (RFC-0008): the bus
+// republishes bus_busy / bus_voice_* / bus_down / peer states under
+// <Prefix>/<bus id>/<type>, and waypointd's consumer ingests them as ordinary hub
+// events. Rendered, never hardcoded (mosquitto is localhost-only post-spike).
+type BusMQTT struct {
+	Broker string `json:"broker"`           // host:port of the local mosquitto
+	Prefix string `json:"prefix,omitempty"` // topic root; default DefaultBusTopicPrefix
+}
+
+// DefaultBusTopicPrefix is the MQTT topic root for bus events (documented in
+// docs/mqtt-topics.md alongside the RFC-0008 status tree).
+const DefaultBusTopicPrefix = "waypoint/bus"
+
+// busMQTT renders the broker+prefix block from the deployment Paths, or nil when no
+// broker is configured (tests/demo) so a bus config without MQTT parses cleanly and
+// the daemon simply does not publish.
+func (p Paths) busMQTT() *BusMQTT {
+	if p.MQTTBroker == "" {
+		return nil
+	}
+	prefix := p.BusTopicPrefix
+	if prefix == "" {
+		prefix = DefaultBusTopicPrefix
+	}
+	return &BusMQTT{Broker: p.MQTTBroker, Prefix: prefix}
 }
 
 // busLoopbackFor returns the fixed loopback pair for a reframe-tier mode, the same
