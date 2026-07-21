@@ -40,6 +40,10 @@ type BusConfig struct {
 	// never claims a port MMDVM-Host or a live gateway owns. Absent ⇒ the daemon
 	// uses the stock per-mode loopback (a purely displacing bus needs no override).
 	Loopbacks map[string]BusLoopback `json:"loopbacks,omitempty"`
+
+	// MQTT is the broker + topic prefix this bus publishes its events to (D4).
+	// Absent ⇒ the daemon runs without event publishing (tests/demo).
+	MQTT *BusMQTT `json:"mqtt,omitempty"`
 }
 
 // DefaultBusHangTime is the fallback voice hang when the rendered config leaves

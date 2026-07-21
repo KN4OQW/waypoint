@@ -17,6 +17,10 @@ type Options struct {
 	Name     string // MMDVM-Host [MQTT] Name — the topic prefix (default "mmdvm")
 	Username string // optional
 	Password string // optional
+	// BusPrefix is the topic root the mode-bus daemons publish their events under
+	// (D4; default "waypoint/bus"). The consumer subscribes <BusPrefix>/# and maps
+	// each JSON payload 1:1 onto a hub.Event.
+	BusPrefix string
 }
 
 // Run connects to the broker, subscribes to <Name>/json, and republishes every
@@ -27,7 +31,11 @@ func Run(ctx context.Context, h *hub.Hub, opts Options) error {
 	if opts.Name == "" {
 		opts.Name = "mmdvm"
 	}
+	if opts.BusPrefix == "" {
+		opts.BusPrefix = "waypoint/bus"
+	}
 	topic := opts.Name + "/json"
+	busTopic := opts.BusPrefix + "/#"
 	bridge := NewBridge()
 
 	co := mqtt.NewClientOptions().
@@ -53,7 +61,18 @@ func Run(ctx context.Context, h *hub.Hub, opts Options) error {
 			log.Printf("mqtt: subscribe %s failed: %v", topic, tok.Error())
 			return
 		}
-		log.Printf("mqtt: subscribed to %s on %s", topic, opts.Broker)
+		// D4: the mode-bus event plane. Each retained/transient message under
+		// <BusPrefix>/<id>/<type> is a hub.Event JSON, mapped 1:1 (no translation
+		// layer). An empty payload is a retained CLEAR (RFC-0008 no-latching) — skipped.
+		if tok := c.Subscribe(busTopic, 0, func(_ mqtt.Client, msg mqtt.Message) {
+			if e, ok := TranslateBusEvent(msg.Payload()); ok {
+				h.Publish(e)
+			}
+		}); tok.Wait() && tok.Error() != nil {
+			log.Printf("mqtt: subscribe %s failed: %v", busTopic, tok.Error())
+			return
+		}
+		log.Printf("mqtt: subscribed to %s and %s on %s", topic, busTopic, opts.Broker)
 		// feed_up drives the status pipeline's Feed health (RFC-0008): the dashboard
 		// shows the MMDVM-Host data plane as connected the moment we (re)subscribe.
 		h.Publish(hub.Event{Time: time.Now().UTC(), Type: "feed_up", Detail: "MMDVM-Host feed connected (" + opts.Broker + ")"})

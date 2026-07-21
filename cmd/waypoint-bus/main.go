@@ -119,6 +119,8 @@ func runOwner(cfgPath, dmridsPath, nodeID string) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
+	startEventPublisher(ctx, bc.MQTT, bc.Bus.ID, h) // D4: republish events to MQTT (best-effort)
+
 	frameCh := make(chan inbound, 256)
 	for _, a := range rcfg.Attachments {
 		if remoteModes[a.Mode] {
@@ -172,9 +174,11 @@ func runOwner(cfgPath, dmridsPath, nodeID string) {
 
 		case ml := <-ctlJoin(ctl):
 			io.byMode[ml.mode] = append(io.byMode[ml.mode], ml)
+			h.Publish(hub.Event{Time: time.Now(), Type: "peer_connected", Network: bc.Bus.ID, Source: ml.node, Mode: string(ml.mode), Detail: "member " + ml.node + " joined"})
 
 		case node := <-ctlLeave(ctl):
 			io.removeMember(node)
+			h.Publish(hub.Event{Time: time.Now(), Type: "peer_disconnected", Network: bc.Bus.ID, Source: node, Detail: "member " + node + " left"})
 
 		case tr := <-ctlToken(ctl):
 			io.answerToken(bus, tr)

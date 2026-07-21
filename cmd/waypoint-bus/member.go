@@ -80,6 +80,7 @@ func runMember(cfgPath, dmridsPath, nodeID, ownerAddr string) {
 
 	h := hub.New()
 	go logEvents(h)
+	startEventPublisher(ctx, mc.MQTT, mc.BusID, h) // D4: republish events to MQTT (best-effort)
 
 	// Bind each contributed mode's local loopback once; the channel outlives
 	// reconnects so replayed/keyed local frames are never lost across a blip.
@@ -146,6 +147,9 @@ func (m *memberRunner) run(ctx context.Context) {
 		}
 		bo.Reset()
 		log.Printf("member %s: connected to owner %s", m.node, m.owner)
+		// D4 / RFC-0008 no-latching: a reconnect clears the retained "bus down" state
+		// (the publisher republishes an empty retained payload on bus_up).
+		m.hub.Publish(hub.Event{Time: time.Now(), Type: "bus_up", Network: m.busID, Detail: "owner online"})
 		sess.Send(peer.Message{Type: peer.MsgHello, Hello: &peer.Hello{NodeID: m.node, BusID: m.busID, Role: peer.RoleMember}})
 		m.session(ctx, sess)
 		if wasActive := m.client.OwnerDisconnected(); wasActive {
