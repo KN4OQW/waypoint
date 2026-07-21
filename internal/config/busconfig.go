@@ -79,11 +79,29 @@ func (c BusConfig) Validate() error {
 	if err := ValidateBuses([]Bus{c.Bus}, stripped, nil); err != nil {
 		return err
 	}
-	if len(c.Attachments) < 2 {
-		return fmt.Errorf("bus %q has %d attachments; a bus needs at least 2 to hub",
-			c.Bus.ID, len(c.Attachments))
+	// A bus needs at least two endpoints to hub. For a PEERED bus (RFC-0016) the
+	// second endpoint may be a member's mode contributed over the peer link, which
+	// lives in the Peering block, not Attachments — so count both. A member is a
+	// real bus endpoint (its voice reframes to the local modes and back), so a bus
+	// with one local mode + one member is a valid two-endpoint hub.
+	endpoints := len(c.Attachments)
+	if c.Peering != nil {
+		endpoints += len(c.Peering.Members)
+	}
+	if endpoints < 2 {
+		return fmt.Errorf("bus %q has %d endpoint(s) (%d local + %d peer member(s)); a bus needs at least 2 to hub",
+			c.Bus.ID, endpoints, len(c.Attachments), peeringMemberCount(c.Peering))
 	}
 	return nil
+}
+
+// peeringMemberCount is the number of member modes on a bus's peering block (0
+// when unpeered) — a small helper so the error message is precise.
+func peeringMemberCount(bp *BusPeering) int {
+	if bp == nil {
+		return 0
+	}
+	return len(bp.Members)
 }
 
 // ReadBusConfig loads and validates a rendered bus config file. This is the

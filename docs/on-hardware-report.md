@@ -387,3 +387,116 @@ below) and `waypoint-bus` cross-compiled for armhf (GOARM=7), both deployed to
 
 - **Over-the-air keyed QSO through a fully-wired bus on the live stack** — blocked by D3 (loopback topology). The reframe, addressing, arbitration, and loop-prevention are proven by replay; the last mile is the live-stack port hand-off.
 - **YSF/NXDN modem-side real captures** — those modes are disabled on the bench modem, so no keyed C4FM/NXDN was decoded. The YSF path is instead backed by a real DMR→YSF bench capture (`internal/bus/frames/testdata/capture/ysf_bench_from_dmr.bin`, real Parrot audio reframed, callsign resolved) plus generated-YSF replay.
+
+---
+
+## Bus LAN peering — Phase 2 (2026-07-20)
+
+RFC-0016 two-node bus peering validated across **two real nodes on one switch**.
+Issue #65 acceptance items **3 (cable pull)** and **7 (latency)** are covered here
+alongside the full peering matrix.
+
+**Increment landed first.** The merged RFC-0016 lineage carried voice over the
+wire but stopped at the owner (media fan-out "the next increment") and shipped no
+member-side daemon. This branch wires that media path — the owner adds each
+member's mode to the same router and re-emits router output to members with the
+cross-peer envelope; a new `waypoint-bus` **member** role dials the owner over
+pinned mTLS and runs the token client. Only with that in place is a two-node bus
+runnable, so it is a prerequisite of this validation (see the branch commits and
+the cherry-pick note below), not a fix found mid-run.
+
+### Topology
+
+| | Node A — "shack" (owner) | Node B — "garage" (member) |
+|---|---|---|
+| Host | bench Pi 3 `172.16.50.13` (WPSD, armhf) | x86_64 Linux `172.16.50.24`, same switch |
+| Role | owns **Bus A**, local **DMR** attachment | contributes **YSF** as a remote attachment |
+| Binary | `waypoint-bus` (armhf, this branch) | `waypoint-bus` (x86, this branch) |
+| Media driver | DMR Parrot capture replayed into the DMR loopback `62032` | YSF bench capture replayed into the YSF loopback `4200` |
+| Modem | none needed — peering is pure network | none |
+
+**Node B exact configuration.** A second, throwaway `waypoint-bus` **member**
+instance (no modem, no store): rendered member config
+`{role:"member", bus_id:"busA", owner.listen, attachments:[{mode:ysf,
+loopback:{bind:4200,peer:3200}}]}`, its own peering keypair + the owner's pinned
+cert under a shared `/tmp/wp-peering`, launched as
+`waypoint-bus -config member.json -node <B-id> -owner-addr 172.16.50.13:42500`.
+Its YSF loopback was driven by **replaying the committed Phase-1 loopback
+captures** (`internal/bus/frames/testdata/capture/*.bin`) into `4200` — the
+sanctioned method (a second modem was not on the bench). Certs were provisioned
+directly (the pairing exchange's *outcome*); the interactive short-code ceremony
+is covered by unit tests (row 1). The pairing was thrown away and the bench
+restored at the end; the Pi store was **not** touched (manual certs, not the
+store) and was backed up first
+(`sqlite3 config.db ".backup pre-phase2-validation.db"`).
+
+**Stack under test.** `waypoint-bus`/`waypointd` cross-compiled from this branch
+for armhf (`GOARCH=arm GOARM=7`) and native x86. The media path was exercised with
+the Pi's DMR loopback owned by the bus in **isolation** (`waypoint-mmdvm` +
+`waypoint-dmrgateway` stopped for the media rows, restarted after) — the live
+stack owns `62031/62032/4200` (verified with `ss`), so an enabled bus cannot bind
+them alongside it: the unchanged **D3** hand-off (below). Clocks on both boxes are
+`systemd-timesyncd`-synchronized (`System clock synchronized: yes`).
+
+### Matrix
+
+| # | Test | Result |
+|---|---|---|
+| **1** | Pairing: mDNS discover, short-code, fingerprints match both ends, wrong code leaves no trust in **both** stores | **PASS (ceremony via tests + trust outcome on HW).** The handshake/manager suite covers the exact acceptance items — `happy_path_pins_matching_certs_on_both_sides`, `wrong_code_fails_with_no_residue`, `cancel/expired/drop … no_residue`, `MITM_swapping_the_responder_cert_is_rejected`, `TestManagerHappyPathPairsBothStores`, `TestManagerWrongCodeNoResidue` — all green. The pairing **outcome** (pinned mTLS trust) is validated on hardware by rows 2–7: the pinned certs carry live media and a non-pinned cert is refused (row 7). The interactive mDNS + 6-digit flow through two live dashboards was **not** re-run this session. |
+| **2** | Remote attach: garage YSF joins shack Bus A; voice crosses **both** directions | **PASS — end to end over the LAN.** Member→owner: replayed YSF into B's `4200` arrived at the owner (`voice start: YSF KN4OQW -> ALL`), reframed YSF→DMR, emitted **31 `DMRD` frames** (magic `444d5244`) on the Pi's `62031`. Owner→member: replayed DMR into the Pi's `62032` reframed DMR→YSF and arrived at B's `3200` as **28 `YSFD` frames** carrying **KN4OQW** resolved from DMR id `3180202`. |
+| **3** | Cable pull (acceptance 3): member holding the token vanishes mid-tx | **PASS.** With the member streaming, its process was `kill -9`'d. Owner logged `peering: member … disconnected` then released the token (`voice end`) on the hang, **stayed alive (no crash, no restart)**, and `62032` stayed usable. On member restart it **auto-reconnected** and a fresh DMR→YSF transmission flowed again — the bus self-cleared. |
+| **4** | Cross-peer loop: no frame originating at B's YSF re-emitted toward it | **PASS.** During a member→owner YSF replay, a sink on B's own `3200` (the origin loopback) recorded **0 datagrams**, while the owner emitted the reframed DMR on `62031` (31 frames) — the frame flowed to DMR and was **never** looped back to `garage/ysf`. The member's playout capture is committed as `testdata/capture/ysf_peer_from_dmr.bin` (`TestRealCapturePeerYSFFromDMR`). |
+| **5** | Doubling across nodes: near-simultaneous key-up; one holder cluster-wide | **PASS.** Replaying DMR (Pi) and YSF (B) together, the member's YSF took the token and the local DMR was dropped: `busy: DMR dropped, bus held via YSF` — **exactly one** holder, the loser dropped and surfaced as `bus_busy`. (The member learns it lost via `MsgTokenDeny`; surfacing that on the member's *dashboard* is D4, below.) |
+| **6** | Latency (acceptance 7): added one-way media latency A↔B under the real stack | **PASS — well inside the 60 ms budget.** The **added** media-link latency is the peer session's LAN transport (the reframe/jitter is inherent, not added by peering): one-way `= RTT/2` over 100 samples — **mean 0.287 ms, median 0.290 ms, σ 0.067 ms, p99 0.492 ms** (≈ 59.5 ms margin at p99). End-to-end first-audio (B ingress → owner DMR egress, NTP-synced cross-clock, ±few-ms) measured **28 ms**, dominated by the DMR↔YSF reframe fill, still comfortably under 60 ms. This corroborates the RFC-0016 §5 spike table's sub-millisecond LAN transport. |
+| **7** | Revocation: revoked/unknown peer refused at TLS; re-pair fresh | **PASS.** A member presenting a **non-pinned** cert (a freshly minted keypair the owner does not pin — the state a revoked peer's re-mint leaves) was **refused at the mTLS handshake**: the owner accepted **0** sessions (it never reached `Hello`), the member looped `connected (TCP) → bus down`. Restoring the pinned cert, the member reconnected — re-pair with the correct cert works. A revoked peer also renders **nothing** (no owner peering block / member config), so its membership disappears without deleting the store row (`activeRemoteAttachmentsForBus`, unit-tested). |
+| **8** | Reboot A: bus, peering, B's membership recover without intervention | **PASS for the recovery logic; boot auto-start gated by D2.** Node A's `waypoint-bus` was stopped (node A "down") — the member logged `bus down: busA (owner offline)` (a self-clearing state, RFC-0008). On restart it re-read its config from disk, re-listened, and the member **auto-reconnected with no intervention** (`peering: member … connected`), media resuming. A full *OS* reboot bringing the peered bus back automatically needs the `waypoint-bus@.service` template enabled on boot — the unchanged **D2** (waypoint-stack), not a code gap here. |
+
+### Deviations & findings
+
+- **P2-1 — fix, on this branch (cherry-pick: the RFC-0016 owner/member daemon
+  work).** `BusConfig.Validate()` required ≥2 attachments but counted only
+  **local** ones, so a peered bus with one local mode + one member (a valid
+  two-endpoint hub) was rejected at daemon start (`bus "busA" has 1 attachments`).
+  Fixed to count `len(Attachments) + len(Peering.Members)`. Belongs with the
+  media-path increment (same PR); it is the render/daemon completion of the
+  peering wiring, not a standalone fix.
+- **P2-2 — the media-path increment itself.** The owner media fan-out + the
+  member-side daemon were unbuilt before this branch (the code called them "the
+  next increment / Prompt 13"). They are implemented here so the two-node bus is
+  runnable at all. Cherry-pick target: this is net-new feature work; it should
+  land as its own reviewed unit even though it rode in on the validation branch.
+- **D3 — unchanged, still the major gap.** An enabled bus binds each local mode's
+  fixed loopback (`62032`, …), which the live MMDVM-Host/gateways already own, so
+  the bus and the live stack cannot coexist on one node. The Phase-2 media rows
+  therefore ran in **isolation** on node A (live DMR components stopped), exactly
+  as Phase-1. Real-RF coexistence still needs the loopback hand-off (which daemon
+  owns which port when a mode is on a bus). Highest-priority item, carried from
+  Phase 1.
+- **D4 — unchanged.** The bus daemons emit `bus_busy` / `bus_voice_*` / `bus_down`
+  to their in-process hubs and logs, but nothing forwards them to a node's
+  `waypointd` `/api/events` SSE, so the dashboard "busy: via YSF @ garage" /
+  "owner offline" badges (Prompt 12 UI) will not light up in the real deployment
+  yet. The events are emitted with the correct shape on both sides (validated in
+  the logs here); the cross-process transport is still unbuilt.
+- **P2-3 — jitter buffer available but not wired.** `peer.JitterBuffer` (RFC-0016
+  §5 play-out smoothing) is tested but the member's playout emits directly rather
+  than scheduling through it. On the sub-millisecond LAN this is invisible
+  (row 6), but a lossy/distant link would want it wired at the member's `onOwner`
+  path. Follow-up, low risk.
+- **Member identity.** The owner maps an incoming `Hello.NodeID` to a rendered
+  member by peer id; this is exact because a paired peer's store key **is** its
+  node id (`peering.NewNodeID`). Multiple members contributing the **same** mode
+  to one bus is not yet supported (the router keys by mode) — the daemon logs and
+  skips the second; out of scope for the two-node topology, noted for N-node.
+
+### Not covered (blocked/manual)
+
+- **Over-the-air keyed RF through a peered bus on the live stack** — blocked by D3
+  (loopback coexistence). Both media directions are proven by replay end to end
+  across the peer link; the last mile is the live-stack port hand-off.
+- **Full unattended recovery after an OS reboot** — gated by D2 (no enabled
+  `waypoint-bus@.service`); the recovery *logic* (config persists, member
+  auto-reconnects) is validated by the process-restart run (row 8).
+- **Interactive mDNS + short-code pairing through two live dashboards** — the
+  pairing logic and both-store wrong-code-no-residue are covered by the peering
+  unit suite; this session provisioned the pairing outcome (certs) directly.

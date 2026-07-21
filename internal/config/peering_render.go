@@ -1,7 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 )
@@ -93,6 +96,49 @@ type BusPeerMember struct {
 	ID                string            `json:"id,omitempty"`
 	TG                string            `json:"tg,omitempty"`
 	DefaultID         string            `json:"default_id,omitempty"`
+}
+
+// ConfigRole sniffs a rendered bus-config file to tell an owner BusConfig from a
+// member MemberBusConfig without fully decoding either: the member config carries
+// `"role":"member"`, the owner config has no role field. The daemon dispatches on
+// it (one binary reads both shapes, RFC-0016 §what-renders).
+func ConfigRole(path string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var probe struct {
+		Role string `json:"role"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return "", fmt.Errorf("parse config role %s: %w", path, err)
+	}
+	if probe.Role == "" {
+		return "owner", nil
+	}
+	return probe.Role, nil
+}
+
+// ReadMemberConfig loads a rendered member-side config file (role="member"). It is
+// the reader the member daemon imports, mirroring ReadBusConfig for the owner side.
+func ReadMemberConfig(path string) (MemberBusConfig, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return MemberBusConfig{}, err
+	}
+	var c MemberBusConfig
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&c); err != nil {
+		return MemberBusConfig{}, fmt.Errorf("parse member config %s: %w", path, err)
+	}
+	if c.Role != "member" {
+		return MemberBusConfig{}, fmt.Errorf("member config %s: role is %q, want \"member\"", path, c.Role)
+	}
+	if c.BusID == "" || len(c.Attachments) == 0 {
+		return MemberBusConfig{}, fmt.Errorf("member config %s: needs a bus_id and at least one attachment", path)
+	}
+	return c, nil
 }
 
 // MemberBusConfig is the member-side config for one remote membership — a peer

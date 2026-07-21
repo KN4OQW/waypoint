@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/KN4OQW/waypoint/internal/bus/frames"
+	"github.com/KN4OQW/waypoint/internal/bus/peer"
 	"github.com/KN4OQW/waypoint/internal/config"
 )
 
@@ -39,11 +41,16 @@ func loopbackFor(m config.Mode) (loopback, error) {
 	return loopback{}, fmt.Errorf("no loopback endpoint for mode %q (reframe tier is DMR/YSF/NXDN)", m)
 }
 
-// inbound is one frame lifted off a loopback socket, tagged with the attachment
-// (mode) it entered on — the origin tag §5 rule 1 fans out around.
+// inbound is one frame entering the bus, tagged with the attachment (mode) it
+// entered on — the origin tag §5 rule 1 fans out around. Exactly one source is
+// set: `data` for a local loopback datagram (parsed by parseFrame), or `frame`+
+// `env` for a frame injected off a peer link (already parsed by the owner's
+// session handler, carrying the cross-peer envelope for loop prevention).
 type inbound struct {
-	mode config.Mode
-	data []byte
+	mode  config.Mode
+	data  []byte         // local loopback datagram (needs parseFrame)
+	frame *frames.Frame  // peer-injected, already parsed
+	env   *peer.Envelope // origin envelope for a peer-injected frame
 }
 
 // endpoint is one attachment's live UDP socket pair.

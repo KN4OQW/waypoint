@@ -70,6 +70,20 @@ func TestManagerHappyPathPairsBothStores(t *testing.T) {
 	if err := garage.ConfirmPairing(sid, code); err != nil {
 		t.Fatalf("garage confirm: %v", err)
 	}
+	// garage's confirm sends its certificate back to shack asynchronously; shack can
+	// only confirm once that has arrived (its pending session then shows the peer
+	// fingerprint). Waiting on the readiness signal rather than assuming instant
+	// delivery keeps the test deterministic on a slow/contended runner.
+	if !poll(t, func() bool {
+		for _, p := range shack.Pending() {
+			if p.SID == sid && p.Fingerprint != "" {
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatal("shack never received garage's certificate")
+	}
 	if err := shack.ConfirmPairing(sid, ""); err != nil {
 		t.Fatalf("shack confirm: %v", err)
 	}

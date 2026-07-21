@@ -174,3 +174,40 @@ func TestRealCaptureYSFFromDMRBench(t *testing.T) {
 		t.Fatalf("expected 1 header and >=1 voice frame, got header=%d voice=%d", nHeader, nVoice)
 	}
 }
+
+// TestRealCapturePeerYSFFromDMR parses the RFC-0016 Phase-2 capture: YSFD frames a
+// real member daemon (node "garage", an x86 host) emitted at its local YSF loopback
+// after the OWNER node (the bench Pi) reframed a replayed DMR Parrot transmission
+// DMR->YSF and streamed it over the pinned-mTLS peer link. Unlike
+// ysf_bench_from_dmr.bin (single-node reframe), these bytes crossed a LAN peer link
+// end to end, so parsing them proves the member's playout is faithful YSFD carrying
+// the source callsign resolved on the owner (docs/on-hardware-report.md, 2026-07-20).
+func TestRealCapturePeerYSFFromDMR(t *testing.T) {
+	path := filepath.Join("testdata", "capture", "ysf_peer_from_dmr.bin")
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blob) == 0 || len(blob)%ysfdLen != 0 {
+		t.Fatalf("capture is not a whole number of %d-byte YSFD frames: %d bytes", ysfdLen, len(blob))
+	}
+	var nVoice int
+	for off := 0; off+ysfdLen <= len(blob); off += ysfdLen {
+		f, err := ParseYSF(blob[off : off+ysfdLen])
+		if err != nil {
+			t.Fatalf("real peered YSFD frame at %d failed to parse: %v", off, err)
+		}
+		if f.Mode != ModeYSF {
+			t.Fatalf("frame at %d: mode %v, want YSF", off, f.Mode)
+		}
+		if f.Kind == KindVoice {
+			nVoice++
+			if len(f.AMBE) != ysfVCHPerFrame {
+				t.Fatalf("voice frame at %d carried %d codewords, want %d", off, len(f.AMBE), ysfVCHPerFrame)
+			}
+		}
+	}
+	if nVoice < 1 {
+		t.Fatalf("expected >=1 voice frame from the peered playout, got %d", nVoice)
+	}
+}
