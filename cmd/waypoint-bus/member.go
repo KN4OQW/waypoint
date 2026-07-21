@@ -108,6 +108,7 @@ func runMember(cfgPath, dmridsPath, nodeID, ownerAddr string) {
 	m := &memberRunner{
 		node: nodeID, busID: mc.BusID, owner: ownerListen,
 		tlsCfg: tlsCfg, hang: hang, resolver: resolver,
+		bufferMs: mc.JitterBufferMs, deadlineMs: mc.DeadlineMs,
 		byMode: byMode, byFMode: byFMode, localCh: localCh, hub: h,
 		client: peer.NewClient(hang),
 	}
@@ -120,15 +121,16 @@ func runMember(cfgPath, dmridsPath, nodeID, ownerAddr string) {
 
 // memberRunner is the member's reconnecting session loop and token client.
 type memberRunner struct {
-	node, busID, owner string
-	tlsCfg             *tls.Config
-	hang               time.Duration
-	resolver           frames.Resolver
-	byMode             map[config.Mode]*memberEndpoint
-	byFMode            map[frames.Mode]*memberEndpoint
-	localCh            chan inbound
-	hub                *hub.Hub
-	client             *peer.Client
+	node, busID, owner   string
+	tlsCfg               *tls.Config
+	hang                 time.Duration
+	bufferMs, deadlineMs int // per-peer play-out depths (RFC-0016 §5); 0 ⇒ defaults
+	resolver             frames.Resolver
+	byMode               map[config.Mode]*memberEndpoint
+	byFMode              map[frames.Mode]*memberEndpoint
+	localCh              chan inbound
+	hub                  *hub.Hub
+	client               *peer.Client
 }
 
 // run reconnects to the owner until ctx is cancelled, draining local frames while
@@ -160,11 +162,27 @@ func (m *memberRunner) run(ctx context.Context) {
 }
 
 // session drives one connected owner session: local frames -> owner (token-gated),
-// owner voice -> local loopback, token grants/denies, and the hang-driven release.
+// owner voice -> the play-out buffer -> local loopback (RFC-0016 §5), token
+// grants/denies, and the hang-driven release. Owner voice no longer emits on
+// arrival: it schedules through peer.JitterBuffer and a play timer drains it on the
+// 20 ms cadence, so LAN jitter is smoothed and a late frame is dropped, not played
+// late (P2-3).
 func (m *memberRunner) session(ctx context.Context, sess *peer.Session) {
 	defer sess.Close()
 	ticker := time.NewTicker(releaseTick)
 	defer ticker.Stop()
+
+	play := newPlayoutScheduler(m.bufferMs, m.deadlineMs)
+	playTimer := time.NewTimer(time.Hour)
+	armTimer(playTimer, time.Time{}, false) // start disarmed (drain the initial tick)
+	defer playTimer.Stop()
+	defer func() {
+		if d := play.Dropped(); play.Delivered() > 0 || d > 0 {
+			log.Printf("member %s: play-out delivered %d, dropped %d (late past deadline)", m.node, play.Delivered(), d)
+		}
+	}()
+	rearm := func() { at, ok := play.nextPlayAt(); armTimer(playTimer, at, ok) }
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -177,12 +195,25 @@ func (m *memberRunner) session(ctx context.Context, sess *peer.Session) {
 			}
 		case in := <-m.localCh:
 			m.onLocal(sess, in)
+		case now := <-playTimer.C:
+			for _, f := range play.emitDue(now) {
+				m.emit(f)
+			}
+			rearm()
 		case msg, ok := <-sess.Recv():
 			if !ok {
 				return
 			}
-			m.onOwner(msg)
+			m.onOwner(msg, play)
+			rearm()
 		}
+	}
+}
+
+// emit plays one due frame out to its local loopback.
+func (m *memberRunner) emit(f scheduledFrame) {
+	if err := f.me.ep.send(f.out); err != nil {
+		log.Printf("member %s: send %s: %v", m.node, f.me.mode, err)
 	}
 }
 
@@ -212,8 +243,10 @@ func (m *memberRunner) onLocal(sess *peer.Session, in inbound) {
 }
 
 // onOwner handles a message from the owner: voice (already reframed to a local
-// mode) is played to that mode's loopback; grants/denies advance the token client.
-func (m *memberRunner) onOwner(msg peer.Message) {
+// mode) is scheduled through the play-out buffer for its cadence slot; grants/denies
+// advance the token client. Voice is NOT emitted here — the session's play timer
+// drains the buffer at the play-out slot (RFC-0016 §5, P2-3).
+func (m *memberRunner) onOwner(msg peer.Message, play *playoutScheduler) {
 	switch msg.Type {
 	case peer.MsgVoice:
 		if msg.Voice == nil {
@@ -232,8 +265,9 @@ func (m *memberRunner) onOwner(msg peer.Message) {
 			log.Printf("member %s: construct %s: %v", m.node, me.mode, err)
 			return
 		}
-		if err := me.ep.send(out); err != nil {
-			log.Printf("member %s: send %s: %v", m.node, me.mode, err)
+		// Enqueue for play-out; stragglers from a previous stream (rare) emit now.
+		for _, f := range play.schedule(msg.Voice.Frame.Stream.ID, me, out, time.Now()) {
+			m.emit(f)
 		}
 	case peer.MsgTokenGrant:
 		if msg.Token != nil {
