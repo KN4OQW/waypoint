@@ -88,6 +88,23 @@ func displayName(b config.Bus) string {
 	return b.ID
 }
 
+// AttachmentFor resolves one config.Attachment into a router Attachment through
+// the same mode/param path FromBusConfig uses. It exists so the daemon can add a
+// PEER-backed member's mode to a bus's router (RFC-0016): a remote attachment
+// reframes exactly like a local one — only its I/O is a peer link, not a loopback
+// — so its edge is built here rather than duplicating frameMode/paramsFor.
+func AttachmentFor(a config.Attachment) (Attachment, error) {
+	fm, ok := frameMode(a.Mode)
+	if !ok {
+		return Attachment{}, fmt.Errorf("mode %q has no frame implementation (reframe tier is DMR/YSF/NXDN)", a.Mode)
+	}
+	p, err := paramsFor(a)
+	if err != nil {
+		return Attachment{}, fmt.Errorf("%s attachment: %w", a.Mode, err)
+	}
+	return Attachment{Mode: a.Mode, FMode: fm, Params: p}, nil
+}
+
 // Emission is one outbound frame: a normalized destination Frame the caller turns
 // into wire bytes via frames.Construct<Dst> with that attachment's params. The
 // AMBE is already regrouped to the destination's cadence and the addressing is
