@@ -65,11 +65,24 @@ type inbound struct {
 	env   *peer.Envelope // origin envelope for a peer-injected frame
 }
 
-// endpoint is one attachment's live UDP socket pair.
+// endpoint is one attachment's live UDP socket pair. When master is non-nil the
+// endpoint is a DMR multiplex master (RFC-0003 Addendum A §Design-1): it speaks the
+// Homebrew login handshake to the DMRGateway that dials it, and the reverse-path
+// destination is the *learned* client address rather than the fixed peer.
 type endpoint struct {
-	mode config.Mode
-	conn *net.UDPConn
-	peer *net.UDPAddr
+	mode   config.Mode
+	conn   *net.UDPConn
+	peer   *net.UDPAddr
+	master *dmrMaster // non-nil ⇒ DMR multiplex master; nil ⇒ plain loopback
+}
+
+// multiplexMaster reports whether a DMR loopback is the reserved-multiplex port on
+// which the bus must act as a Homebrew master. The render marks that port by
+// setting Bind == Peer (a dedicated bus-owned port, e.g. 62100/62100), which no
+// stock loopback pair ever does (a real pair is always bind ≠ peer, e.g.
+// 62032/62031). See internal/config/loopback_handoff.go.
+func multiplexMaster(m config.Mode, lb loopback) bool {
+	return m == config.ModeDMR && lb.bind == lb.peer
 }
 
 // openEndpoint binds the receive port and resolves the peer for one mode. Binding
@@ -81,22 +94,37 @@ func openEndpoint(m config.Mode, lb loopback) (*endpoint, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bind 127.0.0.1:%d: %w", lb.bind, err)
 	}
-	return &endpoint{
+	ep := &endpoint{
 		mode: m,
 		conn: conn,
 		peer: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: lb.peer},
-	}, nil
+	}
+	if multiplexMaster(m, lb) {
+		ep.master = newDMRMaster()
+	}
+	return ep, nil
 }
 
 // recv reads datagrams until the socket is closed (shutdown) and forwards each as
 // a tagged inbound frame. A short/oversized read is passed through as-is; the
-// parser rejects malformed input without panicking (frames fuzz contract).
+// parser rejects malformed input without panicking (frames fuzz contract). On a
+// DMR multiplex master the Homebrew login/keepalive packets are answered inline
+// and consumed — only DMRD voice is forwarded to the router.
 func (e *endpoint) recv(ctx context.Context, out chan<- inbound) {
 	buf := make([]byte, 2048)
 	for {
-		n, _, err := e.conn.ReadFromUDP(buf)
+		n, src, err := e.conn.ReadFromUDP(buf)
 		if err != nil {
 			return // socket closed on shutdown
+		}
+		if e.master != nil {
+			reply, forward := e.master.handle(buf[:n], src)
+			if reply != nil {
+				_, _ = e.conn.WriteToUDP(reply, src)
+			}
+			if !forward {
+				continue // login/keepalive packet consumed
+			}
 		}
 		data := make([]byte, n)
 		copy(data, buf[:n])
@@ -108,9 +136,17 @@ func (e *endpoint) recv(ctx context.Context, out chan<- inbound) {
 	}
 }
 
-// send emits one constructed frame to the mode's peer.
+// send emits one constructed frame to the mode's peer. For a DMR multiplex master
+// the destination is the logged-in DMRGateway's learned address; a frame produced
+// before any client has logged in is dropped (there is nowhere to send it yet).
 func (e *endpoint) send(data []byte) error {
-	_, err := e.conn.WriteToUDP(data, e.peer)
+	dst := e.peer
+	if e.master != nil {
+		if dst = e.master.clientAddr(); dst == nil {
+			return nil // no DMRGateway logged in yet — nothing to emit toward
+		}
+	}
+	_, err := e.conn.WriteToUDP(data, dst)
 	return err
 }
 
