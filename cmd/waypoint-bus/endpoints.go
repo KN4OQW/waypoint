@@ -27,6 +27,18 @@ type loopback struct {
 	peer int // UDP port on 127.0.0.1 the bus sends this mode's frames to
 }
 
+// loopbackFrom returns the loopback a bus's local attachment binds: the
+// coordinated override from the rendered config when present (RFC-0003 Addendum A
+// — a DMR attachment's reserved multiplex port), otherwise the fixed per-mode
+// default. Reading the render's choice keeps the daemon from ever binding a stock
+// port MMDVM-Host or a live gateway owns.
+func loopbackFrom(bc config.BusConfig, m config.Mode) (loopback, error) {
+	if lb, ok := bc.Loopbacks[string(m)]; ok {
+		return loopback{bind: lb.Bind, peer: lb.Peer}, nil
+	}
+	return loopbackFor(m)
+}
+
 // loopbackFor returns the fixed loopback pair for a reframe-tier mode. It is a
 // pure lookup (unit-testable) over the same constants render.go emits.
 func loopbackFor(m config.Mode) (loopback, error) {
