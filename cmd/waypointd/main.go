@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -367,19 +368,44 @@ func (s *server) applyRender(by string) (restarted, stopped []string, err error)
 	for _, wn := range warnings {
 		log.Printf("overrides: %s", wn) // malformed fragment line — surfaced, never silently dropped
 	}
+	// D5 (RFC-0003 Addendum A §6): sweep rendered bus config files that are no longer
+	// registered — a disabled/detached/deleted bus, or a stale file an earlier version
+	// left. A config file must never outlive its unit.
+	s.sweepStaleBusFiles(targets)
+
+	// Addendum §5: stop-before-start. Everything that must give up a port stops FIRST,
+	// so the displacing consumer (a bus that took a gateway's loopback, or a gateway
+	// coming back on detach) never contends. The stop is robust to activating/failed
+	// units (D5), not only active ones. Units:
+	//   - retired MMDVM_CM bridges still lingering from the old surface;
+	//   - disabled buses (an enabled bus is a restart target below);
+	//   - gateways DISPLACED by a YSF/NXDN bus (dropped from targets — nothing else
+	//     stops them, and their port must be free before the bus starts).
+	stopUnits := append(config.RetiredBridgeUnits(), m.DisabledBusUnits()...)
+	stopUnits = append(stopUnits, m.DisplacedGatewayUnits()...)
+	// A DELETED bus's row cannot be enumerated from the model (DisabledBusUnits only
+	// sees buses that still exist), so its lingering unit — which still holds the
+	// mode's loopback and would make a restored gateway crash-loop — is found via
+	// systemd and reconciled here (RFC-0003 Addendum A §6 / D5).
+	orphans := s.orphanedBusUnits(m.RegisteredBusUnits())
+	stopUnits = append(stopUnits, orphans...)
+	stopped = s.stopUnits(stopUnits)
+
+	// With the ports freed, (re)start exactly the rendered target set. A displacing
+	// bus is a target here and binds the port the displaced gateway just released.
 	restarted, err = s.restartUnits(restartSet(targets))
 	if err != nil {
 		return nil, nil, fmt.Errorf("restart: %w", err)
 	}
-	// Stop any retired cross-mode bridge daemon (MMDVM_CM) still running from the old
-	// per-bridge surface. The bridges no longer contribute a render target (RFC-0003
-	// bus architecture supersedes them), so they are never restarted; stopping any
-	// that are still active on every apply closes the stale-daemon-on-disable defect
-	// by construction. Best-effort: a stop failure is logged, not fatal to the apply.
-	// Also stop the daemon of any bus that is present but disabled (RFC-0003): an
-	// enabled bus contributes a render target and is (re)started above; a disabled
-	// bus contributes none, so its lingering waypoint-bus@<id> is stopped here.
-	stopped = s.stopUnitsIfActive(append(config.RetiredBridgeUnits(), m.DisabledBusUnits()...))
+
+	// D2 (Addendum §7): the render is the boot picture. Enable every registered bus
+	// instance and every non-displaced gateway so they return after a reboot; disable
+	// disabled buses and DISPLACED gateways so, on reboot, a displaced gateway does not
+	// race the bus for the mode's loopback. Best-effort — a boot-persistence failure is
+	// logged, never fatal to the apply.
+	s.enableUnits(m.BootEnableUnits())
+	s.disableUnits(append(m.BootDisableUnits(), orphans...))
+
 	_ = s.store.RecordApply(by, map[string]any{"restarted": restarted, "stopped": stopped})
 	// The native LCD driver renders no INI and restarts no unit, so it is absent
 	// from targets/restarted — bring the panel in line with the applied config
@@ -800,19 +826,25 @@ func (s *server) restartUnits(units []string) ([]string, error) {
 	return done, nil
 }
 
-// stopUnitsIfActive stops each unit that is currently active, skipping ones that
-// are already inactive or not installed (`is-active` exits non-zero for both). A
-// stop failure is logged and skipped rather than failing the apply — a lingering
-// bridge that refuses to stop must not block a config change. Returns the units it
-// actually stopped.
-func (s *server) stopUnitsIfActive(units []string) []string {
+// stopUnits stops each unit that is not already inactive or absent — robustly,
+// including units in an activating/failed/deactivating state (RFC-0003 Addendum A
+// §6 / D5). The prior `is-active --quiet` gate exited non-zero for a crash-looping
+// unit (exactly the D3 symptom) and so skipped it; here the state string is
+// inspected and anything other than "inactive"/"unknown" is stopped. A stop
+// failure is logged and skipped rather than failing the apply — a lingering unit
+// that refuses to stop must not block a config change. Returns the units stopped.
+func (s *server) stopUnits(units []string) []string {
+	seen := map[string]bool{}
 	var stopped []string
 	for _, u := range units {
-		if u == "" {
+		if u == "" || seen[u] {
 			continue
 		}
-		if _, err := systemctlRun("is-active", "--quiet", u); err != nil {
-			continue // inactive or unknown unit — nothing to stop
+		seen[u] = true
+		out, _ := systemctlRun("is-active", u) // exit code is non-zero for non-active states; read the word
+		switch strings.TrimSpace(string(out)) {
+		case "", "inactive", "unknown":
+			continue // not running / not installed — nothing to stop
 		}
 		if out, err := systemctlRun("stop", u); err != nil {
 			log.Printf("apply: stop %s: %v: %s", u, err, strings.TrimSpace(string(out)))
@@ -821,6 +853,100 @@ func (s *server) stopUnitsIfActive(units []string) []string {
 		stopped = append(stopped, u)
 	}
 	return stopped
+}
+
+// orphanedBusUnits returns loaded/enabled waypoint-bus@ instances that are NOT in
+// the registered set — a DELETED bus's lingering unit, which the model can no
+// longer name (RFC-0003 Addendum A §6 / D5). Found via systemd so a removed bus's
+// daemon is stopped and disabled even though its row is gone. Best-effort: if
+// systemctl enumeration fails, returns nothing (the apply still converges the rest).
+func (s *server) orphanedBusUnits(registered []string) []string {
+	reg := map[string]bool{}
+	for _, u := range registered {
+		reg[u] = true
+	}
+	seen := map[string]bool{}
+	var orphans []string
+	scan := func(out []byte) {
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 0 {
+				continue
+			}
+			u := fields[0]
+			if strings.HasPrefix(u, "waypoint-bus@") && strings.HasSuffix(u, ".service") && !reg[u] && !seen[u] && u != "waypoint-bus@.service" {
+				seen[u] = true
+				orphans = append(orphans, u)
+			}
+		}
+	}
+	// Loaded instances (running/failed/activating) and installed-but-inactive ones.
+	if out, err := systemctlRun("list-units", "--all", "--plain", "--no-legend", "waypoint-bus@*.service"); err == nil {
+		scan(out)
+	}
+	if out, err := systemctlRun("list-unit-files", "--plain", "--no-legend", "waypoint-bus@*.service"); err == nil {
+		scan(out)
+	}
+	return orphans
+}
+
+// enableUnits enables each unit for boot (idempotent). Best-effort: a failure is
+// logged, never fatal — boot persistence must not block a config apply.
+func (s *server) enableUnits(units []string) {
+	for _, u := range units {
+		if u == "" {
+			continue
+		}
+		if out, err := systemctlRun("enable", u); err != nil {
+			log.Printf("apply: enable %s: %v: %s", u, err, strings.TrimSpace(string(out)))
+		}
+	}
+}
+
+// disableUnits disables each unit for boot (idempotent), so a de-registered bus
+// does not resurrect on reboot (RFC-0003 Addendum A §7). Best-effort.
+func (s *server) disableUnits(units []string) {
+	for _, u := range units {
+		if u == "" {
+			continue
+		}
+		if out, err := systemctlRun("disable", u); err != nil {
+			log.Printf("apply: disable %s: %v: %s", u, err, strings.TrimSpace(string(out)))
+		}
+	}
+}
+
+// sweepStaleBusFiles deletes any waypoint-bus-*.json in the bus config dir that is
+// not a currently rendered target (RFC-0003 Addendum A §6 / D5): a disabled,
+// detached, or deleted bus's config, or a stale file an earlier version left. A
+// config file must never outlive its unit. Best-effort: a remove failure is logged.
+func (s *server) sweepStaleBusFiles(targets []config.RenderTarget) {
+	dir := s.paths.BusConfigDir
+	if dir == "" {
+		return
+	}
+	keep := map[string]bool{}
+	for _, t := range targets {
+		if filepath.Dir(t.Path) == dir {
+			keep[filepath.Base(t.Path)] = true
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return // dir absent on a node with no buses ever configured — nothing to sweep
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasPrefix(name, "waypoint-bus-") || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		if keep[name] {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			log.Printf("apply: sweep stale bus config %s: %v", name, err)
+		}
+	}
 }
 
 // seedStore imports the existing INI files into a fresh store on first run, so
@@ -1396,6 +1522,12 @@ func main() {
 	// operator with a shell on the box (RFC-0002 "Reset procedure (a)").
 	if len(os.Args) > 1 && os.Args[1] == "reset-claim" {
 		os.Exit(runResetClaim(os.Args[2:]))
+	}
+	// `waypointd reset-peer-identity` regenerates the node's peering keypair and
+	// revokes every pairing (RFC-0016 §3, amended) — the whole-mesh reset for a
+	// compromised node key or a re-homed box, same shell-on-device lineage.
+	if len(os.Args) > 1 && os.Args[1] == "reset-peer-identity" {
+		os.Exit(runResetPeerIdentity(os.Args[2:]))
 	}
 
 	addr := flag.String("addr", "127.0.0.1:8073", "HTTPS listen address for the API and UI (plaintext when -tls=false)")

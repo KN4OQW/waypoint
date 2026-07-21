@@ -108,7 +108,7 @@ through Save/Load, so disabling loses nothing (RFC-0001) and RFC-0003's migratio
 can seed bus definitions from the saved masters/passwords/TGs. Status: ⏸
 superseded (config retired) · the `MMDVM_CM` daemon builds are no longer needed.
 
-## 4. Host / network configuration  → [#32]  → 🟡 (foundation shipped)
+## 4. Host / network configuration  → [#32]  → ✅ (complete; hardware-validated)
 
 The second renderer family — **now complete**. NetworkManager is the substrate,
 so the renderer target is NM connection keyfiles + a `systemd-timesyncd` drop-in +

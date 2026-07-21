@@ -32,6 +32,14 @@ type BusConfig struct {
 	// bus has at least one active (paired) remote attachment. Absent on a purely
 	// local bus, so a bus without peering renders byte-identically to Phase 1.
 	Peering *BusPeering `json:"peering,omitempty"`
+
+	// Loopbacks is the per-mode loopback each local attachment binds, keyed by mode
+	// (RFC-0003 Addendum A). Present when the hand-off gives an attachment a
+	// non-stock port — a DMR attachment's reserved multiplex port. The daemon binds
+	// the loopback named here in preference to the fixed per-mode default, so it
+	// never claims a port MMDVM-Host or a live gateway owns. Absent ⇒ the daemon
+	// uses the stock per-mode loopback (a purely displacing bus needs no override).
+	Loopbacks map[string]BusLoopback `json:"loopbacks,omitempty"`
 }
 
 // DefaultBusHangTime is the fallback voice hang when the rendered config leaves

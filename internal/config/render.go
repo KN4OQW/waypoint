@@ -124,12 +124,26 @@ func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 	targets := []RenderTarget{
 		{Path: paths.MMDVM, Unit: unitMMDVM, Daemon: daemonMMDVM, Render: (*Model).RenderMMDVM},
 		{Path: paths.DMRGateway, Unit: unitDMRGateway, Daemon: daemonDMRGateway, Render: (*Model).RenderDMRGateway},
-		ysf,
-		{Path: paths.P25Gateway, Unit: unitP25Gateway, Daemon: daemonP25Gateway, Render: (*Model).RenderP25Gateway},
-		{Path: paths.NXDNGateway, Unit: unitNXDNGateway, Daemon: daemonNXDNGateway, Render: (*Model).RenderNXDNGateway},
-		{Path: paths.DStarGateway, Unit: unitDStarGateway, Daemon: daemonDStarGateway, Render: (*Model).RenderDStarGateway},
-		{Path: paths.M17Gateway, Unit: unitM17Gateway, Daemon: daemonM17Gateway, Render: (*Model).RenderM17Gateway},
 	}
+	// RFC-0003 Addendum A §2/§3: a YSF (resp. NXDN) bus attachment DISPLACES the stock
+	// gateway — the bus becomes the mode's gateway on the same loopback, so the stock
+	// gateway target is not rendered while the attachment exists (mirroring how
+	// EnableDGId already swaps the YSF unit). Its running unit is stopped by the apply
+	// path (DisplacedGatewayUnits) before the bus starts. DMR never displaces (§1).
+	if !m.modeDisplacesGateway(ModeYSF) {
+		targets = append(targets, ysf)
+	}
+	targets = append(targets,
+		RenderTarget{Path: paths.P25Gateway, Unit: unitP25Gateway, Daemon: daemonP25Gateway, Render: (*Model).RenderP25Gateway},
+	)
+	if !m.modeDisplacesGateway(ModeNXDN) {
+		targets = append(targets,
+			RenderTarget{Path: paths.NXDNGateway, Unit: unitNXDNGateway, Daemon: daemonNXDNGateway, Render: (*Model).RenderNXDNGateway})
+	}
+	targets = append(targets,
+		RenderTarget{Path: paths.DStarGateway, Unit: unitDStarGateway, Daemon: daemonDStarGateway, Render: (*Model).RenderDStarGateway},
+		RenderTarget{Path: paths.M17Gateway, Unit: unitM17Gateway, Daemon: daemonM17Gateway, Render: (*Model).RenderM17Gateway},
+	)
 	// POCSAG's DAPNETGateway is gated on the POCSAG mode enable, NOT always-on.
 	// Unlike the digital-mode gateways (YSF/P25/NXDN/M17/D-Star) — which idle
 	// harmlessly when their mode is off — DAPNETGateway exits immediately with
@@ -234,6 +248,10 @@ func (m *Model) renderBusConfig(id, peeringDir string) string {
 			bc.Attachments = append(bc.Attachments, a)
 		}
 	}
+	// RFC-0003 Addendum A: carry the coordinated loopbacks so the daemon binds the
+	// hand-off ports (a DMR attachment's reserved multiplex port), never a stock
+	// port the live stack owns.
+	bc.Loopbacks = m.busLoopbacksFor(id)
 	// RFC-0016 owner side: add the peering block + one member row per ACTIVE remote
 	// attachment. A bus with no active remote attachment gets no Peering block, so
 	// it renders byte-identically to Phase 1 (dormant/revoked peers render nothing).
@@ -1352,6 +1370,25 @@ func (m *Model) RenderDMRGateway() string {
 		// Routing generated from Type + Primary (mirrors WPSD); custom renders
 		// the operator's verbatim lines. DMRRoute overrides append as TGRewrites.
 		lines = append(lines, networkRewrites(net, m.Routes)...)
+		sect(&b, fmt.Sprintf("DMR Network %d", n), lines...)
+	}
+	// RFC-0003 Addendum A §1: a DMR bus attachment multiplexes here as one more
+	// [DMR Network N] — DMRGateway dials the bus's reserved loopback port and routes
+	// the bus's talkgroups to it, exactly as it routes an upstream network. MMDVM-Host
+	// and every upstream network above are untouched (no displacement). The numbering
+	// continues past the operator's networks so a bus never renumbers a real one.
+	for _, bn := range m.dmrBusNetworks(dmrID) {
+		n++
+		lines := []string{
+			kv("Name", bn.name),
+			kv("Address", "127.0.0.1"),
+			kv("Port", fmt.Sprintf("%d", bn.port)),
+			kv("Password", "passw0rd"), // local loopback peer; not a network credential (Addendum Open Q3)
+			kv("Id", bn.id),
+			kb("Enabled", true),
+			kb("Debug", false),
+		}
+		lines = append(lines, bn.rewrites()...)
 		sect(&b, fmt.Sprintf("DMR Network %d", n), lines...)
 	}
 	return b.String()

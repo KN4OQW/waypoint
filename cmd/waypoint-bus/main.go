@@ -124,7 +124,7 @@ func runOwner(cfgPath, dmridsPath, nodeID string) {
 		if remoteModes[a.Mode] {
 			continue // a member's mode has no local loopback; it rides the peer link
 		}
-		lb, err := loopbackFor(a.Mode)
+		lb, err := loopbackFrom(bc, a.Mode)
 		if err != nil {
 			log.Fatalf("%v", err)
 		}
