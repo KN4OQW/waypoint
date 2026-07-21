@@ -500,3 +500,44 @@ them alongside it: the unchanged **D3** hand-off (below). Clocks on both boxes a
 - **Interactive mDNS + short-code pairing through two live dashboards** — the
   pairing logic and both-store wrong-code-no-residue are covered by the peering
   unit suite; this session provisioned the pairing outcome (certs) directly.
+
+## Bus peering — play-out jitter buffer under impairment (2026-07-21)
+
+Closing **P2-3**: the RFC-0016 §5 play-out jitter buffer is now wired into the
+member's playout path — owner→member voice schedules through `peer.JitterBuffer`
+and emerges at the destination mode's frame cadence, instead of emitting on
+arrival. This is the on-hardware proof that it matters.
+
+**Setup.** The Phase-2 two-node pattern: owner on the bench Pi (`172.16.50.13`),
+member on the x86 host (`172.16.50.24`). Thanks to RFC-0003 Addendum A, the owner
+bus ran on its reserved DMR port (`62100`) **alongside the full live stack** — no
+service stopped. A DMR Parrot capture was replayed into the owner's DMR loopback
+at the real **60 ms** frame rate; the owner reframes DMR→YSF (5 codewords ⇒ a
+**100 ms** YSF frame cadence) and streams to the member over the peer link. The
+member plays out to its YSF loopback (`127.0.0.1:3200`), captured there with
+per-datagram timestamps. Impairment on the Pi's link to the host:
+`tc netem delay 40ms 10ms loss 0.5%` (scoped to the host by dst filter), removed
+after. The pre-fix binary (arrival-emit) is `origin/main`, built from a worktree.
+
+**Result — inter-frame interval at the member loopback, same ~140-frame stream,
+identical netem:**
+
+| Binary | mean | median | **σ (jitter)** | p95 | p99 | min–max | on-cadence (90–110 ms) | late drops |
+|---|---|---|---|---|---|---|---|---|
+| **pre-fix** (emit on arrival) | 95.3 | 110.4 | **29.0 ms** | 130.1 | 134.6 | 46–136 ms | **6 %** | 0 (played late/bursty) |
+| **buffer wired** | 100.7 | 100.0 | **9.8 ms** | 100.9 | 102.7 | 86–214 ms | **99 %** | 1 (past 60 ms deadline) |
+
+The netem jitter + TCP head-of-line blocking passed straight through to the loopback
+without the buffer (σ = 29 ms, intervals sprayed 46–136 ms, only 6 % on cadence).
+With the buffer wired, play-out is smoothed onto the 100 ms YSF cadence
+(σ = 9.8 ms, **99 %** of frames within 90–110 ms, p99 = 102.7 ms), and the one
+frame that arrived past the 60 ms deadline was **dropped, not played late** — the
+RFC-0016 §5 policy operating end to end. The buffer's own counters agreed
+(`delivered 139, dropped 1`).
+
+**Deviation noted.** The buffer's cadence must be the **destination mode's** frame
+period (YSF 100 ms / DMR 60 ms / NXDN 80 ms = codewords × 20 ms), not the RFC's
+flat "20 ms frame rate" wording — 20 ms is the *codeword* period, and a reframed
+stream emerges at the destination frame rate. The integration derives the cadence
+from `frames.CodewordsPerFrame`. netem qdisc removed and the bench restored (the
+live stack was never touched).
