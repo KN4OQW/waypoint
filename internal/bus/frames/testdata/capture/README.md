@@ -63,3 +63,17 @@ note above); addressing is KN4OQW's public RadioID.
 YSF/NXDN *modem-side* real captures (a keyed-up C4FM/NXDN transmission decoded by
 MMDVM-Host) remain unavailable: those modes were disabled on the bench modem, so
 their synthetic golden fixtures stand until a modem-side capture is feasible.
+
+## `ysf_peer_from_dmr.bin`
+
+Produced during RFC-0016 **Phase-2** two-node hardware validation
+(`docs/on-hardware-report.md`, 2026-07-20). The bench Pi (owner, node "shack")
+owned Bus A with a local DMR attachment; a second `waypointd`/`waypoint-bus` on an
+x86 host (member, node "garage") contributed YSF over a pinned-mTLS LAN peer link.
+A DMR Parrot transmission was replayed into the owner's DMR loopback; the owner
+reframed it DMR->YSF and streamed it over the peer link, and these are the YSFD
+bytes the **member** emitted at its local YSF loopback (`127.0.0.1:3200`), captured
+there. Unlike `ysf_bench_from_dmr.bin` (a single-node reframe), these frames
+crossed a real LAN peer link end to end. `TestRealCapturePeerYSFFromDMR` parses
+them. Same operator Parrot audio + KN4OQW public RadioID as the other captures
+(see the sanitization note above).
