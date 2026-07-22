@@ -58,6 +58,37 @@ func TestDMRMultiplexAddsExactlyOneNetwork(t *testing.T) {
 	}
 }
 
+// TestDMRBusNetworkRenderedBeforeOperatorNetworks guards the RFC-0003 Addendum A
+// §1 precedence fix: the bus's [DMR Network] must render BEFORE the operator's
+// networks so its specific TGRewrite wins DMRGateway's two-pass RF router (Pass 1
+// = specific rewrites, first match across all networks) even when an operator
+// network carries its OWN specific rewrite for the same TG. On the bench, an
+// operator BrandMeister network with TGRewrite0=2,9,... claimed keyed RF on TG 9
+// before the bus (rendered last) could — so "exactly the bus's talkgroups route to
+// it" only holds if the bus is rendered first.
+func TestDMRBusNetworkRenderedBeforeOperatorNetworks(t *testing.T) {
+	m := &Model{
+		// An operator network whose own rewrite claims the very TG the bus wants.
+		Networks: []Network{{Name: "BM", Address: "3102.master", Type: NetCustom, Enabled: true,
+			Rewrites: []string{"TGRewrite0=2,9,2,9,1", "PassAllTG0=1", "PassAllTG1=2"}}},
+		Buses:       []Bus{{ID: "a", Name: "A", Enabled: true}},
+		Attachments: []Attachment{{BusID: "a", Mode: ModeDMR, Slot: "2", DefaultTG: "9"}, {BusID: "a", Mode: ModeYSF}},
+	}
+	ini := m.RenderDMRGateway()
+	busAt := strings.Index(ini, "Name=Bus_a")
+	bmAt := strings.Index(ini, "Name=BM")
+	if busAt < 0 || bmAt < 0 {
+		t.Fatalf("expected both bus and operator networks in render:\n%s", ini)
+	}
+	if busAt > bmAt {
+		t.Fatalf("bus network must render BEFORE the operator network so its TGRewrite wins Pass 1; got bus@%d after BM@%d:\n%s", busAt, bmAt, ini)
+	}
+	// The bus is [DMR Network 1]; the operator network follows.
+	if i := strings.Index(ini, "[DMR Network 1]"); i < 0 || i > busAt {
+		t.Fatalf("the bus should be [DMR Network 1] (rendered first)")
+	}
+}
+
 // TestDisplaceDropsGatewayTarget: a YSF bus drops the YSF gateway target and adds
 // the bus unit; removing it restores the gateway target (Addendum §8.1).
 func TestDisplaceDropsGatewayTarget(t *testing.T) {

@@ -1343,6 +1343,32 @@ func (m *Model) RenderDMRGateway() string {
 
 	dmrID := firstNonEmpty(m.DMR.ID, m.General.ID)
 	n := 0
+	// RFC-0003 Addendum A §1: emit the bus's [DMR Network] blocks FIRST, ahead of the
+	// operator's networks. DMRGateway's RF→network router is two-pass — Pass 1 tries
+	// every network's *specific* rewrites (TGRewrite/PCRewrite/TypeRewrite) and takes
+	// the FIRST match across all networks; Pass 2 tries PassAllTG only if Pass 1 found
+	// nothing. So a bus rendered *after* an operator network that already carries a
+	// specific rewrite for the bus's TG (e.g. BrandMeister's own TGRewrite for TG 9)
+	// would never receive that keyed RF — Pass 1 matches the earlier network and stops.
+	// Emitting the bus first makes its TGRewrite win Pass 1, so "exactly the bus's
+	// talkgroups route to it" (Addendum §1) holds even against a colliding upstream.
+	// Everything the bus does NOT claim still falls through to the operator networks
+	// (their own specific rewrites, then PassAllTG). The network→RF path has no
+	// first-match break, so this ordering does not affect bus→RF delivery.
+	for _, bn := range m.dmrBusNetworks(dmrID) {
+		n++
+		lines := []string{
+			kv("Name", bn.name),
+			kv("Address", "127.0.0.1"),
+			kv("Port", fmt.Sprintf("%d", bn.port)),
+			kv("Password", "passw0rd"), // local loopback peer; not a network credential (Addendum Open Q3)
+			kv("Id", bn.id),
+			kb("Enabled", true),
+			kb("Debug", false),
+		}
+		lines = append(lines, bn.rewrites()...)
+		sect(&b, fmt.Sprintf("DMR Network %d", n), lines...)
+	}
 	for _, net := range m.Networks {
 		if net.Type == NetXLX {
 			// XLX talks over a dedicated [XLX Network] section, not a DMR Network
@@ -1383,25 +1409,6 @@ func (m *Model) RenderDMRGateway() string {
 		// Routing generated from Type + Primary (mirrors WPSD); custom renders
 		// the operator's verbatim lines. DMRRoute overrides append as TGRewrites.
 		lines = append(lines, networkRewrites(net, m.Routes)...)
-		sect(&b, fmt.Sprintf("DMR Network %d", n), lines...)
-	}
-	// RFC-0003 Addendum A §1: a DMR bus attachment multiplexes here as one more
-	// [DMR Network N] — DMRGateway dials the bus's reserved loopback port and routes
-	// the bus's talkgroups to it, exactly as it routes an upstream network. MMDVM-Host
-	// and every upstream network above are untouched (no displacement). The numbering
-	// continues past the operator's networks so a bus never renumbers a real one.
-	for _, bn := range m.dmrBusNetworks(dmrID) {
-		n++
-		lines := []string{
-			kv("Name", bn.name),
-			kv("Address", "127.0.0.1"),
-			kv("Port", fmt.Sprintf("%d", bn.port)),
-			kv("Password", "passw0rd"), // local loopback peer; not a network credential (Addendum Open Q3)
-			kv("Id", bn.id),
-			kb("Enabled", true),
-			kb("Debug", false),
-		}
-		lines = append(lines, bn.rewrites()...)
 		sect(&b, fmt.Sprintf("DMR Network %d", n), lines...)
 	}
 	return b.String()
