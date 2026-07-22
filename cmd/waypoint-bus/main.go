@@ -136,7 +136,11 @@ func runOwner(cfgPath, dmridsPath, nodeID string) {
 		}
 		io.eps[a.Mode] = ep
 		go ep.recv(ctx, frameCh)
-		log.Printf("attached %s: listen 127.0.0.1:%d, peer 127.0.0.1:%d", a.Mode, lb.bind, lb.peer)
+		if ep.master != nil {
+			log.Printf("attached %s: Homebrew master on 127.0.0.1:%d (DMRGateway multiplex; reverse path to the logged-in client)", a.Mode, lb.bind)
+		} else {
+			log.Printf("attached %s: listen 127.0.0.1:%d, peer 127.0.0.1:%d", a.Mode, lb.bind, lb.peer)
+		}
 	}
 
 	// RFC-0016 LAN peering: if the rendered config carries a peering block, this bus

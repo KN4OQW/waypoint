@@ -1376,8 +1376,17 @@ function remoteAttachmentBlock(r) {
 }
 
 function attachmentBlock(a, idx) {
-  const headRow = `<div class="toggle-row"><span class="name">${esc(BUS_MODE_LABEL[a.mode] || a.mode)} attachment</span><button type="button" class="btn" data-attachdel="${idx}">Detach</button></div>`;
-  return `<div class="attach">${headRow}${attachParams(a, idx)}</div>`;
+  const label = esc(BUS_MODE_LABEL[a.mode] || a.mode);
+  const headRow = `<div class="toggle-row"><span class="name">${label} attachment</span><button type="button" class="btn" data-attachdel="${idx}">Detach</button></div>`;
+  // RFC-0003 Addendum A §2/§3: a YSF or NXDN attachment DISPLACES the stock gateway
+  // — the bus becomes the mode's gateway on its loopback and reflectors are
+  // unavailable for the duration. Say so in plain copy so it is a knowing choice,
+  // never a silent side effect. DMR multiplexes onto DMRGateway and displaces
+  // nothing, so it carries no such notice.
+  const displaceNote = (a.mode === "ysf" || a.mode === "nxdn")
+    ? `<div class="note bus-down"><b>While ${label} is attached to this bus, ${label} traffic goes to the bus, not to reflectors.</b> The stock ${label} gateway is stopped for the duration; detach to restore reflector access.</div>`
+    : "";
+  return `<div class="attach">${headRow}${displaceNote}${attachParams(a, idx)}</div>`;
 }
 
 function attachParams(a, idx) {

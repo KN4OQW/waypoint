@@ -541,3 +541,145 @@ flat "20 ms frame rate" wording — 20 ms is the *codeword* period, and a refram
 stream emerges at the destination frame rate. The integration derives the cadence
 from `frames.CodewordsPerFrame`. netem qdisc removed and the bench restored (the
 live stack was never touched).
+
+## Bus RF end-to-end — coexistence + real over-the-air (2026-07-21/22)
+
+This run retires the standing caveat carried through every prior section — *no
+over-the-air RF had ever crossed a bus*. Real keyed DMR RF now crosses a bus in
+**both** directions, **on-air confirmed with an RTL-SDR**, and it does so with the
+**full live stack running throughout** — MMDVM-Host, DMRGateway, and the
+BrandMeister uplink never stopped. Unlike Phase 1 and Phase 2 (which ran the bus
+in isolation with the DMR components stopped, D3), the bus here **multiplexes**
+onto the live DMRGateway on its reserved port, exactly as RFC-0003 Addendum A
+specifies. Getting there required **two code fixes** the isolation runs could
+never have surfaced (the DMR-multiplex path had never carried a real gateway's
+traffic before), plus a UI fix — all on this branch, cherry-pick notes below.
+
+**Stack under test.** waypointd + `waypoint-bus` cross-compiled from
+`validate/bus-rf-end-to-end` (base `e278f1b` = main tip + the three fixes),
+`GOOS=linux GOARCH=arm64 CGO_ENABLED=0` for the Pi. Final deployed waypointd
+sha256 `b28ab1b…` (rev `a6a19b5`); `waypoint-bus` sha256 `d0ec1be…` (arm64, rev
+`86e92e3`). The `waypoint-bus@.service` template (waypoint-stack branch
+`feature/waypoint-bus-unit`, `815cd60`) was installed on the Pi. DMRGateway is the
+stack pin `79edbc4`.
+
+| | Node A — "shack" (owner) | Node B — "member" |
+|---|---|---|
+| Host | bench Pi 3 `172.16.50.13`, WPSD aarch64/armhf, **full live stack** | x86_64 workstation `10.10.0.141` |
+| Role | owns **Bus A**; local **DMR** attachment on reserved port `62100` | contributes **YSF** (replay-fed loopback) |
+| Modem | `MMDVM_HS_Dual_Hat`, DMR **duplex**, RX 433.900 / **TX 438.900**, CC1, id `3180202` (KN4OQW) | none |
+| RF source | a **real DMR radio** keyed by the operator on 433.900 CC1 | committed YSF capture replayed into `:4200` |
+| Link | — | mTLS peer over a **WiFi-routed** LAN (not same-switch — see Row 6) |
+
+**No second real radio was present**, so Node B is replay-fed (the sanctioned
+method, as in Phase 2); the real radio drives the DMR side at Node A. **RF was
+confirmed on the air** with an **RTL-SDR (RTL2838)** on the workstation, driven by
+a purpose-built SoapySDR power monitor (`rfmon`) tuned to the hat's 438.900 TX; the
+idle in-channel floor was **−44.5 dB** and a keyed/reframed transmission raised it
+to **≈ −4.5 dB (+40 dB)**, onset-aligned with the software emitting. The Pi store
+was backed up first (`sqlite3 .backup pre-bus-rf-e2e-…db`, integrity `ok`, mirrored
+to `waypoint-pi-backups/`) and restored to a bus-free state at the end.
+
+### Fixes found (all on this branch)
+
+- **F-RF1 — the bus never answered DMRGateway's login (RFC-0003 Addendum A Open
+  Q3).** Commit **`86e92e3`**. A DMR attachment renders a `[DMR Network N]` that
+  DMRGateway dials as a Homebrew **client** (`RPTL`/`RPTK`/`RPTC` login, `RPTPING`
+  keepalive); the bus bound the port but read every datagram as a frame, dropped
+  the login (not `DMRD`), and never sent `RPTACK`. Login never completed and **no
+  DMR voice ever crossed a DMR-attached bus** — the exact gap both prior runs could
+  only sidestep in isolation. Proven live by packet capture (`RPTL`→`62100`, zero
+  bytes back). Fix: `dmrMaster`, the minimal MMDVM master state machine (answers
+  `RPTL`+salt / `RPTK` / `RPTC` / `RPTPING`, learns the client for the reverse
+  path, forwards only `DMRD`; accept-any auth on the trusted loopback). Race-clean
+  unit tests. **Cherry-pick target:** the RFC-0003 Addendum A DMR-multiplex daemon
+  work in `cmd/waypoint-bus` — this is its runtime completion, not a new feature.
+- **F-RF2 — an operator network stole the bus's talkgroup (Addendum §1 "exactly
+  the bus's talkgroups route to it" did not hold).** Commit **`a6a19b5`**.
+  DMRGateway's RF→network router is two-pass (`DMRGateway.cpp:605-671`): Pass 1
+  tries every network's *specific* rewrites, first match wins; Pass 2 tries
+  `PassAllTG`. The bus rendered **last**, after BrandMeister — whose own
+  `TGRewrite0=2,9,…` claimed TG 9 in Pass 1 and stopped. Keyed RF on the bus's TG
+  never reached it. Proven live: `rf_voice` on TG 9 decoded at **rssi −47** but
+  produced **no** `bus_voice`. Fix: render the bus's `[DMR Network]` **first**, so
+  its `TGRewrite` wins Pass 1 for its own TG while everything else falls through to
+  the operator networks. New render-ordering test. **Cherry-pick target:**
+  `internal/config` render, Addendum §1 lineage. (`PassAllTG` was never the
+  culprit — a subagent trace of the pinned DMRGateway source overturned that first
+  hypothesis; the real cause was a colliding *specific* rewrite.)
+- **F-RF3 — the YSF displacement had no attach-time UI notice (Addendum §2/§3).**
+  Commit **`f1dac94`**. Attaching YSF to a bus silently stops+disables the stock
+  YSFGateway (reflectors go away), yet the UI still offered a "Reflector / DG-ID"
+  field as if reflectors worked. Added the required plain-copy notice to every
+  displacing (YSF/NXDN) attachment block. Copy only. **Cherry-pick target:** the
+  bus settings UI (`ui/static/settings.js`).
+
+### Matrix
+
+RF confirmation column: **radio** = operator keyed a real DMR radio; **SDR** =
+RTL-SDR on-air power confirmation at 438.900; **replay** = committed capture into a
+loopback (sanctioned, no second modem).
+
+| # | Test | RF | Result |
+|---|---|---|---|
+| **1a** | Keyed DMR RF crosses a **local DMR+YSF bus** → YSF, under the live stack | radio | **PASS.** Operator keyed **KN4OQW / TG 9 / slot 2**; owner logged `inbound dmr header src=3180202 dst=9` → `voice start: DMR 3180202 → 9`; **76 `DMRD`** arrived on `:62100`, **48 `YSFD`** emerged on `:3200` carrying `YSFDKN4OQW … KN4OQW … ALL` (id 3180202 resolved). `events.db`: `rf_voice` **and** `bus_voice` fire together (vs. `rf_voice`-only before F-RF2). Needed **both** fixes. |
+| **1b** | Bus output emerges as **real DMR RF on the hat**, on-air | SDR + replay | **PASS.** Real YSF (KN4OQW) replayed into `:4200` → reframed YSF→DMR → **60 `DMRD`** to DMRGateway → MMDVM-Host → **hat TX at 438.900**; RTL-SDR in-channel **−44.5 → −4.5 dB (+40 dB)**, onset 90 ms after the replay start, sustained. |
+| **1-mux** | Multiplex claim — DMR upstream to the live master still passes | radio | **PASS.** Operator keyed **BM Parrot (TG 9990)**; the Parrot **echoed back** (heard on the radio; `rf_voice 9990` → `net_voice 9990→3180202`; hat TX seen on the SDR) — BrandMeister stays linked while the bus is attached. |
+| **1-disp** | Displacement claim — YSF reflectors unavailable, with UI notice | n/a | **PASS.** Attaching YSF stopped **and disabled** `waypoint-ysfgateway` (reflectors unavailable); the attach-time UI now says so (**F-RF3**). MMDVM-Host.ini is **byte-identical** with/without the bus (`f5a769e5…` both) — RenderMMDVM unchanged, as Addendum A §A.7 asserts. |
+| **2** | Dashboard truth (D4): badges + events + MQTT | radio + replay | **PASS.** `bus_voice_start/end` (DMR **and** YSF) and `bus_busy` publish to `waypoint/bus/busA/<type>`, land in `events.db`, and surface on `/api/history`. Doubling → **exactly one** `bus_busy` `"busy: via DMR"` (per losing stream). `bus_down` proven in Row 3. Topics match `docs/mqtt-topics.md`. |
+| **3** | Reboot (D2): OS reboot with **bus + peering active**, unattended recovery | replay | **PASS (with finding).** After `systemctl reboot`, Node A auto-started waypointd + MMDVM-Host + DMRGateway + `waypoint-bus@busA`, re-listened on `:42500`, and **Node B auto-reconnected with no intervention** (`member … connected`); `bus_down` self-cleared to reconnect (RFC-0008). *First* reboot did **not** recover peering — the certs lived in `/tmp` (tmpfs, wiped on reboot); moving them to persistent storage and re-rebooting gave clean unattended recovery. See D-RF3. |
+| **4** | Detach (D5) under load: byte-identical restore, cleanup | replay | **PASS.** Detach (empty buses/attachments + apply) while DMR was injecting: `waypoint-bus-busA.json` **deleted**, `waypoint-bus@busA` **stopped + disabled**, `waypoint-ysfgateway` **restored** (active + enabled), and **DMRGateway.ini byte-identical to the pre-bus render** (`d0e5e1d2…` exact) — losslessness property 3 on hardware. No retained bus MQTT state lingered. |
+| **5a** | Peered: keyed DMR RF at A → **Node B's YSF loopback** over the LAN | radio | **PASS.** Operator keyed KN4OQW/TG 9; owner reframed DMR→YSF and streamed over the mTLS peer link; **`YSFD` frames played out at Node B's `:3200`**. (Few frames landed inside Node B's 60 ms deadline — the WiFi link's jitter buffer dropped the late ones; the frames crossing is the proof. Path independently shown at scale: injecting DMR at the owner produced **84 `YSFD`** at Node B.) |
+| **5b** | Peered: Node B's YSF → **real DMR RF on A's hat**, on-air | SDR + replay | **PASS.** Node B's replayed YSF crossed the peer link; owner reframed YSF→DMR; **hat TX at 438.900, RTL-SDR +40 dB**. `bus_voice YSF KN4OQW` → `net_voice DMR KN4OQW`. |
+| **5c** | Cable-pull: member holding the token vanishes mid-tx | replay | **PASS.** Member `kill -9`'d mid-stream; owner logged `member … disconnected`, **stayed alive (PID unchanged, no crash)**, kept `:62100`/`:42500` bound and the full stack up; on member restart it **auto-reconnected**. |
+| **5d** | Doubling across nodes: one holder cluster-wide | radio + replay | **PASS.** Node B's YSF held the token; Node A's DMR was dropped — `busy: DMR dropped, bus held via YSF`, **exactly one** `bus_busy` `"mode":"DMR","source":"YSF"`. (A single duplex hat also enforces this at the RF layer: while the bus transmits reframed audio the radio sees a busy channel and won't key — a real key-up got a red light, correct DMR etiquette.) |
+| **6** | Latency A↔B under the full stack load | — | **PASS.** RTT **min/avg/max = 2.5 / 3.3 / 6.1 ms**, 0 % loss / 100 samples; one-way ≈ **1.7 ms**. Higher than Phase-2's same-switch **0.287 ms** purely because Node B is on a **WiFi-routed** segment, not the bench switch — the stack load itself adds no measurable transport latency, and it is far inside the 60 ms budget. |
+
+### Deviations & findings
+
+- **F-RF1 / F-RF2 are the headline.** The DMR-multiplex path had **never** carried a
+  real DMRGateway's traffic before this run (Phase 1/2 replayed straight into the
+  bus in isolation), so neither the missing master handshake nor the render-order
+  collision could have been caught earlier. Both are fixed and re-proven on-air.
+- **D-RF1 — apply restarts every target unit unconditionally.** Each `apply`
+  (attach *or* detach) `systemctl restart`s the whole rendered set — including
+  MMDVM-Host, whose INI is byte-identical — so every bus change briefly drops RF
+  and all upstream links (a few seconds; BrandMeister reconnects). Pre-existing
+  behavior, surfaced here because coexistence makes it user-visible. Candidate
+  follow-up: restart only units whose rendered bytes changed.
+- **D-RF2 — a stray manual `waypoint-bus` held the reserved port.** An orphaned
+  process from an earlier manual session still owned `:62100`, crash-looping the new
+  systemd instance (`bind: address already in use`). Environmental, not a defect —
+  but it shows D5's orphan sweep only reaps systemd `waypoint-bus@` units, not a
+  hand-launched process. Cleared by hand.
+- **D-RF3 — peering certs must be on persistent storage for reboot recovery.** With
+  the keypair/pinned certs in `/tmp` (tmpfs), an OS reboot wipes them and the bus
+  comes back **without** peering (it degrades gracefully — local bus keeps running,
+  `peering: not started` logged). Moving them to a persistent dir restored clean
+  unattended recovery (Row 3). The `/tmp/wp-peering` pattern inherited from Phase 2
+  is reboot-fragile; a real deployment renders cert paths under the persistent
+  config dir.
+- **Node B over WiFi (topology note, not a defect).** Running the member on a
+  WiFi-routed host (vs. Phase-2 same-switch) raises one-way latency ~6× and makes
+  the owner→member play-out jitter buffer drop a large fraction of frames as *late
+  past deadline* — the RFC-0016 §5 late-drop policy operating correctly on a poor
+  link, at the cost of media on that link. Functional rows (5a/5c/5d, 3) are
+  unaffected; only clean media throughput and the latency baseline are.
+
+### Not covered
+
+- **Keyed C4FM/NXDN into the hat** — the hat runs one mode at a time and only DMR
+  was keyed-capable; the YSF/NXDN sides remain replay-fed (as in Phase 1/2). The
+  real-RF boundary is proven on the DMR side in both directions.
+- **The interactive mDNS + short-code pairing** — the peer certs were provisioned
+  directly (Phase-2 method); the pairing *outcome* (pinned mTLS trust) is exercised
+  by every peered row.
+
+### Exit state
+
+Bus detached, `waypoint-bus-busA.json` gone, `waypoint-ysfgateway` restored, the
+DMR render byte-identical to pre-session; the full stack (MMDVM-Host, DMRGateway,
+BrandMeister, and the mode gateways) ran **uninterrupted except for apply's own
+restarts** throughout. Store restored to its bus-free state; the pre-session backup
+is at `pre-bus-rf-e2e-…db` (mirrored). New binaries (with the three fixes) left
+deployed; prior binaries saved as `waypointd.bak.prereorder` / `waypoint-bus.bak.premaster`.
