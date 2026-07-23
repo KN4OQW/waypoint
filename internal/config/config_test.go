@@ -89,6 +89,9 @@ func fixture() *Model {
 		// render→parse→fromINI comparison balanced. Its own store round-trip and
 		// validation are covered by TestHistoryStoreRoundTrip.
 		History: DefaultHistory(),
+		// Update policy is store-only too (RFC-0014), so it takes the value
+		// fromINI/Import assigns — DefaultUpdate() — to keep the round-trip balanced.
+		Update: DefaultUpdate(),
 	}
 }
 

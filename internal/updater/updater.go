@@ -26,10 +26,25 @@ type Artifact struct {
 // Manifest describes an available release. It is itself minisign-signed (verified
 // on fetch), so an attacker cannot offer a downgrade or a malicious artifact URL.
 type Manifest struct {
-	Version    string              `json:"version"`
-	MinVersion string              `json:"min_version"`
-	NotesURL   string              `json:"notes_url"`
-	Artifacts  map[string]Artifact `json:"artifacts"` // key "linux/arm", "linux/arm64", …
+	Version    string `json:"version"`
+	MinVersion string `json:"min_version"`
+	NotesURL   string `json:"notes_url"`
+	// Channel tags which release channel this manifest belongs to ("stable" |
+	// "beta"); empty is treated as "stable". A node only applies a manifest whose
+	// channel matches its selected channel (RFC-0014). For now the channel gates
+	// only this signed binary manifest — the apt stack repo serves both channels
+	// from the same suite (see docs/updates.md).
+	Channel   string              `json:"channel,omitempty"`
+	Artifacts map[string]Artifact `json:"artifacts"` // key "linux/arm", "linux/arm64", …
+}
+
+// ManifestChannel returns the manifest's channel, defaulting an empty value to
+// "stable" so a manifest without the field is treated as a stable release.
+func (m Manifest) ManifestChannel() string {
+	if m.Channel == "" {
+		return "stable"
+	}
+	return m.Channel
 }
 
 // Plan is the decision derived from a manifest for the running node.
