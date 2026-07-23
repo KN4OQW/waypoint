@@ -20,6 +20,41 @@ targets ARMv7 and will not boot on ARMv6 — use [Pi-Star](https://www.pistar.uk
 on that hardware. Pick **arm64** on a Pi 3/4 for the best performance; **armhf**
 runs on every supported board.
 
+## Easiest: flash from Raspberry Pi Imager's OS list
+
+[Raspberry Pi Imager](https://www.raspberrypi.com/software/) 2.0+ can pull the
+Waypoint images straight into its **Choose OS** list from a custom repository — no
+manual download, and Imager verifies the SHA-256 for you.
+
+1. Open Imager → the gear / **⚙ App Options** (or Ctrl/⌘-Shift-X).
+2. Set **Content Repository** to:
+   ```
+   https://kn4oqw.github.io/waypoint/os_list_waypoint.json
+   ```
+3. Back on the main screen, **Choose OS** now lists **Waypoint OS (64-bit)** and
+   **Waypoint OS (32-bit)** (filtered to the board you pick under **Choose Device**).
+4. **Choose Storage**, set your Wi-Fi + username/password under the advanced
+   options (the image ships none — see step 2 below), and **Write**.
+
+CLI equivalent:
+
+```console
+$ rpi-imager --repo https://kn4oqw.github.io/waypoint/os_list_waypoint.json
+```
+
+> **Which entry?** A Pi 3/4 sees both; choose **64-bit** for best performance. A
+> Pi 2 or Zero 2 W sees only **32-bit**. Pi Zero W / Pi 1 are excluded (ARMv6).
+
+> **Schema pin / maintenance note.** The custom-repository JSON follows Raspberry
+> Pi Imager's *OS list* JSON Schema (Draft-07). That schema is published on the
+> `rpi-imager` **`main`** branch and is **not** versioned, so it can change without
+> notice. We vendor a pinned copy at [`scripts/os-list-schema.json`](../scripts/os-list-schema.json)
+> and validate every generated `os_list_waypoint.json` against it in CI. If Imager
+> changes the schema, regenerate against the new copy and bump the vendored file;
+> the generator is [`scripts/gen-imager-json.py`](../scripts/gen-imager-json.py).
+
+Prefer to download the `.img.xz` and flash it yourself? Continue below.
+
 ## 1. Verify the download
 
 Every release ships `SHA256SUMS` (signed with the RFC-0013 release key) alongside
