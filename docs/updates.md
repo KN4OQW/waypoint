@@ -126,6 +126,123 @@ Artifact keys are the node's `GOOS/GOARCH`. `min_version` lets a release refuse 
 apply on top of a too-old base (a schema/migration floor). A node running a
 non-release (`dev`) build is treated as older than any release, so it updates.
 
+## Two update paths
+
+A Waypoint node updates two different things, kept deliberately separate:
+
+1. **The OS** (Raspberry Pi OS / Debian base) — kernel, libc, openssl, and the
+   rest of the distro. These are the distro's own security updates, applied by
+   `unattended-upgrades` on the normal Debian schedule.
+2. **Waypoint's own software** — the `waypointd` binary (the signed-manifest
+   engine above) and the **waypoint-stack digital-voice daemons** (MMDVMHost,
+   DMRGateway, the mode gateways), distributed as `.debs` from the signed apt
+   repo at `https://kn4oqw.github.io/waypoint-stack`.
+
+**waypointd is the only driver of the second path (D2).** `unattended-upgrades`
+is configured (in the image) to never touch the Waypoint origin, so the stack is
+only ever moved by waypointd's health-gated updater — never by an unattended
+`apt` run that could restart the modem host mid-QSO with no rollback. The OS path
+stays the distro's job; the Waypoint path gets the transactional, health-gated,
+auto-reverting treatment.
+
+## Stack-package updates (the waypoint-stack .debs)
+
+The stack updater is the apt-backed sibling of the binary engine above. It keeps
+the same **confirm-or-revert** contract, but the atomic unit is a *set of
+versioned packages* installed by `apt`, not one binary swapped by `rename`.
+
+### Detecting updates
+
+The periodic check (reusing the update poll cadence) refreshes package lists
+**limited to the Waypoint source** — never an OS-wide `apt-get update`:
+
+```console
+# apt-get update -o Dir::Etc::SourceList=/dev/null \
+                  -o Dir::Etc::SourceParts=<dir with only waypoint.sources>
+# apt list --upgradable        # (same source limit) → waypoint-* upgradable lines
+```
+
+The available updates are cached in the store and surfaced in the **Updates**
+settings tab (installed versions, what is available, an Apply button).
+
+### Applying an update
+
+`Apply` runs a fixed, health-gated sequence — the ordering is the safety argument:
+
+1. **Record** the currently-installed version of every affected package (the
+   revert set) in the store.
+2. **Stop** the affected services.
+3. **`apt-get install`** the *exact* target versions
+   (`waypoint-mmdvmhost=<ver> …`) — never a bare `upgrade`/`dist-upgrade`, so
+   apt touches only the named packages.
+4. **Restart** the services.
+5. **Health-gate**: poll until healthy for several consecutive checks —
+   **every affected unit is `active` AND MMDVMHost's modem is open**. The
+   modem-open signal is ground-truthed: MMDVMHost **exits(1)** when its modem
+   will not open (`MMDVM-Host.cpp` `createModem → return 1`), so a
+   `waypoint-mmdvm.service` that will not stay cleanly `running` (SubState) is
+   the real "modem did not open" signal — no log scraping. A brief healthy blip
+   mid-restart does not confirm; the health must *sustain*.
+6. **Confirm**, or on any failure (a failed install, a failed restart, or a
+   health gate that never sustains) **revert**: reinstall the previous versions
+   and restart.
+
+### Revert relies on the repo keeping old versions
+
+The revert step is `apt-get install <previous versions>` — which only works
+because the apt repo **retains prior versions in `pool/`** (the repo carries
+every published version forward). That retention is the apt-side half of the
+rollback story; the health gate is the trigger. Every applied/previous pair and
+its result (`confirmed`/`reverted`) is recorded in the `stack_update_history`
+table for the audit and revert trail.
+
+### Timing and auto-apply
+
+- **Default: notify-and-click.** The Updates tab shows "update available"; the
+  operator applies it explicitly. Nothing is applied automatically.
+- **Opt-in auto-apply.** A setting (off by default) applies available updates
+  automatically inside a **quiet window** (default 04:00 local), at most once per
+  day. The poller ticks more often than hourly so it reliably lands in the
+  one-hour window.
+
+### Channels
+
+The update policy selects a **channel** (`stable` | `beta`, default `stable`),
+persisted in the store like any other config. **For now the channel gates only
+the signed `waypointd` binary manifest** — a node applies a manifest only when
+its `channel` field matches the selected channel. The **apt stack repo serves
+both channels from the same `bookworm` suite**, so selecting `beta` does not (yet)
+change the apt source. Mapping a channel to a distinct apt suite (e.g. a
+`bookworm-beta` suite, or a per-channel component) is a deliberate follow-up: the
+setting and the manifest gate ship now so the channel is a real, persisted choice
+the apt side can adopt later without a schema change.
+
+### Triggering (shell + API)
+
+```console
+# Report available stack updates (changes nothing).
+$ waypointd -update-stack-check
+
+# Apply them: stop → install exact versions → restart → health-gate → confirm/revert.
+$ waypointd -update-stack
+update-stack: confirmed — waypoint-mmdvmhost=0~gitNEW+wp1, …
+```
+
+- `GET /api/update/stack` → installed versions, cached available updates, policy,
+  recent history.
+- `POST /api/update/stack/check` → run the source-limited apt check now.
+- `POST /api/update/stack/apply` → start the health-gated apply (202; poll
+  `GET /api/update/stack` for confirmed/reverted).
+
+### Stack flags
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `-update-stack` | — | Apply available stack updates (health-gated, auto-revert) and exit. |
+| `-update-stack-check` | — | Report available stack updates and exit. |
+| `-apt-source-file` | `/etc/apt/sources.list.d/waypoint.sources` | The signed-repo deb822 source; the check limits apt to it (D2). |
+| `-update-poll-interval` | `6h` | How often waypointd checks for updates and evaluates quiet-window auto-apply. |
+
 ## What is not here yet
 
 - **A/B image slots (Phase 3)** — the same verify/confirm/rollback state machine
