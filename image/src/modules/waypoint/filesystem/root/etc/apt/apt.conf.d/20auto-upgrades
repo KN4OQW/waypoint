@@ -1,0 +1,7 @@
+// Waypoint: run the periodic apt update + unattended-upgrade timers. WHICH
+// packages are eligible is decided by 51waypoint-unattended-upgrades
+// (security origins only; the Waypoint origin is excluded). See image/README.md
+// "Two paths, two clocks".
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";

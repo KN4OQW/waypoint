@@ -1,0 +1,29 @@
+[Unit]
+Description=Waypoint dashboard + supervisor (live)
+Documentation=https://github.com/KN4OQW/waypoint
+After=network-online.target mosquitto.service
+Wants=network-online.target mosquitto.service
+
+[Service]
+Type=simple
+# RFC-0014 power-loss safety: an update that was swapped but never confirmed is
+# reverted here, BEFORE the daemon starts, so the unit then runs the prior binary.
+# Non-fatal (leading '-') — a boot-check hiccup must never wedge startup. The
+# paths are the updater's own defaults (Waypoint home = /home/pi-star/waypoint).
+ExecStartPre=-/home/pi-star/waypoint/bin/waypointd -update-boot-check \
+  -update-binary /home/pi-star/waypoint/bin/waypointd \
+  -update-marker /home/pi-star/waypoint/update.marker
+# First start mints the self-signed TLS cert (RFC-0012) and enters the claim flow
+# (RFC-0002) — the image ships neither, so the box is unclaimed until an operator
+# claims it over the web UI. -release-pubkey is the RFC-0013 key the updater
+# verifies waypointd releases against.
+ExecStart=/home/pi-star/waypoint/bin/waypointd \
+  -addr 0.0.0.0:443 -tls -http-redirect-addr 0.0.0.0:80 \
+  -mqtt-broker 127.0.0.1:1883 -mqtt-name mmdvm \
+  -release-pubkey /usr/share/waypoint/waypoint-release.pub
+Restart=on-failure
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

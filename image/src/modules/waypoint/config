@@ -1,0 +1,39 @@
+### Waypoint module config — every setting starts with WAYPOINT_
+#
+# Defaults point at the public, pinned artifacts. For an offline / pre-release
+# build, set WAYPOINT_LOCAL_ARTIFACTS to a directory holding local copies (see
+# image/README.md); the module then uses those instead of fetching, but STILL
+# verifies the keyring sha256 and the waypointd minisig, so a local build proves
+# the same trust path as a public one.
+
+# --- Signed apt repository (waypoint-stack .debs) ---
+# The deb822 source is served, and the archive keyring is fetched, from the Waypoint
+# Pages apt repo. The keyring is pinned by sha256 (the keyring file is deterministic,
+# so this pin is real whether or not Pages is live yet).
+[ -n "$WAYPOINT_APT_URL" ]        || WAYPOINT_APT_URL="https://kn4oqw.github.io/waypoint-stack"
+[ -n "$WAYPOINT_KEYRING_URL" ]    || WAYPOINT_KEYRING_URL="${WAYPOINT_APT_URL}/waypoint-archive-keyring.gpg"
+[ -n "$WAYPOINT_KEYRING_SHA256" ] || WAYPOINT_KEYRING_SHA256="aa4641f449f5ca7364079e41b66ecd74175855d21c1fd7e414451b87a4f67ec2"
+[ -n "$WAYPOINT_APT_SUITE" ]      || WAYPOINT_APT_SUITE="bookworm"
+[ -n "$WAYPOINT_APT_COMPONENT" ]  || WAYPOINT_APT_COMPONENT="main"
+
+# --- waypointd release binary (RFC-0014 updater target) ---
+# Downloaded per target arch from GitHub Releases and verified against the RFC-0013
+# release public key (bundled in the module) with minisign. waypointd verifies
+# updates natively in Go (internal/minisign), so minisign is a BUILD-ONLY dependency
+# — it is not kept on the finished image.
+[ -n "$WAYPOINT_RELEASE_TAG" ]  || WAYPOINT_RELEASE_TAG="latest"
+[ -n "$WAYPOINT_RELEASE_BASE" ] || WAYPOINT_RELEASE_BASE="https://github.com/KN4OQW/waypoint/releases/${WAYPOINT_RELEASE_TAG}/download"
+# GOARCH-style artifact suffix per Debian arch (filled in start_chroot_script).
+
+# --- Install paths (the RFC-0014 updater's defaults; see image/README.md) ---
+# Waypoint's home is /home/pi-star/waypoint, root-owned and user-agnostic — it is
+# every waypointd path flag's default and the updater's -update-binary/-update-marker
+# default, so the units need no path overrides. The stack DAEMONS live in /usr/bin
+# (owned by the waypoint-stack .debs); only waypointd lives under the Waypoint home.
+[ -n "$WAYPOINT_HOME" ]     || WAYPOINT_HOME="/home/pi-star/waypoint"
+[ -n "$WAYPOINT_BIN" ]      || WAYPOINT_BIN="${WAYPOINT_HOME}/bin/waypointd"
+[ -n "$WAYPOINT_KEYRING_DST" ] || WAYPOINT_KEYRING_DST="/usr/share/keyrings/waypoint-archive-keyring.gpg"
+[ -n "$WAYPOINT_RELEASE_PUBKEY" ] || WAYPOINT_RELEASE_PUBKEY="/usr/share/waypoint/waypoint-release.pub"
+
+# journald volatile ring buffer size (SD longevity).
+[ -n "$WAYPOINT_JOURNAL_MAXUSE" ] || WAYPOINT_JOURNAL_MAXUSE="32M"

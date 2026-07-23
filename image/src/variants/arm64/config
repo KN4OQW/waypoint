@@ -1,0 +1,11 @@
+# Waypoint OS — arm64 variant (ARMv8: Pi 3 / 4 on a 64-bit OS).
+# Base: official Raspberry Pi OS Lite (Bookworm), 64-bit. Pinned by URL + sha256;
+# fetch it with image/src/fetch-base-image.sh arm64 before building.
+BASE_ARCH=arm64
+BASE_IMAGE_PATH=${DIST_PATH}/image-arm64
+BASE_ZIP_IMG=$(ls -t ${BASE_IMAGE_PATH}/*-raspios-bookworm-arm64-lite.img.xz 2>/dev/null | head -n 1)
+BASE_IGNORE_VARIANT_NAME=yes
+
+# Pinned base image (last Bookworm release before Raspberry Pi OS moved to Trixie).
+export WAYPOINT_BASE_IMAGE_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz"
+export WAYPOINT_BASE_IMAGE_SHA256="62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45"

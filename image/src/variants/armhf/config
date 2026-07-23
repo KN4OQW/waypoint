@@ -1,0 +1,11 @@
+# Waypoint OS — armhf variant (ARMv7: Pi Zero 2 W, Pi 2/3/3+/4 on a 32-bit OS).
+# Base: official Raspberry Pi OS Lite (Bookworm), 32-bit. Pinned by URL + sha256;
+# fetch it with image/src/fetch-base-image.sh armhf before building.
+BASE_ARCH=armhf
+BASE_IMAGE_PATH=${DIST_PATH}/image-armhf
+BASE_ZIP_IMG=$(ls -t ${BASE_IMAGE_PATH}/*-raspios-bookworm-armhf-lite.img.xz 2>/dev/null | head -n 1)
+BASE_IGNORE_VARIANT_NAME=yes
+
+# Pinned base image (last Bookworm release before Raspberry Pi OS moved to Trixie).
+export WAYPOINT_BASE_IMAGE_URL="https://downloads.raspberrypi.com/raspios_lite_armhf/images/raspios_lite_armhf-2025-05-13/2025-05-13-raspios-bookworm-armhf-lite.img.xz"
+export WAYPOINT_BASE_IMAGE_SHA256="a73d68b618c3ca40190c1aa04005a4dafcf32bc861c36c0d1fc6ddc48a370b6e"

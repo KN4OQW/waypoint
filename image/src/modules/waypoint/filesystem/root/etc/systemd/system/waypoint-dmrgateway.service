@@ -1,0 +1,17 @@
+[Unit]
+Description=Waypoint DMRGateway (MQTT)
+After=mosquitto.service waypoint-mmdvm.service
+Wants=mosquitto.service
+
+[Service]
+# Runs the waypoint-stack package binary (/usr/bin) against the INI waypointd
+# renders on Apply. Managed by waypointd: enabled/started when its mode is
+# configured, health-gated on stack updates (RFC-0014). Not enabled at image
+# build — a fresh, unclaimed node runs no gateways until it is configured.
+ExecStart=/usr/bin/DMRGateway /home/pi-star/waypoint/etc/DMRGateway.ini
+Restart=on-failure
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
