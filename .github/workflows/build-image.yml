@@ -1,0 +1,262 @@
+name: Build image
+
+# Builds the Waypoint OS SD-card images (RFC-0014 / image module) with CustomPiOS.
+#
+#   push tag v*        -> build both arches, then upload the images + a signed
+#                         SHA256SUMS to the GitHub release for the tag.
+#   workflow_dispatch  -> DRY RUN: build both arches, upload as workflow artifacts,
+#                         no release upload.
+#
+# The waypointd binary and the signed apt repo are the release pipeline's two
+# inputs. For a tag build the vX waypointd binary is pulled from the release the
+# Release workflow publishes for the same tag (download-with-retry, since the two
+# workflows run concurrently on the tag push). The waypoint-stack .debs come from
+# the signed apt repo (https://kn4oqw.github.io/waypoint-stack); the image module
+# installs + verifies them.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      apt_url:
+        description: "Override the waypoint-stack apt repo URL (blank = public Pages)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write # upload assets to the release on a tag build
+
+jobs:
+  build:
+    name: build (${{ matrix.variant }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # armhf (ARMv7: Pi Zero 2 W, 2, 3/3+, 4 on a 32-bit OS). The release ships
+          # one 32-bit waypointd built GOARM=6 (waypointd-linux-arm6); ARMv6 runs on
+          # ARMv7, so that single binary covers the whole armhf tier.
+          - variant: armhf
+            arch: armhf
+            wp_asset: waypointd-linux-arm6
+            goarch: arm
+            goarm: "6"
+          # arm64 (ARMv8: Pi 3/4 on a 64-bit OS).
+          - variant: arm64
+            arch: arm64
+            wp_asset: waypointd-linux-arm64
+            goarch: arm64
+            goarm: ""
+    steps:
+      # CustomPiOS needs several GB of scratch on top of the base + output images;
+      # the stock runner does not have it. Reclaim it before anything else.
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: 2048
+          swap-size-mb: 1024
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+
+      - name: Checkout waypoint
+        uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - name: Checkout CustomPiOS
+        uses: actions/checkout@v4
+        with:
+          repository: guysoft/CustomPiOS
+          ref: master
+          path: CustomPiOS
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y coreutils p7zip-full qemu-user-static binfmt-support \
+            python3-git python3-yaml python3-requests xz-utils kpartx zip jq minisign
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      # Cache the pinned base image by its sha256 (from the variant config), so the
+      # ~0.5 GB .img.xz is downloaded once.
+      - name: Base-image cache key
+        id: basekey
+        run: |
+          cd repo/image/src
+          # shellcheck disable=SC1090
+          DIST_PATH="$PWD" source "variants/${{ matrix.variant }}/config"
+          echo "sha=${WAYPOINT_BASE_IMAGE_SHA256}" >> "$GITHUB_OUTPUT"
+          echo "dir=repo/image/src/image-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache base image
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.basekey.outputs.dir }}
+          key: rpios-base-${{ matrix.arch }}-${{ steps.basekey.outputs.sha }}
+
+      - name: Fetch + verify base image
+        run: repo/image/src/fetch-base-image.sh ${{ matrix.variant }}
+
+      # Stage the waypointd binary + its minisig where the module reads local
+      # artifacts (/filesystem/build-artifacts in the chroot). Tag builds pull the
+      # signed vX release asset; a dry run builds + signs from the checked-out source.
+      - name: Stage waypointd (${{ matrix.arch }})
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          art="repo/image/src/modules/waypoint/filesystem/build-artifacts"
+          mkdir -p "$art"
+          dst="waypointd-linux-${{ matrix.arch }}"   # the name the module fetches
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${GITHUB_REF_NAME}"
+            echo "pulling ${{ matrix.wp_asset }} from release $tag (retry until the Release workflow publishes it)"
+            for i in $(seq 1 30); do
+              if gh release download "$tag" --repo "${{ github.repository }}" \
+                   --pattern "${{ matrix.wp_asset }}" --pattern "${{ matrix.wp_asset }}.minisig" \
+                   --dir "$art" --clobber 2>/dev/null; then
+                break
+              fi
+              echo "  attempt $i: release asset not ready yet, waiting 20s…"; sleep 20
+            done
+            mv "$art/${{ matrix.wp_asset }}" "$art/$dst"
+            mv "$art/${{ matrix.wp_asset }}.minisig" "$art/$dst.minisig"
+          else
+            echo "dry run: building + signing waypointd from source"
+            ( cd repo && CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} GOARM=${{ matrix.goarm }} \
+                go build -trimpath -ldflags "-s -w -X main.Version=dev-$(git rev-parse --short HEAD)" \
+                -o "../$art/$dst" ./cmd/waypointd )
+            if [ -z "${MINISIGN_SECRET_KEY:-}" ]; then
+              echo "::error::MINISIGN_SECRET_KEY not set — the image module needs a signed waypointd to verify. Configure the RFC-0013 release key (docs/signing.md)."
+              exit 1
+            fi
+            printf '%s' "$MINISIGN_SECRET_KEY" > minisign.key
+            echo "$MINISIGN_PASSWORD" | minisign -S -H -s minisign.key -m "$art/$dst" -t "waypoint dry-run $dst"
+            rm -f minisign.key
+          fi
+          # Verify the staged binary against the committed public key before we bake it in.
+          minisign -V -p repo/docs/waypoint-release.pub -m "$art/$dst"
+          ls -l "$art"
+
+      # config.local is CustomPiOS's build-time override file; its vars reach the
+      # module in the chroot. Point the module at the staged local artifacts, and at
+      # an apt URL override if one was supplied (default = public Pages).
+      - name: Write config.local
+        run: |
+          cat > repo/image/src/config.local <<EOF
+          export WAYPOINT_LOCAL_ARTIFACTS="/filesystem/build-artifacts"
+          EOF
+          url='${{ github.event.inputs.apt_url }}'
+          if [ -n "$url" ]; then
+            echo "export WAYPOINT_APT_URL=\"$url\"" >> repo/image/src/config.local
+          fi
+          cat repo/image/src/config.local
+
+      - name: Build image (${{ matrix.variant }})
+        run: |
+          echo "$PWD/CustomPiOS/src" > repo/image/src/custompios_path
+          sudo modprobe loop || true
+          cd repo/image/src
+          sudo -E CUSTOM_PI_OS_PATH="$PWD/../../../CustomPiOS/src" bash ./build "${{ matrix.variant }}"
+
+      - name: Rename output image
+        id: img
+        run: |
+          set -euo pipefail
+          ws="repo/image/src/workspace-${{ matrix.variant }}"
+          src="$(ls -t "$ws"/*.img | head -n1)"
+          tag="${GITHUB_REF_NAME:-dev}"
+          [ "${{ github.event_name }}" = "push" ] || tag="dryrun"
+          name="waypoint-${tag}-bookworm-${{ matrix.arch }}.img"
+          sudo mv "$src" "$name"
+          sudo chown "$USER" "$name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          ls -lh "$name"
+
+      # Verify the UNCOMPRESSED image before shrink/compression (loopback assertions).
+      - name: Verify image contract
+        run: sudo repo/image/tests/verify-image.sh --image "${{ steps.img.outputs.name }}"
+
+      - name: Compress + checksum
+        id: xz
+        run: |
+          set -euo pipefail
+          img="${{ steps.img.outputs.name }}"
+          xz -T0 -9 "$img"
+          sha256sum "$img.xz" | tee "$img.xz.sha256"
+          echo "file=$img.xz" >> "$GITHUB_OUTPUT"
+          ls -lh "$img.xz"
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: waypoint-image-${{ matrix.arch }}
+          path: |
+            ${{ steps.xz.outputs.file }}
+            ${{ steps.xz.outputs.file }}.sha256
+          if-no-files-found: error
+
+  # Tag builds only: aggregate both images into one signed SHA256SUMS and upload
+  # everything to the release for the tag (the same release the Release workflow
+  # created for the waypointd binaries).
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download built images
+        uses: actions/download-artifact@v4
+        with:
+          pattern: waypoint-image-*
+          path: dist
+          merge-multiple: true
+
+      - name: Aggregate SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          # One SHA256SUMS over the images (recompute so it cannot disagree).
+          sha256sum ./*.img.xz | sed 's# \./# #' > SHA256SUMS
+          rm -f ./*.img.xz.sha256
+          cat SHA256SUMS
+
+      - name: Sign SHA256SUMS with minisign (RFC-0013)
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::warning::MINISIGN_SECRET_KEY not set — uploading UNSIGNED SHA256SUMS (docs/signing.md)."
+            exit 0
+          fi
+          sudo apt-get update && sudo apt-get install -y minisign
+          printf '%s' "$MINISIGN_SECRET_KEY" > minisign.key
+          echo "$MINISIGN_PASSWORD" | minisign -S -H -s minisign.key \
+            -m dist/SHA256SUMS -t "waypoint ${TAG} image SHA256SUMS"
+          rm -f minisign.key
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cd dist
+          files=(./*.img.xz SHA256SUMS)
+          [ -f SHA256SUMS.minisig ] && files+=(SHA256SUMS.minisig)
+          gh release upload "$TAG" "${files[@]}" --repo "${{ github.repository }}" --clobber

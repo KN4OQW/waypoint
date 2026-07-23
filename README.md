@@ -13,6 +13,24 @@ It exists because the amateur community deserves a hotspot platform that is:
 - **Usable from your phone** — responsive to 360 px with a dark-default and light theme, and a first-run claim/login you can complete on a phone; screen-reader accessible.
 - **Governed to outlive any one person** — public repos, public CI, a review SLA, an RFC process, and a written no-telemetry policy. See [GOVERNANCE.md](GOVERNANCE.md).
 
+## Quick start
+
+The easiest way to run Waypoint is the ready-to-flash SD-card image (Raspberry Pi
+OS Lite Bookworm + the full stack):
+
+1. Download `waypoint-<version>-bookworm-<arch>.img.xz` and `SHA256SUMS` from the
+   [latest release](https://github.com/KN4OQW/waypoint/releases/latest), and
+   verify them: `sha256sum -c SHA256SUMS` and `minisign -Vm SHA256SUMS -P <release key>`.
+2. Flash with **Raspberry Pi Imager** (Use custom → the `.img.xz`). In Imager's
+   advanced options set your **Wi-Fi and a username/password** — the image ships
+   no default login.
+3. Boot the Pi, browse to **`https://<address>/`**, and complete the one-time
+   claim to set your Waypoint admin account.
+
+Pick **arm64** on a Pi 3/4, **armhf** for a Pi Zero 2 W / 2 / 3 (32-bit). Pi Zero
+W and Pi 1 are not supported. Full flashing, verification, and first-boot walk-through:
+**[docs/image.md](docs/image.md)**.
+
 ## Status
 
 **Active development — the config core, the full mode stack, cross-mode buses, LAN peering, and host networking are in place, with per-mode and two-node runs validated on the bench.** The [requirements register](https://github.com/KN4OQW/waypoint/issues?q=is%3Aissue+label%3Atype%3Arequirement) is imported (every item carries provenance back to the community complaint or upstream issue that motivated it), the architecture is documented in [docs/architecture.md](docs/architecture.md), and the stack builds in public CI. Everything is public from the first commit.

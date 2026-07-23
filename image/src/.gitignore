@@ -8,3 +8,7 @@ workspace*/
 *.zip
 # Local CustomPiOS checkout path (developer-specific).
 custompios_path
+# Build-time artifacts staged by the CI workflow (waypointd binary + minisig).
+modules/waypoint/filesystem/build-artifacts/
+# CustomPiOS build-time override file.
+config.local
