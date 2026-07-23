@@ -22,6 +22,7 @@ const TABS = [
   { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Routing",   crumb: "BRIDGES / GATEWAYS",      title: "Cross-Mode Gateways",   desc: "Cross-mode routing is being redesigned as a bus system (RFC-0003)." },
   { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "SYSTEM / NETWORK",        title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
   { id: "station",      tag: "ST", label: "Station",      sub: "History & Beacon",     crumb: "SYSTEM / STATION",        title: "Station Settings",      desc: "Node-wide operating policy: how long the persistent last-heard / event history is kept (pruned nightly), and — coming soon — automatic callsign identification." },
+  { id: "updates",      tag: "UP", label: "Updates",       sub: "Version & Channel",    crumb: "SYSTEM / UPDATES",        title: "Software Updates",      desc: "Installed versions, available updates from the signed Waypoint apt repo, and the update policy. Updates are applied on the node, health-checked, and rolled back automatically if the modem does not come back up." },
   { id: "expert",       tag: "SY", label: "Expert",       sub: "System & Config",      crumb: "SYSTEM / EXPERT",         title: "Expert & System",       desc: "Firmware versions and low-level configuration." },
 ];
 
@@ -41,6 +42,9 @@ let nxdnRefs = [];          // cached NXDN talkgroup list for the startup-TG pic
 let dstarRefs = [];         // cached D-Star reflector list for the startup picker
 let m17Refs = [];           // cached M17 reflector list for the startup picker
 let overridesData = null;   // GET /api/overrides — the override layer's effective records (read-only, RFC-0005)
+let stackStatus = null;     // GET /api/update/stack — installed versions, available updates, history (RFC-0014)
+let stackBusy = false;      // a check/apply request is in flight (guards double-clicks)
+let stackPoll = null;       // interval while an apply runs, cleared when it settles
 let profiles = null;        // saved connection profiles from /api/profiles (RFC-0006)
 let profileBusy = false;    // an activate/save/import is in flight (disables the buttons)
 let importScan = null;      // last /api/import/scan result {report, preview} (RFC-0007)
@@ -92,6 +96,9 @@ function buildEdit(c) {
     // body carries retention_days as JSON number, not string (the store field is
     // an int). Falls back to the 7-day default if the view somehow omits it.
     history: { retention_days: (c.history || {}).retention_days ?? 7 },
+    // Software-update policy (Updates tab, RFC-0014). Channel + quiet window are
+    // strings, auto_apply a bool; saved through the normal Apply flow.
+    update: { channel: (c.update || {}).channel || "stable", auto_apply: !!(c.update || {}).auto_apply, quiet_window: (c.update || {}).quiet_window || "04:00" },
     // Mode buses (RFC-0003): buses[] and their attachments. Neither carries a
     // secret — a DMR attachment authenticates through an existing network named by
     // credentials_ref, never its own password (assert-the-shape: no password field
@@ -1951,6 +1958,73 @@ function panelStation() {
   return `<div class="grid2">${retention}${beacon}</div>`;
 }
 
+// panelUpdates renders the Software Updates tab (RFC-0014): installed versions,
+// available stack updates with an apply/check control, the update policy (channel,
+// auto-apply, quiet window — saved through the normal Apply flow), and recent
+// update history. Pure: state + stackStatus + edit in, HTML string out.
+function panelUpdates() {
+  const st = stackStatus || {};
+  const wv = (state.health && state.health.version) || "—";
+  const inst = st.installed || {};
+  const shortName = (p) => p.replace(/^waypoint-/, "");
+  const daemons = ["waypoint-mmdvmhost", "waypoint-dmrgateway", "waypoint-ysfgateway", "waypoint-p25gateway", "waypoint-nxdngateway", "waypoint-dstargateway", "waypoint-m17gateway"];
+
+  // Installed versions.
+  let verRows = row("waypointd", `<span class="accent">${esc(wv)}</span>`);
+  if (st.configured) {
+    verRows += row("Stack", `<span class="accent">${esc(inst["waypoint-stack"] || "—")}</span>`);
+    verRows += daemons.map((p) => row(shortName(p), `<span>${esc(inst[p] || "—")}</span>`)).join("");
+  }
+  const versions = card("INSTALLED VERSIONS", verRows);
+
+  // Available updates + apply/check.
+  let availInner;
+  if (!st.configured) {
+    availInner = note("The signed apt repo is not configured on this node, so stack updates are unavailable here. waypointd still self-updates its own binary (RFC-0014).");
+  } else if (st.applying) {
+    availInner = note("<b>Applying an update…</b> Services are being updated and health-checked. This page refreshes automatically.");
+  } else if ((st.available || []).length) {
+    const list = (st.available || []).map((u) =>
+      row(shortName(u.package), `<span>${esc(u.from || "—")} → <span class="accent">${esc(u.to || "—")}</span></span>`)).join("");
+    availInner = list +
+      `<div class="row"><label></label><button type="button" id="stack-apply" class="btn primary">UPDATE NOW</button></div>` +
+      note("Applying stops the affected services, installs the new versions, restarts, and health-checks the modem. If the stack does not come back up healthy it is <b>automatically rolled back</b> to the previous versions.");
+  } else {
+    availInner = note(hasCheck(st) ? `Up to date. Last checked ${fmtWhen(st.last_check)}.` : "No update check has run yet.");
+  }
+  if (st.configured) {
+    availInner += `<div class="row"><label></label><button type="button" id="stack-check" class="btn ghost">CHECK NOW</button></div>`;
+    if (st.last_result) availInner += note(`Last result: ${esc(st.last_result)}`);
+  }
+  const available = card("AVAILABLE UPDATES", availInner);
+
+  // Update policy (edit-backed; saved with Apply Changes).
+  const u = edit.update || (edit.update = { channel: "stable", auto_apply: false, quiet_window: "04:00" });
+  const chan = u.channel || "stable";
+  const chanSel = `<select data-sec="update" data-key="channel">` +
+    [["stable", "Stable"], ["beta", "Beta"]].map(([v, l]) => `<option value="${v}"${v === chan ? " selected" : ""}>${esc(l)}</option>`).join("") +
+    `</select>`;
+  const policy = card("UPDATE POLICY",
+    row("Channel", chanSel) +
+    toggle("update", "auto_apply", "Automatic updates", "ON", "OFF") +
+    row("Quiet window", `<input type="time" data-sec="update" data-key="quiet_window" value="${esc(u.quiet_window || "04:00")}">`) +
+    note("Default is notify-and-click: updates wait for you to press <b>UPDATE NOW</b>. Turn <b>Automatic updates</b> ON to apply them during the quiet window (local time) instead."));
+
+  // Recent history.
+  const hist = (st.history || []).slice(0, 8);
+  const histInner = hist.length
+    ? hist.map((h) => row(shortName(h.package), `<span>${esc(h.from || "—")} → ${esc(h.to || "—")} · ${esc(h.result)}</span>`)).join("")
+    : note("No stack update history yet.");
+  const history = card("RECENT UPDATES", histInner);
+
+  return `<div class="grid2">${versions}${available}</div><div class="grid2">${policy}${history}</div>`;
+}
+
+// hasCheck reports whether a real check timestamp is present (the Go zero time
+// serializes as a 0001 date, which is "never checked").
+function hasCheck(st) { return st.last_check && !String(st.last_check).startsWith("0001"); }
+function fmtWhen(iso) { try { return new Date(iso).toLocaleString(); } catch (_) { return iso; } }
+
 // enhanceA11y wires every rendered form control to an accessible name so screen
 // readers announce it and axe-core's label/select-name rules pass. Rows are
 // built as `<label>text</label><control>` without a `for=` (the control's id is
@@ -1999,6 +2073,7 @@ function renderPanel() {
     case "modes":        box.innerHTML = panelModes(); break;
     case "profiles":     box.innerHTML = panelProfiles(); break;
     case "station":      box.innerHTML = panelStation(); break;
+    case "updates":      box.innerHTML = panelUpdates(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
     case "gateways":     box.innerHTML = panelGateways(); break;
@@ -2111,6 +2186,9 @@ function selectTab(id) {
   // Connection profiles are fetched on demand (RFC-0006), refreshed each open so
   // the ACTIVE badge reflects the live store.
   if (id === "profiles") loadProfiles();
+  // The Updates tab reads installed/available versions from the daemon on demand
+  // (RFC-0014), re-fetched each open so it reflects the live apt/dpkg state.
+  if (id === "updates") loadUpdateStatus();
 }
 
 function renderThemes() {
@@ -2270,6 +2348,68 @@ async function loadProfiles() {
     profiles = [];
   }
   if (state.tab === "profiles") renderPanel();
+}
+
+// loadUpdateStatus fetches the stack update status (installed versions, cached
+// available updates, history) and repaints the Updates tab (RFC-0014).
+async function loadUpdateStatus() {
+  try {
+    stackStatus = await fetch("/api/update/stack").then((r) => r.json());
+  } catch {
+    stackStatus = null;
+  }
+  if (state.tab === "updates") renderPanel();
+}
+
+// stackCheckNow runs an on-demand apt check against the Waypoint source, then
+// repaints with the fresh availability.
+async function stackCheckNow() {
+  if (stackBusy) return;
+  stackBusy = true;
+  const btn = document.getElementById("stack-check");
+  if (btn) { btn.textContent = "CHECKING…"; btn.disabled = true; }
+  try {
+    const r = await fetch("/api/update/stack/check", { method: "POST" });
+    if (!r.ok) throw new Error((await r.text()).trim());
+  } catch (err) {
+    banner(String(err.message || err), "bad");
+  } finally {
+    stackBusy = false;
+    await loadUpdateStatus();
+  }
+}
+
+// stackApplyNow starts a health-gated apply (the daemon runs it in the background)
+// and polls the status until it settles to confirmed/reverted.
+async function stackApplyNow() {
+  if (stackBusy) return;
+  if (!confirm("Apply the available stack updates now? The affected services restart, and the update rolls back automatically if the modem does not come back up.")) return;
+  stackBusy = true;
+  const btn = document.getElementById("stack-apply");
+  if (btn) { btn.textContent = "STARTING…"; btn.disabled = true; }
+  try {
+    const r = await fetch("/api/update/stack/apply", { method: "POST" });
+    if (!r.ok && r.status !== 202) throw new Error((await r.text()).trim());
+    banner("Update started — health-checking the stack; this may take up to a minute.", "ok");
+  } catch (err) {
+    banner(String(err.message || err), "bad");
+  } finally {
+    stackBusy = false;
+    startStackPolling();
+  }
+}
+
+// startStackPolling refreshes the status every few seconds while an apply runs,
+// stopping once the daemon reports it is no longer applying.
+function startStackPolling() {
+  if (stackPoll) return;
+  stackPoll = setInterval(async () => {
+    await loadUpdateStatus();
+    if (!stackStatus || !stackStatus.applying) {
+      clearInterval(stackPoll);
+      stackPoll = null;
+    }
+  }, 3000);
 }
 
 async function saveProfile() {
@@ -2579,6 +2719,9 @@ document.getElementById("panels").addEventListener("click", (e) => {
     return;
   }
   if (e.target.id === "import-apply") { applyImport(); return; }
+  // --- software updates (RFC-0014) ---
+  if (e.target.id === "stack-check") { stackCheckNow(); return; }
+  if (e.target.id === "stack-apply") { stackApplyNow(); return; }
   const tg = e.target.closest("[data-toggle]");
   if (tg) {
     const [sec, key] = tg.dataset.toggle.split(".");
