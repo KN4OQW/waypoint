@@ -20,6 +20,7 @@ type View struct {
 	FM       ViewFM        `json:"fm"`
 	LCD      ViewLCD       `json:"lcd"`
 	History  ViewHistory   `json:"history"`
+	Update   ViewUpdate    `json:"update"`
 	// Mode buses (RFC-0003). Buses and their attachments carry NO secret (a bus
 	// authenticates through an existing Networks[] entry named by credentials_ref,
 	// never its own master — §3), so they project verbatim; there is nothing to
@@ -86,6 +87,14 @@ type ViewLCD struct {
 // retention (RFC-0004). No secrets — a straight projection of the History section.
 type ViewHistory struct {
 	RetentionDays int `json:"retention_days"`
+}
+
+// ViewUpdate is the Updates tab's read model for the operator update policy
+// (RFC-0014). No secrets — a straight projection of the Update section.
+type ViewUpdate struct {
+	Channel     string `json:"channel"`
+	AutoApply   bool   `json:"auto_apply"`
+	QuietWindow string `json:"quiet_window"`
 }
 
 type ViewLCDPage struct {
@@ -475,6 +484,7 @@ func (m *Model) View(storePath string) *View {
 		})
 	}
 	v.History = ViewHistory{RetentionDays: m.History.RetentionDays}
+	v.Update = ViewUpdate{Channel: m.Update.Channel, AutoApply: m.Update.AutoApply, QuietWindow: m.Update.QuietWindow}
 	// Buses/attachments project verbatim (no secrets). Copy the slices so the view
 	// never aliases the model's backing arrays.
 	v.Buses = append([]Bus(nil), m.Buses...)

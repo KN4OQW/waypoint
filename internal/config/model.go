@@ -70,6 +70,10 @@ type Model struct {
 	// It lives under the Station Settings tab, which a future callsign-beacon
 	// section will share (RFC-0004).
 	History History `json:"history"`
+
+	// Update is the operator-set software-update policy (channel, auto-apply,
+	// quiet window). Store-only; drives no INI. See update.go / RFC-0014.
+	Update UpdatePrefs `json:"update"`
 }
 
 // History is the event-history retention policy (RFC-0004): how long waypointd
@@ -604,6 +608,7 @@ func (m *Model) sections() map[string]any {
 		"peering":            &m.Peering,
 		"lcd":                &m.LCD,
 		"history":            &m.History,
+		"update":             &m.Update,
 	}
 }
 

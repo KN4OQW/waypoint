@@ -91,6 +91,11 @@ type server struct {
 	update     *updateConfig
 	updateArgs []string
 
+	// Stack-package updater (RFC-0014 Phase-2 / D2): waypointd-driven apt updates of
+	// the waypoint-stack .debs, health-gated with automatic revert. Nil disables the
+	// stack update API (e.g. no apt source configured).
+	stack *stackUpdater
+
 	// Native LCD renderer lifecycle. The renderer captures its config at start, so
 	// a config change (enable, geometry, pages) only reaches the panel when the
 	// renderer is torn down and restarted — reloadLCD does that on apply. Guarded
@@ -262,6 +267,16 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 	// merge (RFC-0004).
 	if section == "history" {
 		if err := config.SetHistory(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// Software-update policy validates on save (channel enum + HH:MM quiet window),
+	// so route it through SetUpdate rather than the generic merge (RFC-0014).
+	if section == "update" {
+		if err := config.SetUpdate(s.store, body, "api"); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -1151,6 +1166,18 @@ func (s *server) backfillDefaults() error {
 		}
 		log.Printf("config store: backfilled history defaults")
 	}
+	// Software-update policy (RFC-0014) arrived after the event store: a store
+	// seeded before it lacks the row, so backfill the notify-and-click defaults
+	// (stable channel, auto-apply off) so Load never returns a zero-value channel.
+	if _, ok, err := s.store.Get("update"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("update", config.DefaultUpdate(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled update defaults")
+	}
 	// Mode buses (RFC-0003) arrived after the LCD driver: a store seeded before them
 	// lacks both sections. Backfill the empty defaults so Load never returns a nil
 	// surprise; a fresh node starts with no buses.
@@ -1517,6 +1544,11 @@ func (s *server) newMux() *http.ServeMux {
 	// Atomic-update endpoints (RFC-0014 / issue #13), behind the session wall.
 	mux.HandleFunc("/api/update/check", s.updateCheck)
 	mux.HandleFunc("/api/update/apply", s.updateApply)
+	// Stack-package update surface (RFC-0014 Phase-2 / D2): status, on-demand check,
+	// and health-gated apply. Behind the session wall like the binary update routes.
+	mux.HandleFunc("/api/update/stack", s.stackStatus)
+	mux.HandleFunc("/api/update/stack/check", s.stackCheck)
+	mux.HandleFunc("/api/update/stack/apply", s.stackApply)
 	// First-boot claim + session endpoints (RFC-0002). These are the only routes
 	// the gate serves before authentication (claim while unclaimed, session while
 	// claimed); everything else above is behind the wall.
@@ -1603,6 +1635,10 @@ func main() {
 	updateBinary := flag.String("update-binary", "/home/pi-star/waypoint/bin/waypointd", "path to the live waypointd binary the update swaps atomically")
 	updateUnit := flag.String("update-unit", "waypointd.service", "systemd unit the updater restarts")
 	updateMarker := flag.String("update-marker", "/home/pi-star/waypoint/update.marker", "in-flight-update marker path (power-loss recovery)")
+	stackApplyMode := flag.Bool("update-stack", false, "apply available waypoint-stack .deb updates (health-gated, auto-revert) and exit (RFC-0014 / D2)")
+	stackCheckMode := flag.Bool("update-stack-check", false, "report available waypoint-stack .deb updates and exit; changes nothing")
+	aptSourceFile := flag.String("apt-source-file", "/etc/apt/sources.list.d/waypoint.sources", "deb822 source for the signed Waypoint apt repo; the stack check limits apt to it (D2)")
+	updatePollInterval := flag.Duration("update-poll-interval", 6*time.Hour, "how often waypointd checks for stack/binary updates and evaluates quiet-window auto-apply (RFC-0014)")
 	busConfigDir := flag.String("bus-config-dir", "/home/pi-star/waypoint/etc", "directory for rendered mode-bus configs (waypoint-bus-<id>.json), consumed by waypoint-bus@<id>.service (RFC-0003)")
 	peeringDir := flag.String("peering-dir", "/home/pi-star/waypoint/peering", "directory holding LAN-peering cert/key files (node.key, peer-*.crt) referenced by rendered bus peering blocks (RFC-0016)")
 	peeringBootstrapAddr := flag.String("peering-bootstrap-addr", "0.0.0.0:42501", "listen address for the RFC-0016 pairing bootstrap channel (plain TCP; the short code authenticates the exchange)")
@@ -1647,6 +1683,17 @@ func main() {
 		default:
 			runUpdate(cfg)
 		}
+	}
+
+	// The stack update modes (RFC-0014 Phase-2 / D2) likewise run standalone and
+	// exit: -update-stack-check reports available .deb updates, -update-stack applies
+	// them health-gated with automatic revert. Both drive apt, limited to the
+	// Waypoint source.
+	if *stackApplyMode || *stackCheckMode {
+		if *stackCheckMode {
+			runStackCheck(*storePath, *aptSourceFile)
+		}
+		runStackApply(*storePath, *aptSourceFile)
 	}
 
 	st, err := store.Open(*storePath)
@@ -1710,6 +1757,13 @@ func main() {
 	}
 	if *releasePubkey != "" {
 		s.updateArgs = append(s.updateArgs, "-release-pubkey", *releasePubkey)
+	}
+	// Stack-package updater (D2). A construction failure (e.g. no store table) only
+	// disables the stack update API; the daemon still serves everything else.
+	if su, err := newStackUpdater(st, *aptSourceFile); err != nil {
+		log.Printf("stack updater disabled: %v", err)
+	} else {
+		s.stack = su
 	}
 	if err := s.seedStore(); err != nil {
 		log.Printf("config store seed skipped: %v", err)
@@ -1786,6 +1840,13 @@ func main() {
 		// restarted gateway shows truth within the probe interval — the #5 acceptance,
 		// from systemd state (not log scraping). Live mode only (a demo runs no gateways).
 		go s.runLivenessProbe(context.Background(), *probeInterval)
+		// Stack-update poller (D2): periodically refresh the available-updates cache
+		// and drive opt-in quiet-window auto-apply. Live mode only. Ticks every 15 min
+		// so it reliably lands in the one-hour quiet window; a full apt check runs only
+		// every updatePollInterval. Off if the stack updater is disabled.
+		if s.stack != nil {
+			go s.runUpdatePoller(context.Background(), 15*time.Minute, *updatePollInterval)
+		}
 		// Republish the normalized status onto retained waypoint/status/# topics for
 		// Home Assistant and other consumers (RFC-0008). Best-effort, live mode only.
 		// When HA discovery is on, the publisher also carries the offline Last-Will +

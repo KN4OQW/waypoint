@@ -148,6 +148,9 @@ func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg, dpg *INI) *Model {
 		// default so a fresh store starts with a real prune window, not the zero
 		// value (which reads as keep-forever). See RFC-0004.
 		History: DefaultHistory(),
+		// Update policy drives no INI; a seeded model gets the notify-and-click
+		// defaults (stable channel, auto-apply off). See RFC-0014.
+		Update: DefaultUpdate(),
 	}
 	return m
 }
