@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/minisign"
 	"github.com/KN4OQW/waypoint/internal/updater"
 )
@@ -179,16 +180,28 @@ func (s *server) updateCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	plan, _, err := s.update.plan(ctx)
+	plan, manifest, err := s.update.plan(ctx)
 	if err != nil {
 		writeJSONStatus(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
+	}
+	// Channel gate (RFC-0014): only offer a manifest whose channel matches the
+	// operator's selected channel. For now the channel gates only this signed binary
+	// manifest — the apt stack repo serves both channels from one suite (docs/updates.md).
+	selected := config.ChannelStable
+	if m, err := config.Load(s.store); err == nil && m.Update.Channel != "" {
+		selected = m.Update.Channel
+	}
+	if plan.Available && manifest.ManifestChannel() != selected {
+		plan.Available = false
+		plan.Reason = fmt.Sprintf("release %s is on the %s channel; this node is on %s", plan.Version, manifest.ManifestChannel(), selected)
 	}
 	writeJSONStatus(w, http.StatusOK, map[string]any{
 		"current":   Version,
 		"available": plan.Available,
 		"version":   plan.Version,
 		"notes_url": plan.NotesURL,
+		"channel":   selected,
 		"reason":    plan.Reason,
 	})
 }
