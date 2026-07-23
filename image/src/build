@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Thin wrapper around CustomPiOS build_custom_os, mirroring OctoPi's build_dist.
+#
+#   image/src/build <armhf|arm64>
+#
+# Requires a CustomPiOS checkout. Point CUSTOM_PI_OS_PATH at it, or drop the path
+# in image/src/custompios_path. Most builds run this inside the CustomPiOS docker
+# container — see image/README.md for the one-liner.
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -z "${CUSTOM_PI_OS_PATH:-}" ] && [ -f "$DIR/custompios_path" ]; then
+  CUSTOM_PI_OS_PATH="$(<"$DIR/custompios_path")"
+fi
+: "${CUSTOM_PI_OS_PATH:?set CUSTOM_PI_OS_PATH (or image/src/custompios_path) to a CustomPiOS checkout}"
+
+VARIANT="${1:?usage: build <armhf|arm64>}"
+
+export DIST_PATH="$DIR"
+export CUSTOM_PI_OS_PATH
+export PATH="$PATH:$CUSTOM_PI_OS_PATH"
+
+# Ensure the pinned base image is present.
+"$DIR/fetch-base-image.sh" "$VARIANT"
+
+"$CUSTOM_PI_OS_PATH/build_custom_os" "$VARIANT"

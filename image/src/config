@@ -1,0 +1,33 @@
+### Waypoint OS — CustomPiOS distribution config
+# Turns official Raspberry Pi OS Lite (Bookworm) into the Waypoint hotspot image.
+# See image/README.md for how to build locally.
+
+export DIST_NAME=WaypointOS
+export DIST_VERSION=0.1.0
+
+# base sets up the chroot; waypoint installs the stack. base(waypoint) runs
+# base-pre -> waypoint -> base-post.
+export MODULES="base(waypoint)"
+
+# D5 — NO SECRETS. base defaults BASE_USER=pi / BASE_USER_PASSWORD=raspberry for a
+# raspbian/raspios base, which would write a default userconf.txt credential.
+# Turn user creation OFF so the image ships no login: the operator pre-seeds their
+# own user + Wi-Fi with Raspberry Pi Imager's advanced options (which drops its own
+# userconf.txt / firstrun on the boot partition — we must not disable that), and
+# waypointd's first boot mints the TLS cert (RFC-0012) and enters the claim flow
+# (RFC-0002). The image itself is credential-free.
+export BASE_ADD_USER=no
+export BASE_USER=
+export BASE_USER_PASSWORD=
+
+# SSH daemon enabled, but with no user it grants no access until the operator
+# creates one via Imager — a service, not a secret.
+export BASE_SSH_ENABLE=yes
+
+# Raspberry Pi Imager metadata.
+export RPI_IMAGER_NAME="Waypoint OS ${DIST_VERSION}"
+export RPI_IMAGER_DESCRIPTION="Waypoint MMDVM digital-voice hotspot. Headless — set up over the built-in web UI. No default password."
+
+# Grow the root partition for the stack + build headroom, then shrink to fit.
+export BASE_IMAGE_ENLARGEROOT=1200
+export BASE_IMAGE_RESIZEROOT=200

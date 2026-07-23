@@ -1,0 +1,10 @@
+# Downloaded base images (pinned in variants/<arch>/config; fetched at build time).
+image-armhf/
+image-arm64/
+# CustomPiOS build workspace + outputs.
+workspace*/
+*.img
+*.img.xz
+*.zip
+# Local CustomPiOS checkout path (developer-specific).
+custompios_path

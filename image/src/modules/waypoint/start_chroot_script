@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# Waypoint module — runs inside the Raspberry Pi OS Lite (Bookworm) chroot and
+# turns it into the Waypoint hotspot image. See image/README.md.
+set -x
+set -e
+export LC_ALL=C
+export DEBIAN_FRONTEND=noninteractive
+
+source /common.sh
+install_cleanup_trap
+
+# Static overlay: apt source, unattended-upgrades periodic, needrestart drop-in,
+# journald volatile drop-in, and every systemd unit.
+unpack /filesystem/root /
+
+DEB_ARCH="$(dpkg --print-architecture)"   # armhf | arm64
+echo "=== Waypoint module: building for ${DEB_ARCH}"
+
+# WAYPOINT_LOCAL_ARTIFACTS (a path visible inside the chroot) lets an offline /
+# pre-release build supply the keyring + waypointd locally. The verification steps
+# (keyring sha256, waypointd minisig) run either way, so a local build proves the
+# same trust path as a public one.
+LOCAL="${WAYPOINT_LOCAL_ARTIFACTS:-}"
+
+# fetch_artifact <url> <local-basename> <dest> — copy from the local artifacts dir
+# if present, else download from the URL.
+fetch_artifact() {
+  local url="$1" name="$2" dest="$3"
+  if [ -n "$LOCAL" ] && [ -f "${LOCAL}/${name}" ]; then
+    echo "  using local artifact ${LOCAL}/${name}"
+    cp "${LOCAL}/${name}" "$dest"
+  else
+    echo "  downloading ${url}"
+    curl -fsSL --retry 3 -o "$dest" "$url"
+  fi
+}
+
+########################################################################
+# 1. Signed apt repository + waypoint-stack
+########################################################################
+echo "=== installing the Waypoint archive keyring (pinned by sha256)"
+install -d -m 0755 /usr/share/keyrings
+fetch_artifact "${WAYPOINT_KEYRING_URL}" "waypoint-archive-keyring.gpg" "${WAYPOINT_KEYRING_DST}"
+echo "${WAYPOINT_KEYRING_SHA256}  ${WAYPOINT_KEYRING_DST}" | sha256sum -c -
+chmod 0644 "${WAYPOINT_KEYRING_DST}"
+
+# The shipped source (overlay) points at the PUBLIC Pages repo — that is for the
+# running image, not the build. Disable it during the build so no apt step depends
+# on Pages being reachable; the build installs from WAYPOINT_APT_URL (the public
+# repo by default, or a local mirror for an offline build) via a temp source, then
+# the public source is restored for the finished image.
+mv /etc/apt/sources.list.d/waypoint.sources /etc/apt/sources.list.d/waypoint.sources.disabled
+
+# ca-certificates for HTTPS to the repo + releases; minisign to verify the
+# waypointd download (BUILD-ONLY — waypointd verifies its own updates in Go, so
+# minisign is removed from the finished image below).
+apt-get update
+apt-get install -y --no-install-recommends ca-certificates curl minisign
+
+cat > /etc/apt/sources.list.d/waypoint-build.sources <<EOF
+Types: deb
+URIs: ${WAYPOINT_APT_URL}
+Suites: ${WAYPOINT_APT_SUITE}
+Components: ${WAYPOINT_APT_COMPONENT}
+Signed-By: ${WAYPOINT_KEYRING_DST}
+EOF
+
+echo "=== installing waypoint-stack + the MQTT broker"
+apt-get update
+# mosquitto is the MQTT data plane the whole stack publishes/consumes on (RFC-0008).
+apt-get install -y --no-install-recommends mosquitto
+apt-get install -y waypoint-stack
+
+# Drop the temp build source and restore the shipped PUBLIC source for the image.
+rm -f /etc/apt/sources.list.d/waypoint-build.sources
+mv /etc/apt/sources.list.d/waypoint.sources.disabled /etc/apt/sources.list.d/waypoint.sources
+
+########################################################################
+# 2. waypointd (RFC-0014 updater target) + RFC-0013 verification
+########################################################################
+echo "=== installing the RFC-0013 release public key"
+install -d -m 0755 "$(dirname "${WAYPOINT_RELEASE_PUBKEY}")"
+# The pubkey is bundled in the module (filesystem overlay would expose it, but we
+# keep it beside its use); copy from the module tree.
+cp /filesystem/waypoint-release.pub "${WAYPOINT_RELEASE_PUBKEY}"
+chmod 0644 "${WAYPOINT_RELEASE_PUBKEY}"
+
+echo "=== downloading + verifying waypointd (${DEB_ARCH})"
+wp_tmp="$(mktemp -d)"
+fetch_artifact "${WAYPOINT_RELEASE_BASE}/waypointd-linux-${DEB_ARCH}"        "waypointd-linux-${DEB_ARCH}"         "${wp_tmp}/waypointd"
+fetch_artifact "${WAYPOINT_RELEASE_BASE}/waypointd-linux-${DEB_ARCH}.minisig" "waypointd-linux-${DEB_ARCH}.minisig" "${wp_tmp}/waypointd.minisig"
+# Verify the signature against the bundled release key BEFORE installing. minisign
+# here is belt-and-braces for the build; at runtime waypointd's own Go verifier
+# (internal/minisign, RFC-0013) checks future updates against the same key.
+minisign -V -p "${WAYPOINT_RELEASE_PUBKEY}" -x "${wp_tmp}/waypointd.minisig" -m "${wp_tmp}/waypointd"
+
+install -d -m 0755 "$(dirname "${WAYPOINT_BIN}")"
+install -m 0755 "${wp_tmp}/waypointd" "${WAYPOINT_BIN}"
+rm -rf "${wp_tmp}"
+
+# Waypoint home tree (root-owned, user-agnostic). waypointd renders INIs into etc/
+# and opens the store on first boot; nothing is pre-created that would imply a
+# claimed or configured node (D5).
+install -d -m 0755 "${WAYPOINT_HOME}" "${WAYPOINT_HOME}/etc" "${WAYPOINT_HOME}/peering" "${WAYPOINT_HOME}/overrides.d" "${WAYPOINT_HOME}/tls"
+
+########################################################################
+# 3. Hold the stack — waypointd owns its versions (D2)
+########################################################################
+echo "=== holding waypoint-* packages"
+# unattended-upgrades must never move the stack; waypointd's health-gated updater
+# does (RFC-0014). apt-mark hold blocks unattended-upgrades AND a bare apt upgrade.
+# NOTE for the Prompt-3 updater: `apt-get install <pkg>=<version>` on a held
+# package still proceeds (an explicit versioned install overrides the hold's
+# "don't AUTO-change" intent), which is exactly what the stack updater does — it
+# installs exact versions. So the updater needs no unhold/re-hold dance; verified
+# on the bench. A bare `apt-get upgrade`/unattended-upgrades, by contrast, respects
+# the hold and leaves the stack alone.
+for pkg in $(dpkg-query -W -f='${Package}\n' 'waypoint-*'); do
+  apt-mark hold "$pkg"
+done
+
+########################################################################
+# 4. OS security auto-patching (D2 OS path) — security origins only
+########################################################################
+echo "=== configuring unattended-upgrades (${DEB_ARCH} security origins)"
+apt-get install -y --no-install-recommends unattended-upgrades needrestart
+
+# Origins-Pattern is EMPIRICAL: read from each repo's real Release file (o=/l=/c=).
+#   arm64  → Debian-Security (deb.debian.org) + Raspberry Pi Foundation (archive.raspberrypi.com)
+#   armhf  → Raspbian (raspbian.raspberrypi.com) + Raspberry Pi Foundation
+# Raspbian/RPi have no separate *-security suite, so their whole bookworm archive is
+# the security channel; the Package-Blacklist below fences off the risky bits.
+if [ "${DEB_ARCH}" = "arm64" ]; then
+  origins='        "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+        "origin=Raspberry Pi Foundation,codename=${distro_codename},label=Raspberry Pi Foundation";'
+else
+  origins='        "origin=Raspbian,codename=${distro_codename},label=Raspbian";
+        "origin=Raspberry Pi Foundation,codename=${distro_codename},label=Raspberry Pi Foundation";'
+fi
+
+cat > /etc/apt/apt.conf.d/51waypoint-unattended-upgrades <<EOF
+// Waypoint OS security auto-patching (D2, OS path). This is the DISTRO's clock:
+// security-origin packages patched automatically, on the distro's own schedule.
+// Waypoint's own software is a SEPARATE path/clock — waypointd's health-gated
+// updater — and the Waypoint origin is deliberately absent from Origins-Pattern
+// (belt-and-braces: waypoint-* are also apt-mark hold). See image/README.md.
+Unattended-Upgrade::Origins-Pattern {
+${origins}
+};
+
+// Never touch the kernel, bootloader, or firmware automatically: a bad
+// kernel/firmware bump is the exact "update bricked my Pi" failure Waypoint
+// exists to avoid. waypointd's atomic engine is the only thing that moves the
+// system, and even it does not touch these.
+Unattended-Upgrade::Package-Blacklist {
+        "raspberrypi-kernel";
+        "raspberrypi-bootloader";
+        "linux-image-.*";
+        "raspi-firmware";
+};
+
+// A hotspot must not vanish mid-QSO for a reboot. Security patches land; the
+// operator (or a deliberate waypointd action) reboots when convenient.
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+EOF
+
+########################################################################
+# 5. journald volatile + 6. serial for the modem
+########################################################################
+# journald drop-in is in the overlay; nothing else to do here.
+
+echo "=== freeing /dev/ttyAMA0 for the MMDVM modem"
+# waypointd renders UARTPort=/dev/ttyAMA0 by default, so the modem needs the PL011
+# UART on GPIO14/15. Disable onboard Bluetooth (which otherwise owns PL011) and the
+# serial login console, and stop the getty/hciuart services.
+BOOTDIR=/boot/firmware
+[ -d "$BOOTDIR" ] || BOOTDIR=/boot
+CONFIG_TXT="${BOOTDIR}/config.txt"
+CMDLINE_TXT="${BOOTDIR}/cmdline.txt"
+if [ -f "$CONFIG_TXT" ]; then
+  grep -q '^enable_uart=1' "$CONFIG_TXT" || echo 'enable_uart=1' >> "$CONFIG_TXT"
+  grep -q '^dtoverlay=disable-bt' "$CONFIG_TXT" || echo 'dtoverlay=disable-bt' >> "$CONFIG_TXT"
+fi
+if [ -f "$CMDLINE_TXT" ]; then
+  # Strip any serial console token so the modem UART is not also a login console.
+  sed -i -E 's/console=(serial0|ttyAMA0|ttyS0),[0-9]+ ?//g' "$CMDLINE_TXT"
+fi
+systemctl disable hciuart.service 2>/dev/null || true
+systemctl disable serial-getty@ttyAMA0.service 2>/dev/null || true
+systemctl disable serial-getty@ttyS0.service 2>/dev/null || true
+systemctl mask serial-getty@ttyAMA0.service 2>/dev/null || true
+
+########################################################################
+# Enable services + clean up
+########################################################################
+echo "=== enabling services"
+systemctl enable mosquitto.service
+systemctl enable waypointd.service
+# Gateway units are present but NOT enabled: waypointd enables/starts each one when
+# its mode is configured on Apply. A fresh, unclaimed node runs no gateways.
+
+echo "=== removing build-only minisign (waypointd verifies updates natively in Go)"
+apt-get purge -y minisign
+apt-get autoremove -y --purge
+
+if [ -n "$BASE_APT_CACHE" ] && [ "$BASE_APT_CACHE" != "no" ]; then
+  apt-get autoclean
+else
+  apt-get clean
+fi
+echo "=== Waypoint module done"
