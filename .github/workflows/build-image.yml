@@ -187,13 +187,33 @@ jobs:
       - name: Verify image contract
         run: sudo repo/image/tests/verify-image.sh --image "${{ steps.img.outputs.name }}"
 
-      - name: Compress + checksum
-        id: xz
+      # Compute the four sizes/hashes Raspberry Pi Imager needs — the UNCOMPRESSED
+      # image (extract_*, measured before we xz it) and the compressed download
+      # (image_download_*) — and emit a per-arch imager-meta fragment. The release
+      # job aggregates the fragments so the Imager JSON generator never has to
+      # download or decompress anything.
+      - name: Compute Imager metadata + compress
+        id: meta
         run: |
           set -euo pipefail
-          img="${{ steps.img.outputs.name }}"
+          img="${{ steps.img.outputs.name }}"   # the uncompressed .img
+          extract_size=$(stat -c%s "$img")
+          extract_sha256=$(sha256sum "$img" | cut -d' ' -f1)
           xz -T0 -9 "$img"
           sha256sum "$img.xz" | tee "$img.xz.sha256"
+          dl_size=$(stat -c%s "$img.xz")
+          dl_sha256=$(sha256sum "$img.xz" | cut -d' ' -f1)
+          cat > "imager-meta-${{ matrix.arch }}.json" <<JSON
+          {
+            "arch": "${{ matrix.arch }}",
+            "file": "$img.xz",
+            "image_download_size": $dl_size,
+            "image_download_sha256": "$dl_sha256",
+            "extract_size": $extract_size,
+            "extract_sha256": "$extract_sha256"
+          }
+          JSON
+          cat "imager-meta-${{ matrix.arch }}.json"
           echo "file=$img.xz" >> "$GITHUB_OUTPUT"
           ls -lh "$img.xz"
 
@@ -202,8 +222,9 @@ jobs:
         with:
           name: waypoint-image-${{ matrix.arch }}
           path: |
-            ${{ steps.xz.outputs.file }}
-            ${{ steps.xz.outputs.file }}.sha256
+            ${{ steps.meta.outputs.file }}
+            ${{ steps.meta.outputs.file }}.sha256
+            imager-meta-${{ matrix.arch }}.json
           if-no-files-found: error
 
   # Tag builds only: aggregate both images into one signed SHA256SUMS and upload
@@ -216,7 +237,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Full history so the publish step can push os_list_waypoint.json to main.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download built images
         uses: actions/download-artifact@v4
@@ -250,6 +274,27 @@ jobs:
             -m dist/SHA256SUMS -t "waypoint ${TAG} image SHA256SUMS"
           rm -f minisign.key
 
+      # Aggregate the per-arch fragments into imager-meta.json (with the release
+      # date), then generate + schema-validate the Imager repository JSON. The
+      # generator reads only imager-meta.json — no download/decompress.
+      - name: Assemble imager-meta.json + generate os_list_waypoint.json
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y python3-jsonschema
+          python3 - <<'PY'
+          import datetime, glob, json
+          frags = [json.load(open(f)) for f in sorted(glob.glob("dist/imager-meta-*.json"))]
+          meta = {"release_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"), "images": frags}
+          json.dump(meta, open("dist/imager-meta.json", "w"), indent=2)
+          print(open("dist/imager-meta.json").read())
+          PY
+          python3 scripts/gen-imager-json.py \
+            --meta dist/imager-meta.json --tag "${GITHUB_REF_NAME}" \
+            --repo "${{ github.repository }}" \
+            --out dist/os_list_waypoint.json \
+            --validate --schema scripts/os-list-schema.json
+          cat dist/os_list_waypoint.json
+
       - name: Upload to the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -257,6 +302,27 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          files=(./*.img.xz SHA256SUMS)
+          files=(./*.img.xz SHA256SUMS imager-meta.json os_list_waypoint.json)
           [ -f SHA256SUMS.minisig ] && files+=(SHA256SUMS.minisig)
           gh release upload "$TAG" "${files[@]}" --repo "${{ github.repository }}" --clobber
+
+      # Publish the Imager repository JSON to Pages. This repo serves Pages from
+      # site/ on main via the "Deploy site" workflow (custom domain
+      # waypoint.kn4oqw.com), so we commit os_list_waypoint.json into site/ on main
+      # rather than a gh-pages branch — a gh-pages branch would collide with that
+      # single Pages source. Committing triggers the Pages deploy.
+      # Served at https://kn4oqw.github.io/waypoint/os_list_waypoint.json.
+      - name: Publish os_list_waypoint.json to Pages (site/ on main)
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          cp dist/os_list_waypoint.json site/os_list_waypoint.json
+          git add site/os_list_waypoint.json
+          if git diff --cached --quiet; then
+            echo "os_list_waypoint.json unchanged"
+          else
+            git commit -s -m "Publish Imager repository JSON for ${GITHUB_REF_NAME}"
+            git push origin main
+          fi
