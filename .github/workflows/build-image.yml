@@ -192,7 +192,12 @@ jobs:
         run: |
           set -euo pipefail
           img="${{ steps.img.outputs.name }}"
-          xz -T0 -9 "$img"
+          # Compress to stdout rather than in place: the .img is owned runner:root
+          # (the sudo build leaves group root), so in-place xz warns "Cannot set the
+          # file group" and exits 2, which errexit treats as fatal. Writing through a
+          # shell redirect makes the .xz runner-owned and xz never touches its owner.
+          xz -T0 -9 -c "$img" > "$img.xz"
+          rm -f "$img"
           sha256sum "$img.xz" | tee "$img.xz.sha256"
           echo "file=$img.xz" >> "$GITHUB_OUTPUT"
           ls -lh "$img.xz"

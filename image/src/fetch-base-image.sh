@@ -10,8 +10,14 @@ ARCH="${1:?usage: fetch-base-image.sh <armhf|arm64>}"
 case "$ARCH" in armhf|arm64) ;; *) echo "arch must be armhf or arm64" >&2; exit 2;; esac
 
 # Pull the pinned URL + sha256 out of the variant config (single source of truth).
+# The config is CustomPiOS build machinery: it sets BASE_ZIP_IMG from an
+# `ls …*.img.xz | head` over image-<arch>/, which is empty until we download
+# (every fresh run / cache miss). Under our errexit+pipefail that `ls` exit-2
+# aborts the source before the download, so relax both just for the source.
 # shellcheck disable=SC1090
+set +eo pipefail
 DIST_PATH="$DIR" source "$DIR/variants/$ARCH/config"
+set -eo pipefail
 url="$WAYPOINT_BASE_IMAGE_URL"
 sha="$WAYPOINT_BASE_IMAGE_SHA256"
 
