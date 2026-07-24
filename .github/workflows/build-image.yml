@@ -129,8 +129,12 @@ jobs:
               fi
               echo "  attempt $i: release asset not ready yet, waiting 20s…"; sleep 20
             done
-            mv "$art/${{ matrix.wp_asset }}" "$art/$dst"
-            mv "$art/${{ matrix.wp_asset }}.minisig" "$art/$dst.minisig"
+            # armhf pulls the arm6 asset and renames it to …-armhf; arm64's asset
+            # is already …-arm64, so skip the rename there (mv X X errors "same file").
+            if [ "${{ matrix.wp_asset }}" != "$dst" ]; then
+              mv "$art/${{ matrix.wp_asset }}" "$art/$dst"
+              mv "$art/${{ matrix.wp_asset }}.minisig" "$art/$dst.minisig"
+            fi
           else
             echo "dry run: building + signing waypointd from source"
             ( cd repo && CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} GOARM=${{ matrix.goarm }} \
