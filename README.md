@@ -33,7 +33,7 @@ W and Pi 1 are not supported. Full flashing, verification, and first-boot walk-t
 
 ## Status
 
-**Active development — the config core, the full mode stack, cross-mode buses, LAN peering, and host networking are in place, with per-mode and two-node runs validated on the bench.** The [requirements register](https://github.com/KN4OQW/waypoint/issues?q=is%3Aissue+label%3Atype%3Arequirement) is imported (every item carries provenance back to the community complaint or upstream issue that motivated it), the architecture is documented in [docs/architecture.md](docs/architecture.md), and the stack builds in public CI. Everything is public from the first commit.
+**Active development — the config core, the full mode stack, cross-mode buses, LAN peering, and host networking are in place, with per-mode and two-node runs validated on the bench.** The first flashable SD-card image ships as **`v1-initialimg`** — an initial image built end-to-end by public CI (base Raspberry Pi OS Lite + the signed stack from the [waypoint-stack](https://github.com/KN4OQW/waypoint-stack) apt repo + the signed `waypointd`) for both arm64 and armhf. The [requirements register](https://github.com/KN4OQW/waypoint/issues?q=is%3Aissue+label%3Atype%3Arequirement) is imported (every item carries provenance back to the community complaint or upstream issue that motivated it), the architecture is documented in [docs/architecture.md](docs/architecture.md), and both the stack and the image build in public CI. Everything is public from the first commit.
 
 What's built today:
 
@@ -56,7 +56,7 @@ What's built today:
 - **Host / OS networking** ([#32](https://github.com/KN4OQW/waypoint/issues/32)) — Wi-Fi and Ethernet/IPv4, plus hostname, timezone, NTP, and guarded VLAN, all configured from the UI. A network change is **confirm-or-revert**: a NetworkManager-native checkpoint restores the prior state if the new config would strand the box, so a bad setting can't lock you out. Hardware-validated.
 - **Gateway daemons** pinned and reproducibly built for four architectures (amd64, arm64, armhf, armv6hf) in [waypoint-stack](https://github.com/KN4OQW/waypoint-stack): MMDVM-Host (**forked to restore M17**, which upstream removed), DMRGateway, YSFGateway/DGIdGateway, P25Gateway, NXDNGateway, M17Gateway, and DStarGateway.
 
-Still ahead: the DAPNETGateway (POCSAG) build; the cross-**codec** bus path (only the AMBE+2 reframe envelope ships today, so DMR/YSF-DN/NXDN interoperate but a vocoder-crossing attachment does not yet); and packaging a turnkey, one-command installable release. Peering stays LAN-only by design — no WAN/Internet mesh, no owner failover. Not yet a turnkey release — but well past a skeleton.
+Still ahead: the DAPNETGateway (POCSAG) build; the cross-**codec** bus path (only the AMBE+2 reframe envelope ships today, so DMR/YSF-DN/NXDN interoperate but a vocoder-crossing attachment does not yet); and hardening the OS image — a read-only root with **A/B slots and automatic rollback** ([RFC-0017](docs/rfcs/0017-ab-image-slots.md), design). Peering stays LAN-only by design — no WAN/Internet mesh, no owner failover. `v1-initialimg` is an **initial** image — flashable and complete, but early; treat it as a beta while it takes on hardware miles.
 
 Reference bench hardware: MMDVM_HS_Dual_Hat (STM32F103, dual ADF7021) on a Raspberry Pi 3, plus full-size MMDVM (STM32F4/F7) targets.
 
