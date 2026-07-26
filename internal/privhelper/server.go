@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -177,6 +178,13 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
 		// Reported on the wire so a misconfigured client sees why rather than an
 		// unexplained disconnect. The message names no path and leaks no state.
 		_ = WriteFrame(conn, NewErrorResponse(0, Errorf(CodeDenied, "not authorized to use the provisioning helper")))
+		// The client is usually still writing its request when this is sent —
+		// authorization happens on the connection, before a single frame has been
+		// read. Returning here closes the socket, its write fails with EPIPE, and
+		// it reports a transport error instead of the denial that is already
+		// sitting in its receive buffer. So the request is drained first: the
+		// client finishes writing, reads the answer, and finds out why.
+		drainBriefly(conn)
 		return
 	}
 
@@ -195,6 +203,22 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
 			return
 		}
 	}
+}
+
+// drainDeadline bounds the wait for a rejected client to finish its request. It
+// only has to outlast one small frame on a loopback socket; a client that sends
+// nothing costs exactly this much and no more.
+const drainDeadline = 2 * time.Second
+
+// drainBriefly reads and discards whatever a rejected client is still sending, so
+// closing the connection cannot turn a denial into a broken pipe.
+func drainBriefly(conn net.Conn) {
+	if err := conn.SetReadDeadline(time.Now().Add(drainDeadline)); err != nil {
+		return
+	}
+	// A rejected client's request is bounded by MaxFrameSize; anything past that
+	// is not a request this server would have answered anyway.
+	_, _ = io.CopyN(io.Discard, conn, MaxFrameSize)
 }
 
 // authorize checks the peer's credentials with SO_PEERCRED. This is the check the
