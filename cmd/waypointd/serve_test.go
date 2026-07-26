@@ -1,11 +1,12 @@
 package main
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
-// Property 4: the HTTP redirect handler 301s to the https:// form of the same
+// Property 4: the HTTP redirect handler 308s to the https:// form of the same
 // host+path+query, applying a non-default HTTPS port and preserving the rest.
 func TestHTTPSRedirect(t *testing.T) {
 	cases := []struct {
@@ -26,8 +27,11 @@ func TestHTTPSRedirect(t *testing.T) {
 		req.Host = c.host
 		rec := httptest.NewRecorder()
 		h(rec, req)
-		if rec.Code != 301 {
-			t.Errorf("%s%s: status %d, want 301", c.host, c.target, rec.Code)
+		// 308 rather than 301: 301 and 302 permit a client to rewrite the request
+		// as a GET, which would turn a POST /api/claim arriving here into a request
+		// for the claim page with the password dropped.
+		if rec.Code != http.StatusPermanentRedirect {
+			t.Errorf("%s%s: status %d, want 308", c.host, c.target, rec.Code)
 		}
 		if got := rec.Header().Get("Location"); got != c.want {
 			t.Errorf("%s%s: Location = %q, want %q", c.host, c.target, got, c.want)

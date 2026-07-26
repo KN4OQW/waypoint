@@ -46,6 +46,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/provision"
 	"github.com/KN4OQW/waypoint/internal/status"
 	"github.com/KN4OQW/waypoint/internal/store"
+	"github.com/KN4OQW/waypoint/internal/tlscert"
 	"github.com/KN4OQW/waypoint/internal/verifydl"
 	"github.com/KN4OQW/waypoint/internal/wizard"
 	"github.com/KN4OQW/waypoint/internal/ysfhosts"
@@ -76,6 +77,9 @@ type server struct {
 	// apSession ties the AP to the listeners that make it useful, so a re-raise
 	// after a failed join or a lost upstream brings the wizard back with it.
 	apSession *apSession
+	// certs owns the device certificate, so it can be reminted for the hostname
+	// the operator chooses rather than the one the node booted with.
+	certs *tlscert.Holder
 
 	// Host/OS networking domain (docs/config-coverage.md §4). netKeyfileDir is
 	// where the NetworkManager keyfile renderer writes waypoint-*.nmconnection;
@@ -1865,6 +1869,8 @@ func main() {
 	// The status aggregator folds the event stream into the live status served by
 	// /api/status + the WebSocket (RFC-0008). Runs in both demo and live mode.
 	go s.agg.Run(context.Background(), s.hub, *statusTick)
+	s.certs = tlscert.NewHolder(*tlsDir)
+	s.certs.Logf = log.Printf
 	s.initSetup(setupOptions{
 		Enabled:  *setupWizard,
 		Socket:   *provisionSocket,
@@ -1995,6 +2001,7 @@ func main() {
 		certDir:      *tlsDir,
 		httpsPort:    portOf(*addr),
 		redirectAddr: *httpRedirectAddr,
+		certs:        s.certs,
 		acmeDomain:   *acmeDomain,
 		acmeEmail:    *acmeEmail,
 		acmeDir:      *acmeDir,

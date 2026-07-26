@@ -42,6 +42,13 @@ func (w *Wizard) SetHostname(ctx context.Context, req HostnameRequest) (View, er
 		return w.state(), err
 	}
 	w.logf("wizard: hostname set to %q (was %q)", got.Hostname, got.Previous)
+	// Remint the certificate now rather than at the next restart. The operator is
+	// about to be told to browse to this name, and a certificate still naming the
+	// old one would greet them with a mismatch warning on the address the node
+	// itself just gave them.
+	if w.OnHostnameSet != nil {
+		w.OnHostnameSet(ctx, got.Hostname)
+	}
 	return w.state(), nil
 }
 

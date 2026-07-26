@@ -185,6 +185,11 @@ type Wizard struct {
 	// before the join and take it back if the join fails.
 	AP APController
 
+	// OnHostnameSet is called after the hostname step succeeds, with the name the
+	// operator chose. It is how the device certificate gets reminted for a name
+	// that did not exist when the daemon started (see internal/tlscert.Holder).
+	OnHostnameSet func(ctx context.Context, hostname string)
+
 	// OnComplete is called once provisioning finishes, so the AP can come down
 	// for good and the setup session can close.
 	OnComplete func(ctx context.Context)

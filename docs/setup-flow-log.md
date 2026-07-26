@@ -354,3 +354,73 @@ baseline is wider than previously reported: `./internal/...` as a whole has 63
 findings (50 errcheck, 10 staticcheck, 3 unused) in packages this workstream never
 touched. All seven packages it *did* touch are clean. Still worth a
 `.golangci.yml` or a sweep before the PR.
+
+---
+
+## 8 — `feat/tls-after-hostname`: TLS ordering
+
+**Shipped.** `tlscert.Holder` — the device certificate held for the daemon's life
+and replaceable without a restart — plus the wizard hook that remints it, and the
+LAN redirect moved from 301 to 308.
+
+**The ordering bug.** The certificate's SANs are minted from the hostname, and on
+first boot the hostname is still `raspberrypi`. A certificate minted at daemon
+start therefore names a host that is about to stop existing. The operator finishes
+setup, is told to browse to `https://hs-shack.local/`, and gets a name-mismatch
+warning on the address the node itself just gave them — the worst possible moment
+to train someone to click through a certificate warning.
+
+The certificate is now (re)generated *after* the hostname is chosen, and served
+through `GetCertificate` so the running listener picks it up on the next
+handshake rather than at the next restart. The operator meets the self-signed
+trust prompt once, on the name they will keep.
+
+**Calls worth a second opinion.**
+
+- **`Ensure` regenerates only when the current certificate does not cover the
+  name.** This is the "no cert regen after first LAN boot" criterion, and it
+  matters beyond tidiness: a new certificate every boot means a new trust prompt
+  every boot, which trains an operator to dismiss certificate warnings — the
+  opposite of what a pinned self-signed certificate is for.
+- **Coverage requires both forms.** `hs-shack` and `hs-shack.local`. A node is
+  reached by both — the bare name where DNS search works, the mDNS name
+  everywhere else, and the dashboard tells the operator to use the second.
+- **A dotted name is normalised to its first label.** An operator who types
+  `hs-shack.local` means the host `hs-shack`; minting for the dotted form would
+  produce SANs for `hs-shack.local.local`.
+- **301 → 308 on the LAN redirect.** 301 and 302 permit a client to rewrite the
+  request as a GET. A `POST /api/claim` arriving on the HTTP listener would be
+  replayed as a GET — the operator's claim quietly turning into a request for the
+  claim page, with the password dropped. 308 preserves the method and body. This
+  changes an existing behaviour and an existing test, so flag it if you disagree.
+- **`/api/health` is not special-cased out of the redirect.** It is reachable over
+  HTTP as a 308, not as a hole: a health endpoint served in the clear on the LAN
+  would be the one unencrypted content surface on the box, and anything checking
+  it can follow a redirect.
+- **The captive portal stays plain HTTP**, unchanged. Every connectivity probe is
+  an `http://` URL, and redirecting one to a self-signed certificate produces a
+  warning interstitial inside the captive sheet, where there is frequently no way
+  to click through. TLS is enforced on the LAN side, where the operator has a real
+  browser.
+
+**Verified.** Nine holder properties, including ECDSA P-256 pinned by a test (the
+certificate is the operator's trust anchor for the node's life; quietly acquiring
+a different key type is the kind of change that would otherwise pass review), no
+regeneration across a simulated restart, exactly one remint per rename, and a
+`TLSConfig` that really serves the new certificate after a mid-run remint.
+
+The acceptance test runs a **real TLS server** over the daemon's own handler chain
+and claims through a **real client** that trusts only the device certificate and
+verifies `hs-shack.local`. It then checks the bare name works and that the boot
+name `raspberrypi` no longer validates — so the remint replaced rather than merely
+added.
+
+`go vet ./...`, full `go test -race ./...`, three-arch cross-builds clean.
+golangci-lint 0 issues on `internal/tlscert` and `internal/wizard`; I also cleared
+three pre-existing `errcheck` findings in `tlscert.go` while I was in the file.
+
+**Not verified.** Nothing new on the bench list. Note the remint currently happens
+only via the wizard's hostname step — a hostname changed later through
+`/api/network/host/apply` does not yet trigger one. That is a real gap, but it
+belongs to the network-config surface rather than first-boot setup, and I have not
+touched it.

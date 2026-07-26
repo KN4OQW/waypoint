@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 
@@ -55,6 +56,22 @@ func (s *server) initSetup(opts setupOptions, st *store.Store) {
 			w.Mirror = m
 		}
 	}
+	// The certificate is reminted when the operator names the node. Doing it here
+	// rather than inside the wizard keeps the wizard free of any opinion about
+	// TLS, and means a node set up over Ethernet gets the same treatment as one
+	// set up over the access point.
+	if s.certs != nil {
+		w.OnHostnameSet = func(_ context.Context, hostname string) {
+			regenerated, err := s.certs.Ensure(hostname)
+			switch {
+			case err != nil:
+				log.Printf("waypointd: could not remint the device certificate for %q: %v", hostname, err)
+			case regenerated:
+				log.Printf("waypointd: device certificate reminted for %q — reconnect over https and trust it once", hostname)
+			}
+		}
+	}
+
 	s.wiz = w
 
 	if w.Provisioned() {

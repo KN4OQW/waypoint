@@ -33,8 +33,8 @@ const (
 // one on every subsequent call. now/hostname/interfaceAddrs are injected only so
 // tests can pin them; the production call is LoadOrCreateDefault.
 func LoadOrCreate(dir string, now time.Time, hostname string, ipAddrs []net.IP) (tls.Certificate, error) {
-	cp := filepath.Join(dir, certFile)
-	kp := filepath.Join(dir, keyFile)
+	cp := certPath(dir)
+	kp := keyPath(dir)
 	if fileExists(cp) && fileExists(kp) {
 		cert, err := tls.LoadX509KeyPair(cp, kp)
 		if err == nil {
@@ -137,13 +137,13 @@ func writeFile(path string, data []byte, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	defer os.Remove(tmp.Name()) //nolint:errcheck // best-effort; a no-op once the rename consumes it
 	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
@@ -151,6 +151,10 @@ func writeFile(path string, data []byte, mode os.FileMode) error {
 	}
 	return os.Rename(tmp.Name(), path)
 }
+
+// certPath and keyPath name the persisted pair.
+func certPath(dir string) string { return filepath.Join(dir, certFile) }
+func keyPath(dir string) string  { return filepath.Join(dir, keyFile) }
 
 func fileExists(p string) bool {
 	fi, err := os.Stat(p)
