@@ -5,8 +5,10 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/KN4OQW/waypoint/internal/captive"
 	"github.com/KN4OQW/waypoint/internal/privhelper"
 	"github.com/KN4OQW/waypoint/internal/provision"
 )
@@ -242,7 +244,7 @@ type JoinResult struct {
 	Interface string `json:"interface,omitempty"`
 }
 
-// JoinNetwork puts the node on the operator's network, under a rollback
+// JoinNetwork puts the node on the operator's network under a confirm-or-revert
 // checkpoint.
 //
 // It is not an ordered step. A node on Ethernet never needs it, and one being set
@@ -250,12 +252,22 @@ type JoinResult struct {
 // Wi-Fi password to hand — making it step N would mean refusing the operator who
 // wants to do it first and the one who wants to do it last.
 //
-// The checkpoint is the reason this is more than a passthrough to the helper. The
-// operator is changing the network they are connected over; a wrong passphrase
-// without a checkpoint ends the session that would have fixed it. On success the
-// checkpoint is destroyed and the setup AP comes down; on failure the checkpoint
-// is rolled back and the AP stays up, which is what leaves the operator somewhere
-// to retry from.
+// The sequence is the whole design, and every stage of it is there because of a
+// specific way this goes wrong:
+//
+//  1. Checkpoint the current network state. The operator is changing the network
+//     they are connected over; without this, one wrong passphrase ends the session
+//     that would have fixed it.
+//  2. Lower the access point. A single-radio Pi cannot be an AP and a station at
+//     once, so the radio has to be given up before the join can even be attempted.
+//     This lowering is reversible — it does not spend the AP.
+//  3. Join, and wait.
+//  4. Verify. Association is not success: a node associated to the right SSID with
+//     no DHCP lease is on the network and unreachable, which looks like a working
+//     join right up until the operator tries to find it.
+//  5. On success, destroy the checkpoint and spend the AP. On any failure, roll the
+//     checkpoint back and raise the AP again, so the operator has somewhere to
+//     retry from rather than a node that has vanished.
 func (w *Wizard) JoinNetwork(ctx context.Context, req JoinRequest) (JoinResult, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -267,6 +279,16 @@ func (w *Wizard) JoinNetwork(ctx context.Context, req JoinRequest) (JoinResult, 
 		return JoinResult{View: w.state()}, err
 	}
 
+	// The AP goes down before the join, and comes back on every failure path
+	// below. Doing this after the checkpoint means a failure here is still
+	// covered by it.
+	if w.AP != nil {
+		if err := w.AP.DownForJoin(ctx); err != nil {
+			w.rollback(ctx, cp.Handle)
+			return JoinResult{View: w.state()}, err
+		}
+	}
+
 	got, joinErr := w.Prov.NetJoin(ctx, privhelper.NetJoinRequest{
 		SSID:           req.SSID,
 		PSK:            req.PSK,
@@ -274,34 +296,74 @@ func (w *Wizard) JoinNetwork(ctx context.Context, req JoinRequest) (JoinResult, 
 		Country:        req.Country,
 		TimeoutSeconds: req.TimeoutSeconds,
 	})
-	if joinErr != nil || !got.Connected {
-		if _, err := w.Prov.NetCheckpointRollback(ctx,
-			privhelper.NetCheckpointRollbackRequest{Handle: cp.Handle}); err != nil {
-			w.logf("wizard: could not roll back after a failed join: %v", err)
-		}
-		if joinErr == nil {
-			joinErr = privhelper.Errorf(privhelper.CodeConflict,
-				"could not associate with %q; the previous network settings were restored", req.SSID)
-		}
-		return JoinResult{View: w.state(), SSID: req.SSID}, joinErr
+	if failure := verifyJoin(req.SSID, got, joinErr); failure != nil {
+		w.rollback(ctx, cp.Handle)
+		w.reraise(ctx)
+		return JoinResult{View: w.state(), SSID: req.SSID}, failure
 	}
 
 	if _, err := w.Prov.NetCheckpointDestroy(ctx,
 		privhelper.NetCheckpointDestroyRequest{Handle: cp.Handle}); err != nil {
-		// The join worked; a checkpoint left behind is untidy, not dangerous.
-		w.logf("wizard: could not destroy checkpoint %s after a successful join: %v", cp.Handle, err)
+		// The join is verified; a checkpoint left behind is untidy, not dangerous.
+		w.logf("wizard: could not destroy checkpoint %s after a verified join: %v", cp.Handle, err)
 	}
 	w.logf("wizard: joined %q on %s (%s)", got.SSID, got.Interface, got.IPv4)
 
 	// The node is on the operator's network, so the setup access point has done
-	// its job and comes down at once.
-	if w.OnNetworkJoined != nil {
-		w.OnNetworkJoined(ctx)
+	// its job. This is the point of no return: it does not come back without a
+	// reboot.
+	if w.AP != nil {
+		if err := w.AP.Commit(ctx); err != nil {
+			w.logf("wizard: could not take the setup access point down after the join: %v", err)
+		}
 	}
 	return JoinResult{
 		View: w.state(), SSID: got.SSID, Connected: true,
 		IPv4: got.IPv4, Interface: got.Interface,
 	}, nil
+}
+
+// verifyJoin decides whether a join actually worked, returning nil when it did.
+//
+// The address check is the one that matters. nmcli reports success once the
+// profile is up, and a node associated to the right SSID with no DHCP lease
+// satisfies that while being completely unreachable — the failure an operator
+// discovers ten minutes later, looking for a node that is on their network and
+// answering nothing.
+func verifyJoin(ssid string, got privhelper.NetJoinResponse, joinErr error) error {
+	if joinErr != nil {
+		return joinErr
+	}
+	if !got.Connected {
+		return privhelper.Errorf(privhelper.CodeConflict,
+			"could not associate with %q; the previous network settings were restored", ssid)
+	}
+	if strings.TrimSpace(got.IPv4) == "" {
+		return privhelper.Errorf(privhelper.CodeConflict,
+			"associated with %q but no address was assigned before the timeout, so the node would have been unreachable; the previous network settings were restored", ssid)
+	}
+	return nil
+}
+
+// rollback restores the pre-join network state.
+func (w *Wizard) rollback(ctx context.Context, handle string) {
+	if _, err := w.Prov.NetCheckpointRollback(ctx,
+		privhelper.NetCheckpointRollbackRequest{Handle: handle}); err != nil {
+		w.logf("wizard: could not roll back checkpoint %s after a failed join: %v", handle, err)
+	}
+}
+
+// reraise brings the setup access point back so the operator has somewhere to
+// retry from.
+func (w *Wizard) reraise(ctx context.Context) {
+	if w.AP == nil {
+		return
+	}
+	if err := w.AP.Reraise(ctx, captive.ReasonHandingOver); err != nil {
+		// Worth shouting about: the join failed and the way back in did not come
+		// back, which is the one combination that strands the operator.
+		w.logf("wizard: THE JOIN FAILED AND THE SETUP ACCESS POINT DID NOT COME BACK: %v", err)
+	}
 }
 
 // joinCheckpointWindow is how long the pre-join network state is held. It only

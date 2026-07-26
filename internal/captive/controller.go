@@ -31,6 +31,15 @@ const (
 	ReasonSetupComplete Reason = "setup completed"
 	// ReasonShutdown — the daemon is stopping.
 	ReasonShutdown Reason = "waypointd is stopping"
+	// ReasonHandingOver — the AP is down only for the length of a join attempt.
+	// A single-radio Pi cannot be an access point and a station at the same time,
+	// so the AP has to give the radio up before the node can try the operator's
+	// network. This reason never spends the AP: the whole point is that a failed
+	// join gets it back.
+	ReasonHandingOver Reason = "handing the radio over for a network join"
+	// ReasonUpstreamLost — netwatch re-raised the AP because the node has had no
+	// route out for long enough that the operator has probably lost the node.
+	ReasonUpstreamLost Reason = "the upstream network went away"
 )
 
 // Controller owns the setup access point's lifetime.
@@ -127,13 +136,23 @@ func (c *Controller) Up(ctx context.Context) error {
 	return nil
 }
 
-// Down takes the AP down and, unless this is a plain shutdown, spends it.
+// spendingReasons are the ways the AP goes down for good. Everything else is a
+// pause it can come back from — which is the distinction a join depends on.
+func spends(why Reason) bool {
+	switch why {
+	case ReasonShutdown, ReasonHandingOver:
+		return false
+	}
+	return true
+}
+
+// Down takes the AP down. Whether it can come back depends on why (see spends).
 func (c *Controller) Down(ctx context.Context, why Reason) error {
 	c.mu.Lock()
 	wasUp := c.up
 	c.up = false
 	c.lastDwn = why
-	if why != ReasonShutdown {
+	if spends(why) {
 		c.spent = true
 	}
 	c.mu.Unlock()
@@ -146,6 +165,43 @@ func (c *Controller) Down(ctx context.Context, why Reason) error {
 	}
 	c.logf("captive: setup access point down — %s", why)
 	return nil
+}
+
+// DownForJoin lowers the AP so the radio is free for a station association, in a
+// way it can be brought back from. It is half of the confirm-or-revert handover:
+// Reraise is the other half.
+func (c *Controller) DownForJoin(ctx context.Context) error {
+	return c.Down(ctx, ReasonHandingOver)
+}
+
+// Reraise brings the AP back after a failed join or a lost upstream.
+//
+// It clears the "a client was here" flag deliberately. The operator whose join
+// failed is on a phone that just lost this network; the associate window has to
+// start again from the moment the AP comes back, or a node that has been sitting
+// unattended would tear it straight back down.
+func (c *Controller) Reraise(ctx context.Context, why Reason) error {
+	c.mu.Lock()
+	if c.spent {
+		c.mu.Unlock()
+		return privhelper.Errorf(privhelper.CodeConflict,
+			"the setup access point was taken down (%s) and will not come back until the node is rebooted", c.lastDwn)
+	}
+	c.seen = false
+	c.mu.Unlock()
+
+	if err := c.Up(ctx); err != nil {
+		return err
+	}
+	c.logf("captive: setup access point back up — %s", why)
+	return nil
+}
+
+// Commit spends the AP after a join the caller has confirmed. It is the point of
+// no return in the handover: from here the node is on the operator's network and
+// the setup AP does not come back without a reboot.
+func (c *Controller) Commit(ctx context.Context) error {
+	return c.Down(ctx, ReasonJoined)
 }
 
 // NoteClient records that a client is using the AP. It is called from the

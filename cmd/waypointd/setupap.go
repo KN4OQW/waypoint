@@ -5,9 +5,11 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/KN4OQW/waypoint/internal/captive"
+	"github.com/KN4OQW/waypoint/internal/netwatch"
 	"github.com/KN4OQW/waypoint/internal/setupap"
 )
 
@@ -30,6 +32,10 @@ type apOptions struct {
 	Window time.Duration
 	// IdleTimeout releases the one-device setup session.
 	IdleTimeout time.Duration
+	// NetwatchGrace is how long the node tolerates having no route out before the
+	// access point comes back; NetwatchInterval is how often that is checked.
+	NetwatchGrace    time.Duration
+	NetwatchInterval time.Duration
 }
 
 // initSetupAP raises the setup access point and serves the captive portal while
@@ -42,9 +48,6 @@ type apOptions struct {
 func (s *server) initSetupAP(ctx context.Context, opts apOptions) {
 	if !opts.Enabled || s.wiz == nil {
 		return
-	}
-	if s.wiz.Provisioned() {
-		return // nothing to set up; the AP would be an open network for no reason
 	}
 
 	ssid := setupap.SSID(nonEmpty(opts.CPUInfo, setupap.CPUInfoPath))
@@ -66,10 +69,7 @@ func (s *server) initSetupAP(ctx context.Context, opts apOptions) {
 	}
 	s.ap = ctrl
 
-	if err := ctrl.Up(ctx); err != nil {
-		log.Printf("waypointd: could not raise the setup access point (%s): %v", ssid, err)
-		return
-	}
+	provisioned := s.wiz.Provisioned()
 
 	lock := &captive.Lock{Idle: opts.IdleTimeout, Logf: log.Printf}
 	portal := &captive.Portal{
@@ -82,11 +82,6 @@ func (s *server) initSetupAP(ctx context.Context, opts apOptions) {
 	// The AP comes down the moment the node is on the operator's network, and the
 	// session lock closes when setup finishes. Both hooks live here rather than in
 	// the wizard so the wizard needs to know nothing about radios.
-	s.wiz.OnNetworkJoined = func(ctx context.Context) {
-		if err := ctrl.Down(ctx, captive.ReasonJoined); err != nil {
-			log.Printf("waypointd: could not take the setup access point down after the join: %v", err)
-		}
-	}
 	s.wiz.OnComplete = func(ctx context.Context) {
 		lock.Complete()
 		if err := ctrl.Down(ctx, captive.ReasonSetupComplete); err != nil {
@@ -94,13 +89,107 @@ func (s *server) initSetupAP(ctx context.Context, opts apOptions) {
 		}
 	}
 
-	go serveCaptivePortal(ctx, portal, opts)
-	go runDNSHijack(ctx, opts)
+	sess := &apSession{ctrl: ctrl, portal: portal, opts: opts}
+	s.wiz.AP = sess
+	s.apSession = sess
+
+	if !provisioned {
+		// A node that has never been set up needs the AP now, and needs the
+		// associate window that takes it down again if nobody comes.
+		if err := ctrl.Up(ctx); err != nil {
+			log.Printf("waypointd: could not raise the setup access point (%s): %v", ssid, err)
+		} else {
+			sess.serve(ctx)
+			go func() {
+				tick := time.NewTicker(time.Minute)
+				defer tick.Stop()
+				ctrl.Run(ctx, tick.C)
+			}()
+		}
+	}
+
+	// netwatch runs in both states, and the provisioned one is the point: a node
+	// that was set up months ago and has just had its network renamed out from
+	// under it has no other way back. It re-raises the AP and touches nothing else
+	// — the node stays provisioned, stays claimed, and keeps its configuration.
 	go func() {
-		tick := time.NewTicker(time.Minute)
+		w := &netwatch.Watcher{
+			AP:          sess,
+			APInterface: opts.Interface,
+			Grace:       opts.NetwatchGrace,
+			Logf:        log.Printf,
+		}
+		interval := opts.NetwatchInterval
+		if interval <= 0 {
+			interval = netwatch.DefaultInterval
+		}
+		tick := time.NewTicker(interval)
 		defer tick.Stop()
-		ctrl.Run(ctx, tick.C)
+		w.Run(ctx, tick.C)
 	}()
+}
+
+// apSession ties the access point to the listeners that make it useful.
+//
+// The portal and the DNS responder bind to the AP's own address, which does not
+// exist while the AP is down — so they cannot simply run for the daemon's
+// lifetime. They start when the AP goes up and stop when it comes down, which
+// also means a re-raise after a failed join or a lost upstream brings the wizard
+// back rather than an access point serving nothing.
+type apSession struct {
+	ctrl   *captive.Controller
+	portal *captive.Portal
+	opts   apOptions
+
+	mu   sync.Mutex
+	stop context.CancelFunc
+}
+
+// serve starts the portal and DNS listeners for the current AP.
+func (a *apSession) serve(ctx context.Context) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.stop != nil {
+		return // already serving
+	}
+	sctx, cancel := context.WithCancel(ctx)
+	a.stop = cancel
+	go serveCaptivePortal(sctx, a.portal, a.opts)
+	go runDNSHijack(sctx, a.opts)
+}
+
+// halt stops them.
+func (a *apSession) halt() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.stop != nil {
+		a.stop()
+		a.stop = nil
+	}
+}
+
+// DownForJoin frees the radio, taking the listeners down with it.
+func (a *apSession) DownForJoin(ctx context.Context) error {
+	if err := a.ctrl.DownForJoin(ctx); err != nil {
+		return err
+	}
+	a.halt()
+	return nil
+}
+
+// Commit spends the AP after a verified join.
+func (a *apSession) Commit(ctx context.Context) error {
+	a.halt()
+	return a.ctrl.Commit(ctx)
+}
+
+// Reraise brings the AP and its listeners back.
+func (a *apSession) Reraise(ctx context.Context, why captive.Reason) error {
+	if err := a.ctrl.Reraise(ctx, why); err != nil {
+		return err
+	}
+	a.serve(context.WithoutCancel(ctx))
+	return nil
 }
 
 // serveCaptivePortal serves the portal over plain HTTP on the AP address.

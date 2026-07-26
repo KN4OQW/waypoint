@@ -89,6 +89,13 @@ type Fake struct {
 	// caller's error path without a real broken system.
 	Errs map[privhelper.Method]error
 
+	// NetJoinResult, when set, is returned by NetJoin instead of the fake's own
+	// success. It exists for the outcomes that are not simply "worked" or
+	// "errored" — an association that came up with no DHCP lease is the one that
+	// matters, because it looks like success to everything except the operator
+	// trying to reach the node afterwards.
+	NetJoinResult *privhelper.NetJoinResponse
+
 	// Clock is the time source, injectable so checkpoint expiries are assertable.
 	Clock func() time.Time
 
@@ -337,6 +344,13 @@ func (f *Fake) NetJoin(ctx context.Context, req privhelper.NetJoinRequest) (priv
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.NetJoinResult != nil {
+		out := *f.NetJoinResult
+		if out.Connected {
+			f.Joined = &FakeJoin{SSID: out.SSID, Interface: out.Interface, Profile: out.Profile, IPv4: out.IPv4}
+		}
+		return out, nil
+	}
 	j := &FakeJoin{
 		SSID:      req.SSID,
 		Interface: orDefault(req.Interface, "wlan0"),

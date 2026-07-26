@@ -38,6 +38,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/minisign"
 	"github.com/KN4OQW/waypoint/internal/mqtt"
 	"github.com/KN4OQW/waypoint/internal/netconfig"
+	"github.com/KN4OQW/waypoint/internal/netwatch"
 	"github.com/KN4OQW/waypoint/internal/nxdnhosts"
 	"github.com/KN4OQW/waypoint/internal/p25hosts"
 	"github.com/KN4OQW/waypoint/internal/peering"
@@ -72,6 +73,9 @@ type server struct {
 	// ap is the setup access point and its captive portal, raised only while the
 	// node is unprovisioned. Nil when the node is set up or the AP is disabled.
 	ap *captive.Controller
+	// apSession ties the AP to the listeners that make it useful, so a re-raise
+	// after a failed join or a lost upstream brings the wizard back with it.
+	apSession *apSession
 
 	// Host/OS networking domain (docs/config-coverage.md §4). netKeyfileDir is
 	// where the NetworkManager keyfile renderer writes waypoint-*.nmconnection;
@@ -1678,6 +1682,12 @@ func main() {
 	setupAPCountry := flag.String("setup-ap-country", "", "regulatory domain for the setup access point, e.g. US")
 	setupAPWindow := flag.Duration("setup-ap-window", captive.DefaultAssociateWindow, "how long the setup access point waits for a client before coming down until the next boot")
 	setupSessionIdle := flag.Duration("setup-session-idle", captive.DefaultIdleTimeout, "how long a setup session survives with no request from the holding device")
+	// netwatch is the way back into a node that was set up months ago and has
+	// since lost the network it was set up on — a replaced router, a renamed SSID,
+	// a node carried somewhere else. It re-raises the setup access point and
+	// touches no provisioning state.
+	netwatchGrace := flag.Duration("netwatch-grace", netwatch.DefaultGrace, "how long the node tolerates having no route out before the setup access point comes back")
+	netwatchInterval := flag.Duration("netwatch-interval", netwatch.DefaultInterval, "how often the route table is checked for a way out")
 	eventsPath := flag.String("events-store", "/home/pi-star/waypoint/events.db", "path to the SQLite event-history store (RFC-0004); a config.db sibling")
 	nmKeyfileDir := flag.String("nm-keyfile-dir", "/etc/NetworkManager/system-connections", "directory for rendered NetworkManager keyfiles (waypoint-*.nmconnection)")
 	netConfirmTimeout := flag.Duration("network-confirm-timeout", netconfig.DefaultConfirmTimeout, "confirm-or-revert rollback window for a network apply")
@@ -1862,11 +1872,13 @@ func main() {
 		Progress: *setupProgress,
 	}, st)
 	s.initSetupAP(context.Background(), apOptions{
-		Enabled:     *setupAP,
-		Interface:   *setupAPIface,
-		Country:     *setupAPCountry,
-		Window:      *setupAPWindow,
-		IdleTimeout: *setupSessionIdle,
+		Enabled:          *setupAP,
+		Interface:        *setupAPIface,
+		Country:          *setupAPCountry,
+		Window:           *setupAPWindow,
+		IdleTimeout:      *setupSessionIdle,
+		NetwatchGrace:    *netwatchGrace,
+		NetwatchInterval: *netwatchInterval,
 	})
 	s.initPeering(context.Background(), *peeringDir, *peeringBootstrapAddr)
 

@@ -45,6 +45,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/KN4OQW/waypoint/internal/captive"
 	"github.com/KN4OQW/waypoint/internal/privhelper"
 	"github.com/KN4OQW/waypoint/internal/provision"
 )
@@ -142,6 +143,18 @@ func (e *ErrOutOfOrder) Error() string {
 	return fmt.Sprintf("setup step %q cannot run yet; the next step is %q", e.Submitted, e.Expected)
 }
 
+// APController is the part of the setup access point the join sequence needs.
+// It is an interface so the wizard depends on the behaviour rather than on the
+// radio, and so a test can drive the whole handover without one.
+type APController interface {
+	// DownForJoin frees the radio for a station association, reversibly.
+	DownForJoin(ctx context.Context) error
+	// Reraise brings the AP back after a failed join.
+	Reraise(ctx context.Context, why captive.Reason) error
+	// Commit spends the AP after a join that has been verified.
+	Commit(ctx context.Context) error
+}
+
 // Wizard drives the flow.
 type Wizard struct {
 	// Prov is the privileged helper. Every system change goes through it; this
@@ -161,13 +174,14 @@ type Wizard struct {
 	// whether the step after provisioning is claim or done.
 	Claimed func() bool
 
-	// OnNetworkJoined is called after the node successfully joins the operator's
-	// network. It is how the setup access point learns it has done its job: an
-	// open AP broadcasting beside the real network the node just joined is exactly
-	// what the window rules exist to prevent.
-	OnNetworkJoined func(ctx context.Context)
+	// AP is the setup access point, when there is one. The join sequence has to
+	// drive it rather than merely notify it: a single-radio Pi cannot be an access
+	// point and a station at the same time, so the AP must give the radio up
+	// before the join and take it back if the join fails.
+	AP APController
 
-	// OnComplete is called once provisioning finishes, for the same reason.
+	// OnComplete is called once provisioning finishes, so the AP can come down
+	// for good and the setup session can close.
 	OnComplete func(ctx context.Context)
 
 	// Now and Logf are injectable for tests.
