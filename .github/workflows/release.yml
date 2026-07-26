@@ -80,7 +80,14 @@ jobs:
           files: |
             ${{ env.ARTIFACT }}
             ${{ env.ARTIFACT }}.minisig
+            ${{ env.HELPER }}
+            ${{ env.HELPER }}.minisig
         # .minisig is uploaded only when signing produced it; a missing file is skipped.
+        #
+        # The helper is listed here as well as built and signed above. It was
+        # missed once: the image module fetches it by name from the release, so a
+        # release without it produces a build that waits ten minutes for an asset
+        # that is never coming and then fails inside the chroot.
 
   # After the per-arch binaries are published, assemble and sign the update manifest
   # the atomic updater fetches (RFC-0014). The sha256 is computed over each
