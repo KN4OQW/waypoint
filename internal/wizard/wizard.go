@@ -194,6 +194,13 @@ type Wizard struct {
 	// for good and the setup session can close.
 	OnComplete func(ctx context.Context)
 
+	// APStatus, when set, reports the setup access point's state. The wizard shows
+	// it so an operator can see whether they are on an open network — and, when the
+	// access point did not come up, why. That failure is otherwise invisible: the
+	// node is reachable over Ethernet, so nothing looks wrong until somebody
+	// unplugs it.
+	APStatus func() *APState
+
 	// Now and Logf are injectable for tests.
 	Now  func() time.Time
 	Logf func(format string, args ...any)
@@ -316,6 +323,16 @@ func next(p Progress) Step {
 	return StepClaim
 }
 
+// APState is the setup access point as the wizard reports it.
+type APState struct {
+	SSID string `json:"ssid,omitempty"`
+	Up   bool   `json:"up"`
+	// Open reports an unprotected network, which changes what it is safe to type.
+	Open bool `json:"open"`
+	// Error is why the access point is not up, when it should have been.
+	Error string `json:"error,omitempty"`
+}
+
 // View is what a client needs to render the wizard.
 type View struct {
 	Mode      string `json:"mode"` // "setup", "claim", or "done"
@@ -334,6 +351,9 @@ type View struct {
 
 	Provisioned bool `json:"provisioned"`
 	Claimed     bool `json:"claimed"`
+
+	// AP is the setup access point's state, when there is one to report.
+	AP *APState `json:"ap,omitempty"`
 }
 
 // State returns the current view.
@@ -375,6 +395,9 @@ func (w *Wizard) state() View {
 		Claimed:         claimed,
 	}
 	v.Mode, v.Next = "setup", next(p)
+	if w.APStatus != nil {
+		v.AP = w.APStatus()
+	}
 	return v
 }
 

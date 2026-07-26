@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Waypoint · Set up this node</title>
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<style>
+  /* Self-contained on purpose. This page is served over the setup access point to
+     a phone with no route to the internet, and often inside a captive-portal
+     sheet — so no CDN font, no external stylesheet, nothing that can fail to
+     load. It borrows the dashboard's phosphor palette so the two read as one app. */
+  :root {
+    --bg: #0b0f0d; --panel: #111917; --line: #1f2f2a; --ink: #d7e8e1;
+    --dim: #8aa39a; --accent: #35e08f; --warn: #e0a935; --bad: #e05c5c;
+    --radius: .5rem;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f4f7f5; --panel: #fff; --line: #d8e3de; --ink: #16241f;
+            --dim: #5c6f68; --accent: #0f7a45; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 34rem; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+  h1 { font-size: 1.35rem; margin: .2rem 0 .1rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 .75rem; }
+  p  { margin: .55rem 0; }
+  .sub { color: var(--dim); font-size: .92rem; margin-top: 0; }
+
+  /* Progress rail */
+  ol.rail { list-style: none; display: flex; gap: .35rem; padding: 0; margin: 1.1rem 0 1.4rem; }
+  ol.rail li { flex: 1; font-size: .72rem; letter-spacing: .04em; text-transform: uppercase;
+               color: var(--dim); border-top: 3px solid var(--line); padding-top: .4rem; }
+  ol.rail li.done { color: var(--accent); border-top-color: var(--accent); }
+  ol.rail li.now  { color: var(--ink); border-top-color: var(--ink); font-weight: 600; }
+
+  .card { background: var(--panel); border: 1px solid var(--line);
+          border-radius: var(--radius); padding: 1.1rem; }
+  label { display: block; font-weight: 600; margin: .9rem 0 .3rem; }
+  .hint { color: var(--dim); font-size: .87rem; margin: .15rem 0 0; font-weight: 400; }
+  input[type=text], input[type=password], textarea {
+    width: 100%; padding: .6rem .7rem; background: var(--bg); color: var(--ink);
+    border: 1px solid var(--line); border-radius: .35rem; font: inherit; }
+  textarea { min-height: 5.5rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+             font-size: .82rem; resize: vertical; }
+  input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  button { font: inherit; font-weight: 600; padding: .65rem 1.1rem; border-radius: .35rem;
+           border: 1px solid var(--accent); background: var(--accent); color: #04150c;
+           cursor: pointer; }
+  button.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+  button[disabled] { opacity: .55; cursor: progress; }
+  .row { display: flex; gap: .6rem; align-items: center; margin-top: 1.2rem; flex-wrap: wrap; }
+
+  .note { border-left: 3px solid var(--warn); padding: .7rem .85rem; border-radius: .3rem;
+          background: color-mix(in srgb, var(--warn) 12%, transparent); font-size: .9rem; }
+  .rec  { border-left: 3px solid var(--accent); padding: .7rem .85rem; border-radius: .3rem;
+          background: color-mix(in srgb, var(--accent) 12%, transparent); font-size: .9rem; }
+  .err  { border-left: 3px solid var(--bad); padding: .7rem .85rem; border-radius: .3rem;
+          background: color-mix(in srgb, var(--bad) 14%, transparent); margin-bottom: 1rem; }
+  .err[hidden] { display: none; }
+
+  .admin { border: 1px solid var(--line); border-radius: .35rem; padding: .6rem .7rem;
+           margin-bottom: .5rem; display: flex; gap: .6rem; align-items: flex-start; }
+  .admin input { margin-top: .28rem; }
+  .admin code { font-size: .9rem; }
+  .admin .sum { color: var(--dim); font-size: .84rem; display: block; }
+  code { background: color-mix(in srgb, var(--ink) 10%, transparent);
+         padding: .1em .35em; border-radius: .25em; font-size: .9em; }
+  .done-msg { text-align: center; padding: 2rem 0; }
+  .done-msg a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Set up this Waypoint</h1>
+  <p class="sub" id="subtitle">Loading…</p>
+
+  <ol class="rail" id="rail" aria-label="Setup progress"></ol>
+
+  <div class="err" id="err" role="alert" hidden></div>
+
+  <div class="card" id="card">
+    <p>Loading…</p>
+  </div>
+</main>
+
+<script>
+"use strict";
+// Plain DOM and fetch. No framework, no build step: this has to work in whatever
+// cut-down browser a captive-portal sheet provides.
+
+var STEPS = { hostname: "Name", user: "Account", key: "SSH key", lock: "Finish", claim: "Claim" };
+var state = null;
+
+function el(id) { return document.getElementById(id); }
+function esc(s) { var d = document.createElement("div"); d.textContent = s == null ? "" : s; return d.innerHTML; }
+
+function showError(msg) {
+  var e = el("err");
+  if (!msg) { e.hidden = true; e.textContent = ""; return; }
+  e.textContent = msg;
+  e.hidden = false;
+  e.scrollIntoView({ block: "nearest" });
+}
+
+async function api(path, body) {
+  var opts = { headers: { "Accept": "application/json" } };
+  if (body !== undefined) {
+    opts.method = "POST";
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  var r = await fetch(path, opts);
+  var text = await r.text();
+  var data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (e) { /* non-JSON */ }
+  if (!r.ok) {
+    // The API's error field is written for a person; show it as-is rather than
+    // inventing a friendlier one that says less.
+    var msg = (data && data.error) || ("Request failed (" + r.status + ")");
+    if (data && data.expected_step) msg += "  The next step is “" + STEPS[data.expected_step] + "”.";
+    var err = new Error(msg);
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+function renderRail() {
+  var done = (state.completed || []);
+  el("rail").innerHTML = state.steps.map(function (s) {
+    var cls = done.indexOf(s) >= 0 ? "done" : (s === state.next ? "now" : "");
+    return '<li class="' + cls + '">' + esc(STEPS[s] || s) + "</li>";
+  }).join("");
+}
+
+function busy(on, label) {
+  var b = el("card").querySelector("button[type=submit]");
+  if (b) { b.disabled = on; if (on && label) b.textContent = label; }
+}
+
+// --- steps -----------------------------------------------------------------
+
+function stepHostname() {
+  el("subtitle").textContent = "Give this node a name.";
+  el("card").innerHTML =
+    '<h2>Name this node</h2>' +
+    '<form id="f">' +
+    '<label for="hostname">Hostname' +
+    '<span class="hint">Letters, digits and hyphens. You will reach the dashboard at ' +
+    '<code id="preview">name.local</code> — so pick something you will recognise. ' +
+    'The shipped default is not accepted: two Waypoints keeping it would answer to the same address.</span>' +
+    '</label>' +
+    '<input type="text" id="hostname" name="hostname" autocapitalize="none" autocorrect="off" ' +
+    'spellcheck="false" required placeholder="hs-shack">' +
+    '<div class="row"><button type="submit">Continue</button></div>' +
+    "</form>";
+  var input = el("hostname");
+  input.addEventListener("input", function () {
+    el("preview").textContent = (input.value.trim() || "name") + ".local";
+  });
+  input.focus();
+  el("f").addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    showError(null); busy(true, "Renaming…");
+    try {
+      state = await api("/api/setup/hostname", { hostname: input.value.trim() });
+      render();
+    } catch (e) { showError(e.message); busy(false); el("card").querySelector("button").textContent = "Continue"; }
+  });
+}
+
+function stepUser() {
+  el("subtitle").textContent = "Create the account that can recover this node.";
+  el("card").innerHTML =
+    '<h2>Recovery account</h2>' +
+    '<p>This is the account you use to get back in over SSH if you lose your ' +
+    'Waypoint password. It can become root; the root password is locked at the end of setup.</p>' +
+    '<div class="rec"><strong>An SSH key is the better credential.</strong> A key you ' +
+    'already hold cannot be forgotten, and a public key is not a secret — so sending it ' +
+    'over this network gives nothing away.</div>' +
+    '<form id="f">' +
+    '<label for="username">Username<span class="hint">Lowercase. Not <code>root</code>.</span></label>' +
+    '<input type="text" id="username" autocapitalize="none" autocorrect="off" spellcheck="false" ' +
+    'required placeholder="rescue" value="rescue">' +
+    '<label for="sshkey">SSH public key <span class="hint">Recommended. Paste the contents of ' +
+    '<code>~/.ssh/id_ed25519.pub</code> — one line, starting with <code>ssh-ed25519</code>.</span></label>' +
+    '<textarea id="sshkey" autocapitalize="none" autocorrect="off" spellcheck="false" ' +
+    'placeholder="ssh-ed25519 AAAA… you@laptop"></textarea>' +
+    '<label for="password">Password <span class="hint" id="pwhint">Optional if you gave a key. ' +
+    'At least 8 characters.</span></label>' +
+    '<input type="password" id="password" autocomplete="new-password">' +
+    '<div class="note" id="openwarn" hidden></div>' +
+    '<div class="row"><button type="submit">Create account</button></div>' +
+    "</form>";
+  if (state.ap && state.ap.up && state.ap.open) {
+    var w = el("openwarn");
+    w.hidden = false;
+    w.innerHTML = "You are connected over <strong>" + esc(state.ap.ssid) + "</strong>, which is an " +
+      "open network — anyone in range could be listening. A password you type here travels in the " +
+      "clear; a public key does not. If you set a password, change it once this node is on your own Wi-Fi.";
+  }
+  el("username").focus();
+  el("f").addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    showError(null);
+    var key = el("sshkey").value.trim(), pw = el("password").value;
+    if (!key && !pw) {
+      showError("Give an SSH key or a password — an account with neither could never log in.");
+      return;
+    }
+    busy(true, "Creating…");
+    try {
+      var body = { username: el("username").value.trim() };
+      if (key) body.ssh_key = key;
+      if (pw) body.password = pw;
+      state = await api("/api/setup/user", body);
+      render();
+    } catch (e) { showError(e.message); busy(false); el("card").querySelector("button").textContent = "Create account"; }
+  });
+}
+
+function stepKey() {
+  el("subtitle").textContent = "Add an SSH key.";
+  el("card").innerHTML =
+    '<h2>SSH key for ' + esc(state.recovery_user) + "</h2>" +
+    "<p>Paste a public key to log in without a password.</p>" +
+    '<form id="f">' +
+    '<label for="sshkey">SSH public key</label>' +
+    '<textarea id="sshkey" autocapitalize="none" autocorrect="off" spellcheck="false" ' +
+    'placeholder="ssh-ed25519 AAAA… you@laptop"></textarea>' +
+    '<div class="row"><button type="submit">Add key</button>' +
+    (state.key_skippable ? '<button type="button" class="ghost" id="skip">Skip — I will use the password</button>' : "") +
+    "</div></form>";
+  el("sshkey").focus();
+  el("f").addEventListener("submit", async function (ev) {
+    ev.preventDefault(); showError(null); busy(true, "Installing…");
+    try { state = await api("/api/setup/key", { public_key: el("sshkey").value.trim() }); render(); }
+    catch (e) { showError(e.message); busy(false); el("card").querySelector("button").textContent = "Add key"; }
+  });
+  var skip = el("skip");
+  if (skip) skip.addEventListener("click", async function () {
+    showError(null); skip.disabled = true;
+    try { state = await api("/api/setup/key", { skip: true }); render(); }
+    catch (e) { showError(e.message); skip.disabled = false; }
+  });
+}
+
+async function stepLock() {
+  el("subtitle").textContent = "Last step.";
+  var admins = [];
+  try {
+    var r = await api("/api/setup/prior-admins");
+    admins = (r && r.admins) || [];
+    var notice = r && r.notice;
+  } catch (e) { /* enumeration is advisory; never block finishing on it */ }
+
+  var adminHtml = "";
+  if (admins.length) {
+    adminHtml = '<h2 style="margin-top:1.6rem">Existing administrator accounts</h2>' +
+      '<div class="note">' + esc(notice || "") + "</div>" +
+      admins.map(function (a, i) {
+        return '<div class="admin"><input type="checkbox" id="rm' + i + '" value="' + esc(a.username) + '">' +
+          '<label for="rm' + i + '" style="margin:0;font-weight:600"><code>' + esc(a.username) + "</code>" +
+          '<span class="sum">' + esc(a.summary) + "</span></label></div>";
+      }).join("");
+  }
+
+  el("card").innerHTML =
+    "<h2>Lock root and finish</h2>" +
+    "<p>Root's password is locked, and SSH is told to refuse root logins. From here on, " +
+    "<code>" + esc(state.recovery_user) + "</code> is how you get in — it can become root with " +
+    "<code>sudo</code>.</p>" +
+    (state.key_fingerprint
+      ? '<p class="hint">Key installed: <code>' + esc(state.key_fingerprint) + "</code></p>"
+      : "") +
+    adminHtml +
+    '<form id="f"><div class="row"><button type="submit">Lock root and finish</button></div></form>';
+
+  el("f").addEventListener("submit", async function (ev) {
+    ev.preventDefault(); showError(null); busy(true, "Finishing…");
+    var picked = Array.prototype.slice.call(document.querySelectorAll(".admin input:checked"))
+      .map(function (c) { return c.value; });
+    try {
+      if (picked.length) {
+        var out = await api("/api/setup/prior-admins", { usernames: picked });
+        var failed = ((out && out.outcomes) || []).filter(function (o) { return !o.removed; });
+        // Reported, never fatal: a stubborn account must not strand the operator
+        // between "I have an account" and "root is locked".
+        if (failed.length) {
+          showError("Finished, but some accounts were not removed: " +
+            failed.map(function (o) { return o.username + " (" + o.error + ")"; }).join("; "));
+        }
+      }
+      state = await api("/api/setup/lock", {});
+      render();
+    } catch (e) { showError(e.message); busy(false); el("card").querySelector("button").textContent = "Lock root and finish"; }
+  });
+}
+
+function stepDone() {
+  var host = state.hostname || "";
+  el("subtitle").textContent = "Setup complete.";
+  el("rail").innerHTML = "";
+  el("card").innerHTML =
+    '<div class="done-msg"><h2>This node is set up</h2>' +
+    "<p>Root is locked and the recovery account is in place.</p>" +
+    "<p>Now claim the dashboard to choose who administers it.</p>" +
+    '<p class="row" style="justify-content:center"><button onclick="location.href=\'/\'">Go to the claim page</button></p>' +
+    (host ? '<p class="hint">If this node has just moved onto your own network, it is at ' +
+      "<code>https://" + esc(host) + ".local/</code> — you will be asked to trust its certificate once.</p>" : "") +
+    "</div>";
+}
+
+// --- driver ----------------------------------------------------------------
+
+function render() {
+  renderRail();
+  if (state.mode !== "setup") { stepDone(); return; }
+  switch (state.next) {
+    case "hostname": stepHostname(); break;
+    case "user":     stepUser();     break;
+    case "key":      stepKey();      break;
+    case "lock":     stepLock();     break;
+    default:         stepDone();
+  }
+}
+
+(async function () {
+  try {
+    state = await api("/api/setup/state");
+    render();
+  } catch (e) {
+    el("subtitle").textContent = "";
+    el("card").innerHTML = "<h2>Could not reach this node's setup service</h2><p>" +
+      esc(e.message) + "</p><p>Reload to try again.</p>";
+  }
+})();
+</script>
+</body>
+</html>

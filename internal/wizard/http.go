@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -230,7 +231,11 @@ func (w *Wizard) Gate(next http.Handler) http.Handler {
 			// the box tells a node that is starting up from one that is wedged.
 			next.ServeHTTP(rw, r)
 		case isPageAsset(r):
-			writePlaceholder(rw, w.State())
+			writeSetupPage(rw)
+		case r.Method == http.MethodGet && (r.URL.Path == "/logo.svg" || r.URL.Path == "/logo-mono.svg"):
+			// Served from the dashboard's assets behind the gate: a page that
+			// renders with a broken image looks like a broken node.
+			next.ServeHTTP(rw, r)
 		default:
 			// Everything else — the config API, the event stream, the claim
 			// endpoint — is closed. An unprovisioned node has no hostname the
@@ -245,77 +250,34 @@ func (w *Wizard) Gate(next http.Handler) http.Handler {
 	})
 }
 
+// isPageAsset reports whether the request is for the setup page itself or an
+// asset it references. The logo is included because a page that renders with a
+// broken image looks like a broken node.
 func isPageAsset(r *http.Request) bool {
-	return r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/index.html")
+	if r.Method != http.MethodGet {
+		return false
+	}
+	switch r.URL.Path {
+	case "/", "/index.html", "/setup", "/setup.html":
+		return true
+	}
+	return false
 }
 
-// writePlaceholder serves a self-contained setup page.
+//go:embed setup.html
+var setupPage []byte
+
+// writeSetupPage serves the wizard.
 //
-// It is deliberately dependency-free: this page is served over the setup access
-// point to a phone that has no route to the internet, so every byte it needs has
-// to be in the response. The real wizard UI replaces it when the frontend lands;
-// until then this is enough to see the flow and to make the gate observable in a
-// browser.
-func writePlaceholder(rw http.ResponseWriter, v View) {
+// It is one self-contained file with no build step and no external request. This
+// page is delivered over the setup access point to a phone with no route to the
+// internet, frequently inside a captive-portal sheet — so a CDN font or a
+// bundled framework is not a style preference, it is a page that does not load.
+func writeSetupPage(rw http.ResponseWriter) {
 	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
 	rw.Header().Set("Cache-Control", "no-store")
 	rw.WriteHeader(http.StatusOK)
-	_, _ = rw.Write([]byte(`<!doctype html>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Waypoint &mdash; set up this node</title>
-<style>
-  body{font:16px/1.6 system-ui,sans-serif;max-width:34rem;margin:2.5rem auto;padding:0 1rem}
-  h1{font-size:1.4rem}
-  h2{font-size:1.05rem;margin-top:2rem}
-  code{background:#8881;padding:.1em .35em;border-radius:.25em}
-  .warn{border-left:3px solid #c60;background:#c6601a;background:color-mix(in srgb,#c60 12%, transparent);padding:.75rem 1rem;border-radius:.25rem}
-  .rec{border-left:3px solid #2a7;background:color-mix(in srgb,#2a7 12%, transparent);padding:.75rem 1rem;border-radius:.25rem}
-  ol{padding-left:1.2rem}
-</style>
-<h1>Set up this Waypoint node</h1>
-<p>This node has not been set up yet. The next step is <code>` + string(v.Next) + `</code>.</p>
-
-<div class="warn">
-  <strong>This setup network is open.</strong> Anyone within radio range can reach
-  this page while it is up, so treat anything you type here as visible to them.
-  The access point comes down as soon as this node joins your network, and it is
-  only up for the first half hour after boot.
-  <br><br>
-  To protect it instead, power the node off, put the card in a reader, and create
-  <code>waypoint-setup.txt</code> on the boot partition containing
-  <code>psk=your-passphrase</code> (8&ndash;63 characters).
-</div>
-
-<h2>The recovery account</h2>
-<p>Setup creates one non-root account. It is how you get back into this node if
-you lose your Waypoint password, so it is worth getting right.</p>
-
-<div class="rec">
-  <strong>Recommended: an SSH public key.</strong> Paste the contents of your
-  <code>~/.ssh/id_ed25519.pub</code>. A key you already hold cannot be forgotten,
-  and &mdash; on this open network &mdash; a public key is not a secret, so
-  sending it over the setup access point gives nothing away.
-</div>
-
-<p><strong>Fallback: a password.</strong> Use one if you have no key to hand. Be
-aware that it travels over this open network in the clear, so choose one you do
-not use anywhere else, and change it once the node is on your own Wi-Fi.</p>
-
-<p>You can set both. Whichever you choose, root's password is locked at the end
-of setup, and this account is the only way back in.</p>
-
-<h2>What happens next</h2>
-<ol>
-  <li>Name this node &mdash; the shipped default is refused, so two Waypoints on
-      one network do not answer to the same address.</li>
-  <li>Create the recovery account.</li>
-  <li>Add its SSH key, or skip if you set a password.</li>
-  <li>Lock root and finish. The dashboard opens after that, for you to claim.</li>
-</ol>
-<p>Setup runs over <code>` + Prefix + `</code>; the dashboard is not served until
-it is finished.</p>
-`))
+	_, _ = rw.Write(setupPage)
 }
 
 func decode(rw http.ResponseWriter, r *http.Request, dst any) bool {
