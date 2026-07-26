@@ -11,6 +11,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/captive"
 	"github.com/KN4OQW/waypoint/internal/netwatch"
 	"github.com/KN4OQW/waypoint/internal/setupap"
+	"github.com/KN4OQW/waypoint/internal/wizard"
 )
 
 // apOptions configures the setup access point and its captive portal.
@@ -71,6 +72,18 @@ func (s *server) initSetupAP(ctx context.Context, opts apOptions) {
 
 	provisioned := s.wiz.Provisioned()
 
+	// Whatever happens below, the wizard can report the access point — including
+	// the reason it is not up. An operator on Ethernet would otherwise see a
+	// perfectly working node and no hint that the wireless half failed.
+	s.wiz.APStatus = func() *wizard.APState {
+		st := ctrl.Status()
+		out := &wizard.APState{SSID: st.SSID, Up: st.Up, Open: st.Open}
+		s.apErrMu.Lock()
+		out.Error = s.apErr
+		s.apErrMu.Unlock()
+		return out
+	}
+
 	lock := &captive.Lock{Idle: opts.IdleTimeout, Logf: log.Printf}
 	portal := &captive.Portal{
 		Lock:      lock,
@@ -98,6 +111,9 @@ func (s *server) initSetupAP(ctx context.Context, opts apOptions) {
 		// associate window that takes it down again if nobody comes.
 		if err := ctrl.Up(ctx); err != nil {
 			log.Printf("waypointd: could not raise the setup access point (%s): %v", ssid, err)
+			s.apErrMu.Lock()
+			s.apErr = err.Error()
+			s.apErrMu.Unlock()
 		} else {
 			sess.serve(ctx)
 			go func() {

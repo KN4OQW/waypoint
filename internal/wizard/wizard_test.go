@@ -533,3 +533,82 @@ func asOutOfOrder(err error, target **wizard.ErrOutOfOrder) bool {
 func writeFile(path, body string) error {
 	return os.WriteFile(path, []byte(body), 0o644)
 }
+
+// Property 13: the setup page is served, with fields, before the node is
+// provisioned — and it is self-contained.
+//
+// The page reaches a phone over the access point, often inside a captive-portal
+// sheet with no route to the internet. A stylesheet, font, or script fetched from
+// anywhere else is a page that does not load, and an operator with no way to set
+// the node up.
+func TestSetupPageIsServedAndSelfContained(t *testing.T) {
+	e := newEnv(t)
+	rec := httptest.NewRecorder()
+	e.w.Gate(http.NotFoundHandler()).ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q", ct)
+	}
+
+	// It has to actually collect the things setup needs.
+	for _, want := range []string{`id="hostname"`, `id="username"`, `id="sshkey"`, `id="password"`, "<form"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the setup page has no %s — there is nothing for an operator to fill in", want)
+		}
+	}
+	// And the guidance the flow depends on.
+	for _, want := range []string{"SSH key is the better credential", "root password is locked"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the setup page does not explain %q", want)
+		}
+	}
+
+	// Nothing is *loaded* from off-node. A URL in visible text is fine — the page
+	// tells the operator where to reach the node afterwards — so this looks for
+	// resource references specifically rather than for the scheme anywhere.
+	for _, attr := range []string{`src="http`, `src='http`, `href="http`, `href='http`,
+		`src="//`, `href="//`, "@import", "integrity="} {
+		if strings.Contains(body, attr) {
+			t.Errorf("the setup page loads a resource with %q; it must render with no route to the internet", attr)
+		}
+	}
+}
+
+// Property 14: the access point's state reaches the page, including why it is not
+// up. On a node reached over Ethernet that failure is otherwise invisible.
+func TestAPStateIsReported(t *testing.T) {
+	e := newEnv(t)
+	e.w.APStatus = func() *wizard.APState {
+		return &wizard.APState{SSID: "Waypoint-Setup-9E10", Up: false, Open: true,
+			Error: "no wireless interface"}
+	}
+
+	v := e.w.State()
+	if v.AP == nil {
+		t.Fatal("the view carries no access-point state")
+	}
+	if v.AP.Up || v.AP.Error != "no wireless interface" {
+		t.Errorf("AP = %+v", v.AP)
+	}
+
+	// And it survives the HTTP surface, which is where the page reads it.
+	rec := httptest.NewRecorder()
+	e.w.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/setup/state", nil))
+	var got wizard.View
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.AP == nil || got.AP.Error == "" {
+		t.Errorf("state = %s", rec.Body.String())
+	}
+
+	// A wizard with no access point reports none rather than an empty one.
+	e2 := newEnv(t)
+	if e2.w.State().AP != nil {
+		t.Error("a node with no access point reported one")
+	}
+}
