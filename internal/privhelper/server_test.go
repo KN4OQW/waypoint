@@ -2,12 +2,14 @@ package privhelper_test
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/KN4OQW/waypoint/internal/privhelper"
 	"github.com/KN4OQW/waypoint/internal/privhelper/privtest"
@@ -303,5 +305,84 @@ func TestListenRefusesToRemoveANonSocket(t *testing.T) {
 	}
 	if b, err := os.ReadFile(path); err != nil || string(b) != "keep me" {
 		t.Errorf("the file was disturbed: %q %v", b, err)
+	}
+}
+
+// Property: a rejected peer learns it was rejected, even when it is still writing
+// its request as the refusal is sent.
+//
+// Authorization happens on the connection, before a frame has been read, so the
+// server's denial and the client's request are in flight at the same time. If the
+// server closes as soon as it has written the denial, the client's remaining write
+// fails with EPIPE and it reports a transport error — "broken pipe" — instead of
+// the denial already sitting in its receive buffer. That is what a loaded CI
+// runner produced, and what an operator would see as an unexplained disconnect.
+//
+// The pause below is what makes this deterministic rather than a race the test
+// wins on a fast machine: the request is written in two parts, so a server that
+// closes early is guaranteed to do it between them.
+func TestRejectedPeerLearnsWhyWhileStillWriting(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root, which is always authorized")
+	}
+	dir, err := os.MkdirTemp("", "wph")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	path := filepath.Join(dir, "s.sock")
+
+	srv := &privhelper.Server{
+		Prov:       privtest.NewFake(),
+		AllowedGID: 0x7ffffffe, // a group this process cannot be in
+		Logf:       func(string, ...any) {},
+	}
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); _ = srv.Serve(ctx, ln) }()
+	t.Cleanup(func() { cancel(); <-done })
+
+	conn, err := net.Dial("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close() //nolint:errcheck // test connection
+
+	req, err := privhelper.NewRequest(1, privhelper.MethodSetHostname,
+		privhelper.SetHostnameRequest{Hostname: "hs-shack"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hdr [4]byte
+	binary.BigEndian.PutUint32(hdr[:], uint32(len(body)))
+
+	// The header, then a pause long enough for a server that closes early to have
+	// done so, then the body.
+	if _, err := conn.Write(hdr[:]); err != nil {
+		t.Fatalf("writing the header: %v", err)
+	}
+	time.Sleep(250 * time.Millisecond)
+	if _, err := conn.Write(body); err != nil {
+		t.Fatalf("the connection was closed before the request finished (%v) — "+
+			"a rejected client would report a broken pipe instead of the denial", err)
+	}
+
+	var resp privhelper.Response
+	if err := privhelper.ReadFrame(conn, &resp); err != nil {
+		t.Fatalf("reading the denial: %v", err)
+	}
+	if resp.Error == nil {
+		t.Fatal("an unauthorized peer was served")
+	}
+	if got := privhelper.CodeOf(resp.Error); got != privhelper.CodeDenied {
+		t.Errorf("code = %q (err %v), want %q", got, resp.Error, privhelper.CodeDenied)
 	}
 }
