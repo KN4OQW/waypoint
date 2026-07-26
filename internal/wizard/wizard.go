@@ -35,6 +35,7 @@
 package wizard
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -159,6 +160,15 @@ type Wizard struct {
 	// Claimed reports whether the device has been claimed (RFC-0002). It decides
 	// whether the step after provisioning is claim or done.
 	Claimed func() bool
+
+	// OnNetworkJoined is called after the node successfully joins the operator's
+	// network. It is how the setup access point learns it has done its job: an
+	// open AP broadcasting beside the real network the node just joined is exactly
+	// what the window rules exist to prevent.
+	OnNetworkJoined func(ctx context.Context)
+
+	// OnComplete is called once provisioning finishes, for the same reason.
+	OnComplete func(ctx context.Context)
 
 	// Now and Logf are injectable for tests.
 	Now  func() time.Time

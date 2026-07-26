@@ -186,3 +186,93 @@ place gets directions rather than only a refusal.
 - Installing the helper binary and its units from the image module
   (`image/src/modules/waypoint/start_chroot_script`).
 - Adding waypointd's service user to the `waypoint` group.
+
+## The setup access point
+
+A node flashed with `dd` has no network at all, so there is nothing to serve the
+wizard over. The setup AP closes that gap and exists for nothing else — every
+rule below is about making sure it stops existing once it is no longer needed.
+
+### What it looks like
+
+    SSID     Waypoint-Setup-XXXX   (last four of the board serial, uppercased)
+    Security open by default
+    Address  10.42.0.1/24          (NetworkManager's shared-mode range)
+
+The serial suffix is for the hamfest case: several unconfigured nodes powered up
+in one room, all broadcasting an identically named network, and no way to tell
+which one your phone just joined.
+
+### Open by default, and why
+
+An open network means anyone in radio range can reach the wizard. The mitigations
+are that the AP is up for minutes rather than permanently, that the session lock
+admits one device, and that the page says so inline. The alternative — a printed
+per-device key — produces the failure where an operator with no key cannot set up
+the node they own, which is worse.
+
+To protect it, put `waypoint-setup.txt` on the boot partition:
+
+    psk=my-setup-passphrase
+
+Eight to sixty-three characters. A malformed file is **ignored with a logged
+warning** and the AP still comes up open. That file is edited by hand on a card
+in a reader, often on Windows; a node that refuses to raise its AP over a typo is
+a node the operator cannot reach at all.
+
+### The captive portal
+
+`internal/captive` answers every A query with `10.42.0.1` and answers the probe
+URLs each operating system fetches — Apple's `hotspot-detect.html`, Android and
+Chrome's `generate_204`, Windows' `connecttest.txt` and `ncsi.txt`, Firefox's
+`canonical.html` — with a 302 to the wizard, so the phone's own captive sheet
+opens on it. `dhcp-option=114` (RFC 8910) hands the portal URL to clients that
+read it, and `/captive-portal` serves the RFC 8908 JSON they then fetch.
+
+AAAA queries get an empty NOERROR rather than a forged address: a client handed a
+nonsense AAAA tries it first and stalls until it times out.
+
+NetworkManager's own dnsmasq is set to `port=0` — DHCP only — so the responder in
+`internal/captive` owns port 53 rather than the behaviour living in a config file
+written blind.
+
+### The session lock
+
+The first device to load the wizard holds it. Every other device gets a 403 page
+naming the holder and the timeout. The session follows the client's MAC as well
+as its address, so a DHCP renewal mid-setup does not cost the operator their
+progress, and it is released after ten minutes idle or when setup completes.
+
+This is not authentication and does not pretend to be — whoever associates first
+holds the session. It bounds the damage to "first device wins", which is the same
+property a physical setup button has, and it is the strongest thing available
+before any credential exists.
+
+### When it goes away
+
+- **On a network join** — immediately. An open AP broadcasting beside the real
+  network the node just joined is the thing the window rules exist to prevent.
+- **On setup completion** — immediately.
+- **After thirty minutes with nobody associated** — and it stays down until the
+  next boot. Re-raising it would undo the reason it went down; a reboot is a
+  deliberate act by someone with physical access, which is the right bar for
+  re-opening an unauthenticated surface.
+
+A daemon shutdown takes it down without spending it, so the next boot raises it
+again if setup is still unfinished.
+
+### No routing off the AP segment
+
+NetworkManager's shared mode enables forwarding and adds a masquerade rule,
+because it assumes you want to share an internet connection. An unattended open
+access point that routes traffic is a different object from one that serves a
+setup page. `net.ipv4.conf.<iface>.forwarding=0` is the primary control, with a
+best-effort nft/iptables FORWARD drop behind it.
+
+### Credentials on an open network
+
+The wizard presents an **SSH public key as the recommended credential**: a key
+the operator already holds cannot be forgotten, and a public key is not a secret,
+so sending it over an open network gives nothing away. A **password is the
+fallback**, with the caveat stated inline that it travels in the clear and should
+be changed once the node is on the operator's own Wi-Fi.

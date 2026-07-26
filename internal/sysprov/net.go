@@ -25,10 +25,18 @@ const (
 	// ones a rollback restores and hand-made profiles are left alone.
 	apProfile = "waypoint-setup-ap"
 
-	// defaultAPAddress is the node's address on its own access point. 192.168.66/24
-	// is chosen to be unlikely to collide with the network the operator's phone
-	// normally sits on.
-	defaultAPAddress = "192.168.66.1/24"
+	// defaultAPAddress is the node's address on its own access point.
+	//
+	// It is NetworkManager's shared-mode default range. That is not cosmetic: NM
+	// starts the DHCP server itself and hands out 10.42.0.x, so choosing a
+	// different address here would mean the node answering on one subnet while its
+	// own clients were leased another.
+	defaultAPAddress = "10.42.0.1/24"
+
+	// nmDnsmasqSharedDir holds drop-ins for the dnsmasq NetworkManager runs in
+	// shared mode. NM reads every .conf here and passes it to that dnsmasq.
+	nmDnsmasqSharedDir = "/etc/NetworkManager/dnsmasq-shared.d"
+	nmDnsmasqSharedAP  = nmDnsmasqSharedDir + "/waypoint-setup-ap.conf"
 
 	defaultJoinTimeout = 45 * time.Second
 )
@@ -55,6 +63,10 @@ func (s *System) APUp(ctx context.Context, req privhelper.APUpRequest) (privhelp
 	}
 	s.setRegulatoryDomain(ctx, req.Country)
 
+	if err := s.writeDnsmasqSharedConf(addr); err != nil {
+		return privhelper.APUpResponse{}, err
+	}
+
 	body := renderAPKeyfile(apProfile, iface, addr, req)
 	changed, err := s.writeProfile(ctx, apProfile, body)
 	if err != nil {
@@ -69,7 +81,69 @@ func (s *System) APUp(ctx context.Context, req privhelper.APUpRequest) (privhelp
 		resp.Changed = true
 		s.logf("sysprov: setup AP %q up on %s (%s)", req.SSID, iface, addr)
 	}
+	// After the interface exists, not before: the sysctl key is per-interface and
+	// does not appear until NetworkManager has brought the device up in AP mode.
+	s.confineAPSegment(ctx, iface)
 	return resp, nil
+}
+
+// writeDnsmasqSharedConf configures the dnsmasq NetworkManager runs for the AP.
+//
+// Two settings, each load-bearing:
+//
+//   - port=0 turns dnsmasq's DNS server off while leaving its DHCP server on.
+//     waypointd runs the captive portal's own responder on port 53, and two
+//     processes cannot both have it. Letting dnsmasq keep DNS would work for the
+//     hijack, but it would put the portal's behaviour in a config file this
+//     package writes blind rather than in code with tests around it.
+//   - dhcp-option=114 is RFC 8910: it hands the portal URL to the client in its
+//     DHCP lease. A modern phone that reads it opens the sheet without waiting to
+//     notice that its connectivity probe came back wrong, which is the difference
+//     between the wizard appearing immediately and appearing after a probe cycle.
+func (s *System) writeDnsmasqSharedConf(addrCIDR string) error {
+	gateway := addrCIDR
+	if i := strings.IndexByte(gateway, '/'); i > 0 {
+		gateway = gateway[:i]
+	}
+	body := managedHeader("setup access point DHCP") +
+		"\n# waypointd serves DNS for the captive portal; dnsmasq does DHCP only.\n" +
+		"port=0\n\n" +
+		"# RFC 8910: tell the client where the portal is, in its lease.\n" +
+		"dhcp-option=114,http://" + gateway + "/\n"
+
+	if _, err := s.writeFileIfChanged(s.path(nmDnsmasqSharedAP), []byte(body), 0o644); err != nil {
+		return internalf("write %s: %v", nmDnsmasqSharedAP, err)
+	}
+	return nil
+}
+
+// confineAPSegment stops the node routing anything off the setup AP.
+//
+// The AP is a way to reach this node, not a way to reach the internet through it.
+// NetworkManager's shared mode enables forwarding and adds a masquerade rule
+// because it assumes you want the second thing; an unattended open access point
+// that routes traffic is a very different object from one that serves a setup
+// page, and it is not the one Waypoint should be.
+//
+// The per-interface sysctl is the primary control and always available. The
+// firewall rule is belt and braces for a kernel where the global forwarding
+// setting overrides it, and is best-effort because nft and iptables are not both
+// present on every image.
+func (s *System) confineAPSegment(ctx context.Context, iface string) {
+	key := "net.ipv4.conf." + strings.ReplaceAll(iface, ".", "/") + ".forwarding"
+	if _, err := s.run(ctx, nil, "sysctl", "-w", key+"=0"); err != nil {
+		s.logf("sysprov: could not disable forwarding on %s (%v); the AP may route traffic", iface, err)
+	} else {
+		s.logf("sysprov: forwarding disabled on %s — the setup AP reaches this node only", iface)
+	}
+
+	if _, err := s.run(ctx, nil, "nft", "add", "rule", "inet", "filter", "forward",
+		"iifname", iface, "drop"); err == nil {
+		return
+	}
+	if _, err := s.run(ctx, nil, "iptables", "-I", "FORWARD", "1", "-i", iface, "-j", "DROP"); err != nil {
+		s.logf("sysprov: no packet filter available to fence the AP segment (%v); the sysctl above is the only control", err)
+	}
 }
 
 // APDown tears the setup access point down. It does not delete the profile: an

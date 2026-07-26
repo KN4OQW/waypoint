@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/KN4OQW/waypoint/internal/auth"
+	"github.com/KN4OQW/waypoint/internal/captive"
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/demo"
 	"github.com/KN4OQW/waypoint/internal/dmrhosts"
@@ -68,6 +69,9 @@ type server struct {
 	// and the gate becomes a pass-through, which is what every test that builds a
 	// server directly relies on.
 	wiz *wizard.Wizard
+	// ap is the setup access point and its captive portal, raised only while the
+	// node is unprovisioned. Nil when the node is set up or the AP is disabled.
+	ap *captive.Controller
 
 	// Host/OS networking domain (docs/config-coverage.md §4). netKeyfileDir is
 	// where the NetworkManager keyfile renderer writes waypoint-*.nmconnection;
@@ -1218,6 +1222,9 @@ type healthResponse struct {
 	Uptime  string `json:"uptime"`
 	Demo    bool   `json:"demo"`
 	Detail  string `json:"detail,omitempty"`
+	// SetupAP is the setup access point's state, or null once the node is
+	// provisioned and the AP is gone.
+	SetupAP *captive.Status `json:"setup_ap,omitempty"`
 }
 
 func (s *server) health(w http.ResponseWriter, _ *http.Request) {
@@ -1233,6 +1240,10 @@ func (s *server) health(w http.ResponseWriter, _ *http.Request) {
 		Uptime:  time.Since(s.started).Round(time.Second).String(),
 		Demo:    s.demo,
 		Detail:  detail,
+		// Health is reachable in every state, including from the setup access
+		// point, so it is the one endpoint that can answer "is the AP up, and why
+		// did it go away" while the node is still unprovisioned.
+		SetupAP: s.setupAPStatus(),
 	})
 }
 
@@ -1658,6 +1669,15 @@ func main() {
 	provisionSocket := flag.String("provision-socket", privhelper.DefaultSocketPath, "Unix socket of the privileged provisioning helper")
 	provisionMarker := flag.String("provision-marker", provision.DefaultPath, "path to the provisioned marker written when setup completes")
 	setupProgress := flag.String("setup-progress", wizard.DefaultProgressPath, "path to the in-flight setup progress file")
+	// The setup access point is how a node with no other network is reachable at
+	// all. It is open by default (see internal/setupap) and comes down on a
+	// network join, on setup completion, or after the window below with nobody
+	// associated.
+	setupAP := flag.Bool("setup-ap", true, "raise the setup access point while the node is unprovisioned")
+	setupAPIface := flag.String("setup-ap-interface", "", "wireless interface for the setup access point (empty picks the first)")
+	setupAPCountry := flag.String("setup-ap-country", "", "regulatory domain for the setup access point, e.g. US")
+	setupAPWindow := flag.Duration("setup-ap-window", captive.DefaultAssociateWindow, "how long the setup access point waits for a client before coming down until the next boot")
+	setupSessionIdle := flag.Duration("setup-session-idle", captive.DefaultIdleTimeout, "how long a setup session survives with no request from the holding device")
 	eventsPath := flag.String("events-store", "/home/pi-star/waypoint/events.db", "path to the SQLite event-history store (RFC-0004); a config.db sibling")
 	nmKeyfileDir := flag.String("nm-keyfile-dir", "/etc/NetworkManager/system-connections", "directory for rendered NetworkManager keyfiles (waypoint-*.nmconnection)")
 	netConfirmTimeout := flag.Duration("network-confirm-timeout", netconfig.DefaultConfirmTimeout, "confirm-or-revert rollback window for a network apply")
@@ -1841,6 +1861,13 @@ func main() {
 		Marker:   *provisionMarker,
 		Progress: *setupProgress,
 	}, st)
+	s.initSetupAP(context.Background(), apOptions{
+		Enabled:     *setupAP,
+		Interface:   *setupAPIface,
+		Country:     *setupAPCountry,
+		Window:      *setupAPWindow,
+		IdleTimeout: *setupSessionIdle,
+	})
 	s.initPeering(context.Background(), *peeringDir, *peeringBootstrapAddr)
 
 	if *demoMode {

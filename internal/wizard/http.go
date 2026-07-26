@@ -26,6 +26,7 @@ func (w *Wizard) Handler() http.Handler {
 	mux.HandleFunc(Prefix+"user", post(w.handleUser))
 	mux.HandleFunc(Prefix+"key", post(w.handleKey))
 	mux.HandleFunc(Prefix+"lock", post(w.handleLock))
+	mux.HandleFunc(Prefix+"network", post(w.handleJoin))
 	return mux
 }
 
@@ -83,6 +84,20 @@ func (w *Wizard) handleLock(rw http.ResponseWriter, r *http.Request) {
 	}
 	view, err := w.Lock(r.Context(), req)
 	w.respond(rw, view, err)
+}
+
+func (w *Wizard) handleJoin(rw http.ResponseWriter, r *http.Request) {
+	var req JoinRequest
+	if !decode(rw, r, &req) {
+		return
+	}
+	got, err := w.JoinNetwork(r.Context(), req)
+	if err != nil {
+		status, msg := statusFor(err)
+		writeJSON(rw, status, map[string]any{"error": msg, "mode": got.View.Mode, "state": got.View})
+		return
+	}
+	writeJSON(rw, http.StatusOK, got)
 }
 
 // respond writes the step's outcome. Success and failure both carry the current
@@ -203,14 +218,58 @@ func writePlaceholder(rw http.ResponseWriter, v View) {
 	_, _ = rw.Write([]byte(`<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Waypoint — set up this node</title>
+<title>Waypoint &mdash; set up this node</title>
 <style>
-  body{font:16px/1.5 system-ui,sans-serif;max-width:34rem;margin:3rem auto;padding:0 1rem}
-  code{background:#8881;padding:.1em .3em;border-radius:.2em}
+  body{font:16px/1.6 system-ui,sans-serif;max-width:34rem;margin:2.5rem auto;padding:0 1rem}
+  h1{font-size:1.4rem}
+  h2{font-size:1.05rem;margin-top:2rem}
+  code{background:#8881;padding:.1em .35em;border-radius:.25em}
+  .warn{border-left:3px solid #c60;background:#c6601a;background:color-mix(in srgb,#c60 12%, transparent);padding:.75rem 1rem;border-radius:.25rem}
+  .rec{border-left:3px solid #2a7;background:color-mix(in srgb,#2a7 12%, transparent);padding:.75rem 1rem;border-radius:.25rem}
+  ol{padding-left:1.2rem}
 </style>
 <h1>Set up this Waypoint node</h1>
 <p>This node has not been set up yet. The next step is <code>` + string(v.Next) + `</code>.</p>
-<p>Setup runs over <code>/api/setup/</code>; the dashboard is not served until it is finished.</p>
+
+<div class="warn">
+  <strong>This setup network is open.</strong> Anyone within radio range can reach
+  this page while it is up, so treat anything you type here as visible to them.
+  The access point comes down as soon as this node joins your network, and it is
+  only up for the first half hour after boot.
+  <br><br>
+  To protect it instead, power the node off, put the card in a reader, and create
+  <code>waypoint-setup.txt</code> on the boot partition containing
+  <code>psk=your-passphrase</code> (8&ndash;63 characters).
+</div>
+
+<h2>The recovery account</h2>
+<p>Setup creates one non-root account. It is how you get back into this node if
+you lose your Waypoint password, so it is worth getting right.</p>
+
+<div class="rec">
+  <strong>Recommended: an SSH public key.</strong> Paste the contents of your
+  <code>~/.ssh/id_ed25519.pub</code>. A key you already hold cannot be forgotten,
+  and &mdash; on this open network &mdash; a public key is not a secret, so
+  sending it over the setup access point gives nothing away.
+</div>
+
+<p><strong>Fallback: a password.</strong> Use one if you have no key to hand. Be
+aware that it travels over this open network in the clear, so choose one you do
+not use anywhere else, and change it once the node is on your own Wi-Fi.</p>
+
+<p>You can set both. Whichever you choose, root's password is locked at the end
+of setup, and this account is the only way back in.</p>
+
+<h2>What happens next</h2>
+<ol>
+  <li>Name this node &mdash; the shipped default is refused, so two Waypoints on
+      one network do not answer to the same address.</li>
+  <li>Create the recovery account.</li>
+  <li>Add its SSH key, or skip if you set a password.</li>
+  <li>Lock root and finish. The dashboard opens after that, for you to claim.</li>
+</ol>
+<p>Setup runs over <code>` + Prefix + `</code>; the dashboard is not served until
+it is finished.</p>
 `))
 }
 

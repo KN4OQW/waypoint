@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"time"
 
 	"github.com/KN4OQW/waypoint/internal/privhelper"
 	"github.com/KN4OQW/waypoint/internal/provision"
@@ -212,8 +213,100 @@ func (w *Wizard) Lock(ctx context.Context, req LockRequest) (View, error) {
 	}
 
 	w.logf("wizard: setup complete — %q, recovery account %q, root locked", p.Hostname, p.RecoveryUser)
+	if w.OnComplete != nil {
+		w.OnComplete(ctx)
+	}
 	return w.state(), nil
 }
+
+// JoinRequest puts the node on the operator's Wi-Fi network.
+type JoinRequest struct {
+	SSID string `json:"ssid"`
+	// PSK is empty for an open network.
+	PSK string `json:"psk,omitempty"`
+	// Hidden drives a scan-ssid join for a network that does not beacon.
+	Hidden bool `json:"hidden,omitempty"`
+	// Country is the regulatory domain, two letters.
+	Country string `json:"country,omitempty"`
+	// TimeoutSeconds bounds the wait for association; zero means the helper's
+	// default.
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+}
+
+// JoinResult reports the outcome alongside the wizard's state.
+type JoinResult struct {
+	View      View   `json:"state"`
+	SSID      string `json:"ssid"`
+	Connected bool   `json:"connected"`
+	IPv4      string `json:"ipv4,omitempty"`
+	Interface string `json:"interface,omitempty"`
+}
+
+// JoinNetwork puts the node on the operator's network, under a rollback
+// checkpoint.
+//
+// It is not an ordered step. A node on Ethernet never needs it, and one being set
+// up over the setup access point needs it at whatever point the operator has their
+// Wi-Fi password to hand — making it step N would mean refusing the operator who
+// wants to do it first and the one who wants to do it last.
+//
+// The checkpoint is the reason this is more than a passthrough to the helper. The
+// operator is changing the network they are connected over; a wrong passphrase
+// without a checkpoint ends the session that would have fixed it. On success the
+// checkpoint is destroyed and the setup AP comes down; on failure the checkpoint
+// is rolled back and the AP stays up, which is what leaves the operator somewhere
+// to retry from.
+func (w *Wizard) JoinNetwork(ctx context.Context, req JoinRequest) (JoinResult, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	cp, err := w.Prov.NetCheckpointCreate(ctx, privhelper.NetCheckpointCreateRequest{
+		TimeoutSeconds: int(joinCheckpointWindow.Seconds()),
+	})
+	if err != nil {
+		return JoinResult{View: w.state()}, err
+	}
+
+	got, joinErr := w.Prov.NetJoin(ctx, privhelper.NetJoinRequest{
+		SSID:           req.SSID,
+		PSK:            req.PSK,
+		Hidden:         req.Hidden,
+		Country:        req.Country,
+		TimeoutSeconds: req.TimeoutSeconds,
+	})
+	if joinErr != nil || !got.Connected {
+		if _, err := w.Prov.NetCheckpointRollback(ctx,
+			privhelper.NetCheckpointRollbackRequest{Handle: cp.Handle}); err != nil {
+			w.logf("wizard: could not roll back after a failed join: %v", err)
+		}
+		if joinErr == nil {
+			joinErr = privhelper.Errorf(privhelper.CodeConflict,
+				"could not associate with %q; the previous network settings were restored", req.SSID)
+		}
+		return JoinResult{View: w.state(), SSID: req.SSID}, joinErr
+	}
+
+	if _, err := w.Prov.NetCheckpointDestroy(ctx,
+		privhelper.NetCheckpointDestroyRequest{Handle: cp.Handle}); err != nil {
+		// The join worked; a checkpoint left behind is untidy, not dangerous.
+		w.logf("wizard: could not destroy checkpoint %s after a successful join: %v", cp.Handle, err)
+	}
+	w.logf("wizard: joined %q on %s (%s)", got.SSID, got.Interface, got.IPv4)
+
+	// The node is on the operator's network, so the setup access point has done
+	// its job and comes down at once.
+	if w.OnNetworkJoined != nil {
+		w.OnNetworkJoined(ctx)
+	}
+	return JoinResult{
+		View: w.state(), SSID: got.SSID, Connected: true,
+		IPv4: got.IPv4, Interface: got.Interface,
+	}, nil
+}
+
+// joinCheckpointWindow is how long the pre-join network state is held. It only
+// has to outlast the association attempt plus the operator noticing it failed.
+const joinCheckpointWindow = 3 * time.Minute
 
 func removeIfExists(path string) error {
 	err := os.Remove(path)
