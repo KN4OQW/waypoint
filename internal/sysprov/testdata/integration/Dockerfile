@@ -14,6 +14,8 @@ RUN apt-get update \
       hostname \
       openssh-server \
       sudo \
+      systemd \
+      strace \
  && rm -rf /var/lib/apt/lists/*
 
 # sshd refuses to run without host keys or its privilege-separation directory,
@@ -26,3 +28,8 @@ RUN ssh-keygen -A && mkdir -p /run/sshd
 # LockRoot change it to L. A fresh Debian container has root at NP, which would
 # make the transition invisible.
 RUN echo 'root:integration-only-not-a-secret' | chpasswd
+
+# The syscall check needs the unit's filter resolved by the same systemd that
+# would enforce it, and strace to see what the helper actually calls.
+COPY verify-syscalls.sh /verify-syscalls.sh
+RUN chmod +x /verify-syscalls.sh

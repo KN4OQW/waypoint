@@ -1,11 +1,10 @@
 [Unit]
 Description=Waypoint dashboard + supervisor (live)
 Documentation=https://github.com/KN4OQW/waypoint
-After=network-online.target mosquitto.service
+After=network-online.target mosquitto.service waypoint-firstboot.service
 Wants=network-online.target mosquitto.service
 
 [Service]
-Type=simple
 # RFC-0014 power-loss safety: an update that was swapped but never confirmed is
 # reverted here, BEFORE the daemon starts, so the unit then runs the prior binary.
 # Non-fatal (leading '-') — a boot-check hiccup must never wedge startup. The
@@ -24,6 +23,20 @@ ExecStart=/home/pi-star/waypoint/bin/waypointd \
 Restart=on-failure
 RestartSec=3
 User=root
+
+# The watchdog catches the failure Restart= cannot: a daemon that has deadlocked
+# still holds its listener open and never exits, so a hotspot can be off the air
+# indefinitely with systemd believing it healthy. waypointd pings from a loop that
+# is gated on the event hub answering, so a ping proves the daemon is working
+# rather than merely scheduled. 60s is generous for a Pi Zero under a full
+# rendering pass; the daemon pings at half that.
+#
+# Type=notify rather than simple: the daemon signals READY=1 once its listeners
+# are bound, so units ordered after it are not started against a socket that is
+# not accepting yet.
+Type=notify
+NotifyAccess=main
+WatchdogSec=60s
 
 [Install]
 WantedBy=multi-user.target

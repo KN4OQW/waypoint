@@ -44,6 +44,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/peering"
 	"github.com/KN4OQW/waypoint/internal/privhelper"
 	"github.com/KN4OQW/waypoint/internal/provision"
+	"github.com/KN4OQW/waypoint/internal/sdnotify"
 	"github.com/KN4OQW/waypoint/internal/seed"
 	"github.com/KN4OQW/waypoint/internal/status"
 	"github.com/KN4OQW/waypoint/internal/store"
@@ -1585,6 +1586,52 @@ func (s *server) newMux() *http.ServeMux {
 	return mux
 }
 
+// runWatchdog answers systemd's watchdog for as long as the daemon is healthy.
+//
+// "Healthy" is deliberately more than "this goroutine is scheduled". The ping is
+// gated on the event hub answering, because a daemon whose hub has deadlocked is
+// exactly the failure the watchdog exists to catch, and a ping that only proves
+// the timer fired would keep such a node alive indefinitely.
+func runWatchdog(ctx context.Context, s *server) {
+	interval := sdnotify.WatchdogInterval()
+	if err := sdnotify.Ready(); err != nil {
+		log.Printf("waypointd: could not notify systemd: %v", err)
+	}
+	if interval <= 0 {
+		return // no watchdog configured, or not running under systemd
+	}
+	log.Printf("waypointd: answering the systemd watchdog every %s", interval)
+
+	tick := time.NewTicker(interval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			if !s.healthy() {
+				// Deliberately silent on the socket: withholding the ping is how the
+				// watchdog is told, and systemd will restart us. The log line is for
+				// whoever reads the journal afterwards.
+				log.Printf("waypointd: WEDGED — withholding the watchdog ping so systemd restarts this daemon")
+				continue
+			}
+			if err := sdnotify.Watchdog(); err != nil {
+				log.Printf("waypointd: watchdog ping failed: %v", err)
+			}
+		}
+	}
+}
+
+// healthy reports whether the daemon is doing its job, not merely running. It is
+// what the watchdog ping is gated on.
+func (s *server) healthy() bool {
+	// The hub is the daemon's spine: every event, status frame, and WebSocket
+	// message goes through it. If it does not answer, nothing else works either,
+	// however alive the process looks from outside.
+	return s.hub != nil && s.hub.Alive()
+}
+
 func main() {
 	// Subcommands are dispatched before flag parsing: `waypointd reset-claim`
 	// connects to the store directly and returns the device to claim mode, for an
@@ -2002,6 +2049,13 @@ func main() {
 		scheme = "http"
 	}
 	log.Printf("serving %s on %s", scheme, *addr)
+	// Tell systemd we are up, and start answering its watchdog.
+	//
+	// The watchdog is the only thing that can distinguish a wedged daemon from a
+	// healthy one: a hotspot whose event loop has deadlocked still holds its
+	// listener open and never exits, so Restart= never fires and the node is off
+	// the air until somebody power-cycles it. See runWatchdog.
+	go runWatchdog(context.Background(), s)
 	log.Fatal(listenAndServe(srv, tlsOptions{
 		enabled:      tlsServing,
 		certDir:      *tlsDir,

@@ -34,12 +34,30 @@ echo "==> building the container image"
 docker build --quiet -t "$image" "$here" >/dev/null
 
 echo "==> running"
+run_container() {
+  docker run --rm \
+    --cap-add SYS_ADMIN \
+    --cap-add SYS_PTRACE \
+    -e WAYPOINT_SYSPROV_INTEGRATION=1 \
+    -v "$bin:/sysprov.test:ro" \
+    "$image" "$@"
+}
+
+# The syscall surface check runs first, in its own container, because it traces a
+# full test run and would otherwise be reading a filesystem the tests had already
+# changed. It is skipped rather than failed when the kernel will not allow
+# ptrace — some CI sandboxes refuse it — but a refusal is said out loud.
+if ! run_container /verify-syscalls.sh; then
+  echo "!! syscall surface check did not pass; see above" >&2
+  syscall_rc=1
+else
+  syscall_rc=0
+fi
+
 # --cap-add SYS_ADMIN lets sethostname(2) succeed inside the container's UTS
 # namespace, so the running hostname changes too and not only /etc/hostname.
 # Nothing else here needs elevated privileges.
-exec docker run --rm \
-  --cap-add SYS_ADMIN \
-  -e WAYPOINT_SYSPROV_INTEGRATION=1 \
-  -v "$bin:/sysprov.test:ro" \
-  "$image" \
-  /sysprov.test -test.count=1 "$@"
+run_container /sysprov.test -test.count=1 "$@"
+test_rc=$?
+
+exit $(( syscall_rc || test_rc ))

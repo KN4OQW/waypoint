@@ -21,6 +21,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"os/user"
 	"syscall"
 
 	"github.com/KN4OQW/waypoint/internal/privhelper"
@@ -34,6 +35,9 @@ func main() {
 	socket := flag.String("socket", privhelper.DefaultSocketPath,
 		"path to the Unix socket to listen on (ignored under systemd socket activation)")
 	root := flag.String("root", "", "filesystem prefix for the files this helper writes (testing only)")
+	prepare := flag.Bool("prepare", false,
+		"create the state directory and verify the waypoint group exists, then exit (first-boot oneshot)")
+	stateDir := flag.String("state-dir", "/var/lib/waypoint", "directory holding the provisioned marker and setup progress")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
@@ -43,9 +47,41 @@ func main() {
 	}
 
 	logger := log.New(os.Stderr, "", 0) // journald adds its own timestamps
+
+	if *prepare {
+		if err := runPrepare(*stateDir, logger); err != nil {
+			logger.Fatalf("waypoint-provision-helper -prepare: %v", err)
+		}
+		return
+	}
 	if err := run(*socket, *root, logger); err != nil {
 		logger.Fatalf("waypoint-provision-helper: %v", err)
 	}
+}
+
+// runPrepare is the first-boot oneshot: make the state directory and prove the
+// access-control group exists, before anything tries to use either.
+//
+// It is a separate mode rather than work done lazily at first use because the
+// failure it catches is a packaging one — a group that sysusers.d did not create,
+// a /var/lib that is read-only — and those should fail at boot, in a unit an
+// operator can see in `systemctl --failed`, rather than as a confusing socket
+// error the first time somebody opens the wizard.
+func runPrepare(stateDir string, logger *log.Logger) error {
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("must run as root (running as uid %d)", os.Geteuid())
+	}
+	if _, err := user.LookupGroup(privhelper.SocketGroup); err != nil {
+		return fmt.Errorf("group %q does not exist; sysusers.d should have created it: %w",
+			privhelper.SocketGroup, err)
+	}
+	// 0750 root:root — the marker inside is world-readable, the directory is not
+	// somewhere an unprivileged process needs to list.
+	if err := os.MkdirAll(stateDir, 0o750); err != nil {
+		return fmt.Errorf("create %s: %w", stateDir, err)
+	}
+	logger.Printf("waypoint-provision-helper: %s ready, group %q present", stateDir, privhelper.SocketGroup)
+	return nil
 }
 
 func run(socket, root string, logger *log.Logger) error {

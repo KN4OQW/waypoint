@@ -96,6 +96,27 @@ minisign -V -p "${WAYPOINT_RELEASE_PUBKEY}" -x "${wp_tmp}/waypointd.minisig" -m 
 
 install -d -m 0755 "$(dirname "${WAYPOINT_BIN}")"
 install -m 0755 "${wp_tmp}/waypointd" "${WAYPOINT_BIN}"
+
+# The privileged provisioning helper lives in /usr/bin rather than under the
+# Waypoint home: it is a system daemon started by systemd, not something the
+# RFC-0014 updater swaps, and its unit refers to it by an absolute path.
+echo "=== downloading + verifying waypoint-provision-helper (${DEB_ARCH})"
+fetch_artifact "${WAYPOINT_RELEASE_BASE}/waypoint-provision-helper-linux-${DEB_ARCH}" \
+    "waypoint-provision-helper-linux-${DEB_ARCH}"         "${wp_tmp}/waypoint-provision-helper"
+fetch_artifact "${WAYPOINT_RELEASE_BASE}/waypoint-provision-helper-linux-${DEB_ARCH}.minisig" \
+    "waypoint-provision-helper-linux-${DEB_ARCH}.minisig" "${wp_tmp}/waypoint-provision-helper.minisig"
+minisign -V -p "${WAYPOINT_RELEASE_PUBKEY}" -x "${wp_tmp}/waypoint-provision-helper.minisig" \
+    -m "${wp_tmp}/waypoint-provision-helper"
+install -m 0755 "${wp_tmp}/waypoint-provision-helper" /usr/bin/waypoint-provision-helper
+
+# The waypoint group gates the helper's socket. sysusers.d creates it on first
+# boot, but the helper refuses to start without it, so it is created at build
+# time too — a node whose first boot raced sysusers would otherwise come up with
+# a failed helper and no way to run setup.
+systemd-sysusers /usr/lib/sysusers.d/waypoint.conf
+# Likewise the socket directory: the .socket unit would create it 0755, and the
+# tmpfiles fragment is what makes it 0750 root:waypoint.
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/waypoint-provision.conf || true
 rm -rf "${wp_tmp}"
 
 # Waypoint home tree (root-owned, user-agnostic). waypointd renders INIs into etc/
@@ -197,6 +218,11 @@ systemctl mask serial-getty@ttyAMA0.service 2>/dev/null || true
 echo "=== enabling services"
 systemctl enable mosquitto.service
 systemctl enable waypointd.service
+# First-boot provisioning (docs/provisioning.md). The socket is what starts the
+# privileged helper on demand; the oneshot is skipped by its own
+# ConditionPathExists on every boot after the node has been set up.
+systemctl enable waypoint-provision-helper.socket
+systemctl enable waypoint-firstboot.service
 # Gateway units are present but NOT enabled: waypointd enables/starts each one when
 # its mode is configured on Apply. A fresh, unclaimed node runs no gateways.
 
