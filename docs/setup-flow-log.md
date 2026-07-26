@@ -632,4 +632,18 @@ they are covered by the container suite against the real `useradd`/`passwd`/
 `global`); AP → station → AP sequencing is clean with no driver reload or rfkill
 workaround on 7.45.98; the MAC changes between AP and scanning roles.
 
+**The image was built.** `image/tests/build-local.sh` produces a flashable
+`.img.xz` from the working tree, inside a privileged container so the host needs
+Docker rather than root. Loop-mounting the result confirms the helper binary, all
+three units with the socket and oneshot **enabled**, the sysusers/tmpfiles
+fragments, the `waypoint` group at gid 992, and no provisioned marker — so the
+first boot runs the wizard. That closes the prompt 9.5 acceptance item I had
+reported as unverified.
+
+The image is signed with a throwaway key, deliberately: the module's minisign
+check is not skipped for a local build, because a build that skipped it would not
+be exercising the trust path the real one uses. The image therefore trusts a dev
+key and will refuse a production release, which is the correct property for a
+bench image.
+
 The board was returned to its prior state and confirmed clean.

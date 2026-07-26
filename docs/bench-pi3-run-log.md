@@ -177,12 +177,46 @@ what was actually observed:
   `curl` proves. The probe endpoints answer correctly (302 to the portal, none of
   the vendor success strings), but whether iOS and Android pop their sheet needs a
   handset.
-- **A card.** Claim over HTTPS, reboot persistence, and both reset depths need a
-  stock image flashed to an SD card. I cannot flash one from here, and the board's
-  running system is not a clean image. The image build itself is wired up
-  (`start_chroot_script`, `verify-units.sh`) but has never been run end to end —
-  CustomPiOS needs a privileged loop-mounted chroot with qemu binfmt, which is a
-  separate task from this branch.
+- **A card.** Claim over HTTPS, reboot persistence, and both reset depths need
+  the image below flashed to an SD card and booted. I cannot flash a card from
+  here; the board's running system is a live dual-stack node, not a clean image.
+
+## The image
+
+Built from this tree and verified. `image/tests/build-local.sh` reproduces it.
+
+    waypoint-firstboot-bench-armhf.img.xz   598 MiB
+    sha256  dd1cd9734facf744899c5b22645bf993e6eb8b55f9541966c83cdcb91e8dfe0a
+
+Checked by loop-mounting the finished rootfs:
+
+| Check | Result |
+|---|---|
+| `/usr/bin/waypoint-provision-helper` installed | present, 0755 |
+| `waypoint-provision-helper.socket` enabled | symlinked into `sockets.target.wants` |
+| `waypoint-firstboot.service` enabled | symlinked into `multi-user.target.wants` |
+| `waypoint-provision-helper.service` shipped | present |
+| `sysusers.d` / `tmpfiles.d` fragments | both present |
+| `waypoint` group created at build time | `waypoint:x:992:` |
+| Provisioned marker absent | yes — first boot runs the wizard |
+| Release public key baked in | the dev key the binaries were signed with |
+
+That closes the one acceptance item from prompt 9.5 I had reported as unverified:
+**a from-scratch image build does contain all units enabled.**
+
+**This image trusts a throwaway signing key.** The module verifies every binary it
+bakes in with minisign and that check is not skipped for a local build — skipping
+it would mean not testing the trust path the real build uses. So the binaries are
+signed with a generated key and that key becomes the image's release key. The
+verification is real; the key is obviously not, which is the honest way to say the
+image must never accept a production release. It is for this bench and nothing
+else.
+
+Five container packages had to be found by failing without them: `python3`,
+`python3-yaml`, `python3-git`, `lsof`, and the partition tools. Two of them
+(`python3-yaml`, `python3-git`) fail *late* — after the 500 MiB base image has
+been downloaded, extracted and mounted — so a first attempt costs ten minutes
+before it tells you. They are pinned in the build script with that noted.
 - **A correct passphrase.** The success half of the join. The failure half — the
   one that strands operators — is verified.
 
