@@ -107,6 +107,140 @@ func (w *Wizard) CreateUser(ctx context.Context, req UserRequest) (View, error) 
 	return w.state(), nil
 }
 
+// PriorAdmin is an administrator account that existed before this setup ran.
+type PriorAdmin struct {
+	Username string `json:"username"`
+	UID      int    `json:"uid"`
+	// Summary is the credential state in a line the operator can act on.
+	Summary string `json:"summary"`
+	// Reachable reports whether somebody could actually log in as it. An account
+	// with a key or a usable password is a live way into this node; one with
+	// neither is a name in a file, and the difference decides how alarmed the
+	// operator should be.
+	Reachable bool `json:"reachable"`
+	SSHKeys   int  `json:"ssh_keys"`
+}
+
+// PriorAdmins lists administrator accounts other than the one this setup created.
+//
+// It exists for second-hand hardware. A board bought at a hamfest, inherited from
+// a silent key, or reflashed onto a card nobody wiped can carry a previous
+// owner's account — often with an SSH key still in it, which is standing
+// passwordless access to a node the new operator believes is theirs. Nothing else
+// in setup would ever mention it.
+//
+// The account this wizard just created is filtered out here rather than left for
+// the UI to exclude. A screen offering the operator a checkbox to delete the
+// recovery account they are in the middle of creating would be a bug with a
+// bricked node at the end of it, and "the UI does not render that one" is not
+// where that guarantee belongs.
+func (w *Wizard) PriorAdmins(ctx context.Context) ([]PriorAdmin, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.priorAdmins(ctx)
+}
+
+func (w *Wizard) priorAdmins(ctx context.Context) ([]PriorAdmin, error) {
+	got, err := w.Prov.ListSudoUsers(ctx, privhelper.ListSudoUsersRequest{})
+	if err != nil {
+		return nil, err
+	}
+	ours := w.Load().RecoveryUser
+
+	var out []PriorAdmin
+	for _, u := range got.Users {
+		if u.Username == ours {
+			continue
+		}
+		out = append(out, PriorAdmin{
+			Username:  u.Username,
+			UID:       u.UID,
+			Summary:   u.Summary(),
+			Reachable: u.Reachable(),
+			SSHKeys:   u.SSHKeys,
+		})
+	}
+	return out, nil
+}
+
+// RemovePriorAdminsRequest names accounts the operator ticked for removal.
+type RemovePriorAdminsRequest struct {
+	// Usernames are the accounts to remove. The UI defaults every box to
+	// unchecked, so an empty list is the normal submission.
+	Usernames []string `json:"usernames"`
+}
+
+// RemovalOutcome is what happened to one account.
+type RemovalOutcome struct {
+	Username string `json:"username"`
+	Removed  bool   `json:"removed"`
+	// Error is the reason it was not removed, phrased for the operator.
+	Error string `json:"error,omitempty"`
+}
+
+// RemovePriorAdmins removes the accounts the operator ticked.
+//
+// Failures are per-account and never block setup. An account with a live session,
+// or one userdel refuses for a reason nobody anticipated, must not leave the
+// operator stuck on a screen between "I have an account" and "root is locked" —
+// the two states this step sits between, and the worst place to be stranded. They
+// are reported and setup continues.
+func (w *Wizard) RemovePriorAdmins(ctx context.Context, req RemovePriorAdminsRequest) ([]RemovalOutcome, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	p := w.Load()
+	if p.RecoveryUser == "" {
+		return nil, privhelper.Errorf(privhelper.CodeConflict,
+			"create this node's recovery account before removing anyone else's")
+	}
+
+	// Whatever the request says, the account this setup created is never removed.
+	// The helper refuses it too; this is the same guarantee stated where the list
+	// is built, so neither end depends on the other having remembered.
+	allowed, err := w.priorAdmins(ctx)
+	if err != nil {
+		return nil, err
+	}
+	known := map[string]bool{}
+	for _, a := range allowed {
+		known[a.Username] = true
+	}
+
+	var out []RemovalOutcome
+	for _, name := range req.Usernames {
+		if name == p.RecoveryUser {
+			out = append(out, RemovalOutcome{Username: name,
+				Error: "this is the recovery account setup just created; it was not removed"})
+			continue
+		}
+		if !known[name] {
+			out = append(out, RemovalOutcome{Username: name,
+				Error: "not an administrator account on this node"})
+			continue
+		}
+		got, err := w.Prov.RemoveUser(ctx, privhelper.RemoveUserRequest{
+			Username: name, RemoveHome: true})
+		if err != nil {
+			w.logf("wizard: could not remove prior administrator %q: %v", name, err)
+			out = append(out, RemovalOutcome{Username: name, Error: humanise(err)})
+			continue
+		}
+		w.logf("wizard: removed prior administrator %q", name)
+		out = append(out, RemovalOutcome{Username: name, Removed: got.Removed})
+	}
+	return out, nil
+}
+
+// humanise strips a helper error's wire prefix for display.
+func humanise(err error) string {
+	msg := strings.TrimPrefix(err.Error(), "privhelper: ")
+	if i := strings.Index(msg, ": "); i > 0 && strings.HasPrefix(msg, string(privhelper.CodeOf(err))) {
+		msg = msg[i+2:]
+	}
+	return msg
+}
+
 // KeyRequest installs an SSH key on the recovery account.
 type KeyRequest struct {
 	PublicKey string `json:"public_key,omitempty"`

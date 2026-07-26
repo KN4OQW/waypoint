@@ -226,3 +226,21 @@ func (c *Client) NetCheckpointRollback(ctx context.Context, req NetCheckpointRol
 	err := c.call(ctx, MethodNetCheckpointRollback, req, &out)
 	return out, err
 }
+
+func (c *Client) ListSudoUsers(ctx context.Context, req ListSudoUsersRequest) (ListSudoUsersResponse, error) {
+	var out ListSudoUsersResponse
+	if err := req.Validate(); err != nil {
+		return out, err
+	}
+	err := c.call(ctx, MethodListSudoUsers, req, &out)
+	return out, err
+}
+
+func (c *Client) RemoveUser(ctx context.Context, req RemoveUserRequest) (RemoveUserResponse, error) {
+	var out RemoveUserResponse
+	if err := req.Validate(); err != nil {
+		return out, err
+	}
+	err := c.call(ctx, MethodRemoveUser, req, &out)
+	return out, err
+}

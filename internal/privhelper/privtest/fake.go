@@ -10,6 +10,7 @@ package privtest
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -99,6 +100,11 @@ type Fake struct {
 	// Clock is the time source, injectable so checkpoint expiries are assertable.
 	Clock func() time.Time
 
+	// BusyUsers marks accounts RemoveUser must refuse as having running
+	// processes, so a caller's handling of that refusal can be exercised.
+	BusyUsers map[string]bool
+
+	protected   string
 	checkpoints map[string]time.Time
 	nextUID     int
 	nextHandle  int
@@ -114,6 +120,7 @@ func NewFake() *Fake {
 		SSHEnabled:   true,
 		PasswordAuth: true,
 		Errs:         map[privhelper.Method]error{},
+		BusyUsers:    map[string]bool{},
 		Clock:        time.Now,
 		checkpoints:  map[string]time.Time{},
 		nextUID:      1000,
@@ -224,7 +231,8 @@ func (f *Fake) CreateRecoveryUser(ctx context.Context, req privhelper.CreateReco
 	}
 	f.nextUID++
 	f.Users[u.Name] = u
-	// The first account created is the recovery user — it is what unblocks LockRoot.
+	// RecoveryUser records the first account created, for tests that want to name
+	// it. It is deliberately NOT what unblocks LockRoot — see hasUsableAdminLocked.
 	if f.RecoveryUser == "" {
 		f.RecoveryUser = u.Name
 	}
@@ -295,13 +303,31 @@ func (f *Fake) LockRoot(ctx context.Context, req privhelper.LockRootRequest) (pr
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.RecoveryUser == "" {
+	// "Is there a usable administrator" rather than "was one ever created": an
+	// account can be removed after the fact, and a fake that remembered the first
+	// name it saw would let a caller lock root behind an account that is gone.
+	// This mirrors the real hasUsableRecoveryAccount.
+	if !f.hasUsableAdminLocked() {
 		return privhelper.LockRootResponse{}, privhelper.Errorf(privhelper.CodeConflict,
 			"refusing to lock root: no recovery account exists, so nothing could administer this node afterwards")
 	}
 	changed := !f.RootLocked
 	f.RootLocked = true
 	return privhelper.LockRootResponse{Locked: true, Changed: changed}, nil
+}
+
+// hasUsableAdminLocked reports whether some non-root sudo account could actually
+// log in. The mutex is already held.
+func (f *Fake) hasUsableAdminLocked() bool {
+	for _, u := range f.Users {
+		if !u.Sudo || u.UID == 0 {
+			continue
+		}
+		if !u.PasswordLocked || len(u.Keys) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // APUp raises the access point.
@@ -416,4 +442,78 @@ func orDefault(v, def string) string {
 		return def
 	}
 	return v
+}
+
+// ListSudoUsers reports the accounts the Fake believes can become root.
+//
+// Only accounts with Sudo and a uid at or above the human floor: the point of the
+// call is prior *administrator* accounts, and a fake that also returned system
+// accounts would let a caller's filtering bug pass unnoticed.
+func (f *Fake) ListSudoUsers(ctx context.Context, req privhelper.ListSudoUsersRequest) (privhelper.ListSudoUsersResponse, error) {
+	if err := f.enter(ctx, privhelper.MethodListSudoUsers, req); err != nil {
+		return privhelper.ListSudoUsersResponse{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var out []privhelper.SudoUser
+	for _, u := range f.Users {
+		if !u.Sudo || u.UID < privhelper.MinHumanUID {
+			continue
+		}
+		out = append(out, privhelper.SudoUser{
+			Username: u.Name, UID: u.UID, Home: u.Home, Shell: "/bin/bash",
+			HasPassword:    !u.PasswordLocked,
+			PasswordLocked: u.PasswordLocked,
+			SSHKeys:        len(u.Keys),
+			NOPASSWDSudo:   u.PasswordLocked, // matches the real rule: key-only accounts get the drop-in
+			LoginShell:     true,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
+	return privhelper.ListSudoUsersResponse{Users: out}, nil
+}
+
+// ProtectedUser is an account RemoveUser must refuse. It stands in for the
+// wizard's own recovery account, which the real implementation is told about by
+// the caller.
+func (f *Fake) ProtectUser(name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.protected = name
+}
+
+// RemoveUser deletes an account, refusing the same things the real one refuses.
+func (f *Fake) RemoveUser(ctx context.Context, req privhelper.RemoveUserRequest) (privhelper.RemoveUserResponse, error) {
+	if err := f.enter(ctx, privhelper.MethodRemoveUser, req); err != nil {
+		return privhelper.RemoveUserResponse{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if req.Username == f.protected {
+		return privhelper.RemoveUserResponse{}, privhelper.Errorf(privhelper.CodeConflict,
+			"refusing to remove %q: it is the recovery account this setup just created", req.Username)
+	}
+	u, ok := f.Users[req.Username]
+	if !ok {
+		// Absent is success: the caller wanted it gone and it is.
+		return privhelper.RemoveUserResponse{Username: req.Username, Removed: false}, nil
+	}
+	if u.UID == 0 {
+		return privhelper.RemoveUserResponse{}, privhelper.Errorf(privhelper.CodeInvalidArgument,
+			"%q is uid 0 — refusing to remove root under another name", req.Username)
+	}
+	if f.BusyUsers[req.Username] {
+		return privhelper.RemoveUserResponse{}, privhelper.Errorf(privhelper.CodeConflict,
+			"%q has running processes; log it out and try again", req.Username)
+	}
+	delete(f.Users, req.Username)
+	if f.RecoveryUser == req.Username {
+		f.RecoveryUser = ""
+	}
+	return privhelper.RemoveUserResponse{
+		Username: req.Username, Removed: true,
+		HomeRemoved: req.RemoveHome, SudoersPruned: u.PasswordLocked,
+	}, nil
 }

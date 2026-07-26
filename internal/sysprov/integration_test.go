@@ -292,6 +292,136 @@ func TestProvisionsARealSystem(t *testing.T) {
 		}
 	})
 
+	t.Run("a prior administrator account is enumerated and removed", func(t *testing.T) {
+		// The second-hand hardware case, against a real /etc/passwd.
+		const prior = "previous-owner"
+		if _, err := s.CreateRecoveryUser(ctx, privhelper.CreateRecoveryUserRequest{
+			Username: prior, SSHKey: testKey, Sudo: true}); err != nil {
+			t.Fatal(err)
+		}
+		// The wizard protects the account it created; everything else is fair game.
+		s.SetProtectedUser(testUser)
+
+		listed, err := s.ListSudoUsers(ctx, privhelper.ListSudoUsersRequest{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var found *privhelper.SudoUser
+		for i := range listed.Users {
+			if listed.Users[i].Username == prior {
+				found = &listed.Users[i]
+			}
+			if listed.Users[i].UID < privhelper.MinHumanUID {
+				t.Errorf("system account %q (uid %d) was offered for removal",
+					listed.Users[i].Username, listed.Users[i].UID)
+			}
+			if listed.Users[i].Username == "root" {
+				t.Error("root was listed")
+			}
+		}
+		if found == nil {
+			t.Fatalf("the prior administrator was not enumerated: %+v", listed.Users)
+		}
+		if found.SSHKeys != 1 {
+			t.Errorf("%q reports %d keys, want 1", prior, found.SSHKeys)
+		}
+		if !found.NOPASSWDSudo {
+			t.Errorf("%q is key-only but the drop-in does not cover it", prior)
+		}
+		if !found.Reachable() {
+			t.Errorf("%q has a key and reports as unreachable", prior)
+		}
+
+		// The protected account is refused, whatever the caller asks.
+		if _, err := s.RemoveUser(ctx, privhelper.RemoveUserRequest{
+			Username: testUser}); privhelper.CodeOf(err) != privhelper.CodeConflict {
+			t.Errorf("removing the protected account: code = %q (err %v), want %q",
+				privhelper.CodeOf(err), err, privhelper.CodeConflict)
+		}
+		if _, err := exec.Command("getent", "passwd", testUser).Output(); err != nil {
+			t.Fatal("the protected account was removed")
+		}
+
+		home := filepath.Join("/home", prior)
+		got, err := s.RemoveUser(ctx, privhelper.RemoveUserRequest{Username: prior, RemoveHome: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.Removed || !got.HomeRemoved || !got.SudoersPruned {
+			t.Errorf("response = %+v", got)
+		}
+
+		// The system agrees, not just our return value.
+		if out, err := exec.Command("getent", "passwd", prior).Output(); err == nil && len(out) > 0 {
+			t.Errorf("getent still finds the account: %s", out)
+		}
+		if _, err := os.Stat(home); !os.IsNotExist(err) {
+			t.Errorf("the home directory survived: %v", err)
+		}
+		if body, err := os.ReadFile("/etc/sudoers.d/010-waypoint-recovery"); err == nil {
+			if strings.Contains(string(body), prior) {
+				t.Errorf("the sudoers drop-in still names the removed account:\n%s", body)
+			}
+		}
+		// The drop-in that remains — or its absence — is one sudo accepts. A
+		// cleanup step that breaks sudo on a root-locked node is the worst possible
+		// outcome of tidying up.
+		sh(t, "visudo", "-c")
+
+		// And it is gone from the enumeration.
+		after, err := s.ListSudoUsers(ctx, privhelper.ListSudoUsersRequest{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, u := range after.Users {
+			if u.Username == prior {
+				t.Error("the removed account is still enumerated")
+			}
+		}
+	})
+
+	t.Run("removal refuses root under another name", func(t *testing.T) {
+		// A uid-0 account that is not called root is still root. The username
+		// validator cannot see this; only the system can.
+		sh(t, "useradd", "--non-unique", "--uid", "0", "--no-create-home", "toor")
+		t.Cleanup(func() { _ = exec.Command("userdel", "toor").Run() })
+
+		_, err := s.RemoveUser(ctx, privhelper.RemoveUserRequest{Username: "toor"})
+		if privhelper.CodeOf(err) != privhelper.CodeInvalidArgument {
+			t.Fatalf("code = %q (err %v), want %q", privhelper.CodeOf(err), err, privhelper.CodeInvalidArgument)
+		}
+		if out, err := exec.Command("getent", "passwd", "toor").Output(); err != nil || len(out) == 0 {
+			t.Error("the uid-0 account was removed")
+		}
+	})
+
+	t.Run("removal refuses an account with running processes", func(t *testing.T) {
+		const busy = "busy-owner"
+		if _, err := s.CreateRecoveryUser(ctx, privhelper.CreateRecoveryUserRequest{
+			Username: busy, Password: "correct horse battery", Sudo: true}); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = exec.Command("userdel", "--remove", busy).Run() })
+
+		// A long-lived process owned by the account, as a live SSH session would be.
+		proc := exec.Command("setpriv", "--reuid", busy, "--regid", busy, "--clear-groups", "sleep", "120")
+		if err := proc.Start(); err != nil {
+			t.Skipf("cannot start a process as %s: %v", busy, err)
+		}
+		t.Cleanup(func() { _ = proc.Process.Kill(); _, _ = proc.Process.Wait() })
+
+		_, err := s.RemoveUser(ctx, privhelper.RemoveUserRequest{Username: busy, RemoveHome: true})
+		if privhelper.CodeOf(err) != privhelper.CodeConflict {
+			t.Fatalf("code = %q (err %v), want %q", privhelper.CodeOf(err), err, privhelper.CodeConflict)
+		}
+		if !strings.Contains(err.Error(), "running processes") {
+			t.Errorf("the refusal does not say why: %v", err)
+		}
+		if out, err := exec.Command("getent", "passwd", busy).Output(); err != nil || len(out) == 0 {
+			t.Error("the busy account was removed anyway")
+		}
+	})
+
 	t.Run("out-of-vocabulary input is refused", func(t *testing.T) {
 		bad := []struct {
 			name string

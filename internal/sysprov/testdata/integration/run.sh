@@ -30,6 +30,12 @@ bin="$(mktemp -d)/sysprov.test"
 ( cd "$repo" && CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" \
     go test -c -tags integration -o "$bin" ./internal/sysprov )
 
+# The helper itself, so the first-boot simulation exercises the binary the image
+# ships rather than a stand-in.
+helper_bin="$(dirname "$bin")/waypoint-provision-helper"
+( cd "$repo" && CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" \
+    go build -o "$helper_bin" ./cmd/waypoint-provision-helper )
+
 echo "==> building the container image"
 docker build --quiet -t "$image" "$here" >/dev/null
 
@@ -40,8 +46,19 @@ run_container() {
     --cap-add SYS_PTRACE \
     -e WAYPOINT_SYSPROV_INTEGRATION=1 \
     -v "$bin:/sysprov.test:ro" \
+    -v "$repo/image/src/modules/waypoint/filesystem/root/etc/systemd/system:/units:ro" \
+    -v "$helper_bin:/usr/bin/waypoint-provision-helper:ro" \
     "$image" "$@"
 }
+
+# The first-boot oneshot: does it run when the marker is absent, and not when it
+# is present. Checked against the real unit file and the real binary.
+if ! run_container /verify-firstboot.sh; then
+  echo "!! first-boot simulation did not pass; see above" >&2
+  firstboot_rc=1
+else
+  firstboot_rc=0
+fi
 
 # The syscall surface check runs first, in its own container, because it traces a
 # full test run and would otherwise be reading a filesystem the tests had already
@@ -60,4 +77,4 @@ fi
 run_container /sysprov.test -test.count=1 "$@"
 test_rc=$?
 
-exit $(( syscall_rc || test_rc ))
+exit $(( syscall_rc || firstboot_rc || test_rc ))

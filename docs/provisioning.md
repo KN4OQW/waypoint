@@ -352,3 +352,47 @@ AP later if the node really has no way out.
 
 **A stale file is ignored on an already-provisioned node**, so a card moved
 between boxes cannot rename a live node out from under its operator.
+
+## Second-hand hardware
+
+**If this board came from someone else, reflash the card.** That is the only way
+to know what is on it.
+
+A previous owner had root. They could have added an account, installed an SSH key,
+left a cron job, replaced a binary, or changed anything else below the level
+Waypoint can see. Waypoint runs on top of Raspberry Pi OS; it does not audit it,
+and nothing it can show you would prove the absence of something deliberately
+hidden. A node that has been set up by somebody else is not a node you can
+inspect your way into trusting.
+
+The wizard does what it can. During the recovery-account step it lists every
+existing administrator account — anything in the `sudo` group with a uid at or
+above 1000 — with what each one carries:
+
+    previous-owner   password locked, 1 SSH key, passwordless sudo
+    their-friend     password set, no SSH keys
+
+An SSH key on an account you do not recognise is the one to look at: it is
+standing, passwordless access to a node you believe is yours. Each account has a
+checkbox, **unchecked by default**, and ticking it removes the account and its
+home directory when you continue.
+
+This listing is a convenience, not a guarantee. It finds accounts in the sudo
+group. It does not find a uid-0 account outside that group, a key added to
+`root`'s own `authorized_keys`, a systemd unit, or a modified binary. Treat it as
+a way to clear the obvious, not as an audit.
+
+Removal refuses, per account and without ever forcing:
+
+- **root, under any name.** Any account resolving to uid 0.
+- **system accounts** (uid below 1000), whose removal would break whatever runs
+  as them.
+- **the recovery account this setup just created** — root is about to be locked
+  behind it.
+- **an account with running processes.** `userdel -f` would delete it out from
+  under a live session and leave files owned by a uid that gets reallocated to
+  somebody else. There is no `-f` here at all.
+
+A removal that fails is reported against that account and does not block setup.
+This step sits between "I have a recovery account" and "root is locked", which is
+the worst place to strand an operator.

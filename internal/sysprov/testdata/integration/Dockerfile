@@ -16,6 +16,8 @@ RUN apt-get update \
       sudo \
       systemd \
       strace \
+      procps \
+      util-linux \
  && rm -rf /var/lib/apt/lists/*
 
 # sshd refuses to run without host keys or its privilege-separation directory,
@@ -32,4 +34,9 @@ RUN echo 'root:integration-only-not-a-secret' | chpasswd
 # The syscall check needs the unit's filter resolved by the same systemd that
 # would enforce it, and strace to see what the helper actually calls.
 COPY verify-syscalls.sh /verify-syscalls.sh
-RUN chmod +x /verify-syscalls.sh
+COPY verify-firstboot.sh /verify-firstboot.sh
+RUN chmod +x /verify-syscalls.sh /verify-firstboot.sh
+
+# The waypoint group the helper refuses to start without, as sysusers.d creates
+# it on a node.
+RUN groupadd --system waypoint

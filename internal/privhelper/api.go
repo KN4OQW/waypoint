@@ -76,6 +76,18 @@ type Provisioner interface {
 
 	// NetCheckpointRollback restores a snapshot, undoing the change.
 	NetCheckpointRollback(ctx context.Context, req NetCheckpointRollbackRequest) (NetCheckpointRollbackResponse, error)
+
+	// ListSudoUsers reports the human accounts that can already become root on
+	// this node. It exists for second-hand hardware: a board bought from a
+	// hamfest, inherited from a silent key, or reflashed onto a card that was not
+	// wiped can carry a previous owner's administrator account, and the operator
+	// setting it up has no way to know without being told.
+	ListSudoUsers(ctx context.Context, req ListSudoUsersRequest) (ListSudoUsersResponse, error)
+
+	// RemoveUser deletes an account and its home directory. It is the other half
+	// of ListSudoUsers and is deliberately narrow: it refuses root under any
+	// name, refuses an account with running processes, and never forces.
+	RemoveUser(ctx context.Context, req RemoveUserRequest) (RemoveUserResponse, error)
 }
 
 // The three NetCheckpoint methods are exactly the shape of netconfig.Checkpoint
@@ -497,6 +509,117 @@ func validateHandle(h string) error {
 	return nil
 }
 
+// MinHumanUID is the floor for an account a person logs in as. Debian's adduser
+// allocates from 1000 up and reserves everything below for system accounts, so
+// this is the line between "somebody's login" and "a daemon's identity" — and the
+// filter that keeps ListSudoUsers from offering to delete the sudo group's own
+// machinery.
+const MinHumanUID = 1000
+
+// --- ListSudoUsers -------------------------------------------------------
+
+// ListSudoUsersRequest enumerates administrator accounts.
+type ListSudoUsersRequest struct{}
+
+// Validate checks the request.
+func (r ListSudoUsersRequest) Validate() error { return nil }
+
+// SudoUser is one account that can become root.
+type SudoUser struct {
+	Username string `json:"username"`
+	UID      int    `json:"uid"`
+	Home     string `json:"home"`
+	Shell    string `json:"shell"`
+
+	// HasPassword reports a usable password; PasswordLocked reports one that is
+	// set but locked. They are separate because "locked" and "never set" are
+	// different states an operator may want to act on differently.
+	HasPassword    bool `json:"has_password"`
+	PasswordLocked bool `json:"password_locked"`
+	// SSHKeys is how many authorized keys the account carries. A non-zero count on
+	// an account the current operator does not recognise is the most important
+	// thing on this screen: it is standing, passwordless remote access.
+	SSHKeys int `json:"ssh_keys"`
+	// NOPASSWDSudo reports that Waypoint's own sudoers drop-in covers this
+	// account — so an operator can tell an account this node created from one it
+	// inherited.
+	NOPASSWDSudo bool `json:"nopasswd_sudo"`
+	// LoginShell reports whether the account can be logged into at all.
+	LoginShell bool `json:"login_shell"`
+}
+
+// Reachable reports whether somebody could actually get in as this account. An
+// account with no password and no keys is a name in a file; one with either is a
+// way into a node with root-equivalent rights.
+func (u SudoUser) Reachable() bool {
+	return u.LoginShell && ((u.HasPassword && !u.PasswordLocked) || u.SSHKeys > 0)
+}
+
+// Summary renders the credential state in a line an operator can act on.
+func (u SudoUser) Summary() string {
+	var parts []string
+	switch {
+	case u.HasPassword && !u.PasswordLocked:
+		parts = append(parts, "password set")
+	case u.PasswordLocked:
+		parts = append(parts, "password locked")
+	default:
+		parts = append(parts, "no password")
+	}
+	switch {
+	case u.SSHKeys == 1:
+		parts = append(parts, "1 SSH key")
+	case u.SSHKeys > 1:
+		parts = append(parts, fmt.Sprintf("%d SSH keys", u.SSHKeys))
+	default:
+		parts = append(parts, "no SSH keys")
+	}
+	if u.NOPASSWDSudo {
+		parts = append(parts, "passwordless sudo")
+	}
+	if !u.LoginShell {
+		parts = append(parts, "no login shell")
+	}
+	if !u.Reachable() {
+		parts = append(parts, "not reachable")
+	}
+	return strings.Join(parts, ", ")
+}
+
+// ListSudoUsersResponse carries the accounts found.
+type ListSudoUsersResponse struct {
+	Users []SudoUser `json:"users"`
+}
+
+// --- RemoveUser ----------------------------------------------------------
+
+// RemoveUserRequest deletes an account.
+type RemoveUserRequest struct {
+	Username string `json:"username"`
+	// RemoveHome deletes the home directory too. Default false is deliberate:
+	// deleting somebody's files is a bigger act than removing their login, and the
+	// caller should have to say so.
+	RemoveHome bool `json:"remove_home"`
+}
+
+// Validate checks the request. The username rules are the same ones that govern
+// creating an account, so a name this build would refuse to create is a name it
+// refuses to delete — which keeps "root" out by construction, before the
+// implementation's uid check.
+func (r RemoveUserRequest) Validate() error { return ValidateUsername(r.Username) }
+
+// RemoveUserResponse reports the deletion.
+type RemoveUserResponse struct {
+	Username string `json:"username"`
+	// Removed is false when the account did not exist, which is success: the
+	// caller wanted it gone and it is.
+	Removed     bool `json:"removed"`
+	HomeRemoved bool `json:"home_removed"`
+	// SudoersPruned reports that the account was dropped from Waypoint's sudoers
+	// drop-in, so a deleted name cannot come back with root by being recreated.
+	SudoersPruned bool `json:"sudoers_pruned"`
+}
+
 // Validator is implemented by every request type. A server validates through this
 // interface so adding a method cannot accidentally add an unvalidated one.
 type Validator interface {
@@ -515,4 +638,6 @@ var (
 	_ Validator = NetCheckpointCreateRequest{}
 	_ Validator = NetCheckpointDestroyRequest{}
 	_ Validator = NetCheckpointRollbackRequest{}
+	_ Validator = ListSudoUsersRequest{}
+	_ Validator = RemoveUserRequest{}
 )

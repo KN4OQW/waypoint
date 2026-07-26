@@ -27,6 +27,7 @@ func (w *Wizard) Handler() http.Handler {
 	mux.HandleFunc(Prefix+"key", post(w.handleKey))
 	mux.HandleFunc(Prefix+"lock", post(w.handleLock))
 	mux.HandleFunc(Prefix+"network", post(w.handleJoin))
+	mux.HandleFunc(Prefix+"prior-admins", w.handlePriorAdmins)
 	return mux
 }
 
@@ -99,6 +100,50 @@ func (w *Wizard) handleJoin(rw http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(rw, http.StatusOK, got)
 }
+
+// handlePriorAdmins lists prior administrator accounts (GET) and removes the ones
+// the operator ticked (POST).
+func (w *Wizard) handlePriorAdmins(rw http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		admins, err := w.PriorAdmins(r.Context())
+		if err != nil {
+			status, msg := statusFor(err)
+			writeJSON(rw, status, map[string]any{"error": msg, "mode": "setup"})
+			return
+		}
+		writeJSON(rw, http.StatusOK, map[string]any{
+			"admins": admins,
+			// The copy lives with the data so a UI cannot render the list without
+			// the warning that gives it meaning.
+			"notice": priorAdminNotice,
+		})
+	case http.MethodPost:
+		var req RemovePriorAdminsRequest
+		if !decode(rw, r, &req) {
+			return
+		}
+		outcomes, err := w.RemovePriorAdmins(r.Context(), req)
+		if err != nil {
+			status, msg := statusFor(err)
+			writeJSON(rw, status, map[string]any{"error": msg, "mode": "setup"})
+			return
+		}
+		// Always 200: individual failures are in the outcomes, and a non-2xx would
+		// invite a client to treat one stubborn account as a failed setup step.
+		writeJSON(rw, http.StatusOK, map[string]any{"outcomes": outcomes})
+	default:
+		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// priorAdminNotice is what the operator is told above the list. It says what
+// these accounts are and what they can do, because "previous-owner" on its own
+// reads like a stale entry rather than root-equivalent access to their node.
+const priorAdminNotice = "These accounts already had administrator (sudo) access to this node before you " +
+	"set it up. On second-hand hardware they are the previous owner's, and any of them with an SSH key " +
+	"can log in without a password. Removing them is optional and nothing is removed unless you tick it. " +
+	"If this board came from someone else, reflashing the card is the only way to be sure of what is on it."
 
 // respond writes the step's outcome. Success and failure both carry the current
 // view, so a client that mis-stepped gets told where it actually is in one round

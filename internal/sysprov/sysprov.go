@@ -60,6 +60,9 @@ type System struct {
 	Logf func(format string, args ...any)
 
 	mu sync.Mutex
+	// protected is an account RemoveUser refuses regardless of the system's
+	// opinion — the recovery account the caller is in the middle of creating.
+	protected string
 
 	// checkpoint is created lazily so a System that never touches the network
 	// never touches NetworkManager's directory either.

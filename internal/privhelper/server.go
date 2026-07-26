@@ -379,6 +379,18 @@ func (s *Server) dispatch() map[Method]handler {
 				return p.NetCheckpointRollback(ctx, r)
 			})
 		},
+		MethodListSudoUsers: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			return call(raw, func(r ListSudoUsersRequest) (ListSudoUsersResponse, error) {
+				s.Logf("privhelper: list_sudo_users")
+				return p.ListSudoUsers(ctx, r)
+			})
+		},
+		MethodRemoveUser: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			return call(raw, func(r RemoveUserRequest) (RemoveUserResponse, error) {
+				s.Logf("privhelper: remove_user %q (home: %v)", r.Username, r.RemoveHome)
+				return p.RemoveUser(ctx, r)
+			})
+		},
 	}
 }
 

@@ -70,6 +70,12 @@ func Conform(t *testing.T, newProvisioner func(t *testing.T) privhelper.Provisio
 	t.Run("checkpoint lifecycle", func(t *testing.T) {
 		conformCheckpoints(t, newProvisioner)
 	})
+	t.Run("sudo account enumeration", func(t *testing.T) {
+		conformListSudoUsers(t, newProvisioner)
+	})
+	t.Run("account removal refusals", func(t *testing.T) {
+		conformRemoveUser(t, newProvisioner)
+	})
 	t.Run("every method honours a cancelled context", func(t *testing.T) {
 		conformContext(t, newProvisioner)
 	})
@@ -475,6 +481,141 @@ func conformCheckpoints(t *testing.T, newP func(t *testing.T) privhelper.Provisi
 	}
 }
 
+// conformListSudoUsers checks the enumeration reports what an operator needs to
+// decide with: who can become root, and how reachable each of them is.
+func conformListSudoUsers(t *testing.T, newP func(t *testing.T) privhelper.Provisioner) {
+	ctx := context.Background()
+	p := newP(t)
+
+	// A fresh node has no administrators but root, which the call never reports.
+	empty, err := p.ListSudoUsers(ctx, privhelper.ListSudoUsersRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range empty.Users {
+		if u.Username == "root" || u.UID == 0 {
+			t.Errorf("root was listed as a removable administrator: %+v", u)
+		}
+	}
+
+	if _, err := p.CreateRecoveryUser(ctx, privhelper.CreateRecoveryUserRequest{
+		Username: "rescue", SSHKey: validKey, Sudo: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.CreateRecoveryUser(ctx, privhelper.CreateRecoveryUserRequest{
+		Username: "previous-owner", Password: "correct horse battery", Sudo: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.ListSudoUsers(ctx, privhelper.ListSudoUsersRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]privhelper.SudoUser{}
+	for _, u := range got.Users {
+		byName[u.Username] = u
+		if u.UID < privhelper.MinHumanUID {
+			t.Errorf("%q has uid %d, below the human floor — a system account was offered for removal",
+				u.Username, u.UID)
+		}
+	}
+
+	key, ok := byName["rescue"]
+	if !ok {
+		t.Fatalf("the key-only account is missing from %v", got.Users)
+	}
+	if key.SSHKeys != 1 {
+		t.Errorf("rescue reports %d keys, want 1 — a key on an unrecognised account is standing remote access",
+			key.SSHKeys)
+	}
+	if !key.PasswordLocked {
+		t.Error("a key-only account does not report its password as locked")
+	}
+	if !key.Reachable() {
+		t.Error("an account with a key reports as unreachable")
+	}
+
+	pw, ok := byName["previous-owner"]
+	if !ok {
+		t.Fatalf("the password account is missing from %v", got.Users)
+	}
+	if !pw.HasPassword || pw.PasswordLocked {
+		t.Errorf("the password account reports %+v", pw)
+	}
+	if !pw.Reachable() {
+		t.Error("an account with a password reports as unreachable")
+	}
+
+	// The summary is what the operator actually reads, so it has to say something.
+	for _, u := range got.Users {
+		if sum := u.Summary(); sum == "" || !strings.Contains(sum, "SSH key") {
+			t.Errorf("%q summary is unhelpful: %q", u.Username, sum)
+		}
+	}
+}
+
+// conformRemoveUser checks every refusal. These are the ones that matter: each is
+// a way an operator could destroy the node they are setting up, and none of them
+// is recoverable from the wizard.
+func conformRemoveUser(t *testing.T, newP func(t *testing.T) privhelper.Provisioner) {
+	ctx := context.Background()
+
+	t.Run("refuses root by name", func(t *testing.T) {
+		p := newP(t)
+		_, err := p.RemoveUser(ctx, privhelper.RemoveUserRequest{Username: "root"})
+		if privhelper.CodeOf(err) != privhelper.CodeInvalidArgument {
+			t.Errorf("code = %q (err %v), want %q", privhelper.CodeOf(err), err, privhelper.CodeInvalidArgument)
+		}
+	})
+
+	t.Run("refuses a system account", func(t *testing.T) {
+		p := newP(t)
+		for _, name := range []string{"daemon", "www-data", "sshd"} {
+			if _, err := p.RemoveUser(ctx, privhelper.RemoveUserRequest{Username: name}); err == nil {
+				t.Errorf("removing %q was accepted", name)
+			}
+		}
+	})
+
+	t.Run("an absent account is success", func(t *testing.T) {
+		p := newP(t)
+		got, err := p.RemoveUser(ctx, privhelper.RemoveUserRequest{Username: "never-existed"})
+		if err != nil {
+			t.Fatalf("removing an absent account: %v", err)
+		}
+		if got.Removed {
+			t.Error("Removed = true for an account that did not exist")
+		}
+	})
+
+	t.Run("removes a real account", func(t *testing.T) {
+		p := newP(t)
+		if _, err := p.CreateRecoveryUser(ctx, privhelper.CreateRecoveryUserRequest{
+			Username: "previous-owner", SSHKey: validKey, Sudo: true}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := p.RemoveUser(ctx, privhelper.RemoveUserRequest{
+			Username: "previous-owner", RemoveHome: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.Removed || !got.HomeRemoved {
+			t.Errorf("response = %+v", got)
+		}
+
+		// And it is gone from the enumeration, not merely reported as removed.
+		list, err := p.ListSudoUsers(ctx, privhelper.ListSudoUsersRequest{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, u := range list.Users {
+			if u.Username == "previous-owner" {
+				t.Error("the removed account is still listed")
+			}
+		}
+	})
+}
+
 func conformContext(t *testing.T, newP func(t *testing.T) privhelper.Provisioner) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -539,6 +680,14 @@ func allCalls(ctx context.Context) map[privhelper.Method]func(privhelper.Provisi
 		},
 		privhelper.MethodNetCheckpointRollback: func(p privhelper.Provisioner) error {
 			_, err := p.NetCheckpointRollback(ctx, privhelper.NetCheckpointRollbackRequest{Handle: "cp-1"})
+			return err
+		},
+		privhelper.MethodListSudoUsers: func(p privhelper.Provisioner) error {
+			_, err := p.ListSudoUsers(ctx, privhelper.ListSudoUsersRequest{})
+			return err
+		},
+		privhelper.MethodRemoveUser: func(p privhelper.Provisioner) error {
+			_, err := p.RemoveUser(ctx, privhelper.RemoveUserRequest{Username: "previous-owner"})
 			return err
 		},
 	}

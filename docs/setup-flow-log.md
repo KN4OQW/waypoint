@@ -501,3 +501,87 @@ second tick instead of a sleep.
 **New dependency.** `github.com/BurntSushi/toml` v1.4.0, promoted to direct. A
 hand-rolled TOML subset parser would have been the alternative; for a file format
 an operator hand-edits, a real parser is worth the dependency.
+
+---
+
+## 9.5 — `feat/firstboot-image-integration`: image, CI, and stale accounts
+
+Two commits on one branch.
+
+### Part A — image and CI
+
+**Shipped.** Image install steps for the helper and its units, the
+`waypoint-firstboot.service` oneshot, `WatchdogSec` on waypointd with
+`internal/sdnotify`, `systemd-analyze verify` in CI, a differential
+`.golangci.yml`, and issue #119 for the certificate remint gap.
+
+**The watchdog is gated on the hub, not the timer.** `Restart=on-failure` cannot
+catch the failure that actually strands a hotspot: a daemon whose event loop has
+deadlocked still holds its listener open and never exits, so systemd believes it
+healthy. `hub.Alive()` takes the mutex every event passes through, on its own
+goroutine with a deadline. A ping that only proved a goroutine was scheduled would
+keep exactly the wedged node alive indefinitely.
+
+**The syscall check found one relaxation, and it is documented rather than
+widened.** `SystemCallFilter=@system-service` does not permit `sethostname`. The
+helper only reaches it through the no-systemd fallback in `sysprov.setHostname`;
+on a node `hasSystemd()` is true and the hostname is set through `hostnamectl`, a
+D-Bus call, so this process never makes the syscall. The fallback exists for
+containers — precisely where the filter is not enforced. Recorded in
+`verify-syscalls.sh` with that reasoning, and the check **fails if the exception
+ever stops being needed**, so it cannot rot into a lie.
+
+Resolving `@system-service` correctly mattered more than expected: systemd lists a
+set's members without expanding nested groups, and my first parse produced 62
+names instead of 376 — making almost every syscall look forbidden. A wall of false
+positives is a check people learn to ignore, so the script now walks the closure
+and fails if the resolved set is implausibly small.
+
+**The lint gate is `new-from-rev`.** The baseline (63 findings in untouched
+packages) is reported and does not block; new code is held to zero. Verified both
+ways: 0 issues across the whole workstream, and a deliberately introduced finding
+fails the gate.
+
+### Part B — stale sudo accounts
+
+**Shipped.** `ListSudoUsers` and `RemoveUser` (protocol now 13 methods), the real
+implementation, fake, conformance coverage, the wizard's enumeration step, and a
+docs section.
+
+**Every `RemoveUser` refusal is a way to destroy the node being set up**, and none
+is recoverable from the wizard: uid 0 under any name; system accounts below uid
+1000; the account this setup just created; and an account with running processes.
+There is no `-f` anywhere — `userdel -f` would delete an account out from under a
+live session and leave files owned by a uid that gets reallocated.
+
+**The wizard's own account is filtered where the list is built**, not in the UI. A
+screen with a checkbox next to the recovery account, on the step immediately
+before root is locked behind it, would be a bug with a bricked node at the end.
+Both the wizard and the helper enforce it, so neither depends on the other having
+remembered.
+
+**Removal failures are per-account and never block setup.** This step sits between
+"I have a recovery account" and "root is locked" — the worst place to strand
+someone.
+
+**A fake-modelling bug this surfaced.** The fake's `LockRoot` gated on
+`RecoveryUser`, the *first* account it had seen. Once accounts could be removed,
+removing the first one made `LockRoot` refuse even though a usable admin existed.
+The real implementation always checked the live sudo group; the fake now mirrors
+that with `hasUsableAdminLocked`. A fake that is wrong in a way the real thing is
+not is worse than no fake.
+
+**The docs say plainly that second-hand hardware should be reflashed.** The
+listing finds accounts in the sudo group. It does not find a uid-0 account outside
+it, a key in root's own `authorized_keys`, a systemd unit, or a modified binary.
+It is a way to clear the obvious, not an audit, and the documentation says so.
+
+**Verified.** Conformance covers both methods including every refusal. Eight
+wizard properties. Three new container subtests against a real Debian: enumeration
+with credential summaries, removal asserted through `getent`, the home directory,
+the pruned sudoers drop-in and `visudo -c`; uid-0-under-another-name refused; and a
+genuinely running process (`setpriv` + `sleep`) blocking removal. A boot simulation
+checks the oneshot's condition and ordering in the real unit file and runs the real
+binary on both sides of the marker. `systemd-analyze verify` clean on all 13 units.
+
+`go vet ./...`, `go test -race ./...`, three-arch cross-builds clean.
