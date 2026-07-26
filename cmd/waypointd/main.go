@@ -1832,7 +1832,7 @@ func main() {
 	// any boot-partition reset marker before the server starts serving, so a device
 	// booted with a marker comes up unclaimed. A failure here is fatal: starting
 	// with an unknown/inconsistent auth state could expose config surfaces.
-	s.auth, err = buildAuth(st, secureCookieOn)
+	s.auth, err = buildAuth(st, secureCookieOn, resetPaths{Marker: *provisionMarker, Progress: *setupProgress})
 	if err != nil {
 		log.Fatalf("auth: %v", err)
 	}

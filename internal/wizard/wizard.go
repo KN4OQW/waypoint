@@ -95,6 +95,11 @@ type Progress struct {
 	// UserHasPassword records whether the account can be logged into without a
 	// key. It is what decides whether the key step may be skipped.
 	UserHasPassword bool `json:"user_has_password"`
+	// UserSudo records that the account can become root. It is checked before the
+	// lock step: an account that cannot become root cannot recover a node whose
+	// root is locked, so locking root behind one would be the same as locking it
+	// behind nothing.
+	UserSudo bool `json:"user_sudo"`
 	// KeyFingerprint is the installed key's OpenSSH fingerprint, so the operator
 	// can confirm on the summary screen that it is the one they meant.
 	KeyFingerprint string    `json:"key_fingerprint,omitempty"`

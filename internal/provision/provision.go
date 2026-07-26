@@ -199,6 +199,18 @@ func Save(path string, st State) error {
 	return atomicWrite(path, append(b, '\n'))
 }
 
+// Clear removes the marker, returning the node to "needs setup".
+//
+// It is the destructive half of the reset paths, and it is deliberately the only
+// way to get there: nothing in the normal running of a node ever calls it. An
+// absent marker is success, so a reset run twice is not an error.
+func Clear(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("provision: clear %s: %w", path, err)
+	}
+	return nil
+}
+
 // atomicWrite writes data to path via a same-directory temp file and a rename.
 //
 // The full durability chain matters here and is easy to get half right: fsync the

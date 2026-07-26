@@ -263,3 +263,94 @@ association is not), a good PSK persisting across a reboot, and unplugging the
 upstream for N minutes re-raising the AP. The marker-preservation half of that
 last one *is* tested — netwatch has no route to provisioning state, and there is a
 test asserting it has not grown one.
+
+---
+
+## 7 — `feat/root-lock-reset`: root lockout + reset paths
+
+**Shipped.**
+
+- A third verification layer in the wizard, run before `LockRoot`.
+- `ensureRecoverySudoers` in `internal/sysprov` — passwordless sudo for key-only
+  recovery accounts, validated with `visudo -c` before it is trusted.
+- `provision.Clear`, `wizard.ClearProgress`, and `cmd/waypointd/reset.go` holding
+  both reset depths.
+- `reset-claim --full`; the boot-partition marker now performs a **full**
+  re-provision.
+
+**The bug this prompt surfaced.** The recovery account is created key-only by
+default, which means `passwd -l`. On Debian, `sudo` authenticates the *invoking
+user's own password* — and a locked account has none to give. So the recovery
+account could SSH in and then do nothing: no sudo, no root, on a node whose root
+we had just locked. That is precisely the dead end the account exists to prevent,
+and nothing in the earlier prompts would have caught it, because every test until
+now asserted group membership rather than that `sudo` actually works.
+
+The fix is a `/etc/sudoers.d/010-waypoint-recovery` drop-in with `NOPASSWD`, and
+**only** for accounts whose password is locked. An account with a password
+authenticates normally, and any drop-in from an earlier key-only run is removed —
+so adding a password later does not silently leave passwordless root behind. The
+file is written 0440 and validated differentially with `visudo -c`, because a bad
+file in `sudoers.d` breaks sudo for everyone, which on a root-locked node means
+nobody can administer it at all.
+
+**The three layers, and what each catches alone.**
+
+1. **The wizard** (`verifyRecoveryUser`) — the account *this wizard created*
+   exists, can become root, and has a credential. Catches "the wizard's own
+   account is not what it thinks it is".
+2. **The helper** (`hasUsableRecoveryAccount`) — some non-root member of the sudo
+   group can actually log in, checked against the live system. Catches an account
+   changed out from under the wizard.
+3. **The sudoers drop-in** — a key-only account can use sudo at all. Catches the
+   account that can log in and then do nothing.
+
+`Progress` gained `UserSudo`, recorded from `CreateRecoveryUser`'s response, so
+layer 1 is checking something real rather than an assumption.
+
+**The two reset depths, and why they differ.** This is the call worth your
+sign-off.
+
+| Path | Needs | Clears |
+|---|---|---|
+| `waypointd reset-claim` | a shell on the box | admin credential, sessions, `claimed_at` |
+| `waypointd reset-claim --full` | a shell on the box | the above **+** provisioned marker, setup progress, mirror |
+| boot-partition marker | **the SD card in a reader** | same as `--full` |
+
+The marker is now a *full* reset, where it used to be claim-only. The reasoning:
+whoever has a shell can already read the config and restart the daemons, so
+handing the dashboard to a new administrator is the whole job — the node's
+identity was never in question. Whoever holds the SD card is almost always
+someone who cannot get in **at all**: a forgotten password on a node with root
+locked, or a second-hand board carrying somebody else's setup. Giving them a
+dashboard on a node still called someone else's hostname, with someone else's
+recovery account and SSH key, would not be a recovery.
+
+**What the full reset deliberately does not do.** It does not revert the
+hostname, delete the recovery account, or unlock root. Those need the privileged
+helper, and a reset that ran halfway — hostname reverted, root still locked, no
+account — would be worse than one that reverts nothing. Re-running setup is
+idempotent: it renames the host to whatever the operator picks next and converges
+the account rather than duplicating it. The `--full` output says this explicitly,
+and a test asserts it does.
+
+**Verified.** Six reset properties (claim-only leaves the marker, mirror, and
+progress untouched; full clears all three and the wizard really does resume at
+`hostname`; both idempotent; honest reporting on a fresh node; the boot marker
+takes the full path and deletes itself). The two existing marker tests were
+updated rather than replaced.
+
+The container integration test now proves the acceptance criterion against a real
+Debian filesystem: `passwd -S root` is `L`, `sshd -T` reports
+`permitrootlogin no`, and **`sudo -n -u rescue sudo -n -i id -u` returns `0`** —
+the recovery user really can become root. A second subtest creates a
+password-holding account and asserts it did *not* get passwordless sudo.
+
+`go vet ./...`, full `go test -race ./...`, three-arch cross-builds clean.
+golangci-lint **0 issues** across all seven of this workstream's packages.
+
+**Not verified.** Nothing new on the bench list. Note the pre-existing lint
+baseline is wider than previously reported: `./internal/...` as a whole has 63
+findings (50 errcheck, 10 staticcheck, 3 unused) in packages this workstream never
+touched. All seven packages it *did* touch are clean. Still worth a
+`.golangci.yml` or a sweep before the PR.

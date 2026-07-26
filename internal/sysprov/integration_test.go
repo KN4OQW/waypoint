@@ -193,6 +193,68 @@ func TestProvisionsARealSystem(t *testing.T) {
 		}
 	})
 
+	t.Run("root is locked out while the recovery user can still become root", func(t *testing.T) {
+		// The acceptance criterion, checked against the real system rather than
+		// against our own return values.
+
+		// 1. Root's password is unusable. "L" is locked; "NP" (no password at all)
+		//    would also block a password login, so both are accepted.
+		status := strings.Fields(sh(t, "passwd", "--status", "root"))[1]
+		if status != "L" && status != "NP" {
+			t.Errorf("root password status = %q, want L or NP", status)
+		}
+
+		// 2. sshd will not accept a root login, whatever key or password is
+		//    offered. Locking the password alone does not stop a key-based root
+		//    login, which is why this is a separate check and a separate mechanism.
+		eff := strings.ToLower(sh(t, "sshd", "-T"))
+		if !strings.Contains(eff, "permitrootlogin no") {
+			t.Errorf("sshd's effective PermitRootLogin is not no:\n%s", grepLines(eff, "permitroot"))
+		}
+
+		// 3. The recovery user can actually become root. This is the half that is
+		//    easy to get wrong and invisible until somebody needs it: the account
+		//    was created key-only, so its password is locked, and sudo
+		//    authenticates the *invoking user's* password. Without the sudoers
+		//    drop-in it would have nothing to authenticate against and every sudo
+		//    would fail — an account that can log in and do nothing, on a node
+		//    whose root is locked.
+		if groups := sh(t, "id", "-nG", testUser); !strings.Contains(groups, "sudo") {
+			t.Fatalf("%s is not in the sudo group: %q", testUser, strings.TrimSpace(groups))
+		}
+		// -n so it fails rather than prompting; -i for a full login shell, which is
+		// the command an operator actually reaches for.
+		out, err := exec.Command("sudo", "-n", "-u", testUser, "sudo", "-n", "-i", "id", "-u").CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s cannot sudo -i: %v\n%s", testUser, err, out)
+		}
+		if strings.TrimSpace(string(out)) != "0" {
+			t.Errorf("sudo -i as %s produced uid %q, want 0", testUser, strings.TrimSpace(string(out)))
+		}
+
+		// And the drop-in that makes that work is one sudo will accept.
+		sh(t, "visudo", "-c")
+	})
+
+	t.Run("an account with a password gets no passwordless sudo", func(t *testing.T) {
+		// The drop-in exists only because a key-only account has no password for
+		// sudo to check. An account that has one must authenticate normally, or
+		// setup would be quietly handing out passwordless root.
+		const pwUser = "rescue-pw"
+		if _, err := s.CreateRecoveryUser(ctx, privhelper.CreateRecoveryUserRequest{
+			Username: pwUser, Password: "correct horse battery", Sudo: true}); err != nil {
+			t.Fatal(err)
+		}
+		body, err := os.ReadFile("/etc/sudoers.d/010-waypoint-recovery")
+		if err == nil && strings.Contains(string(body), pwUser) {
+			t.Errorf("an account with a password was given passwordless sudo:\n%s", body)
+		}
+		out, err := exec.Command("sudo", "-n", "-u", pwUser, "sudo", "-n", "-i", "true").CombinedOutput()
+		if err == nil {
+			t.Errorf("%s got passwordless sudo: %s", pwUser, out)
+		}
+	})
+
 	t.Run("the whole sequence is re-runnable", func(t *testing.T) {
 		// This is the acceptance criterion that matters most in the field: a
 		// wizard step that timed out on the operator's phone gets retried, and

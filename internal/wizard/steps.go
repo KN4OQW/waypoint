@@ -82,6 +82,7 @@ func (w *Wizard) CreateUser(ctx context.Context, req UserRequest) (View, error) 
 
 	p.RecoveryUser = got.Username
 	p.UserHasPassword = !got.PasswordLocked
+	p.UserSudo = got.Sudo
 	if got.SSHKeyFingerprint != "" {
 		// The key arrived with the account, so the key step is already satisfied.
 		p.KeyFingerprint = got.SSHKeyFingerprint
@@ -165,6 +166,26 @@ func (w *Wizard) Lock(ctx context.Context, req LockRequest) (View, error) {
 		return w.state(), err
 	}
 
+	// The recovery account is verified before anything is locked. This is the
+	// first of three layers, and it is the one that knows *which* account setup
+	// created:
+	//
+	//  1. here — the account this wizard made exists, can become root, and has a
+	//     credential;
+	//  2. the helper's LockRoot — some non-root member of the sudo group can
+	//     actually log in, checked against the live system rather than this
+	//     record;
+	//  3. the helper's sudoers drop-in — a key-only account can use sudo at all,
+	//     since it has no password for sudo to authenticate against.
+	//
+	// Any one of them alone leaves a hole. This layer catches "the wizard's own
+	// account is not what it thinks it is"; layer 2 catches an account changed out
+	// from under the wizard; layer 3 catches the account that can log in and then
+	// do nothing.
+	if err := verifyRecoveryUser(p); err != nil {
+		return w.state(), err
+	}
+
 	passwordAuth := p.UserHasPassword
 	if req.PasswordAuth != nil {
 		passwordAuth = *req.PasswordAuth
@@ -219,6 +240,28 @@ func (w *Wizard) Lock(ctx context.Context, req LockRequest) (View, error) {
 		w.OnComplete(ctx)
 	}
 	return w.state(), nil
+}
+
+// verifyRecoveryUser checks that the account setup created is one that can
+// actually recover this node once root is locked.
+//
+// Every condition here is a way an operator ends up locked out of hardware they
+// own, and none of them is visible until they need it — which is why this runs
+// before the lock rather than being discovered afterwards.
+func verifyRecoveryUser(p Progress) error {
+	if p.RecoveryUser == "" {
+		return privhelper.Errorf(privhelper.CodeConflict,
+			"refusing to lock root: no recovery account was created, so nothing could administer this node afterwards")
+	}
+	if !p.UserSudo {
+		return privhelper.Errorf(privhelper.CodeConflict,
+			"refusing to lock root: %q cannot become root, so it could not administer a node with root locked", p.RecoveryUser)
+	}
+	if !p.UserHasPassword && p.KeyFingerprint == "" {
+		return privhelper.Errorf(privhelper.CodeConflict,
+			"refusing to lock root: %q has neither a password nor an SSH key, so nobody could log in as it", p.RecoveryUser)
+	}
+	return nil
 }
 
 // JoinRequest puts the node on the operator's Wi-Fi network.
@@ -369,6 +412,17 @@ func (w *Wizard) reraise(ctx context.Context) {
 // joinCheckpointWindow is how long the pre-join network state is held. It only
 // has to outlast the association attempt plus the operator noticing it failed.
 const joinCheckpointWindow = 3 * time.Minute
+
+// ClearProgress deletes an in-flight setup progress file. It is used by the reset
+// paths so a full re-provision starts at the first step rather than resuming into
+// the middle of a setup that describes an account and a hostname the reset just
+// undid.
+func ClearProgress(path string) error {
+	if path == "" {
+		path = DefaultProgressPath
+	}
+	return removeIfExists(path)
+}
 
 func removeIfExists(path string) error {
 	err := os.Remove(path)

@@ -13,6 +13,10 @@ const (
 	// sudoGroup is Debian's administrator group. Membership in it is what makes
 	// the recovery account able to recover anything.
 	sudoGroup = "sudo"
+	// sudoersDropIn grants the recovery account passwordless sudo when — and only
+	// when — it has no password to type. See ensureRecoverySudoers.
+	sudoersDropIn = "/etc/sudoers.d/010-waypoint-recovery"
+
 	// defaultShell is the recovery account's shell. It must be a real one: an
 	// account with /usr/sbin/nologin cannot be SSH'd into, which is the entire
 	// purpose of this account.
@@ -103,6 +107,12 @@ func (s *System) CreateRecoveryUser(ctx context.Context, req privhelper.CreateRe
 		}
 	}
 	resp.PasswordLocked = s.passwordLocked(ctx, req.Username)
+
+	if req.Sudo {
+		if err := s.ensureRecoverySudoers(ctx, req.Username, resp.PasswordLocked); err != nil {
+			return resp, err
+		}
+	}
 
 	if req.SSHKey != "" {
 		key, err := s.installKey(existing, req.SSHKey, false)
@@ -221,6 +231,80 @@ func countKeys(lines []string) int {
 		}
 	}
 	return n
+}
+
+// ensureRecoverySudoers gives a key-only recovery account passwordless sudo.
+//
+// This is not a convenience. On Debian, sudo authenticates the *invoking user*
+// with their own password — and a key-only account's password is locked, so it
+// has none to give. Without this drop-in the recovery account can SSH in and then
+// do nothing: no sudo, no way to reach root on a node whose root is locked. That
+// is the exact dead end the recovery account exists to prevent, and it is
+// invisible until an operator actually needs it.
+//
+// An account with a password gets no drop-in and authenticates normally, and any
+// drop-in from a previous key-only run is removed — so an operator who adds a
+// password later does not silently keep passwordless sudo.
+//
+// The file is validated before it is trusted. A syntactically bad file in
+// /etc/sudoers.d breaks sudo for *everyone*, which on a node with root locked
+// means nobody can administer it at all — the worst possible outcome of a step
+// meant to guarantee access.
+func (s *System) ensureRecoverySudoers(ctx context.Context, user string, passwordLocked bool) error {
+	path := s.path(sudoersDropIn)
+
+	if !passwordLocked {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return internalf("remove %s: %v", sudoersDropIn, err)
+		}
+		return nil
+	}
+
+	body := managedHeader("recovery account sudo") +
+		"\n# " + user + " has no password (it is reachable only by SSH key), so sudo has\n" +
+		"# nothing to authenticate against. Without this it could log in and do nothing.\n" +
+		user + " ALL=(ALL) NOPASSWD:ALL\n"
+
+	// 0440: sudo refuses to read a drop-in that is group- or world-writable, and
+	// ignores the whole directory if any file in it is.
+	changed, err := s.writeFileIfChanged(path, []byte(body), 0o440)
+	if err != nil {
+		return internalf("write %s: %v", sudoersDropIn, err)
+	}
+	if !changed {
+		return nil
+	}
+	if err := s.validateSudoers(ctx, path); err != nil {
+		return err
+	}
+	s.logf("sysprov: %s may use sudo without a password (it has none to type)", user)
+	return nil
+}
+
+// validateSudoers checks the assembled sudo configuration, removing the drop-in
+// if it is what broke it.
+//
+// Differential, like the sshd check: visudo can fail for reasons that predate
+// this file, and deleting a valid drop-in over an unrelated fault would leave the
+// recovery account unable to sudo on a node with root locked.
+func (s *System) validateSudoers(ctx context.Context, path string) error {
+	if _, err := s.run(ctx, nil, "visudo", "-c"); err == nil {
+		return nil
+	}
+	saved, readErr := os.ReadFile(path)
+	if err := os.Remove(path); err != nil {
+		return internalf("visudo rejected the configuration and %s could not be removed: %v", sudoersDropIn, err)
+	}
+	if _, err := s.run(ctx, nil, "visudo", "-c"); err != nil {
+		if readErr == nil {
+			if werr := s.writeFile(path, saved, 0o440); werr != nil {
+				return internalf("restore %s: %v", sudoersDropIn, werr)
+			}
+		}
+		s.logf("sysprov: visudo -c fails for reasons unrelated to %s (%v); the drop-in was kept", sudoersDropIn, err)
+		return nil
+	}
+	return internalf("the sudo configuration %s produces is invalid, so it was removed", sudoersDropIn)
 }
 
 // LockRoot locks root's password and tells sshd to refuse root logins.
