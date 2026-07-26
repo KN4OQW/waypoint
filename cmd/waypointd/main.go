@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/KN4OQW/waypoint/internal/auth"
+	"github.com/KN4OQW/waypoint/internal/captive"
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/demo"
 	"github.com/KN4OQW/waypoint/internal/dmrhosts"
@@ -37,12 +38,19 @@ import (
 	"github.com/KN4OQW/waypoint/internal/minisign"
 	"github.com/KN4OQW/waypoint/internal/mqtt"
 	"github.com/KN4OQW/waypoint/internal/netconfig"
+	"github.com/KN4OQW/waypoint/internal/netwatch"
 	"github.com/KN4OQW/waypoint/internal/nxdnhosts"
 	"github.com/KN4OQW/waypoint/internal/p25hosts"
 	"github.com/KN4OQW/waypoint/internal/peering"
+	"github.com/KN4OQW/waypoint/internal/privhelper"
+	"github.com/KN4OQW/waypoint/internal/provision"
+	"github.com/KN4OQW/waypoint/internal/sdnotify"
+	"github.com/KN4OQW/waypoint/internal/seed"
 	"github.com/KN4OQW/waypoint/internal/status"
 	"github.com/KN4OQW/waypoint/internal/store"
+	"github.com/KN4OQW/waypoint/internal/tlscert"
 	"github.com/KN4OQW/waypoint/internal/verifydl"
+	"github.com/KN4OQW/waypoint/internal/wizard"
 	"github.com/KN4OQW/waypoint/internal/ysfhosts"
 	"github.com/KN4OQW/waypoint/ui"
 )
@@ -61,6 +69,19 @@ type server struct {
 	paths     config.Paths       // where each daemon reads its generated INI (render targets)
 	agg       *status.Aggregator // live-status fold served by /api/status + WS (RFC-0008); nil only in some tests
 	peering   *peering.Manager   // RFC-0016 LAN pairing manager (nil until initPeering runs / if it fails)
+	// wiz is the first-boot setup wizard (docs/provisioning.md). Nil disables it
+	// and the gate becomes a pass-through, which is what every test that builds a
+	// server directly relies on.
+	wiz *wizard.Wizard
+	// ap is the setup access point and its captive portal, raised only while the
+	// node is unprovisioned. Nil when the node is set up or the AP is disabled.
+	ap *captive.Controller
+	// apSession ties the AP to the listeners that make it useful, so a re-raise
+	// after a failed join or a lost upstream brings the wizard back with it.
+	apSession *apSession
+	// certs owns the device certificate, so it can be reminted for the hostname
+	// the operator chooses rather than the one the node booted with.
+	certs *tlscert.Holder
 
 	// Host/OS networking domain (docs/config-coverage.md §4). netKeyfileDir is
 	// where the NetworkManager keyfile renderer writes waypoint-*.nmconnection;
@@ -1211,6 +1232,9 @@ type healthResponse struct {
 	Uptime  string `json:"uptime"`
 	Demo    bool   `json:"demo"`
 	Detail  string `json:"detail,omitempty"`
+	// SetupAP is the setup access point's state, or null once the node is
+	// provisioned and the AP is gone.
+	SetupAP *captive.Status `json:"setup_ap,omitempty"`
 }
 
 func (s *server) health(w http.ResponseWriter, _ *http.Request) {
@@ -1226,6 +1250,10 @@ func (s *server) health(w http.ResponseWriter, _ *http.Request) {
 		Uptime:  time.Since(s.started).Round(time.Second).String(),
 		Demo:    s.demo,
 		Detail:  detail,
+		// Health is reachable in every state, including from the setup access
+		// point, so it is the one endpoint that can answer "is the AP up, and why
+		// did it go away" while the node is still unprovisioned.
+		SetupAP: s.setupAPStatus(),
 	})
 }
 
@@ -1558,6 +1586,52 @@ func (s *server) newMux() *http.ServeMux {
 	return mux
 }
 
+// runWatchdog answers systemd's watchdog for as long as the daemon is healthy.
+//
+// "Healthy" is deliberately more than "this goroutine is scheduled". The ping is
+// gated on the event hub answering, because a daemon whose hub has deadlocked is
+// exactly the failure the watchdog exists to catch, and a ping that only proves
+// the timer fired would keep such a node alive indefinitely.
+func runWatchdog(ctx context.Context, s *server) {
+	interval := sdnotify.WatchdogInterval()
+	if err := sdnotify.Ready(); err != nil {
+		log.Printf("waypointd: could not notify systemd: %v", err)
+	}
+	if interval <= 0 {
+		return // no watchdog configured, or not running under systemd
+	}
+	log.Printf("waypointd: answering the systemd watchdog every %s", interval)
+
+	tick := time.NewTicker(interval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			if !s.healthy() {
+				// Deliberately silent on the socket: withholding the ping is how the
+				// watchdog is told, and systemd will restart us. The log line is for
+				// whoever reads the journal afterwards.
+				log.Printf("waypointd: WEDGED — withholding the watchdog ping so systemd restarts this daemon")
+				continue
+			}
+			if err := sdnotify.Watchdog(); err != nil {
+				log.Printf("waypointd: watchdog ping failed: %v", err)
+			}
+		}
+	}
+}
+
+// healthy reports whether the daemon is doing its job, not merely running. It is
+// what the watchdog ping is gated on.
+func (s *server) healthy() bool {
+	// The hub is the daemon's spine: every event, status frame, and WebSocket
+	// message goes through it. If it does not answer, nothing else works either,
+	// however alive the process looks from outside.
+	return s.hub != nil && s.hub.Alive()
+}
+
 func main() {
 	// Subcommands are dispatched before flag parsing: `waypointd reset-claim`
 	// connects to the store directly and returns the device to claim mode, for an
@@ -1643,6 +1717,33 @@ func main() {
 	peeringDir := flag.String("peering-dir", "/home/pi-star/waypoint/peering", "directory holding LAN-peering cert/key files (node.key, peer-*.crt) referenced by rendered bus peering blocks (RFC-0016)")
 	peeringBootstrapAddr := flag.String("peering-bootstrap-addr", "0.0.0.0:42501", "listen address for the RFC-0016 pairing bootstrap channel (plain TCP; the short code authenticates the exchange)")
 	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
+	// First-boot setup (docs/provisioning.md). The wizard is on by default: a node
+	// flashed with dd has no hostname the operator chose, no account, and an
+	// unlocked root, and Raspberry Pi Imager 2.x no longer offers to seed any of
+	// them for a local image.
+	setupWizard := flag.Bool("setup-wizard", true, "serve the first-boot setup wizard until the node is provisioned")
+	provisionSocket := flag.String("provision-socket", privhelper.DefaultSocketPath, "Unix socket of the privileged provisioning helper")
+	provisionMarker := flag.String("provision-marker", provision.DefaultPath, "path to the provisioned marker written when setup completes")
+	setupProgress := flag.String("setup-progress", wizard.DefaultProgressPath, "path to the in-flight setup progress file")
+	// The power-user fast path: a TOML on the boot partition provisions the node
+	// without anyone touching the wizard, and without an access point being raised.
+	seedPaths := flag.String("provision-seed", strings.Join(seed.DefaultPaths, ","),
+		"comma-separated boot-partition provisioning files, searched in order (empty disables the fast path)")
+	// The setup access point is how a node with no other network is reachable at
+	// all. It is open by default (see internal/setupap) and comes down on a
+	// network join, on setup completion, or after the window below with nobody
+	// associated.
+	setupAP := flag.Bool("setup-ap", true, "raise the setup access point while the node is unprovisioned")
+	setupAPIface := flag.String("setup-ap-interface", "", "wireless interface for the setup access point (empty picks the first)")
+	setupAPCountry := flag.String("setup-ap-country", "", "regulatory domain for the setup access point, e.g. US")
+	setupAPWindow := flag.Duration("setup-ap-window", captive.DefaultAssociateWindow, "how long the setup access point waits for a client before coming down until the next boot")
+	setupSessionIdle := flag.Duration("setup-session-idle", captive.DefaultIdleTimeout, "how long a setup session survives with no request from the holding device")
+	// netwatch is the way back into a node that was set up months ago and has
+	// since lost the network it was set up on — a replaced router, a renamed SSID,
+	// a node carried somewhere else. It re-raises the setup access point and
+	// touches no provisioning state.
+	netwatchGrace := flag.Duration("netwatch-grace", netwatch.DefaultGrace, "how long the node tolerates having no route out before the setup access point comes back")
+	netwatchInterval := flag.Duration("netwatch-interval", netwatch.DefaultInterval, "how often the route table is checked for a way out")
 	eventsPath := flag.String("events-store", "/home/pi-star/waypoint/events.db", "path to the SQLite event-history store (RFC-0004); a config.db sibling")
 	nmKeyfileDir := flag.String("nm-keyfile-dir", "/etc/NetworkManager/system-connections", "directory for rendered NetworkManager keyfiles (waypoint-*.nmconnection)")
 	netConfirmTimeout := flag.Duration("network-confirm-timeout", netconfig.DefaultConfirmTimeout, "confirm-or-revert rollback window for a network apply")
@@ -1787,7 +1888,7 @@ func main() {
 	// any boot-partition reset marker before the server starts serving, so a device
 	// booted with a marker comes up unclaimed. A failure here is fatal: starting
 	// with an unknown/inconsistent auth state could expose config surfaces.
-	s.auth, err = buildAuth(st, secureCookieOn)
+	s.auth, err = buildAuth(st, secureCookieOn, resetPaths{Marker: *provisionMarker, Progress: *setupProgress})
 	if err != nil {
 		log.Fatalf("auth: %v", err)
 	}
@@ -1820,6 +1921,33 @@ func main() {
 	// The status aggregator folds the event stream into the live status served by
 	// /api/status + the WebSocket (RFC-0008). Runs in both demo and live mode.
 	go s.agg.Run(context.Background(), s.hub, *statusTick)
+	s.certs = tlscert.NewHolder(*tlsDir)
+	s.certs.Logf = log.Printf
+	// Demo mode is a dashboard with synthetic traffic and no radio — a laptop, a
+	// CI runner, a screenshot. Gating it behind first-boot setup would mean the one
+	// mode whose entire purpose is showing the dashboard showing a setup wizard
+	// instead, and raising an access point on a machine that is not a node.
+	if *demoMode && (*setupWizard || *setupAP) {
+		log.Printf("waypointd: demo mode — first-boot setup and the setup access point are off")
+		*setupWizard, *setupAP = false, false
+	}
+
+	s.initSetup(setupOptions{
+		Enabled:   *setupWizard,
+		Socket:    *provisionSocket,
+		Marker:    *provisionMarker,
+		Progress:  *setupProgress,
+		SeedPaths: strings.Split(*seedPaths, ","),
+	}, st)
+	s.initSetupAP(context.Background(), apOptions{
+		Enabled:          *setupAP,
+		Interface:        *setupAPIface,
+		Country:          *setupAPCountry,
+		Window:           *setupAPWindow,
+		IdleTimeout:      *setupSessionIdle,
+		NetwatchGrace:    *netwatchGrace,
+		NetwatchInterval: *netwatchInterval,
+	})
 	s.initPeering(context.Background(), *peeringDir, *peeringBootstrapAddr)
 
 	if *demoMode {
@@ -1916,7 +2044,10 @@ func main() {
 		// The auth gate fronts the entire mux: it is the single seam that enforces
 		// the claim state machine and session requirement, so no handler re-checks
 		// auth (RFC-0002). A route absent from the gate's allowlist defaults to denied.
-		Handler:           s.auth.Gate(s.newMux()),
+		// The setup gate wraps the auth gate, so an unprovisioned node never
+		// reaches the claim state machine at all: provisioning says what the box
+		// is, claiming says who administers it, and the first has to happen first.
+		Handler:           s.setupGate(s.auth.Gate(s.newMux())),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	// Serve HTTPS by default with the self-signed device cert (RFC-0012), plus the
@@ -1927,11 +2058,19 @@ func main() {
 		scheme = "http"
 	}
 	log.Printf("serving %s on %s", scheme, *addr)
+	// Tell systemd we are up, and start answering its watchdog.
+	//
+	// The watchdog is the only thing that can distinguish a wedged daemon from a
+	// healthy one: a hotspot whose event loop has deadlocked still holds its
+	// listener open and never exits, so Restart= never fires and the node is off
+	// the air until somebody power-cycles it. See runWatchdog.
+	go runWatchdog(context.Background(), s)
 	log.Fatal(listenAndServe(srv, tlsOptions{
 		enabled:      tlsServing,
 		certDir:      *tlsDir,
 		httpsPort:    portOf(*addr),
 		redirectAddr: *httpRedirectAddr,
+		certs:        s.certs,
 		acmeDomain:   *acmeDomain,
 		acmeEmail:    *acmeEmail,
 		acmeDir:      *acmeDir,

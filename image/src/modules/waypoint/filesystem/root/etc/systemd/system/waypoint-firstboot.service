@@ -1,0 +1,32 @@
+[Unit]
+Description=Waypoint first-boot preparation
+Documentation=https://github.com/KN4OQW/waypoint/blob/main/docs/provisioning.md
+
+# The whole unit is conditional on the node never having been set up. On every
+# boot after the first this is a no-op that systemd skips without starting a
+# process — which is why the condition lives here rather than as a check inside
+# the binary.
+ConditionPathExists=!/var/lib/waypoint/provisioned
+
+# waypointd reads the marker to decide whether to serve the wizard and whether to
+# raise the setup access point, so this has to have finished before it starts.
+Before=waypointd.service
+Wants=waypoint-provision-helper.socket
+After=waypoint-provision-helper.socket local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/waypoint-provision-helper -prepare
+
+# A failure here means the state directory or the waypoint group is missing —
+# a packaging fault, not a transient one. Retrying would loop; failing leaves it
+# visible in `systemctl --failed` with the reason in the journal.
+Restart=no
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=waypoint-firstboot
+
+[Install]
+WantedBy=multi-user.target

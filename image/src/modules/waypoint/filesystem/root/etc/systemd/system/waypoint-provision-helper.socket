@@ -1,0 +1,23 @@
+[Unit]
+Description=Waypoint provisioning helper socket
+Documentation=https://github.com/KN4OQW/waypoint/blob/main/docs/provisioning.md
+
+[Socket]
+ListenStream=/run/waypoint/provision.sock
+
+# The socket IS the security boundary, so systemd creates it with its final
+# ownership already applied. Doing it here rather than in the helper means there
+# is no instant in which a bound socket is more permissive than it should be.
+SocketUser=root
+SocketGroup=waypoint
+SocketMode=0660
+
+# One helper process serves every connection; systemd hands it the listening fd.
+Accept=no
+
+# A socket left over from a killed helper would make the next activation fail
+# with "address already in use".
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

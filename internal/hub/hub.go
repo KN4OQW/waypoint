@@ -40,6 +40,41 @@ func New() *Hub {
 	return &Hub{subs: make(map[chan Event]struct{})}
 }
 
+// Alive reports whether the hub can still be reached — that its lock is not held
+// by something that has stopped, and its subscriber map is intact.
+//
+// It exists for the systemd watchdog. The interesting failure on an appliance is
+// not the process exiting, which systemd already handles, but the process
+// deadlocking: the listener still accepts, nothing is ever served, and Restart=
+// never fires. Every event in the daemon passes through this mutex, so a
+// goroutine that cannot take it is a daemon that has stopped working, whatever
+// the process table says.
+//
+// The caller runs this on its own goroutine with a deadline; taking the lock is
+// the test, and blocking forever is the failure it is testing for.
+func (h *Hub) Alive() bool {
+	done := make(chan struct{})
+	go func() {
+		h.mu.Lock()
+		ok := h.subs != nil
+		h.mu.Unlock()
+		if ok {
+			close(done)
+		}
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(aliveTimeout):
+		return false
+	}
+}
+
+// aliveTimeout bounds the liveness probe. It is generous relative to how long
+// taking an uncontended mutex takes, because the cost of a false positive here is
+// a restart of a working node.
+const aliveTimeout = 5 * time.Second
+
 // Publish delivers e to all current subscribers without blocking the
 // publisher: a subscriber that has stopped draining is skipped.
 func (h *Hub) Publish(e Event) {

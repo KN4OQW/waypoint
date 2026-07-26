@@ -563,7 +563,8 @@ func TestResetMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	var logs syncBuffer
-	did, err := checkResetMarker(e.as, []string{filepath.Join(dir, "absent"), marker}, logs.logf)
+	did, err := checkResetMarker(e.as, e.s.store, []string{filepath.Join(dir, "absent"), marker},
+		resetPaths{Marker: filepath.Join(dir, "provisioned"), Progress: filepath.Join(dir, "progress.json")}, logs.logf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -601,7 +602,8 @@ func TestResetMarkerDeleteFailureTolerated(t *testing.T) {
 		t.Fatal(err)
 	}
 	var logs syncBuffer
-	did, err := checkResetMarker(e.as, []string{marker}, logs.logf)
+	did, err := checkResetMarker(e.as, e.s.store, []string{marker},
+		resetPaths{Marker: filepath.Join(dir, "provisioned"), Progress: filepath.Join(dir, "progress.json")}, logs.logf)
 	if err != nil {
 		t.Fatalf("marker reset with undeletable marker returned error: %v", err)
 	}

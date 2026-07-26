@@ -32,4 +32,46 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm }}
           CGO_ENABLED: "0"
-        run: go build -trimpath -ldflags "-s -w -X main.Version=${GITHUB_SHA::8}" ./cmd/waypointd
+        run: go build -trimpath -ldflags "-s -w -X main.Version=${GITHUB_SHA::8}" ./cmd/waypointd ./cmd/waypoint-provision-helper
+
+  # The lint gate is differential: the repository carries a pre-existing baseline
+  # in packages this workstream did not touch, and fixing those inside a feature
+  # branch would be a review nobody can do properly. New code is held to zero.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # new-from-rev needs the history to diff against
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.6.2
+          args: --new-from-rev=origin/main
+
+  # Every unit the image ships is parsed by systemd itself. A directive that
+  # systemd silently ignores — a misspelled hardening option, a stale unit name in
+  # an After= — is invisible until the node it was meant to protect is in the
+  # field.
+  units:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: systemd-analyze verify
+        run: ./image/tests/verify-units.sh
+
+  # The provisioning helper creates accounts and locks root, so its integration
+  # test runs against a real Debian filesystem in a throwaway container rather
+  # than against the runner. It is a separate job because it needs Docker and
+  # takes longer than the unit suite.
+  provision-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Integration (sysprov, in a container)
+        run: ./internal/sysprov/testdata/integration/run.sh -test.v

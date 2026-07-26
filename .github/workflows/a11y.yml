@@ -39,7 +39,12 @@ jobs:
 
       - name: Start demo daemon
         run: |
+          # -tls-dir: the default is /home/pi-star/waypoint/tls, which a runner
+          # cannot create, and the daemon exits when it cannot mint its cert.
+          # -tls=false: the daemon serves HTTPS by default, and this job probes
+          # http://127.0.0.1:8073, so the handshake would never complete.
           ./waypointd -demo -addr 127.0.0.1:8073 -store "$RUNNER_TEMP/a11y.db" \
+            -tls=false -tls-dir "$RUNNER_TEMP/tls" \
             > "$RUNNER_TEMP/waypointd.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/wp.pid"
           for i in $(seq 1 30); do
