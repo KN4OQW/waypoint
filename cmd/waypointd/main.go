@@ -1923,6 +1923,15 @@ func main() {
 	go s.agg.Run(context.Background(), s.hub, *statusTick)
 	s.certs = tlscert.NewHolder(*tlsDir)
 	s.certs.Logf = log.Printf
+	// Demo mode is a dashboard with synthetic traffic and no radio — a laptop, a
+	// CI runner, a screenshot. Gating it behind first-boot setup would mean the one
+	// mode whose entire purpose is showing the dashboard showing a setup wizard
+	// instead, and raising an access point on a machine that is not a node.
+	if *demoMode && (*setupWizard || *setupAP) {
+		log.Printf("waypointd: demo mode — first-boot setup and the setup access point are off")
+		*setupWizard, *setupAP = false, false
+	}
+
 	s.initSetup(setupOptions{
 		Enabled:   *setupWizard,
 		Socket:    *provisionSocket,
