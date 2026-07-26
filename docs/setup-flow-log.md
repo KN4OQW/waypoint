@@ -424,3 +424,80 @@ only via the wizard's hostname step — a hostname changed later through
 `/api/network/host/apply` does not yet trigger one. That is a real gap, but it
 belongs to the network-config surface rather than first-boot setup, and I have not
 touched it.
+
+---
+
+## 9 — `feat/custom-toml-fastpath`: the power-user fast path
+
+**Shipped.** `internal/seed` — a TOML on the boot partition that provisions a node
+without anyone touching the wizard — plus `PasswordHash` through the protocol,
+the daemon wiring, and the documented format in `docs/provisioning.md`.
+
+**The central design call: it drives the wizard, it does not bypass it.** `Apply`
+calls `SetHostname`, `CreateUser`, `InstallKey`, `JoinNetwork`, `Lock` — the same
+steps, in the same order, as the interactive flow. A seed path that wrote the
+marker itself would be a provisioning route with none of the validators, none of
+the layered root-lock verification, and none of the idempotency — reachable by
+anyone who can write to a FAT partition. What it skips is the access point and the
+typing, not the rules.
+
+**Schema is Raspberry Pi's `custom.toml`, key for key.** An operator who already
+has one — from Imager, a provisioning script, a colleague — should be able to drop
+it on the card and have it mean what it says. Unknown keys are ignored rather than
+refused; a file that also configures things Waypoint has no opinion about is a
+normal file.
+
+**One protocol addition.** `CreateRecoveryUserRequest.PasswordHash`, applied with
+`chpasswd --encrypted`, with `ValidatePasswordHash` guarding the same
+colon/newline injection as the plaintext path. This is the *recommended* form for
+a seed file: the file sits on a FAT partition anybody who takes the card can read,
+so it should hold a hash rather than the operator's actual password. The validator
+deliberately does not enumerate hash identifiers — crypt(3) grows new ones
+(yescrypt replaced SHA-512 as Debian's default within this project's lifetime) and
+refusing a hash the node's own libcrypt understands would reject a working
+credential.
+
+**Failure directions, each chosen deliberately.**
+
+- **A bad TOML falls back to the wizard**, it does not stop the daemon. The
+  operator who wrote it is not watching this boot; a node that refuses to come up
+  because of a typo is a node they cannot reach to fix the typo.
+- **Validation is whole-file, before anything is applied.** A partial application —
+  hostname set, no account, root unlocked — leaves a node in a state nobody chose
+  and nobody is present to notice.
+- **A failed Wi-Fi join does not fail provisioning.** Refusing to finish would
+  leave the node unprovisioned, which on a node with no other network means it
+  raises the AP and waits for somebody who is not there. It finishes, logs loudly,
+  and netwatch (prompt 6) is the safety net.
+- **The file is deleted on success, left alone on refusal.** Deleted because it
+  carries credentials on a readable partition; left alone when refused so the
+  operator can see what they wrote. **Flagged for your sign-off** — deleting an
+  operator's file is a real choice.
+- **A stale file is ignored on an already-provisioned node**, so a card moved
+  between boxes cannot rename a live node out from under its operator.
+
+**Verified.** Ten seed properties and five daemon-level ones. The acceptance test
+goes through the daemon's own startup path rather than calling the package
+directly, because "no AP raised" is a property of the ordering in
+`initSetup`/`initSetupAP`, not of the seed: it asserts `APUp` was called **zero**
+times, that the claim is still required, and that the claim then succeeds. The
+absent-file case asserts the wizard is untouched and still at `hostname`.
+
+Eleven invalid-file cases each assert the error names the file *and* the specific
+problem, and that nothing was half-applied. The fixture is the **documented**
+TOML, so documentation drifting from the parser fails the build.
+
+`go vet ./...`, `go test -race ./...`, three-arch cross-builds clean.
+golangci-lint 0 issues across the five touched packages. `internal/seed` 84.3%
+coverage.
+
+**A latent test bug this prompt surfaced.** `TestControllerClientCancelsTheWindow`
+(prompt 5) started `ctrl.Run` in a goroutine and never waited for it, so on an
+unlucky schedule the cancelled context made `Run` log through `t.Logf` after the
+test had returned — a data race. It had been passing since prompt 5 and only fired
+once `-race` scheduling shifted. Now the test waits for the goroutine, and uses a
+second tick instead of a sleep.
+
+**New dependency.** `github.com/BurntSushi/toml` v1.4.0, promoted to direct. A
+hand-rolled TOML subset parser would have been the alternative; for a file format
+an operator hand-edits, a real parser is worth the dependency.

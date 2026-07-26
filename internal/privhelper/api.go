@@ -128,6 +128,13 @@ type CreateRecoveryUserRequest struct {
 	// below redacts it, and implementations must not format the raw struct.
 	Password string `json:"password,omitempty"`
 
+	// PasswordHash is a pre-computed crypt(3) string, as `openssl passwd -6` or
+	// Raspberry Pi Imager produce. It is the better form for a password that has
+	// to be written down somewhere — a boot-partition file, a provisioning
+	// template — because the file then holds a hash rather than the operator's
+	// actual password. Mutually exclusive with Password.
+	PasswordHash string `json:"password_hash,omitempty"`
+
 	// Sudo grants passwordless-free sudo via the sudo group. The recovery user
 	// needs it — an account that cannot become root cannot recover a node whose
 	// root is locked.
@@ -143,8 +150,17 @@ func (r CreateRecoveryUserRequest) Validate() error {
 	if err := ValidateUsername(r.Username); err != nil {
 		return err
 	}
+	if r.Password != "" && r.PasswordHash != "" {
+		return Errorf(CodeInvalidArgument,
+			"give either a password or a password hash for %q, not both", r.Username)
+	}
 	if r.Password != "" {
 		if err := ValidatePassword(r.Password); err != nil {
+			return err
+		}
+	}
+	if r.PasswordHash != "" {
+		if err := ValidatePasswordHash(r.PasswordHash); err != nil {
 			return err
 		}
 	}
@@ -156,7 +172,7 @@ func (r CreateRecoveryUserRequest) Validate() error {
 	// A user with neither a password nor a key cannot log in at all, which makes
 	// it useless as a recovery account — exactly the failure this account exists
 	// to prevent, so it is refused rather than silently created.
-	if r.Password == "" && r.SSHKey == "" {
+	if r.Password == "" && r.PasswordHash == "" && r.SSHKey == "" {
 		return Errorf(CodeInvalidArgument,
 			"recovery user %q would have neither a password nor an SSH key and could never log in", r.Username)
 	}
@@ -167,8 +183,13 @@ func (r CreateRecoveryUserRequest) Validate() error {
 // use this rather than formatting the struct.
 func (r CreateRecoveryUserRequest) String() string {
 	pw := "none"
-	if r.Password != "" {
+	switch {
+	case r.Password != "":
 		pw = "[REDACTED]"
+	case r.PasswordHash != "":
+		// A hash is not the operator's password, but it is still the credential an
+		// offline cracker would work on, so it does not go in a log either.
+		pw = "[REDACTED hash]"
 	}
 	key := "none"
 	if r.SSHKey != "" {

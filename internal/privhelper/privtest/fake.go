@@ -217,7 +217,7 @@ func (f *Fake) CreateRecoveryUser(ctx context.Context, req privhelper.CreateReco
 		UID:            f.nextUID,
 		Home:           "/home/" + req.Username,
 		Sudo:           req.Sudo,
-		PasswordLocked: req.Password == "",
+		PasswordLocked: req.Password == "" && req.PasswordHash == "",
 	}
 	if req.SSHKey != "" {
 		u.Keys = append(u.Keys, req.SSHKey)

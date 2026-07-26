@@ -92,18 +92,28 @@ func (s *System) CreateRecoveryUser(ctx context.Context, req privhelper.CreateRe
 		resp.Sudo = true
 	}
 
-	if req.Password == "" {
-		// Key-only: the password is locked, so the account is reachable only with
-		// the key the operator already holds.
-		if _, err := s.run(ctx, nil, "passwd", "--lock", req.Username); err != nil {
-			return resp, internalf("lock the password for %q: %v", req.Username, err)
+	switch {
+	case req.PasswordHash != "":
+		// -e takes the value as an already-hashed crypt string, so a provisioning
+		// file can carry a hash instead of the operator's actual password. Still
+		// stdin: the hash is what an offline cracker would work on, and argv is
+		// world-readable through /proc.
+		line := []byte(req.Username + ":" + req.PasswordHash + "\n")
+		if _, err := s.run(ctx, line, "chpasswd", "--encrypted"); err != nil {
+			return resp, internalf("set the password hash for %q: %v", req.Username, err)
 		}
-	} else {
+	case req.Password != "":
 		// stdin, not argv: a password on a command line is readable out of
 		// /proc/<pid>/cmdline by any local user for as long as the process lives.
 		line := []byte(req.Username + ":" + req.Password + "\n")
 		if _, err := s.run(ctx, line, "chpasswd"); err != nil {
 			return resp, internalf("set the password for %q: %v", req.Username, err)
+		}
+	default:
+		// Key-only: the password is locked, so the account is reachable only with
+		// the key the operator already holds.
+		if _, err := s.run(ctx, nil, "passwd", "--lock", req.Username); err != nil {
+			return resp, internalf("lock the password for %q: %v", req.Username, err)
 		}
 	}
 	resp.PasswordLocked = s.passwordLocked(ctx, req.Username)

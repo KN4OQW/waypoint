@@ -276,3 +276,79 @@ the operator already holds cannot be forgotten, and a public key is not a secret
 so sending it over an open network gives nothing away. A **password is the
 fallback**, with the caveat stated inline that it travels in the clear and should
 be changed once the node is on the operator's own Wi-Fi.
+
+## The fast path: provisioning from the boot partition
+
+Setting a node up through the wizard is the right default and the wrong workflow
+for someone bringing up their fifth node, building a batch for a club, or
+reflashing the same box while chasing a bug. Those operators have the card in a
+reader anyway.
+
+Drop **`waypoint.toml`** on the boot partition — or a **`custom.toml`**, since the
+schema is Raspberry Pi's own, key for key:
+
+```toml
+config_version = 1
+
+[system]
+hostname = "hs-shack"          # required; the shipped default is refused
+
+[user]
+name = "rescue"                # required; must not be root
+# Prefer a hash. This file sits on a FAT partition anybody who takes the card
+# can read. `openssl passwd -6` produces one.
+password = "$6$rounds=5000$...$..."
+password_encrypted = true
+
+[ssh]
+enabled = true
+password_authentication = false   # omit to leave sshd's setting alone
+authorized_keys = [
+  "ssh-ed25519 AAAA... operator@laptop",
+]
+
+[wlan]
+ssid = "home-network"
+password = "correct horse battery"   # or a 64-hex PSK
+country = "US"
+hidden = false
+```
+
+Searched in order: `/boot/firmware/waypoint.toml`, `/boot/waypoint.toml`,
+`/boot/firmware/custom.toml`, `/boot/custom.toml`. Keys outside the subset above
+are ignored, so a file that also configures things Waypoint has no opinion about
+is a normal file rather than a broken one. `--provision-seed=""` disables the path
+entirely.
+
+### What it does and does not do
+
+It is a fast path, not a back door. Every field goes through the **same wizard
+steps** the interactive flow uses, so the same validators run, the same layered
+checks guard the root lock, and the same marker is written. What it skips is the
+access point and the typing — not the rules.
+
+It **does not claim the node.** Provisioning says what the box is; claiming says
+who administers it, and handing that to whoever wrote a file on the card would
+make the claim gate decorative. The operator still meets the claim screen over
+HTTPS, on the hostname the file chose.
+
+**No access point is raised.** The seed runs before anything reports on state, so
+a node that provisions itself never announces that it needs a wizard.
+
+**The file is deleted once it has been used.** It carries a Wi-Fi passphrase and,
+unless a hash was used, an account password, on a partition anybody with the card
+can read. A file that is *refused* is left alone, so the operator can see what
+they wrote.
+
+**Every failure falls back to the wizard.** A bad TOML does not stop the daemon:
+the operator who wrote it is not watching this boot, and a node that refuses to
+come up because of a typo is a node they cannot reach to fix the typo.
+
+**A failed Wi-Fi join does not fail provisioning.** The node may be on Ethernet,
+and refusing to finish over a mistyped passphrase would leave it unprovisioned —
+which on a node with no other network means it raises the access point and waits
+for somebody who is not there. It finishes, logs loudly, and netwatch raises the
+AP later if the node really has no way out.
+
+**A stale file is ignored on an already-provisioned node**, so a card moved
+between boxes cannot rename a live node out from under its operator.

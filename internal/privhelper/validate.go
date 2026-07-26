@@ -41,6 +41,11 @@ var (
 	// hexPSKRE is a raw 256-bit PMK: exactly 64 hex digits.
 	hexPSKRE = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 
+	// cryptHashRE is a crypt(3) password hash: $<id>$[params$]<salt>$<hash>, as
+	// yescrypt ($y$), SHA-512 ($6$), SHA-256 ($5$), and bcrypt ($2b$) produce.
+	// Anchored and colon-free — see ValidatePasswordHash.
+	cryptHashRE = regexp.MustCompile(`^\$[0-9a-zA-Z]+\$[!-9;-~]+$`)
+
 	// countryRE is a two-letter ISO 3166-1 regulatory domain.
 	countryRE = regexp.MustCompile(`^[A-Za-z]{2}$`)
 )
@@ -191,6 +196,36 @@ func ValidatePassword(pw string) error {
 	}
 	if strings.ContainsFunc(pw, isControl) {
 		return Errorf(CodeInvalidArgument, "password must not contain control characters")
+	}
+	return nil
+}
+
+// ValidatePasswordHash checks a pre-computed crypt(3) hash.
+//
+// The character rules are the same injection guard as ValidatePassword and for
+// the same reason: this value reaches `chpasswd -e`, which reads "user:hash"
+// lines from stdin, so a colon truncates the record and a newline appends
+// another one. The regex excludes both by construction rather than by a separate
+// check, since every real crypt alphabet is printable ASCII without colons.
+//
+// It deliberately does not enumerate accepted hash identifiers. crypt(3) grows
+// new ones — yescrypt replaced SHA-512 as Debian's default within this project's
+// lifetime — and a node that refused a hash its own libcrypt understands would be
+// rejecting a credential that works.
+func ValidatePasswordHash(hash string) error {
+	if hash == "" {
+		return Errorf(CodeInvalidArgument, "password hash is empty")
+	}
+	if len(hash) > maxPasswordLen {
+		return Errorf(CodeInvalidArgument, "password hash is longer than %d characters", maxPasswordLen)
+	}
+	if !strings.HasPrefix(hash, "$") {
+		return Errorf(CodeInvalidArgument,
+			"password hash must be a crypt(3) string starting with $ (openssl passwd -6 produces one); a bare password goes in the password field")
+	}
+	if !cryptHashRE.MatchString(hash) {
+		return Errorf(CodeInvalidArgument,
+			"password hash is not a valid crypt(3) string (it must contain no whitespace, colons, or line breaks)")
 	}
 	return nil
 }

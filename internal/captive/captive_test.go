@@ -616,18 +616,22 @@ func TestControllerWindowExpires(t *testing.T) {
 func TestControllerClientCancelsTheWindow(t *testing.T) {
 	ctrl, fake, c := newController(t, "")
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	if err := ctrl.Up(ctx); err != nil {
 		t.Fatal(err)
 	}
 	ctrl.NoteClient()
 
 	tick := make(chan time.Time, 1)
-	go ctrl.Run(ctx, tick)
+	done := make(chan struct{})
+	go func() { defer close(done); ctrl.Run(ctx, tick) }()
+	// Run logs through t.Logf, so the test must not return until it has stopped —
+	// a goroutine logging into a finished test is a race, and one that only shows
+	// up under an unlucky schedule.
+	t.Cleanup(func() { cancel(); <-done })
 
 	tick <- c.add(2 * DefaultAssociateWindow)
-	// Give Run a moment to have acted, if it were going to.
-	time.Sleep(20 * time.Millisecond)
+	// A second tick guarantees the first has been processed, without a sleep.
+	tick <- c.now()
 
 	if fake.AP == nil {
 		t.Error("the AP came down despite a client using it")

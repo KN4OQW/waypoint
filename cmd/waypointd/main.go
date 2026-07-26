@@ -44,6 +44,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/peering"
 	"github.com/KN4OQW/waypoint/internal/privhelper"
 	"github.com/KN4OQW/waypoint/internal/provision"
+	"github.com/KN4OQW/waypoint/internal/seed"
 	"github.com/KN4OQW/waypoint/internal/status"
 	"github.com/KN4OQW/waypoint/internal/store"
 	"github.com/KN4OQW/waypoint/internal/tlscert"
@@ -1677,6 +1678,10 @@ func main() {
 	provisionSocket := flag.String("provision-socket", privhelper.DefaultSocketPath, "Unix socket of the privileged provisioning helper")
 	provisionMarker := flag.String("provision-marker", provision.DefaultPath, "path to the provisioned marker written when setup completes")
 	setupProgress := flag.String("setup-progress", wizard.DefaultProgressPath, "path to the in-flight setup progress file")
+	// The power-user fast path: a TOML on the boot partition provisions the node
+	// without anyone touching the wizard, and without an access point being raised.
+	seedPaths := flag.String("provision-seed", strings.Join(seed.DefaultPaths, ","),
+		"comma-separated boot-partition provisioning files, searched in order (empty disables the fast path)")
 	// The setup access point is how a node with no other network is reachable at
 	// all. It is open by default (see internal/setupap) and comes down on a
 	// network join, on setup completion, or after the window below with nobody
@@ -1872,10 +1877,11 @@ func main() {
 	s.certs = tlscert.NewHolder(*tlsDir)
 	s.certs.Logf = log.Printf
 	s.initSetup(setupOptions{
-		Enabled:  *setupWizard,
-		Socket:   *provisionSocket,
-		Marker:   *provisionMarker,
-		Progress: *setupProgress,
+		Enabled:   *setupWizard,
+		Socket:    *provisionSocket,
+		Marker:    *provisionMarker,
+		Progress:  *setupProgress,
+		SeedPaths: strings.Split(*seedPaths, ","),
 	}, st)
 	s.initSetupAP(context.Background(), apOptions{
 		Enabled:          *setupAP,

@@ -3,6 +3,7 @@ module github.com/KN4OQW/waypoint
 go 1.25.0
 
 require (
+	github.com/BurntSushi/toml v1.4.0
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/libp2p/zeroconf/v2 v2.2.0

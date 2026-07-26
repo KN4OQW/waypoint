@@ -58,6 +58,10 @@ type UserRequest struct {
 	// Password is optional. Leaving it empty produces a key-only account, which is
 	// the recommended shape and requires SSHKey to be set.
 	Password string `json:"password,omitempty"`
+	// PasswordHash is a pre-computed crypt(3) string, used instead of Password by
+	// callers that must write the credential down somewhere — the boot-partition
+	// seed file (internal/seed) is the reason it exists.
+	PasswordHash string `json:"password_hash,omitempty"`
 	// SSHKey, when set, is installed with the account rather than in the following
 	// step, so a key-only account is never briefly created without its key.
 	SSHKey string `json:"ssh_key,omitempty"`
@@ -78,10 +82,11 @@ func (w *Wizard) CreateUser(ctx context.Context, req UserRequest) (View, error) 
 		return w.state(), err
 	}
 	got, err := w.Prov.CreateRecoveryUser(ctx, privhelper.CreateRecoveryUserRequest{
-		Username: req.Username,
-		Password: req.Password,
-		SSHKey:   req.SSHKey,
-		Sudo:     true,
+		Username:     req.Username,
+		Password:     req.Password,
+		PasswordHash: req.PasswordHash,
+		SSHKey:       req.SSHKey,
+		Sudo:         true,
 	})
 	if err != nil {
 		return w.state(), err
