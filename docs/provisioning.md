@@ -117,9 +117,72 @@ verifies the outcomes with `getent`, `id`, `stat`, and `sshd -T`. It is behind a
 build tag and refuses to run outside a container without an explicit override,
 because it creates an account and locks root on whatever machine it runs on.
 
+## The wizard
+
+**`internal/wizard`** is waypointd's side: the step state machine and the gate
+that serves it.
+
+    unprovisioned          -> the setup wizard        (mode "setup")
+    provisioned, unclaimed -> the claim flow          (mode "claim", RFC-0002)
+    provisioned, claimed   -> the dashboard           (mode "done")
+
+The gates nest, setup outside claim. An unprovisioned node still answers to
+`raspberrypi.local` with an unlocked root, so `/api/claim` is closed too — letting
+someone claim a node before any of that is fixed would hand them a box the wizard
+is about to change under them.
+
+### Steps
+
+| Step | Endpoint | What it does |
+|---|---|---|
+| `hostname` | `POST /api/setup/hostname` | names the node; refuses the shipped default |
+| `user` | `POST /api/setup/user` | creates the recovery account (always with sudo) |
+| `key` | `POST /api/setup/key` | installs an SSH key, or skips if the account has a password |
+| `lock` | `POST /api/setup/lock` | settles the SSH policy, locks root, writes the marker |
+| `claim` | `POST /api/claim` | the existing RFC-0002 claim; the wizard only reports it |
+
+`GET /api/setup/state` returns the current step, the completed ones, and what the
+UI needs to render the form. Once setup is finished it reports the mode and
+nothing else — the endpoint stays reachable without authentication, and the
+recovery account's name is useful to someone deciding how to attack the box.
+
+Sudo is not offered as a choice. The recovery account exists to administer a node
+whose root is locked; one that cannot become root would be decoration, and the
+option would only let an operator build that by accident.
+
+### Resuming
+
+Every step writes progress to `/var/lib/waypoint/setup-progress.json` before it
+returns, and the wizard resumes at the first incomplete step. This is not a
+hypothetical: the operator is often setting the node up over the setup access
+point and loses that connection the moment the node joins their real network.
+
+Progress is a separate file from the provisioned marker on purpose. Progress is
+transient and is deleted when setup completes; the marker is durable, terminal,
+and its presence is what flips the gate. Folding them together would mean a
+half-finished wizard left a marker that `provision.IsProvisioned` had to be taught
+to disbelieve.
+
+A corrupt or unreadable progress file starts over. The fail direction is to repeat
+work — every step is idempotent — rather than to skip it.
+
+### Errors
+
+Helper codes map onto HTTP so an operator can tell the two cases apart:
+
+    invalid_argument -> 400   what you typed is wrong
+    conflict         -> 409   right input, wrong moment (includes out-of-order steps)
+    unsupported      -> 503   the helper is not reachable; not your fault
+
+An out-of-order step also returns `expected_step`, so a client that has lost its
+place gets directions rather than only a refusal.
+
 ## Still to come
 
-- waypointd's client wiring and the setup wizard itself.
+- The wizard's frontend. `GET /` currently serves a self-contained placeholder
+  page naming the next step; the real UI replaces it.
+- The AP/join steps. `APUp`, `APDown`, `NetJoin`, and the checkpoint calls exist
+  in the helper but are not yet wired into the wizard flow.
 - Installing the helper binary and its units from the image module
   (`image/src/modules/waypoint/start_chroot_script`).
 - Adding waypointd's service user to the `waypoint` group.

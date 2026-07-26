@@ -40,9 +40,12 @@ import (
 	"github.com/KN4OQW/waypoint/internal/nxdnhosts"
 	"github.com/KN4OQW/waypoint/internal/p25hosts"
 	"github.com/KN4OQW/waypoint/internal/peering"
+	"github.com/KN4OQW/waypoint/internal/privhelper"
+	"github.com/KN4OQW/waypoint/internal/provision"
 	"github.com/KN4OQW/waypoint/internal/status"
 	"github.com/KN4OQW/waypoint/internal/store"
 	"github.com/KN4OQW/waypoint/internal/verifydl"
+	"github.com/KN4OQW/waypoint/internal/wizard"
 	"github.com/KN4OQW/waypoint/internal/ysfhosts"
 	"github.com/KN4OQW/waypoint/ui"
 )
@@ -61,6 +64,10 @@ type server struct {
 	paths     config.Paths       // where each daemon reads its generated INI (render targets)
 	agg       *status.Aggregator // live-status fold served by /api/status + WS (RFC-0008); nil only in some tests
 	peering   *peering.Manager   // RFC-0016 LAN pairing manager (nil until initPeering runs / if it fails)
+	// wiz is the first-boot setup wizard (docs/provisioning.md). Nil disables it
+	// and the gate becomes a pass-through, which is what every test that builds a
+	// server directly relies on.
+	wiz *wizard.Wizard
 
 	// Host/OS networking domain (docs/config-coverage.md §4). netKeyfileDir is
 	// where the NetworkManager keyfile renderer writes waypoint-*.nmconnection;
@@ -1643,6 +1650,14 @@ func main() {
 	peeringDir := flag.String("peering-dir", "/home/pi-star/waypoint/peering", "directory holding LAN-peering cert/key files (node.key, peer-*.crt) referenced by rendered bus peering blocks (RFC-0016)")
 	peeringBootstrapAddr := flag.String("peering-bootstrap-addr", "0.0.0.0:42501", "listen address for the RFC-0016 pairing bootstrap channel (plain TCP; the short code authenticates the exchange)")
 	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
+	// First-boot setup (docs/provisioning.md). The wizard is on by default: a node
+	// flashed with dd has no hostname the operator chose, no account, and an
+	// unlocked root, and Raspberry Pi Imager 2.x no longer offers to seed any of
+	// them for a local image.
+	setupWizard := flag.Bool("setup-wizard", true, "serve the first-boot setup wizard until the node is provisioned")
+	provisionSocket := flag.String("provision-socket", privhelper.DefaultSocketPath, "Unix socket of the privileged provisioning helper")
+	provisionMarker := flag.String("provision-marker", provision.DefaultPath, "path to the provisioned marker written when setup completes")
+	setupProgress := flag.String("setup-progress", wizard.DefaultProgressPath, "path to the in-flight setup progress file")
 	eventsPath := flag.String("events-store", "/home/pi-star/waypoint/events.db", "path to the SQLite event-history store (RFC-0004); a config.db sibling")
 	nmKeyfileDir := flag.String("nm-keyfile-dir", "/etc/NetworkManager/system-connections", "directory for rendered NetworkManager keyfiles (waypoint-*.nmconnection)")
 	netConfirmTimeout := flag.Duration("network-confirm-timeout", netconfig.DefaultConfirmTimeout, "confirm-or-revert rollback window for a network apply")
@@ -1820,6 +1835,12 @@ func main() {
 	// The status aggregator folds the event stream into the live status served by
 	// /api/status + the WebSocket (RFC-0008). Runs in both demo and live mode.
 	go s.agg.Run(context.Background(), s.hub, *statusTick)
+	s.initSetup(setupOptions{
+		Enabled:  *setupWizard,
+		Socket:   *provisionSocket,
+		Marker:   *provisionMarker,
+		Progress: *setupProgress,
+	}, st)
 	s.initPeering(context.Background(), *peeringDir, *peeringBootstrapAddr)
 
 	if *demoMode {
@@ -1916,7 +1937,10 @@ func main() {
 		// The auth gate fronts the entire mux: it is the single seam that enforces
 		// the claim state machine and session requirement, so no handler re-checks
 		// auth (RFC-0002). A route absent from the gate's allowlist defaults to denied.
-		Handler:           s.auth.Gate(s.newMux()),
+		// The setup gate wraps the auth gate, so an unprovisioned node never
+		// reaches the claim state machine at all: provisioning says what the box
+		// is, claiming says who administers it, and the first has to happen first.
+		Handler:           s.setupGate(s.auth.Gate(s.newMux())),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	// Serve HTTPS by default with the self-signed device cert (RFC-0012), plus the
