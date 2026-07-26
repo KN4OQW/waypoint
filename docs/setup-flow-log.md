@@ -585,3 +585,51 @@ checks the oneshot's condition and ordering in the real unit file and runs the r
 binary on both sides of the marker. `systemd-analyze verify` clean on all 13 units.
 
 `go vet ./...`, `go test -race ./...`, three-arch cross-builds clean.
+
+---
+
+## 10 — `test/bench-pi3`: hardware validation
+
+**Shipped.** `internal/sysprov/benchhw_test.go` (tag `benchhw`), two fixes both
+found by the radio, and `docs/bench-pi3-run-log.md`.
+
+**The bench.** Pi 3 Model B, BCM43430/1 on firmware 7.45.98, NM 1.52.1, reached
+over `eth0` so `wlan0` was free. Running WPSD *and* Waypoint side by side, at the
+user's direction — which found a bug a clean image would have hidden.
+
+**15 of 15 attempted steps pass.** AP raise (1.48 s), `type AP` on channel 11 at
+`10.42.0.1/24`, `port=0` freeing `:53`, the DNS hijack answering, the Android
+probe redirecting, forwarding disabled on the AP interface, clean teardown, and
+the confirm-or-revert path putting the AP back **1.61 s** after a rejected
+passphrase — a 6 s total operator-visible outage.
+
+**Finding 1 — an incumbent dnsmasq blocks the AP.** NM's shared mode starts its
+own dnsmasq for DHCP; WPSD's already holds `0.0.0.0:67`, so NM's dies and reports
+"IP configuration could not be reserved". `port=0` covered the DNS half of that
+collision, not the DHCP half, and `bind-dynamic` does not help — tried on the
+bench, the wildcard still wins. `APUp` now pre-flights `:67` and refuses in 66 ms
+naming the holder and the two ways out. A stock image ships no dnsmasq, so this
+hits exactly the migrating-from-Pi-Star case Waypoint is pitched at.
+
+**Finding 2 — a rejected passphrase did not say so, and I misdiagnosed it.** I
+assumed a race between `reload` and activation. NM's log said otherwise: it had
+the key, tried it, was refused, and asked for a *new* one; nmcli has no agent, so
+it reported a missing secret rather than a rejected one. Behaviour correct, message
+wrong. `joinFailure` now maps it to "X refused the passphrase; check it and try
+again". Two changes made under the wrong theory were kept on evidence that
+actually holds — NM auto-activating a newly written profile was observed directly
+— and their comments were rewritten to say what was seen rather than what I had
+guessed.
+
+**Not run, and why.** The phone captive sheet (no handset), the correct-passphrase
+join (no credentials), and claim-over-HTTPS / reboot persistence / reset depths
+(need a stock image on a card; the board is a live dual-stack node and I cannot
+flash from here). The account and root-lock steps were not re-run on the board —
+they are covered by the container suite against the real `useradd`/`passwd`/
+`chsh`/`sshd`, and re-running them on a live WPSD box buys nothing.
+
+**brcmfmac notes.** Channel is chosen by firmware (settled on 11, regdom
+`global`); AP → station → AP sequencing is clean with no driver reload or rfkill
+workaround on 7.45.98; the MAC changes between AP and scanning roles.
+
+The board was returned to its prior state and confirmed clean.

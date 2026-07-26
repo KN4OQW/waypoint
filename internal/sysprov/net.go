@@ -66,6 +66,9 @@ func (s *System) APUp(ctx context.Context, req privhelper.APUpRequest) (privhelp
 	if err := s.writeDnsmasqSharedConf(addr); err != nil {
 		return privhelper.APUpResponse{}, err
 	}
+	if err := s.checkDHCPPortFree(ctx); err != nil {
+		return privhelper.APUpResponse{}, err
+	}
 
 	body := renderAPKeyfile(apProfile, iface, addr, req)
 	changed, err := s.writeProfile(ctx, apProfile, body)
@@ -115,6 +118,38 @@ func (s *System) writeDnsmasqSharedConf(addrCIDR string) error {
 		return internalf("write %s: %v", nmDnsmasqSharedAP, err)
 	}
 	return nil
+}
+
+// checkDHCPPortFree refuses to raise the AP when something else already holds the
+// DHCP port.
+//
+// NetworkManager's shared mode starts its own dnsmasq for DHCP. An incumbent
+// dnsmasq bound to the wildcard 0.0.0.0:67 — which Pi-Star and WPSD both run, and
+// which a node migrating to Waypoint therefore has — makes that instance fail to
+// bind, and NM reports it as "IP configuration could not be reserved (no
+// available address, timeout, etc.)". That message sends an operator looking for
+// an address-pool problem that does not exist.
+//
+// port=0 in the shared drop-in solves the DNS half of the same collision;
+// nothing in the drop-in can solve the DHCP half, because the conflict is the
+// other process's wildcard bind. bind-dynamic does not help either — tried on the
+// bench, the wildcard still wins. So this says plainly what is wrong and what to
+// do about it, which is the only thing that actually helps.
+func (s *System) checkDHCPPortFree(ctx context.Context) error {
+	out, err := s.run(ctx, nil, "ss", "-lunHp", "sport", "=", ":67")
+	if err != nil || strings.TrimSpace(out) == "" {
+		return nil // nothing listening, or ss unavailable — let NM try
+	}
+	holder := "another process"
+	if i := strings.Index(out, `users:(("`); i >= 0 {
+		if j := strings.Index(out[i+9:], `"`); j > 0 {
+			holder = out[i+9 : i+9+j]
+		}
+	}
+	return privhelper.Errorf(privhelper.CodeConflict,
+		"cannot raise the setup access point: %s already has the DHCP port (67), so NetworkManager's "+
+			"shared mode cannot start its own. Stop it (for example `systemctl stop dnsmasq`) or configure "+
+			"it with bind-interfaces so it does not hold the wildcard address", holder)
 }
 
 // confineAPSegment stops the node routing anything off the setup AP.
@@ -199,7 +234,15 @@ func (s *System) NetJoin(ctx context.Context, req privhelper.NetJoinRequest) (pr
 	if _, err := s.run(ctx, nil, "nmcli", "--wait", secs, "connection", "up", profile); err != nil {
 		return privhelper.NetJoinResponse{
 			SSID: req.SSID, Interface: iface, Profile: profile, Connected: false,
-		}, internalf("join %q: %v", req.SSID, err)
+		}, joinFailure(req.SSID, err)
+	}
+
+	// The join worked, so the profile becomes one the node rejoins on boot. Doing
+	// it now rather than at write time is what kept NM from racing the activation
+	// above.
+	if _, err := s.run(ctx, nil, "nmcli", "connection", "modify", profile,
+		"connection.autoconnect", "yes"); err != nil {
+		s.logf("sysprov: could not enable autoconnect on %q (the node will not rejoin on boot): %v", profile, err)
 	}
 
 	resp := privhelper.NetJoinResponse{
@@ -208,6 +251,32 @@ func (s *System) NetJoin(ctx context.Context, req privhelper.NetJoinRequest) (pr
 	}
 	s.logf("sysprov: joined %q on %s (%s)", req.SSID, iface, resp.IPv4)
 	return resp, nil
+}
+
+// joinFailure turns nmcli's account of a failed association into one an operator
+// can act on.
+//
+// A rejected passphrase does not say so. NetworkManager stores the key, tries it,
+// is refused by the access point, and then asks for a *new* secret; nmcli has no
+// agent to ask, so it reports "password ... not given in 'passwd-file'" and
+// "Secrets were required, but not provided". Both were verified on the bench
+// against a real access point with a deliberately wrong key, with NM logging
+// `need-auth -> failed (reason 'no-secrets')` at the same moment. Left as-is, the
+// operator is told their password was not supplied when what happened is that it
+// was wrong.
+func joinFailure(ssid string, err error) error {
+	msg := err.Error()
+	if strings.Contains(msg, "no-secrets") ||
+		strings.Contains(msg, "Secrets were required") ||
+		strings.Contains(msg, "passwd-file") {
+		return privhelper.Errorf(privhelper.CodeInvalidArgument,
+			"%q refused the passphrase; check it and try again", ssid)
+	}
+	if strings.Contains(msg, "Timeout expired") || strings.Contains(msg, "timeout") {
+		return privhelper.Errorf(privhelper.CodeConflict,
+			"could not reach %q before the timeout — it may be out of range or not broadcasting", ssid)
+	}
+	return internalf("join %q: %v", ssid, err)
 }
 
 // writeProfile writes a NetworkManager keyfile and reloads NM if it changed.
@@ -227,7 +296,37 @@ func (s *System) writeProfile(ctx context.Context, name, body string) (bool, err
 	if _, err := s.run(ctx, nil, "nmcli", "connection", "reload"); err != nil {
 		return true, internalf("reload NetworkManager profiles: %v", err)
 	}
+	// `nmcli connection reload` returns before NetworkManager has finished
+	// re-reading the directory, so an activation issued immediately afterwards can
+	// name a profile NM does not know yet. Waiting is cheap and removes a race
+	// that would otherwise depend on how busy the node is.
+	s.waitForProfile(ctx, name)
 	return true, nil
+}
+
+// profileWait bounds how long to wait for NetworkManager to ingest a profile.
+// The observed delay is milliseconds; this is generous enough to cover a loaded
+// Pi Zero without turning a genuine failure into a long stall.
+const profileWait = 5 * time.Second
+
+// waitForProfile blocks until NetworkManager reports the profile, or the wait
+// expires. Expiry is not an error: the activation that follows will produce a
+// better message than anything this could say.
+func (s *System) waitForProfile(ctx context.Context, name string) {
+	deadline := time.Now().Add(profileWait)
+	for time.Now().Before(deadline) {
+		if out, err := s.run(ctx, nil, "nmcli", "-g", "connection.id", "connection", "show", name); err == nil {
+			if strings.TrimSpace(out) == name {
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	s.logf("sysprov: NetworkManager has not reported profile %q after %s; activating anyway", name, profileWait)
 }
 
 // wirelessDevice returns the first wifi device NetworkManager reports, or "".
@@ -413,7 +512,16 @@ func renderAPKeyfile(name, iface, addr string, req privhelper.APUpRequest) strin
 func renderClientKeyfile(name, iface string, req privhelper.NetJoinRequest) string {
 	var b strings.Builder
 	b.WriteString(managedHeader("wi-fi client profile"))
-	fmt.Fprintf(&b, "\n[connection]\nid=%s\ntype=wifi\ninterface-name=%s\nautoconnect=true\n",
+	// autoconnect is off until the join is verified.
+	//
+	// NetworkManager auto-activates a new profile the moment it reads it —
+	// observed on the bench as "policy: auto-activating connection" arriving
+	// before our own `connection up` had been issued. Two activations of the same
+	// profile racing each other makes the outcome depend on which one NM finishes
+	// first, and a profile that failed to associate would then keep retrying on
+	// its own for as long as it exists. It is switched on after the join is
+	// verified, so the node still rejoins on boot.
+	fmt.Fprintf(&b, "\n[connection]\nid=%s\ntype=wifi\ninterface-name=%s\nautoconnect=false\n",
 		name, kfEscape(iface))
 	fmt.Fprintf(&b, "\n[wifi]\nmode=infrastructure\nssid=%s\n", kfEscape(req.SSID))
 	if req.Hidden {

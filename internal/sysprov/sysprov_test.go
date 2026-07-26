@@ -180,6 +180,11 @@ func (f *fakeSystem) nmcli(args []string) (string, error) {
 		return "", nil
 	case strings.HasPrefix(joined, "-g IP4.ADDRESS"):
 		return "192.168.1.50/24\n", nil
+	case strings.HasPrefix(joined, "-g connection.id connection show "):
+		// waitForProfile polls this until NetworkManager reports the profile.
+		// Answering immediately keeps the unit suite from waiting out the real
+		// ingest timeout on every join.
+		return args[len(args)-1] + "\n", nil
 	}
 	return "", nil
 }
