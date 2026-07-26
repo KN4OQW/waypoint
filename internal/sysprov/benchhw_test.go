@@ -34,6 +34,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/privhelper"
 	"github.com/KN4OQW/waypoint/internal/setupap"
 	"github.com/KN4OQW/waypoint/internal/sysprov"
+	"github.com/miekg/dns"
 )
 
 func benchGuard(t *testing.T) {
@@ -170,12 +171,12 @@ func benchCaptive(t *testing.T) {
 	t.Helper()
 	addr := captive.DefaultAddress.String()
 
-	dns := &captive.DNSResponder{Logf: func(f string, a ...any) { t.Logf("    dns: "+f, a...) }}
+	resolver := &captive.DNSResponder{Logf: func(f string, a ...any) { t.Logf("    dns: "+f, a...) }}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	errCh := make(chan error, 1)
-	go func() { errCh <- dns.ListenAndServe(ctx, net.JoinHostPort(addr, "53")) }()
-	defer dns.Shutdown()
+	go func() { errCh <- resolver.ListenAndServe(ctx, net.JoinHostPort(addr, "53")) }()
+	defer resolver.Shutdown()
 	time.Sleep(300 * time.Millisecond)
 
 	select {
@@ -183,10 +184,23 @@ func benchCaptive(t *testing.T) {
 		t.Errorf("the DNS responder could not bind %s:53 — something else holds it: %v", addr, err)
 	default:
 		t.Logf("    DNS responder bound %s:53", addr)
-		out := sh(t, "dig", "+short", "+time=2", "+tries=1", "@"+addr, "captive.apple.com", "A")
-		t.Logf("    dig @%s captive.apple.com -> %q", addr, out)
-		if !strings.Contains(out, addr) {
-			t.Errorf("the hijack did not answer with %s: %q", addr, out)
+		// Queried in-process rather than by shelling to dig: the image does not
+		// ship dig, and a missing tool produced an empty answer that read exactly
+		// like a broken responder. A check that cannot tell "no answer" from "no
+		// dig" is worse than no check.
+		m := new(dns.Msg)
+		m.SetQuestion("captive.apple.com.", dns.TypeA)
+		resp, _, qerr := (&dns.Client{Timeout: 3 * time.Second}).Exchange(m, net.JoinHostPort(addr, "53"))
+		if qerr != nil {
+			t.Errorf("the hijack did not answer: %v", qerr)
+		} else if len(resp.Answer) == 0 {
+			t.Errorf("the hijack returned no records: %s", resp)
+		} else {
+			got := resp.Answer[0].(*dns.A).A.String()
+			t.Logf("    captive.apple.com -> %s", got)
+			if got != addr {
+				t.Errorf("the hijack answered %s, want %s", got, addr)
+			}
 		}
 	}
 

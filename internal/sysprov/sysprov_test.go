@@ -27,6 +27,12 @@ type fakeSystem struct {
 	hostname string
 	calls    []recorded
 	fail     map[string]error // keyed by command name
+	// wifiBlocked models the rfkill soft block a freshly flashed Raspberry Pi OS
+	// carries until a regulatory country is set.
+	wifiBlocked bool
+	// nmRadioOff models NetworkManager's own Wi-Fi switch, which reads "disabled"
+	// on a fresh Raspberry Pi OS and is not the same thing as rfkill.
+	nmRadioOff bool
 }
 
 type fakeAccount struct {
@@ -165,7 +171,14 @@ func (f *fakeSystem) dispatch(name string, args []string, stdin string) (string,
 	case "nmcli":
 		return f.nmcli(args)
 
-	case "iw", "systemctl", "sshd":
+	case "rfkill":
+		// Unblocking is what makes the radio available on a fresh Raspberry Pi OS.
+		if len(args) >= 2 && args[0] == "unblock" {
+			f.wifiBlocked = false
+		}
+		return "", nil
+
+	case "iw", "systemctl", "sshd", "sysctl", "nft", "iptables", "ss", "pgrep", "visudo", "userdel":
 		return "", nil
 	}
 	return "", fmt.Errorf("unexpected command %q", name)
@@ -176,10 +189,22 @@ func (f *fakeSystem) nmcli(args []string) (string, error) {
 	switch {
 	case strings.Contains(joined, "DEVICE,TYPE device"):
 		return "eth0:ethernet\nwlan0:wifi\nlo:loopback\n", nil
+	case strings.Contains(joined, "DEVICE,STATE device"):
+		// The radio reads as usable. The blocked case — a freshly flashed Pi, where
+		// this says "unavailable" — is exercised by TestAPUpUnblocksABlockedRadio.
+		if f.wifiBlocked || f.nmRadioOff {
+			return "eth0:connected\nwlan0:unavailable\nlo:connected\n", nil
+		}
+		return "eth0:connected\nwlan0:disconnected\nlo:connected\n", nil
 	case strings.Contains(joined, "connection show --active"):
 		return "", nil
 	case strings.HasPrefix(joined, "-g IP4.ADDRESS"):
 		return "192.168.1.50/24\n", nil
+	case joined == "radio wifi on":
+		// NetworkManager's own switch, separate from rfkill. Both have to be off
+		// for the device to become available.
+		f.nmRadioOff = false
+		return "", nil
 	case strings.HasPrefix(joined, "-g connection.id connection show "):
 		// waitForProfile polls this until NetworkManager reports the profile.
 		// Answering immediately keeps the unit suite from waiting out the real
@@ -770,3 +795,69 @@ func TestMethodsRevalidate(t *testing.T) {
 		t.Errorf("NetJoin: code = %q, want %q", privhelper.CodeOf(err), privhelper.CodeInvalidArgument)
 	}
 }
+
+// Property 18: a radio that is rfkill-blocked is unblocked before the access
+// point is raised.
+//
+// This is the state every freshly flashed Raspberry Pi OS is in: the radio is
+// soft-blocked pending a regulatory country, and the world domain permits no
+// 2.4 GHz channel it could beacon on. NetworkManager then reports the device
+// unavailable, falls back to any other device, and rejects it — surfacing as a
+// message about eth0 for a problem with the radio. Found on a Pi 3B running the
+// v-nova image, where it meant the setup access point could never come up on a
+// fresh flash.
+func TestAPUpUnblocksABlockedRadio(t *testing.T) {
+	s, fs := newSystem(t)
+	fs.wifiBlocked = true
+	fs.nmRadioOff = true
+
+	got, err := s.APUp(context.Background(), privhelper.APUpRequest{SSID: "Waypoint-Setup-9E10"})
+	if err != nil {
+		t.Fatalf("APUp on a blocked radio: %v", err)
+	}
+	if !got.Active {
+		t.Errorf("response = %+v", got)
+	}
+	if !fs.ran("rfkill", "unblock wifi") {
+		t.Error("the radio was never unblocked")
+	}
+	// A domain has to be set too: unblocking alone leaves the world domain, which
+	// permits no channel to beacon on.
+	if !fs.ran("iw", "reg set US") {
+		t.Error("no regulatory domain was set; the radio would have no permitted channels")
+	}
+	// The one that is easy to miss: rfkill and the domain can both be right and the
+	// device still unavailable until NetworkManager's own switch is on.
+	if !fs.ran("nmcli", "radio wifi on") {
+		t.Error("NetworkManager's Wi-Fi switch was never enabled")
+	}
+	// And the AP is pinned to a channel legal in every 2.4 GHz domain.
+	body, err := os.ReadFile(filepath.Join(s.path(nmKeyfileDir), apProfile+".nmconnection"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "channel=6") {
+		t.Errorf("the AP profile does not pin a channel:\n%s", body)
+	}
+}
+
+// Property 19: a radio that stays blocked produces an error naming the radio,
+// not one naming Ethernet.
+func TestAPUpReportsAStuckRadio(t *testing.T) {
+	s, fs := newSystem(t)
+	fs.wifiBlocked = true
+	fs.nmRadioOff = true
+	fs.fail["rfkill"] = errFakeRfkill // unblocking does not take
+
+	_, err := s.APUp(context.Background(), privhelper.APUpRequest{SSID: "Waypoint-Setup-9E10"})
+	if privhelper.CodeOf(err) != privhelper.CodeUnsupported {
+		t.Fatalf("code = %q (err %v), want %q", privhelper.CodeOf(err), err, privhelper.CodeUnsupported)
+	}
+	for _, want := range []string{"rfkill", "regulatory", "wlan0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not mention %q: %v", want, err)
+		}
+	}
+}
+
+var errFakeRfkill = fmt.Errorf("rfkill: operation not permitted")
