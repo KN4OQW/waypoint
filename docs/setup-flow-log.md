@@ -608,8 +608,12 @@ own dnsmasq for DHCP; WPSD's already holds `0.0.0.0:67`, so NM's dies and report
 "IP configuration could not be reserved". `port=0` covered the DNS half of that
 collision, not the DHCP half, and `bind-dynamic` does not help — tried on the
 bench, the wildcard still wins. `APUp` now pre-flights `:67` and refuses in 66 ms
-naming the holder and the two ways out. A stock image ships no dnsmasq, so this
-hits exactly the migrating-from-Pi-Star case Waypoint is pitched at.
+naming the holder and the two ways out.
+
+**Scope, corrected after the run:** Waypoint is the only hotspot stack on a node —
+fresh Debian, no Pi-Star, no WPSD — so a stock image has no system dnsmasq and
+this collision does not arise there. It arose because the bench board runs both.
+The check was kept as a defensive diagnostic, not as support for coexistence.
 
 **Finding 2 — a rejected passphrase did not say so, and I misdiagnosed it.** I
 assumed a race between `reload` and activation. NM's log said otherwise: it had

@@ -19,10 +19,14 @@ behaviour is decided by firmware. This is the first time any of it met one.
 | Reached over | `eth0` (172.16.50.13), so `wlan0` was free to reconfigure without cutting the session |
 
 **This is not a stock Waypoint image.** The board runs WPSD *and* Waypoint side by
-side, at the user's direction, with a Waypoint build predating this workstream.
-That turned out to be more useful than a clean image: it is the exact
-configuration a migrating operator has, and it found a bug a clean image would
-have hidden. What it means for the results below is stated per step.
+side — a development arrangement, not a supported one. Shipped nodes run a fresh
+Debian with Waypoint as the only hotspot stack.
+
+That distinction matters for exactly one result. Finding 1 below is caused by
+WPSD's dnsmasq and would not occur on a stock image; the fix was kept as a
+defensive diagnostic rather than as support for coexistence. Everything else —
+the radio, the driver, the firmware, NetworkManager — is identical to what a
+shipped node has, which is what this bench was for.
 
 The harness is `internal/sysprov/benchhw_test.go`, build tag `benchhw`,
 cross-compiled to armhf and run as root on the board. It drives the real
@@ -91,11 +95,20 @@ NetworkManager's shared mode cannot start its own. Stop it (for example
 hold the wildcard address
 ```
 
-**Scope.** A stock Waypoint image installs no dnsmasq, so this does not affect a
-clean flash. It affects exactly the case Waypoint is pitched at — a board
-migrating from Pi-Star or WPSD, both of which run one. Worth deciding separately
-whether the image should ship a `bind-interfaces` drop-in for an incumbent
-dnsmasq it finds, which would make coexistence work rather than merely diagnosable.
+**Scope — corrected after the run.** Waypoint is the only hotspot stack on a
+node: a fresh Debian with Waypoint and nothing else, no Pi-Star and no WPSD. A
+stock image installs no system dnsmasq, so on the hardware this is actually
+shipped to, this collision does not arise.
+
+It arose here because the bench board runs Waypoint *and* WPSD side by side,
+which is a development arrangement rather than a supported one. So the check
+earned its place as a **defensive diagnostic, not a compatibility feature**: if
+something on a node does hold `:67`, the operator gets one sentence naming it
+instead of an NM message about address pools. That is worth 66 ms on a path that
+runs once per boot.
+
+It is explicitly *not* an argument for making Waypoint coexist with another
+hotspot stack. Nothing here should be read as supporting that configuration.
 
 ## Finding 2 — a rejected passphrase did not say so
 

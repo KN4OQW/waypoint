@@ -40,6 +40,12 @@ jobs:
           out="waypointd-linux-${suffix}"
           go build -trimpath -ldflags "-s -w -X main.Version=${GITHUB_REF_NAME}" -o "$out" ./cmd/waypointd
           echo "ARTIFACT=$out" >> "$GITHUB_ENV"
+          # The privileged provisioning helper ships as its own asset. The image
+          # module fetches and minisign-verifies it exactly like waypointd, so a
+          # release without it produces an image build that fails at the fetch.
+          helper="waypoint-provision-helper-linux-${suffix}"
+          go build -trimpath -ldflags "-s -w -X main.Version=${GITHUB_REF_NAME}" -o "$helper" ./cmd/waypoint-provision-helper
+          echo "HELPER=$helper" >> "$GITHUB_ENV"
 
       - name: Sign with minisign (RFC-0013)
         id: sign
@@ -55,9 +61,11 @@ jobs:
           printf '%s' "$MINISIGN_SECRET_KEY" > minisign.key
           # -H = prehashed (BLAKE2b), the variant Waypoint's verifier expects; the
           # trusted comment binds the version + filename into the signature.
-          echo "$MINISIGN_PASSWORD" | minisign -S -H -s minisign.key \
-            -m "$ARTIFACT" \
-            -t "waypoint ${GITHUB_REF_NAME} ${ARTIFACT}"
+          for f in "$ARTIFACT" "$HELPER"; do
+            echo "$MINISIGN_PASSWORD" | minisign -S -H -s minisign.key \
+              -m "$f" \
+              -t "waypoint ${GITHUB_REF_NAME} ${f}"
+          done
           rm -f minisign.key
           # Sanity: the built binary verifies its own signature against the public key.
           ./waypointd-linux-amd64 -verify "$ARTIFACT" -verify-sig "$ARTIFACT.minisig" -verify-pubkey docs/waypoint-release.pub || true
