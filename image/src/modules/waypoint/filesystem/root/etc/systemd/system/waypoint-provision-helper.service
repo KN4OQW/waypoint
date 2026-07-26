@@ -1,0 +1,74 @@
+[Unit]
+Description=Waypoint privileged provisioning helper
+Documentation=https://github.com/KN4OQW/waypoint/blob/main/docs/provisioning.md
+Requires=waypoint-provision-helper.socket
+After=waypoint-provision-helper.socket NetworkManager.service dbus.service
+PartOf=waypoint-provision-helper.socket
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/waypoint-provision-helper
+Restart=on-failure
+RestartSec=2s
+
+# --- What this process is allowed to touch -------------------------------
+#
+# It runs as root because useradd, passwd, and hostnamectl require it. The
+# sandbox below is therefore not about dropping to a user; it is about shrinking
+# what "root" reaches in this one process to the set of things provisioning
+# actually needs.
+#
+# ProtectSystem=strict makes the whole hierarchy read-only, so every writable
+# path is named explicitly:
+#   /etc  — passwd/shadow/group, sshd_config.d, NetworkManager profiles,
+#           hostname, hosts
+#   /home — the recovery account's home directory and its authorized_keys
+#   /run  — the socket directory, and the D-Bus socket hostnamectl/nmcli use
+#   /var/lib/waypoint — the provisioned-state marker
+ProtectSystem=strict
+ReadWritePaths=/etc /home /run /var/lib/waypoint
+ProtectHome=no
+
+# --- Sandbox -------------------------------------------------------------
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# AF_UNIX for the helper's own socket and for D-Bus (hostnamectl, nmcli,
+# systemctl); AF_NETLINK for iw's regulatory-domain call. Nothing here needs to
+# reach the network itself — the helper asks NetworkManager to, it does not
+# open sockets of its own.
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+
+# The capabilities the child commands actually use: chown/mode changes on home
+# directories and key files (CHOWN, FOWNER, FSETID, DAC_OVERRIDE), account
+# creation (SETUID, SETGID), and signalling children (KILL). Notably absent is
+# CAP_SYS_ADMIN: the hostname is set through hostnamectl over D-Bus, so this
+# process never calls sethostname() itself.
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_FSETID CAP_SETGID CAP_SETUID CAP_KILL
+AmbientCapabilities=
+
+# journald is the only log sink; the helper writes plain lines and adds no
+# timestamps of its own.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=waypoint-provision-helper
+
+[Install]
+WantedBy=multi-user.target

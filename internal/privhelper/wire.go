@@ -45,7 +45,12 @@ import (
 
 // DefaultSocketPath is where the helper listens on a real node. /run is tmpfs, so
 // the socket cannot survive a reboot as a stale file, and it is not on the SD card.
-const DefaultSocketPath = "/run/waypoint/privhelper.sock"
+const DefaultSocketPath = "/run/waypoint/provision.sock"
+
+// SocketGroup is the group that may talk to the helper. The socket is mode 0660
+// owned root:waypoint, in a 0750 directory, and the server additionally checks
+// SO_PEERCRED — the mode alone is one bad chmod away from being wrong.
+const SocketGroup = "waypoint"
 
 // ProtocolVersion is the wire contract's version. It rides on every frame so a
 // mismatched waypointd/helper pair — which an A/B rollback (RFC-0017) can produce,
