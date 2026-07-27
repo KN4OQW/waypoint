@@ -67,9 +67,14 @@ type Model struct {
 	// LCD is the Waypoint-native HD44780 driver (store-only; drives no INI).
 	LCD LCD `json:"lcd"`
 	// History is the event-history retention policy (store-only; drives no INI).
-	// It lives under the Station Settings tab, which a future callsign-beacon
-	// section will share (RFC-0004).
+	// It shares the Station Settings tab with StationID (RFC-0004).
 	History History `json:"history"`
+
+	// StationID is the automatic CW identification policy — the callsign-beacon
+	// section RFC-0004 reserved space for on the Station Settings tab. Unlike
+	// History it DOES drive an INI: it compiles to MMDVM-Host's [CW Id] section
+	// plus [Modem] CWIdTXLevel.
+	StationID StationID `json:"station_id"`
 
 	// Update is the operator-set software-update policy (channel, auto-apply,
 	// quiet window). Store-only; drives no INI. See update.go / RFC-0014.
@@ -84,6 +89,35 @@ type Model struct {
 // value is rejected at save.
 type History struct {
 	RetentionDays int `json:"retention_days"` // days of event history to keep; 0 = keep forever
+}
+
+// StationID is the automatic CW identification policy: MMDVM-Host keys the
+// station's callsign in Morse on a timer so the node identifies itself without
+// the operator touching it. It compiles to [CW Id] (Enable/Time/Callsign) and
+// [Modem] CWIdTXLevel — a model section spanning two INI sections, like General
+// (which also writes [Info]).
+//
+// Waypoint modeled neither before this section existed, so RenderMMDVM emitted no
+// [CW Id] at all and MMDVM-Host's own default (m_cwIdEnabled(false), Conf.cpp)
+// applied: every node shipped with identification OFF, and an imported Pi-Star /
+// WPSD card silently lost the Enable=1 it arrived with. Hence Enable defaults
+// TRUE here — matching stock MMDVM-Host.ini, Pi-Star and WPSD.
+//
+// Callsign is an override: blank (the normal case) means MMDVM-Host uses
+// [General] Callsign, so the ID cannot drift from the station identity by
+// forgetting to update it in two places. The renderer omits the key entirely when
+// it is blank rather than emitting an empty one.
+//
+// TimeMins is the interval between IDs, in minutes. Note this is the *idle*
+// cadence today: MMDVM-Host stops the ID timer for the duration of a
+// transmission, so a long transmission is not identified until well after it ends
+// (g4klx/MMDVM-Host#671, tracked for Waypoint in #131). Nothing in this section
+// can fix that — it is host behavior, not configuration.
+type StationID struct {
+	Enable   bool   `json:"enable"`
+	TimeMins string `json:"time_mins"` // minutes between IDs ([CW Id] Time)
+	Callsign string `json:"callsign"`  // blank = use General.Callsign
+	TXLevel  string `json:"tx_level"`  // CW tone level ([Modem] CWIdTXLevel)
 }
 
 // The cross-mode bridges are the transcoding daemons from the MMDVM_CM tree
@@ -608,6 +642,7 @@ func (m *Model) sections() map[string]any {
 		"peering":            &m.Peering,
 		"lcd":                &m.LCD,
 		"history":            &m.History,
+		"station_id":         &m.StationID,
 		"update":             &m.Update,
 	}
 }

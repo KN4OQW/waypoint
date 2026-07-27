@@ -89,6 +89,14 @@ func fixture() *Model {
 		// render→parse→fromINI comparison balanced. Its own store round-trip and
 		// validation are covered by TestHistoryStoreRoundTrip.
 		History: DefaultHistory(),
+		// StationID is the one Station Settings section that DOES drive an INI
+		// ([CW Id] + [Modem] CWIdTXLevel), so unlike LCD/History/Update it is
+		// populated with values that differ from every rendered default — a 7-minute
+		// interval, an explicit callsign override, and a non-50 tone level — so a
+		// default filling an empty field cannot mask a lost key. The blank-callsign
+		// case (the normal one, where the key is omitted entirely) is covered by
+		// TestStationIDCallsignInheritance.
+		StationID: StationID{Enable: true, TimeMins: "7", Callsign: "KN4OQW/R", TXLevel: "42"},
 		// Update policy is store-only too (RFC-0014), so it takes the value
 		// fromINI/Import assigns — DefaultUpdate() — to keep the round-trip balanced.
 		Update: DefaultUpdate(),

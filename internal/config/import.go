@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -148,6 +149,9 @@ func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg, dpg *INI) *Model {
 		// default so a fresh store starts with a real prune window, not the zero
 		// value (which reads as keep-forever). See RFC-0004.
 		History: DefaultHistory(),
+		// StationID DOES come off the seed INI — it is the one Station Settings
+		// section with an INI behind it ([CW Id] + [Modem] CWIdTXLevel).
+		StationID: stationIDFromINI(mm),
 		// Update policy drives no INI; a seeded model gets the notify-and-click
 		// defaults (stable channel, auto-apply off). See RFC-0014.
 		Update: DefaultUpdate(),
@@ -234,6 +238,28 @@ func displayFromINI(mm *INI) Display {
 		HD44780Rows:    orDefault(mm.Get("HD44780", "Rows"), "2"),
 		HD44780Cols:    orDefault(mm.Get("HD44780", "Columns"), "16"),
 		HD44780I2CAddr: orDefault(mm.Get("HD44780", "I2CAddress"), "0x20"),
+	}
+}
+
+// stationIDFromINI reads the automatic-identification policy off a seed INI:
+// [CW Id] Enable/Time/Callsign plus [Modem] CWIdTXLevel.
+//
+// When the source INI has no [CW Id] section at all there is nothing to preserve,
+// so the fresh-store default applies (identification on, 10 minutes) rather than
+// MMDVM-Host's own "off". Stock Pi-Star and WPSD both write the section, so this
+// path is a hand-rolled or truncated INI — and for those, defaulting a legally
+// required function to ON is the failure direction to prefer. A section that IS
+// present is read verbatim, Enable=0 included: an operator who deliberately
+// turned identification off keeps it off across the import.
+func stationIDFromINI(mm *INI) StationID {
+	if !mm.Has("CW Id") {
+		return DefaultStationID()
+	}
+	return StationID{
+		Enable:   mm.Bool("CW Id", "Enable"),
+		TimeMins: orDefault(mm.Get("CW Id", "Time"), strconv.Itoa(DefaultStationIDTimeMins)),
+		Callsign: mm.Get("CW Id", "Callsign"),
+		TXLevel:  orDefault(mm.Get("Modem", "CWIdTXLevel"), "50"),
 	}
 }
 

@@ -47,6 +47,40 @@ The net guarantee: an update interrupted at any point degrades to a booting
 system — the prior version if the new one never confirmed, the new version once it
 has.
 
+### Reverting across a schema migration
+
+A release may raise the configuration store's schema version
+([RFC-0001](rfcs/0001-config-store.md)). That puts a twist in the revert path
+worth stating explicitly, because getting it wrong is the one way this engine can
+leave a node that will not start:
+
+1. The new build migrates `config.db` on its **first start** — after the swap, and
+   after the applier wrote its marker. Before touching anything it writes a
+   **pre-migration copy** beside the store (`config.db.pre-v<N>`, taken with
+   `VACUUM INTO`, so it is a consistent database rather than a file copy).
+2. That first start then **annotates the in-flight marker** with the copy's path.
+   This is the handshake: the applier could not know the path, because the
+   migration had not happened when it wrote the marker.
+3. If the new version never becomes healthy, the revert restores the **binary and
+   the store together**. Without the second half, a reverted older `waypointd`
+   would meet a schema it refuses to open — the store's rollback-safety guard
+   turning into a dead node.
+
+Both revert paths do this: the applier's health-gate revert (which re-reads the
+marker to pick up the annotation) and the boot check. The boot check is the better
+of the two, because as `ExecStartPre` nothing has the store open. A restore also
+clears `config.db-wal`/`-shm`, which belong to the database being replaced and
+would otherwise be replayed onto the restored one.
+
+The pre-migration copy is **left in place** after a revert, so recovery is
+repeatable, and after a confirmed update, so an operator can still get back. If a
+restore fails, the marker is deliberately **not** cleared — it is the only record
+of where the copy lives.
+
+A release that raises the schema version must also raise the manifest's
+`min_version` to the first release shipping that version, so an older node updates
+through it rather than jumping a migration it has no ladder for.
+
 ## Triggering an update
 
 ### From the shell

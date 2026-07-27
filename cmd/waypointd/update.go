@@ -43,7 +43,7 @@ type updateConfig struct {
 
 // newUpdateConfig assembles the config from the CLI flags. The health URL is a
 // loopback self-probe of this node's own /api/health (RFC-0012 self-signed cert).
-func newUpdateConfig(url, pubPath, binary, unit, marker, addr string, useTLS bool) updateConfig {
+func newUpdateConfig(url, pubPath, binary, unit, marker, storePath, addr string, useTLS bool) updateConfig {
 	cfg := updateConfig{
 		url:      url,
 		platform: runtime.GOOS + "/" + runtime.GOARCH,
@@ -53,6 +53,7 @@ func newUpdateConfig(url, pubPath, binary, unit, marker, addr string, useTLS boo
 			BinaryPath: binary,
 			Unit:       unit,
 			MarkerPath: marker,
+			StorePath:  storePath,
 			HealthURL:  healthProbeURL(addr, useTLS),
 		},
 	}

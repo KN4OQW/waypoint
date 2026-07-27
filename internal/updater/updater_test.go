@@ -3,6 +3,7 @@ package updater
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,6 +22,13 @@ type fakeSystem struct {
 	healthSeq []healthResp
 	healthIdx int
 	now       time.Time
+	// migratesOnStart stands in for a new build whose first start migrates the
+	// config store: on the next Restart the fake annotates the in-flight marker
+	// with this pre-migration copy, exactly as the daemon does. Empty = the common
+	// case where an update migrates nothing.
+	migratesOnStart string
+	restoredStore   string // the backup path RestoreStore was called with
+	restoreStoreErr error
 }
 
 type healthResp struct {
@@ -45,7 +53,20 @@ func (f *fakeSystem) Swap(stagePath string) error {
 }
 func (f *fakeSystem) Restart(ctx context.Context) error {
 	f.restarts++
+	// The new build's first start opens the store, migrates it, and records the
+	// pre-migration copy on the marker. Only the first start migrates.
+	if f.migratesOnStart != "" && f.marker != nil {
+		f.marker.StoreBackup = f.migratesOnStart
+		f.migratesOnStart = ""
+	}
 	return f.restartErr
+}
+func (f *fakeSystem) RestoreStore(backupPath string) error {
+	if f.restoreStoreErr != nil {
+		return f.restoreStoreErr
+	}
+	f.restoredStore = backupPath
+	return nil
 }
 func (f *fakeSystem) Health(ctx context.Context) (string, bool) {
 	if f.healthIdx < len(f.healthSeq) {
@@ -226,5 +247,128 @@ func TestPlanUpdate(t *testing.T) {
 	// dev build → treated as older, updates.
 	if p := PlanUpdate("abc123-dev", m, "linux/arm64"); !p.Available {
 		t.Errorf("dev build should update: %+v", p)
+	}
+}
+
+// --- reverting across a schema migration (RFC-0001 backup, RFC-0017 open q.2) ---
+//
+// The hazard: the new build migrates config.db on its first start, then fails its
+// health gate. Restoring only the binary leaves an older waypointd facing a schema
+// it refuses to open — a node that will not start. These pin the store going back
+// with it.
+
+// The store is restored only when the update actually migrated it, and the applier
+// learns that from the marker the NEW build annotated — not from the one it wrote.
+func TestApplyRestoresStoreWhenRevertingAMigratedUpdate(t *testing.T) {
+	const backup = "/var/lib/waypoint/config.db.pre-v1"
+	f := &fakeSystem{
+		live:            "1.0.0",
+		migratesOnStart: backup,
+		healthSeq:       []healthResp{{"", false}, {"1.0.0", true}}, // never reports 1.4.0
+	}
+	out, err := Apply(context.Background(), availPlan("1.4.0"), []byte("1.4.0"), f, 5*time.Millisecond, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Reverted {
+		t.Fatalf("expected revert, got %+v", out)
+	}
+	if f.live != "1.0.0" {
+		t.Errorf("after revert live = %q, want 1.0.0", f.live)
+	}
+	if f.restoredStore != backup {
+		t.Errorf("restored store = %q, want %q — a reverted binary must not be left facing a migrated schema", f.restoredStore, backup)
+	}
+	if !strings.Contains(out.Reason, "pre-migration") {
+		t.Errorf("revert reason does not mention the store restore: %q", out.Reason)
+	}
+}
+
+// The common case: an update that migrates nothing must not touch the store.
+func TestApplyLeavesStoreAloneWhenNothingMigrated(t *testing.T) {
+	f := &fakeSystem{live: "1.0.0", healthSeq: []healthResp{{"", false}, {"1.0.0", true}}}
+	if _, err := Apply(context.Background(), availPlan("1.4.0"), []byte("1.4.0"), f, 5*time.Millisecond, time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if f.restoredStore != "" {
+		t.Errorf("restored the store on an update that migrated nothing: %q", f.restoredStore)
+	}
+}
+
+// A confirmed update keeps its migrated store — the backup is recovery, not a
+// rollback that happens anyway.
+func TestApplyKeepsMigratedStoreOnConfirm(t *testing.T) {
+	f := &fakeSystem{live: "1.0.0", migratesOnStart: "/x/config.db.pre-v1", healthSeq: []healthResp{{"1.4.0", true}}}
+	out, err := Apply(context.Background(), availPlan("1.4.0"), []byte("1.4.0"), f, time.Second, time.Millisecond)
+	if err != nil || !out.Confirmed {
+		t.Fatalf("expected confirm, got %+v (%v)", out, err)
+	}
+	if f.restoredStore != "" {
+		t.Errorf("a confirmed update rolled the store back: %q", f.restoredStore)
+	}
+}
+
+// A failed store restore must be an error, not a "reverted" success: the node is
+// left on a binary that cannot open its store, and the operator has to be told.
+func TestApplyFailsLoudlyWhenStoreRestoreFails(t *testing.T) {
+	f := &fakeSystem{
+		live:            "1.0.0",
+		migratesOnStart: "/x/config.db.pre-v1",
+		restoreStoreErr: context.DeadlineExceeded,
+		healthSeq:       []healthResp{{"", false}, {"1.0.0", true}},
+	}
+	out, err := Apply(context.Background(), availPlan("1.4.0"), []byte("1.4.0"), f, 5*time.Millisecond, time.Millisecond)
+	if err == nil {
+		t.Fatalf("a failed store restore reported success: %+v", out)
+	}
+	if out.Reverted {
+		t.Errorf("outcome claims a clean revert despite the store restore failing: %+v", out)
+	}
+	if !strings.Contains(err.Error(), "/x/config.db.pre-v1") {
+		t.Errorf("error does not name the copy to restore by hand: %v", err)
+	}
+}
+
+// The power-loss path, and the best place for this to happen: ExecStartPre, with
+// nothing holding the store open.
+func TestBootCheckRestoresStoreOnRevert(t *testing.T) {
+	const backup = "/var/lib/waypoint/config.db.pre-v1"
+	f := &fakeSystem{
+		live:       "1.4.0",
+		rollbackOf: "1.0.0",
+		marker:     &Marker{Version: "1.4.0", Rollback: "rollback:1.0.0", BootCount: 1, StoreBackup: backup},
+	}
+	out, err := BootCheck(f, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Reverted {
+		t.Fatalf("expected a boot revert, got %+v", out)
+	}
+	if f.live != "1.0.0" {
+		t.Errorf("live = %q, want 1.0.0", f.live)
+	}
+	if f.restoredStore != backup {
+		t.Errorf("restored store = %q, want %q", f.restoredStore, backup)
+	}
+	if f.marker != nil {
+		t.Errorf("marker not cleared after a complete revert: %+v", f.marker)
+	}
+}
+
+// If the store restore fails, the marker must survive: it is the only record of
+// where the copy lives, so clearing it would strand an unrecoverable node.
+func TestBootCheckKeepsMarkerWhenStoreRestoreFails(t *testing.T) {
+	f := &fakeSystem{
+		live:            "1.4.0",
+		rollbackOf:      "1.0.0",
+		restoreStoreErr: context.DeadlineExceeded,
+		marker:          &Marker{Version: "1.4.0", Rollback: "rollback:1.0.0", BootCount: 1, StoreBackup: "/x/config.db.pre-v1"},
+	}
+	if _, err := BootCheck(f, 1); err == nil {
+		t.Fatal("a failed store restore in the boot check reported success")
+	}
+	if f.marker == nil {
+		t.Error("marker cleared despite the store restore failing — the copy's location is now lost")
 	}
 }

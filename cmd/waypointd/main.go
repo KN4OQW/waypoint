@@ -49,6 +49,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/status"
 	"github.com/KN4OQW/waypoint/internal/store"
 	"github.com/KN4OQW/waypoint/internal/tlscert"
+	"github.com/KN4OQW/waypoint/internal/updater"
 	"github.com/KN4OQW/waypoint/internal/verifydl"
 	"github.com/KN4OQW/waypoint/internal/wizard"
 	"github.com/KN4OQW/waypoint/internal/ysfhosts"
@@ -292,6 +293,17 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 	// merge (RFC-0004).
 	if section == "history" {
 		if err := config.SetHistory(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// Station identification validates on save (the interval must be a whole
+	// number of minutes in range when identification is enabled), so route it
+	// through SetStationID rather than the generic merge.
+	if section == "station_id" {
+		if err := config.SetStationID(s.store, body, "api"); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -1191,6 +1203,20 @@ func (s *server) backfillDefaults() error {
 		}
 		log.Printf("config store: backfilled history defaults")
 	}
+	// Station identification: a store seeded before this section existed lacks the
+	// row, and its zero value is Enable=false with a blank interval — which would
+	// render [CW Id] Enable=0 and leave the node silent. Backfill the defaults
+	// (identification on, 10 minutes) so an existing node starts identifying on the
+	// next apply rather than inheriting a zero value as policy.
+	if _, ok, err := s.store.Get("station_id"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("station_id", config.DefaultStationID(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled station ID defaults")
+	}
 	// Software-update policy (RFC-0014) arrived after the event store: a store
 	// seeded before it lacks the row, so backfill the notify-and-click defaults
 	// (stable channel, auto-apply off) so Load never returns a zero-value channel.
@@ -1790,7 +1816,7 @@ func main() {
 	// the service restart it triggers), -update-check reports availability, and
 	// -update-boot-check is the ExecStartPre power-loss revert.
 	if *updateMode || *updateCheckMode || *updateBootCheck {
-		cfg := newUpdateConfig(*updateURL, *releasePubkey, *updateBinary, *updateUnit, *updateMarker, *addr, *useTLS)
+		cfg := newUpdateConfig(*updateURL, *releasePubkey, *updateBinary, *updateUnit, *updateMarker, *storePath, *addr, *useTLS)
 		switch {
 		case *updateBootCheck:
 			runUpdateBootCheck(cfg)
@@ -1817,6 +1843,18 @@ func main() {
 		log.Fatalf("config store: %v", err)
 	}
 	defer st.Close()
+
+	// A schema migration just ran. If an update is in flight, tell its marker where
+	// the pre-migration copy is: this start is the new version's first, and if it
+	// never becomes healthy the revert (here or at the next boot-check) has to put
+	// the store back too, or the restored older binary meets a schema it refuses to
+	// open. This is the only moment that knows both facts.
+	if from, backup, ok := st.Migrated(); ok {
+		log.Printf("config store: migrated schema v%d → v%d (pre-migration copy: %s)", from, store.SchemaVersion, backup)
+		if err := updater.RecordStoreBackup(*updateMarker, backup); err != nil {
+			log.Printf("config store: could not record the pre-migration copy on the in-flight update marker: %v", err)
+		}
+	}
 
 	// Event-history store (RFC-0004). In demo mode it is in-memory so synthetic
 	// traffic never accretes a persistent history on disk; live mode persists to the
@@ -1860,7 +1898,7 @@ func main() {
 	// Atomic-update surface (RFC-0014). The API endpoints reuse the same config the
 	// CLI modes build; updateArgs is the detached `-update` invocation apply launches,
 	// carrying the same manifest/key/seam flags so the child behaves identically.
-	updCfg := newUpdateConfig(*updateURL, *releasePubkey, *updateBinary, *updateUnit, *updateMarker, *addr, *useTLS)
+	updCfg := newUpdateConfig(*updateURL, *releasePubkey, *updateBinary, *updateUnit, *updateMarker, *storePath, *addr, *useTLS)
 	s.update = &updCfg
 	s.updateArgs = []string{
 		"-update",

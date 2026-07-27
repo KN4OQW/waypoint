@@ -187,18 +187,17 @@ Debug=0
 // systemd owns the process. Any drop/change OUTSIDE this set is a real parity
 // regression and fails the test.
 var knownUnmodeled = map[string]bool{
-	"General.Daemon":    true, // intentional: systemd manages the process
-	"Info.Latitude":     true, // pending — structured location not modeled
-	"Info.Longitude":    true,
-	"Info.Height":       true,
-	"Info.Description":  true,
-	"Modem.TXDelay":     true, // pending — full modem calibration (config-coverage #20)
-	"Modem.DMRDelay":    true,
-	"Modem.RFLevel":     true,
-	"Modem.RXDCOffset":  true,
-	"Modem.TXDCOffset":  true,
-	"Modem.CWIdTXLevel": true,
-	"Modem.DMRTXLevel":  true,
+	"General.Daemon":   true, // intentional: systemd manages the process
+	"Info.Latitude":    true, // pending — structured location not modeled
+	"Info.Longitude":   true,
+	"Info.Height":      true,
+	"Info.Description": true,
+	"Modem.TXDelay":    true, // pending — full modem calibration (config-coverage #20)
+	"Modem.DMRDelay":   true,
+	"Modem.RFLevel":    true,
+	"Modem.RXDCOffset": true,
+	"Modem.TXDCOffset": true,
+	"Modem.DMRTXLevel": true,
 }
 
 // TestParityRealRoundTrip drives a real WPSD/Pi-Star export through the actual
@@ -242,7 +241,12 @@ func TestParityRealRoundTrip(t *testing.T) {
 // mmManaged / dgManaged: the sections whose operator-facing keys the store owns
 // and must round-trip. Keys outside these sections are fixed operational values
 // (Log/MQTT/lookup paths) not part of parity.
-var mmManaged = []string{"General", "Info", "Modem", "D-Star", "DMR", "System Fusion", "P25", "NXDN", "M17", "POCSAG", "FM", "DMR Network"}
+// "CW Id" joined this list when automatic identification became a modeled section.
+// Its absence was not cosmetic: the fixture below has carried [CW Id] Enable=1 /
+// Time=10 since this test was written, and because the section was unmanaged the
+// harness never asserted on it — so the import silently dropped a legally required
+// setting and the losslessness gate reported green.
+var mmManaged = []string{"General", "Info", "Modem", "CW Id", "D-Star", "DMR", "System Fusion", "P25", "NXDN", "M17", "POCSAG", "FM", "DMR Network"}
 var dgManaged = []string{"DMR Network 1", "DMR Network 2"}
 
 func assertRoundTrip(t *testing.T, orig, rend *INI, sections []string) {

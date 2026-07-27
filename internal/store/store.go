@@ -9,20 +9,50 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go driver: cross-compiles CGO-free to armv6
 )
 
 // SchemaVersion is the current store schema. The daemon refuses to open a
-// database from a newer version (rollback safety) and migrates older ones
-// forward (migrations land with RFC-0001's later phases).
-const SchemaVersion = 1
+// database from a newer version (rollback safety) and migrates older ones forward
+// through the ladder in migrations.go, taking a pre-migration copy first.
+//
+// Bumping this is a release-visible act: an older waypointd will refuse the
+// migrated database, so a release that raises it must also raise the update
+// manifest's min_version (RFC-0014) to the first release that ships the new
+// version. See docs/updates.md.
+const SchemaVersion = 2
+
+// ErrSchemaNewer is returned by Open when the database was written by a newer
+// build. It is a distinct error because it is the one open failure with a real
+// recovery path — a pre-migration copy (BackupPath) usually sits beside it.
+var ErrSchemaNewer = errors.New("store: database schema is newer than this build")
 
 // Store is a handle to the configuration database. It is the only writer.
 type Store struct {
 	db *sql.DB
+	// path is the database file, retained so the migration ladder can write its
+	// pre-migration copy beside it. Empty for ":memory:".
+	path string
+	// migratedFrom and backupFile record what Open did, for callers that must act
+	// on a migration having happened. The update engine is the one that must: an
+	// update whose new build migrates the store and then fails its health gate is
+	// reverted to a binary that would refuse the migrated schema, so the marker it
+	// left behind has to learn where the pre-migration copy is (RFC-0014 revert,
+	// RFC-0017 open question 2).
+	migratedFrom int
+	backupFile   string
+}
+
+// Migrated reports whether Open migrated this database forward: the version it
+// came from, the pre-migration copy left behind, and whether a migration happened
+// at all. backup is empty for an in-memory store, which has nothing to recover to.
+func (s *Store) Migrated() (from int, backup string, ok bool) {
+	return s.migratedFrom, s.backupFile, s.migratedFrom != 0
 }
 
 // Open opens (creating if needed) the config database at path and ensures the
@@ -38,7 +68,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1) // one writer; keeps SQLite happy under :memory: too
-	s := &Store{db: db}
+	s := &Store{db: db, path: path}
 	if err := s.init(); err != nil {
 		db.Close()
 		return nil, err
@@ -47,11 +77,21 @@ func Open(path string) (*Store, error) {
 }
 
 func (s *Store) init() error {
+	// The baseline is always the CURRENT schema: a fresh database is created at
+	// head and runs no migrations. Anything added here must also arrive as a ladder
+	// step in migrations.go for databases that already exist — the fixture tests
+	// compare a migrated database against a fresh one to keep the two in step.
+	//
+	// claimed_at (RFC-0002) and provisioned (provision.Mirror) are owned
+	// semantically by those subsystems; meta carries them because they are node
+	// identity, not config, and must never appear in the settings key tree.
 	const ddl = `
 CREATE TABLE IF NOT EXISTS meta (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   schema_version INTEGER NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  claimed_at TEXT,
+  provisioned INTEGER
 );
 CREATE TABLE IF NOT EXISTS settings (
   key        TEXT PRIMARY KEY,
@@ -78,13 +118,36 @@ CREATE TABLE IF NOT EXISTS applies (
 		return err
 	case nil:
 		if ver > SchemaVersion {
-			return fmt.Errorf("store: database schema v%d is newer than this build (v%d); refusing to run", ver, SchemaVersion)
+			// Refusing is the rollback-safety guarantee: a newer build may have
+			// rewritten values this one would misread. Name the pre-migration copy when
+			// one is there, because that file is the whole recovery path.
+			if b := BackupPath(s.path, SchemaVersion); s.path != "" && s.path != ":memory:" && fileExists(b) {
+				return fmt.Errorf("%w: database is v%d, this build is v%d; a pre-migration copy of v%d is at %s",
+					ErrSchemaNewer, ver, SchemaVersion, SchemaVersion, b)
+			}
+			return fmt.Errorf("%w: database is v%d, this build is v%d", ErrSchemaNewer, ver, SchemaVersion)
 		}
-		// ver < SchemaVersion would run migrations here (RFC-0001 phase 2).
+		if ver < SchemaVersion {
+			return s.migrateFrom(ver)
+		}
 		return nil
 	default:
 		return err
 	}
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// Version returns the schema version recorded in the database. After a successful
+// Open it equals SchemaVersion; it is exported so the daemon can report and log
+// what it migrated (and so tests can assert the ladder ran).
+func (s *Store) Version() (int, error) {
+	var v int
+	err := s.db.QueryRow(`SELECT schema_version FROM meta WHERE id = 1`).Scan(&v)
+	return v, err
 }
 
 // Close releases the database handle.

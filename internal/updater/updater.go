@@ -89,6 +89,17 @@ type Marker struct {
 	Version   string `json:"version"`    // the version being tried
 	Rollback  string `json:"rollback"`   // path to the backed-up prior binary
 	BootCount int    `json:"boot_count"` // boots into this update without confirmation
+	// StoreBackup is the pre-migration copy of the configuration store, when the
+	// new version migrated the schema on its first start (RFC-0001). Reverting the
+	// binary without also restoring this leaves an older build facing a schema it
+	// refuses to open — a dead node, which is the hazard RFC-0017 names in its
+	// second open question.
+	//
+	// It is written by the NEW build, not by the applier: the applier writes this
+	// marker before the swap, and the migration only happens once the new binary
+	// starts. Both revert paths therefore re-read the marker rather than trusting
+	// the copy they wrote. Empty is the common case — most updates migrate nothing.
+	StoreBackup string `json:"store_backup,omitempty"`
 }
 
 // Outcome is the result of Apply.
@@ -108,6 +119,7 @@ type System interface {
 	Restart(ctx context.Context) error                     // restart the service
 	Health(ctx context.Context) (version string, ok bool)  // probe the running node's health
 	Restore(rollbackPath string) error                     // restore rollback -> live
+	RestoreStore(backupPath string) error                  // restore the pre-migration config store
 	WriteMarker(Marker) error
 	ReadMarker() (*Marker, error)
 	ClearMarker() error
@@ -166,6 +178,18 @@ func revert(ctx context.Context, sys System, rollback, reason string) (Outcome, 
 	if err := sys.Restore(rollback); err != nil {
 		return Outcome{}, fmt.Errorf("updater: REVERT FAILED (%s): %w", reason, err)
 	}
+	// Re-read rather than trusting the marker this process wrote: if the new build
+	// migrated the store on its first start, it annotated the marker with the
+	// pre-migration copy after the swap, and this is where we learn about it.
+	if m, err := sys.ReadMarker(); err == nil && m != nil && m.StoreBackup != "" {
+		if err := sys.RestoreStore(m.StoreBackup); err != nil {
+			// Fatal on purpose. The binary is already back to the prior version, which
+			// cannot open the migrated schema — leaving it here is a node that will not
+			// start, so the operator has to see this rather than a "reverted" success.
+			return Outcome{}, fmt.Errorf("updater: reverted the binary but RESTORING THE PRE-MIGRATION STORE FAILED (%s); the prior version cannot open the migrated store, restore %s by hand: %w", reason, m.StoreBackup, err)
+		}
+		reason += "; restored the pre-migration configuration store"
+	}
 	if err := sys.Restart(ctx); err != nil {
 		return Outcome{}, fmt.Errorf("updater: reverted binary but restart failed (%s): %w", reason, err)
 	}
@@ -191,8 +215,19 @@ func BootCheck(sys System, maxBoots int) (Outcome, error) {
 		if err := sys.Restore(m.Rollback); err != nil {
 			return Outcome{}, fmt.Errorf("updater: boot revert restore failed: %w", err)
 		}
+		reason := "update did not confirm after " + strconv.Itoa(m.BootCount) + " boot(s); reverted to the prior version"
+		// The best place in the whole engine to do this: ExecStartPre, so nothing has
+		// the store open and the replacement cannot race a running daemon.
+		if m.StoreBackup != "" {
+			if err := sys.RestoreStore(m.StoreBackup); err != nil {
+				return Outcome{}, fmt.Errorf("updater: boot revert restored the binary but RESTORING THE PRE-MIGRATION STORE FAILED; the prior version cannot open the migrated store, restore %s by hand: %w", m.StoreBackup, err)
+			}
+			reason += ", along with the pre-migration configuration store"
+		}
+		// Only now: the marker is the only record of where the store copy lives, so
+		// clearing it before the restore would strand an unrecoverable node.
 		_ = sys.ClearMarker()
-		return Outcome{Reverted: true, Reason: "update did not confirm after " + strconv.Itoa(m.BootCount) + " boot(s); reverted to the prior version"}, nil
+		return Outcome{Reverted: true, Reason: reason}, nil
 	}
 	m.BootCount++
 	return Outcome{}, sys.WriteMarker(*m)
