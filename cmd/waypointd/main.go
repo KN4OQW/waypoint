@@ -49,6 +49,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/status"
 	"github.com/KN4OQW/waypoint/internal/store"
 	"github.com/KN4OQW/waypoint/internal/tlscert"
+	"github.com/KN4OQW/waypoint/internal/updater"
 	"github.com/KN4OQW/waypoint/internal/verifydl"
 	"github.com/KN4OQW/waypoint/internal/wizard"
 	"github.com/KN4OQW/waypoint/internal/ysfhosts"
@@ -1790,7 +1791,7 @@ func main() {
 	// the service restart it triggers), -update-check reports availability, and
 	// -update-boot-check is the ExecStartPre power-loss revert.
 	if *updateMode || *updateCheckMode || *updateBootCheck {
-		cfg := newUpdateConfig(*updateURL, *releasePubkey, *updateBinary, *updateUnit, *updateMarker, *addr, *useTLS)
+		cfg := newUpdateConfig(*updateURL, *releasePubkey, *updateBinary, *updateUnit, *updateMarker, *storePath, *addr, *useTLS)
 		switch {
 		case *updateBootCheck:
 			runUpdateBootCheck(cfg)
@@ -1817,6 +1818,18 @@ func main() {
 		log.Fatalf("config store: %v", err)
 	}
 	defer st.Close()
+
+	// A schema migration just ran. If an update is in flight, tell its marker where
+	// the pre-migration copy is: this start is the new version's first, and if it
+	// never becomes healthy the revert (here or at the next boot-check) has to put
+	// the store back too, or the restored older binary meets a schema it refuses to
+	// open. This is the only moment that knows both facts.
+	if from, backup, ok := st.Migrated(); ok {
+		log.Printf("config store: migrated schema v%d → v%d (pre-migration copy: %s)", from, store.SchemaVersion, backup)
+		if err := updater.RecordStoreBackup(*updateMarker, backup); err != nil {
+			log.Printf("config store: could not record the pre-migration copy on the in-flight update marker: %v", err)
+		}
+	}
 
 	// Event-history store (RFC-0004). In demo mode it is in-memory so synthetic
 	// traffic never accretes a persistent history on disk; live mode persists to the
@@ -1860,7 +1873,7 @@ func main() {
 	// Atomic-update surface (RFC-0014). The API endpoints reuse the same config the
 	// CLI modes build; updateArgs is the detached `-update` invocation apply launches,
 	// carrying the same manifest/key/seam flags so the child behaves identically.
-	updCfg := newUpdateConfig(*updateURL, *releasePubkey, *updateBinary, *updateUnit, *updateMarker, *addr, *useTLS)
+	updCfg := newUpdateConfig(*updateURL, *releasePubkey, *updateBinary, *updateUnit, *updateMarker, *storePath, *addr, *useTLS)
 	s.update = &updCfg
 	s.updateArgs = []string{
 		"-update",

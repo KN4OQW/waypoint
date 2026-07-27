@@ -90,6 +90,7 @@ func (s *Store) migrateFrom(from int) error {
 	if err != nil {
 		return err
 	}
+	s.migratedFrom, s.backupFile = from, backup
 	for _, m := range migrations {
 		if m.to <= from {
 			continue

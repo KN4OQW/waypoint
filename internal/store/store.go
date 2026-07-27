@@ -38,6 +38,21 @@ type Store struct {
 	// path is the database file, retained so the migration ladder can write its
 	// pre-migration copy beside it. Empty for ":memory:".
 	path string
+	// migratedFrom and backupFile record what Open did, for callers that must act
+	// on a migration having happened. The update engine is the one that must: an
+	// update whose new build migrates the store and then fails its health gate is
+	// reverted to a binary that would refuse the migrated schema, so the marker it
+	// left behind has to learn where the pre-migration copy is (RFC-0014 revert,
+	// RFC-0017 open question 2).
+	migratedFrom int
+	backupFile   string
+}
+
+// Migrated reports whether Open migrated this database forward: the version it
+// came from, the pre-migration copy left behind, and whether a migration happened
+// at all. backup is empty for an in-memory store, which has nothing to recover to.
+func (s *Store) Migrated() (from int, backup string, ok bool) {
+	return s.migratedFrom, s.backupFile, s.migratedFrom != 0
 }
 
 // Open opens (creating if needed) the config database at path and ensures the

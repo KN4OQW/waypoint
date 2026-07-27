@@ -55,6 +55,7 @@ type OSSystem struct {
 	Unit       string // systemd unit to restart
 	HealthURL  string // https://127.0.0.1:<port>/api/health (self-signed, localhost)
 	MarkerPath string // where the in-flight-update marker lives
+	StorePath  string // the live config store, restored from its pre-migration copy on revert
 	Systemctl  func(args ...string) error
 }
 
@@ -97,6 +98,63 @@ func (s *OSSystem) Restore(rollbackPath string) error {
 		return err
 	}
 	return os.Rename(sp, s.BinaryPath)
+}
+
+// RestoreStore puts the pre-migration copy of the configuration store back, so a
+// reverted binary meets the schema it was built for rather than the migrated one
+// it would refuse (RFC-0001's mandated backup; RFC-0017 open question 2). It is
+// called only when the marker names a copy — i.e. only when the update being
+// reverted actually migrated the schema.
+func (s *OSSystem) RestoreStore(backupPath string) error {
+	if s.StorePath == "" {
+		return fmt.Errorf("a pre-migration store copy exists (%s) but this invocation has no -store path to restore it to", backupPath)
+	}
+	data, err := os.ReadFile(backupPath)
+	if err != nil {
+		return err
+	}
+	// Preserve the live store's mode rather than imposing one: the file may predate
+	// this code and something may depend on how it reads.
+	mode := os.FileMode(0o600)
+	if fi, err := os.Stat(s.StorePath); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	if err := writeAtomic(s.StorePath, data, mode); err != nil {
+		return err
+	}
+	// SQLite's sidecars belong to the file just replaced. A -wal left over from the
+	// migrated database would be replayed onto the restored one on the next open,
+	// which either undoes the restore or corrupts it — the single most important
+	// step here, and the easiest to forget.
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Remove(s.StorePath + suffix); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("clearing %s%s: %w", s.StorePath, suffix, err)
+		}
+	}
+	return nil
+}
+
+// RecordStoreBackup annotates an in-flight update marker with the pre-migration
+// store copy a just-completed migration left behind. It is how the new build tells
+// the revert path — which may be a later boot-check, in a different process — where
+// to recover the store from.
+//
+// No marker means no update is in flight (a migration on an ordinary start, or a
+// hand-run binary), which is not an error: there is nothing to annotate.
+func RecordStoreBackup(markerPath, backupPath string) error {
+	if markerPath == "" || backupPath == "" {
+		return nil
+	}
+	sys := &OSSystem{MarkerPath: markerPath}
+	m, err := sys.ReadMarker()
+	if err != nil || m == nil {
+		return err
+	}
+	if m.StoreBackup == backupPath {
+		return nil
+	}
+	m.StoreBackup = backupPath
+	return sys.WriteMarker(*m)
 }
 
 func (s *OSSystem) Restart(ctx context.Context) error {
