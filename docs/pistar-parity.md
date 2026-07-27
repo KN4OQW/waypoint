@@ -22,9 +22,11 @@ networks, XLX time-slot, DMR Roaming Beacon in place of the dropped JitterBuffer
 M17 as a real mode). Rows note where classic Pi-Star differs.
 
 **Page shape:** WPSD renders one scrolling `configure.php` with mode-gated
-panels; Waypoint keeps a persistent tabbed shell (one tab per mode). This spec
-targets **field/feature parity inside the Waypoint shell**, not the single-page
-layout.
+panels; Waypoint keeps a persistent tabbed shell, with the sections grouped in the
+nav (SYSTEM / MODES / NETWORKS / ADMIN) and the eight mode panels reached as
+sub-tabs of a single Modes section. This spec targets **field/feature parity inside
+the Waypoint shell**, not the single-page layout — a panel that moved in the nav is
+still the same panel with the same fields.
 
 **Status:** `done` — modeled in the store, rendered, and UI-wired, accepted at or
 above WPSD parity · `partial` — present but diverging or incomplete/not surfaced ·
@@ -464,10 +466,11 @@ Verified by inspection of the shell wiring (`settings.js`):
   `config.modes`, adding `.on` per enabled mode; the LED reflects applied truth and
   refreshes after `apply() → load()`.
 - **Each panel carries its own enable.** Every mode panel's first control is
-  `toggle("modes", "<mode>", …)` (and the Modes tab mirrors all eight); flipping it
-  marks `modes` dirty and re-renders, then persists on Apply.
+  `toggle("modes", "<mode>", …)` (and the Modes tab's enable grid mirrors all eight);
+  flipping it marks `modes` dirty and re-renders, then persists on Apply.
 - **Divergence held, as specified.** Pi-Star/WPSD show/hide whole panels by mode
-  enable; Waypoint keeps a persistent tab per mode (all `TABS` always in `renderNav`)
-  and moves the enable into the panel, with settings preserved across disable
-  (RFC-0001). This matches the "field/feature parity inside the shell, not the
-  single-page layout" target set at the top of this spec.
+  enable; Waypoint keeps a persistent panel per mode — every entry in `MODE_SUBS` is
+  always in the Modes sub-tab strip, exactly as every entry in `TABS` is always in
+  `renderNav` — and moves the enable into the panel, with settings preserved across
+  disable (RFC-0001). This matches the "field/feature parity inside the shell, not
+  the single-page layout" target set at the top of this spec.

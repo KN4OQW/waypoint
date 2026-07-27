@@ -108,6 +108,23 @@
   .nav-item.on .tag { border-color: var(--accent); color: var(--accent); background: rgba(0,0,0,.25); }
   .nav-item.on .label { color: var(--ink-head); font-weight: 600; }
 
+  /* Grouped sidebar (D2). Each group header is a disclosure button over its item
+     list; a collapsed list is `hidden`, so it leaves the tab order as well as the
+     view. The item styling above is unchanged — only the nesting is new. */
+  .nav-group + .nav-group { margin-top: 6px; }
+  .nav-group-h { margin: 0; font-weight: 400; }
+  /* --muted, not the --faint the static .nav-head uses: at 9.5px this is small text
+     needing 4.5:1, and --faint only reaches 4.38:1 on the light-mode sidebar. */
+  .nav-group-btn { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border-radius: 7px; cursor: pointer;
+    background: transparent; border: 0; text-align: left; font-family: var(--mono); font-size: 9.5px; letter-spacing: 2px; color: var(--muted); }
+  .nav-group-btn:hover { background: rgba(255,255,255,0.02); color: var(--ink-body); }
+  .nav-group-btn .chev { flex: none; width: 0; height: 0; border-left: 4px solid currentColor;
+    border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent; transition: transform .12s ease; }
+  .nav-group-btn.open .chev { transform: rotate(90deg); }
+  .nav-group-btn .gname { flex: 1; }
+  .nav-group-btn .gcount { flex: none; letter-spacing: 1px; color: var(--dim); }
+  .nav-group-items[hidden] { display: none; }
+
   .theme-pick { padding: 14px 18px 18px; border-top: 1px solid var(--side-line); }
   .theme-head { font-family: var(--mono); font-size: 9px; letter-spacing: 2px; color: var(--faint); margin-bottom: 9px; }
   .swatches { display: flex; flex-wrap: wrap; gap: 7px; } /* the full-width mode toggle wraps to its own row above the accent dots */
@@ -124,7 +141,9 @@
   .stat .k { font-family: var(--mono); font-size: 9px; letter-spacing: 1.5px; color: var(--stat-k); }
   .stat .v { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--stat-v); }
   .stat .v.accent { color: var(--accent); }
-  .leds { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+  /* The eight mode LEDs are ~382px laid out in a row; wrapping keeps them inside a
+     320px phone instead of pushing the page into a sideways scroll (RFC-0009). */
+  .leds { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; min-width: 0; }
   .led-mode { display: flex; align-items: center; gap: 5px; }
   .led-mode .d { width: 8px; height: 8px; border-radius: 50%; background: var(--led-off); }
   .led-mode.on .d { background: var(--accent); box-shadow: 0 0 7px var(--accent-glow); }
@@ -145,21 +164,50 @@
 
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
   .stack { display: flex; flex-direction: column; gap: 20px; }
-  /* Responsive (RFC-0009): tablet collapses the sidebar to a top bar with the tab
-     rail as a horizontal scroll strip; phone tightens padding/type and keeps touch
-     targets >= 44px. The page body never scrolls sideways. */
+  /* Responsive (RFC-0009): tablet collapses the sidebar to a top bar; phone tightens
+     padding/type and keeps touch targets >= 44px. The page body never scrolls
+     sideways.
+
+     The tab rail used to be a horizontal scroll strip, which was already at its
+     usability limit at ~18 tabs. It is now a wrapping grid of touch tiles sectioned
+     by nav group (D3): picking a tile swaps the grid for that panel plus a back
+     control, so a narrow viewport shows one of the two, never both stacked. */
   @media (max-width: 1023px) {
     .app { grid-template-columns: 1fr; }
-    /* min-width:0 lets the grid item shrink to the column so the nav's overflow-x
-       engages instead of the tab strip stretching the page (RFC-0009). */
+    /* min-width:0 lets the grid item shrink to the column, so the tile grid tracks
+       the viewport instead of stretching the page (RFC-0009). */
     aside { min-height: auto; min-width: 0; border-right: 0; border-bottom: 1px solid var(--side-line); }
     main { max-height: none; overflow: visible; }
     .grid2 { grid-template-columns: 1fr; }
-    nav { display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 6px; max-width: 100%; -webkit-overflow-scrolling: touch; }
+    nav { padding: 12px 14px 16px; }
     .nav-head { display: none; }
-    .nav-item { width: auto; flex: none; min-height: 44px; }
-    .nav-item .bar { display: none; }
     .theme-pick { border-top: 0; }
+
+    .tile-sec { margin: 14px 2px 8px; font-family: var(--mono); font-size: 9.5px; letter-spacing: 2px; color: var(--muted); font-weight: 400; }
+    .tile-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(146px, 1fr)); gap: 8px; }
+    .nav-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; min-height: 76px;
+      padding: 10px 12px; border-radius: 10px; cursor: pointer; text-align: left;
+      background: var(--chip-bg); border: 1px solid var(--chip-line); }
+    .nav-tile .tag { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .5px; color: var(--muted);
+      background: var(--tag-bg); border: 1px solid var(--field-line); border-radius: 5px; padding: 1px 5px; }
+    .nav-tile .label { font-size: 13.5px; font-weight: 500; color: var(--ink-body); margin-top: 3px; }
+    .nav-tile .sub { font-family: var(--mono); font-size: 9px; letter-spacing: .5px; color: var(--label); }
+    .nav-tile.on { background: var(--accent-soft); border-color: var(--accent); }
+    /* The selected tile is marked by its accent border, tint and bolder label rather
+       than by accent-on-tint text: the light-mode accent only reaches 2.6:1 against
+       its own soft tint, well under the 4.5:1 this 10px tag needs. */
+    .nav-tile.on .tag { color: var(--ink-head); border-color: var(--accent); }
+    .nav-tile.on .label { color: var(--ink-head); font-weight: 600; }
+
+    .nav-back { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 44px; padding: 10px 12px; border-radius: 8px;
+      cursor: pointer; background: var(--chip-bg); border: 1px solid var(--chip-line);
+      color: var(--ink-body); font-family: var(--mono); font-size: 12px; letter-spacing: 1px; }
+    .nav-back .chev { color: var(--accent); font-size: 14px; }
+    /* The two narrow-viewport views. Anything hidden here is display:none, so it is
+       out of the tab order and out of an assistive tree walk too. */
+    :root[data-nav-view="grid"] .nav-back { display: none; }
+    :root[data-nav-view="grid"] #panels { display: none; }
+    :root[data-nav-view="panel"] .nav-grid { display: none; }
   }
   @media (max-width: 640px) {
     .brand, .theme-pick { padding-left: 14px; padding-right: 14px; }
@@ -239,7 +287,27 @@
     .peer-disc { flex-wrap: wrap; }
   }
 
-  .modes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 16px; }
+  /* Modes tab (D4): the enable toggles head the panel, then a sub-tab strip over the
+     per-mode panels. The strip is a WAI-ARIA tablist — aria-selected carries the
+     state, and the dot repeats each mode's enabled bit so the accent colour is never
+     the only signal (WCAG 1.4.1). */
+  .mode-sec-t { font-family: var(--mono); font-size: 11px; letter-spacing: 2px; color: var(--card-t); }
+  .mode-sec-t.mode-sec-gap { margin-top: 32px; }
+  .mode-sec-d { margin: 7px 0 15px; font-size: 12.5px; color: var(--muted); max-width: 560px; line-height: 1.5; }
+  .mode-subs { display: flex; flex-wrap: wrap; gap: 7px; margin: 14px 0 18px; padding-bottom: 14px; border-bottom: 1px solid var(--panel-line); }
+  .msub { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px 14px; border-radius: 8px; cursor: pointer;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 1px; color: var(--muted);
+    background: var(--chip-bg); border: 1px solid var(--chip-line); }
+  .msub:hover { color: var(--ink-body); }
+  .msub .msub-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--led-off); }
+  .msub.live .msub-dot { background: var(--accent); box-shadow: 0 0 6px var(--accent-glow); }
+  .msub[aria-selected="true"] { color: var(--ink-head); font-weight: 600; background: var(--accent-soft); border-color: var(--accent); }
+  .mode-subpanel:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+  @media (max-width: 640px) { .msub { min-height: 44px; } }
+
+  /* min(310px, 100%): below ~330px the fixed 310px track is wider than the column,
+     which spilled the mode tiles past the viewport edge. */
+  .modes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(310px, 100%), 1fr)); gap: 16px; }
   .mode-card { background: var(--panel); border: 1px solid var(--panel-line); border-radius: 11px; padding: 18px 20px; }
   .mode-card.on { border-color: rgba(120,140,160,.28); }
   .mode-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
