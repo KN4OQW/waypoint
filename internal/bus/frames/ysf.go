@@ -75,6 +75,24 @@ func ParseYSF(buf []byte) (Frame, error) {
 	return f, nil
 }
 
+// YSFDGId reads the DG-ID out of a "YSFD" frame's FICH. It is deliberately not a
+// Frame field: Frame stays mode-neutral, and DG-ID is per-attachment addressing —
+// construction takes it from Params.DGId, the way a DMR TG comes from Params.
+// Same error contract as ParseYSF (ErrShort/ErrBadMagic/ErrBadFrame, never panics).
+func YSFDGId(buf []byte) (uint8, error) {
+	if len(buf) < ysfdLen {
+		return 0, ErrShort
+	}
+	if string(buf[0:4]) != "YSFD" {
+		return 0, ErrBadMagic
+	}
+	fi, ok := fichDecode(buf[ysfFrameOff : ysfFrameOff+ysfFrameLen])
+	if !ok {
+		return 0, ErrBadFrame
+	}
+	return fi.dgID(), nil
+}
+
 // ConstructYSF builds a "YSFD" frame. A voice frame must carry exactly 5 AMBE
 // codewords. The source callsign is taken from the frame, or resolved from its id
 // via the shared lookup when it arrived id-addressed (e.g. from DMR/NXDN).
@@ -103,6 +121,7 @@ func ConstructYSF(f Frame, p Params, r Resolver) ([]byte, error) {
 	fi.setDT(ysfDTVDMode2)
 	fi.setFN(f.Stream.Seq)
 	fi.setFT(ysfVCHPerFrame) // frames total
+	fi.setDGId(p.DGId)       // DG-ID addressing; 0 (the gateway slot) when unset
 	switch f.Kind {
 	case KindHeader:
 		fi.setFI(ysfFIHeader)

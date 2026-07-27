@@ -41,6 +41,14 @@ func (f *fich) setDT(v byte) { f[2] = (f[2] & 0xFC) | (v & 0x03) }
 func (f *fich) setFN(v byte) { f[1] = (f[1] & 0xC7) | ((v & 0x07) << 3) }
 func (f *fich) setFT(v byte) { f[1] = (f[1] & 0xF8) | (v & 0x07) }
 
+// DG-ID occupies the low 7 bits of f[3]; bit 7 is left untouched, exactly as
+// CYSFFICH::getDGId/setDGId do (YSFFICH.cpp @ YSFClients 2b480aa). It is inside
+// the CRC'd region (f[0..3]), so it must be set before encode. DGIdGateway routes
+// on this field alone: a frame arriving from the repeater side selects the DG-ID
+// network, and frames coming back from a network are stamped with its slot.
+func (f *fich) dgID() byte     { return f[3] & 0x7F }
+func (f *fich) setDGId(v byte) { f[3] = (f[3] & 0x80) | (v & 0x7F) }
+
 // fichDecode decodes the FICH out of a 120-byte YSF frame (CYSFFICH::decode).
 // Returns ok=false if the CCITT-16 CRC fails.
 func fichDecode(frame []byte) (fich, bool) {
