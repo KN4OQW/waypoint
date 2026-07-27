@@ -1,8 +1,14 @@
 [Unit]
 Description=Waypoint dashboard + supervisor (live)
 Documentation=https://github.com/KN4OQW/waypoint
-After=network-online.target mosquitto.service waypoint-firstboot.service
-Wants=network-online.target mosquitto.service
+# Deliberately NOT ordered after network-online.target. On an unprovisioned node
+# there is no network to wait for — that is the whole reason the setup access
+# point exists — so NetworkManager-wait-online blocks until it times out and the
+# daemon that would have raised the access point is what is being delayed. The
+# daemon needs no network to start: it binds 0.0.0.0, and its MQTT client
+# reconnects on its own.
+After=mosquitto.service waypoint-firstboot.service
+Wants=mosquitto.service
 
 [Service]
 # RFC-0014 power-loss safety: an update that was swapped but never confirmed is

@@ -14,6 +14,24 @@ import (
 	"github.com/KN4OQW/waypoint/internal/wizard"
 )
 
+// apRaiseTimeout bounds the first attempt to raise the setup access point.
+//
+// Every step of a raise can block: firmware load, rfkill, a regulatory-domain
+// change, and NetworkManager activating the profile. Without a bound, a radio
+// that never answers leaves the node with no access point and no recorded reason
+// — the operator sees the same nothing either way. With one, the attempt fails,
+// says so, and the failure reaches /api/setup/state.
+const apRaiseTimeout = 90 * time.Second
+
+// protectionOf names the AP's protection for a human reading a log. An empty
+// passphrase is an open network, which is the default (see internal/setupap).
+func protectionOf(psk string) string {
+	if psk == "" {
+		return "open"
+	}
+	return "WPA2"
+}
+
 // apOptions configures the setup access point and its captive portal.
 type apOptions struct {
 	Enabled bool
@@ -95,8 +113,16 @@ func (s *server) initSetupAP(ctx context.Context, opts apOptions) {
 	// The AP comes down the moment the node is on the operator's network, and the
 	// session lock closes when setup finishes. Both hooks live here rather than in
 	// the wizard so the wizard needs to know nothing about radios.
+	// The setup panel runs for the length of setup and no longer. Once the node is
+	// provisioned the operator's own configured pages own the display, and two
+	// writers on one HD44780 would interleave into nonsense — so this context is
+	// canceled the moment setup completes, releasing the device before the
+	// configured renderer opens it.
+	panelCtx, stopPanel := context.WithCancel(ctx)
+
 	s.wiz.OnComplete = func(ctx context.Context) {
 		lock.Complete()
+		stopPanel()
 		if err := ctrl.Down(ctx, captive.ReasonSetupComplete); err != nil {
 			log.Printf("waypointd: could not take the setup access point down after setup: %v", err)
 		}
@@ -109,19 +135,38 @@ func (s *server) initSetupAP(ctx context.Context, opts apOptions) {
 	if !provisioned {
 		// A node that has never been set up needs the AP now, and needs the
 		// associate window that takes it down again if nobody comes.
-		if err := ctrl.Up(ctx); err != nil {
-			log.Printf("waypointd: could not raise the setup access point (%s): %v", ssid, err)
-			s.apErrMu.Lock()
-			s.apErr = err.Error()
-			s.apErrMu.Unlock()
-		} else {
+		//
+		// In its own goroutine, deliberately. Raising the AP means loading brcmfmac
+		// firmware, clearing an rfkill block, setting a regulatory domain and
+		// waiting for NetworkManager to activate a profile — tens of seconds on a
+		// cold boot, and unbounded when the radio is wedged. Inline, that ran before
+		// the HTTPS listener was bound and before READY=1: a node reachable over
+		// Ethernet served nothing while it waited, and if the wait outlasted
+		// systemd's start timeout the daemon was killed and restarted into the same
+		// wait, forever. A node whose radio will not come up must still finish
+		// starting and be able to say so — which is what apErr is for, and it is
+		// worth nothing if the surface that reports it never binds.
+		bootLogBanner(Version)
+		bootLogf("raising the setup access point %q (%s) on %s", ssid, protectionOf(psk.PSK), nonEmpty(opts.Interface, "the first wireless interface"))
+		go s.runSetupPanel(panelCtx)
+		go func() {
+			raise, cancel := context.WithTimeout(ctx, apRaiseTimeout)
+			defer cancel()
+			if err := ctrl.Up(raise); err != nil {
+				bootLogAndPrint("could not raise the setup access point (%s): %v", ssid, err)
+				bootLogf("the node has NO setup network. Reach it over Ethernet at https://<address>/ , " +
+					"or write a waypoint.toml to this partition (see docs/provisioning.md) to set it up without one.")
+				s.apErrMu.Lock()
+				s.apErr = err.Error()
+				s.apErrMu.Unlock()
+				return
+			}
+			bootLogAndPrint("setup access point %q is up; join it and browse to http://10.42.0.1/", ssid)
 			sess.serve(ctx)
-			go func() {
-				tick := time.NewTicker(time.Minute)
-				defer tick.Stop()
-				ctrl.Run(ctx, tick.C)
-			}()
-		}
+			tick := time.NewTicker(time.Minute)
+			defer tick.Stop()
+			ctrl.Run(ctx, tick.C)
+		}()
 	}
 
 	// netwatch runs in both states, and the provisioned one is the point: a node
