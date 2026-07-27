@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -479,6 +480,20 @@ func (m *Model) RenderMMDVM() string {
 		kv("Name", "mmdvm"),
 		kv("Keepalive", "60"),
 	)
+	// [CW Id] is automatic Morse identification. Callsign is emitted only when the
+	// operator set an explicit override: MMDVM-Host seeds m_cwIdCallsign from
+	// [General] Callsign and overrides it only if this key is present, so omitting
+	// it keeps the ID locked to the station identity. Emitting an empty
+	// "Callsign=" would be silently ignored by the host's parser anyway, but a key
+	// that does nothing is a key that misleads whoever reads the generated file.
+	cwLines := []string{
+		kb("Enable", m.StationID.Enable),
+		kv("Time", def(m.StationID.TimeMins, strconv.Itoa(DefaultStationIDTimeMins))),
+	}
+	if strings.TrimSpace(m.StationID.Callsign) != "" {
+		cwLines = append(cwLines, kv("Callsign", m.StationID.Callsign))
+	}
+	sect(&b, "CW Id", cwLines...)
 	sect(&b, "DMR Id Lookup",
 		kv("File", "/usr/local/etc/DMRIds.dat"),
 		kv("Time", "24"),
@@ -494,6 +509,9 @@ func (m *Model) RenderMMDVM() string {
 		kv("TXOffset", def(m.Modem.TXOffset, "0")),
 		kv("RXLevel", def(m.Modem.RXLevel, "50")),
 		kv("TXLevel", def(m.Modem.TXLevel, "50")),
+		// CW tone level lives in [Modem] but belongs to the station-ID feature, so
+		// the store keeps it on StationID (General/[Info] sets the same precedent).
+		kv("CWIdTXLevel", def(m.StationID.TXLevel, "50")),
 		kv("RSSIMappingFile", "/usr/local/etc/RSSI.dat"),
 	)
 

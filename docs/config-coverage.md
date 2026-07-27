@@ -26,6 +26,7 @@ Status: ✅ done · 🟡 partial · ⬜ pending
 | Area | Store section | Status | Notes |
 |---|---|---|---|
 | Station identity | `general` | ✅ | callsign, DMR ID, duplex, location, URL, timeout, mode-hangs |
+| Automatic identification | `station_id` | ✅ | `[CW Id]` Enable/Time/Callsign + `[Modem]` CWIdTXLevel; on by default. Blank callsign inherits `general.callsign`. Excluded from connection profiles. Identification *during* a transmission is host behavior, not config → [#131] |
 | Frequencies + modem port | `modem` | ✅ | RX/TX Hz, UART port/speed |
 | Modem calibration | `modem` | 🟡 | offsets, invert flags, RX/TX level modeled; **per-mode TX levels, DC offsets, RSSI mapping, DMR delay not yet** → [#20] |
 | DMR params + slots | `dmr`, `dmrnet` | ✅ | color code, ID, slots, embedded-LC |
@@ -172,7 +173,9 @@ pattern (`View`/`Set`), wired now ahead of the Wi-Fi surface.
 ## 5. Dashboard / system  → 🟡
 
 Log levels and MQTT partly wired; **updates lifecycle, auth/TLS (RFC-0002),
-service supervision ([#22]), station-ID/legal helpers ([#24])** pending.
+service supervision ([#22])** pending. Of the station-ID / legal helpers ([#24]),
+automatic CW identification is now modeled (§1); the scheduled-operation windows,
+remote kill, and jurisdiction presets remain pending under RFC-0019.
 
 ## 6. Auxiliary services  → ⬜
 
@@ -222,3 +225,4 @@ deploy-side (waypoint-stack) and adjacent domains:
 [#24]: https://github.com/KN4OQW/waypoint/issues/24
 [#32]: https://github.com/KN4OQW/waypoint/issues/32
 [#33]: https://github.com/KN4OQW/waypoint/issues/33
+[#131]: https://github.com/KN4OQW/waypoint/issues/131

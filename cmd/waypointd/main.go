@@ -299,6 +299,17 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// Station identification validates on save (the interval must be a whole
+	// number of minutes in range when identification is enabled), so route it
+	// through SetStationID rather than the generic merge.
+	if section == "station_id" {
+		if err := config.SetStationID(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	// Software-update policy validates on save (channel enum + HH:MM quiet window),
 	// so route it through SetUpdate rather than the generic merge (RFC-0014).
 	if section == "update" {
@@ -1191,6 +1202,20 @@ func (s *server) backfillDefaults() error {
 			return err
 		}
 		log.Printf("config store: backfilled history defaults")
+	}
+	// Station identification: a store seeded before this section existed lacks the
+	// row, and its zero value is Enable=false with a blank interval — which would
+	// render [CW Id] Enable=0 and leave the node silent. Backfill the defaults
+	// (identification on, 10 minutes) so an existing node starts identifying on the
+	// next apply rather than inheriting a zero value as policy.
+	if _, ok, err := s.store.Get("station_id"); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if err := s.store.Set("station_id", config.DefaultStationID(), "backfill"); err != nil {
+			return err
+		}
+		log.Printf("config store: backfilled station ID defaults")
 	}
 	// Software-update policy (RFC-0014) arrived after the event store: a store
 	// seeded before it lacks the row, so backfill the notify-and-click defaults

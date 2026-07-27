@@ -20,7 +20,9 @@ type View struct {
 	FM       ViewFM        `json:"fm"`
 	LCD      ViewLCD       `json:"lcd"`
 	History  ViewHistory   `json:"history"`
-	Update   ViewUpdate    `json:"update"`
+	// StationID shares the Station Settings tab with History.
+	StationID ViewStationID `json:"station_id"`
+	Update    ViewUpdate    `json:"update"`
 	// Mode buses (RFC-0003). Buses and their attachments carry NO secret (a bus
 	// authenticates through an existing Networks[] entry named by credentials_ref,
 	// never its own master — §3), so they project verbatim; there is nothing to
@@ -87,6 +89,19 @@ type ViewLCD struct {
 // retention (RFC-0004). No secrets — a straight projection of the History section.
 type ViewHistory struct {
 	RetentionDays int `json:"retention_days"`
+}
+
+// ViewStationID is the Station Settings tab's read model for automatic CW
+// identification. No secrets — a straight projection of the StationID section.
+// EffectiveCallsign is derived, not stored: it resolves the blank-means-inherit
+// rule so the UI can show the operator what will actually go out on the air
+// without duplicating that logic in JS.
+type ViewStationID struct {
+	Enable            bool   `json:"enable"`
+	TimeMins          string `json:"time_mins"`
+	Callsign          string `json:"callsign"`
+	EffectiveCallsign string `json:"effective_callsign"`
+	TXLevel           string `json:"tx_level"`
 }
 
 // ViewUpdate is the Updates tab's read model for the operator update policy
@@ -485,6 +500,13 @@ func (m *Model) View(storePath string) *View {
 		})
 	}
 	v.History = ViewHistory{RetentionDays: m.History.RetentionDays}
+	v.StationID = ViewStationID{
+		Enable:            m.StationID.Enable,
+		TimeMins:          m.StationID.TimeMins,
+		Callsign:          m.StationID.Callsign,
+		EffectiveCallsign: m.EffectiveIDCallsign(),
+		TXLevel:           m.StationID.TXLevel,
+	}
 	v.Update = ViewUpdate{Channel: m.Update.Channel, CheckEnabled: m.Update.CheckEnabled, AutoApply: m.Update.AutoApply, QuietWindow: m.Update.QuietWindow}
 	// Buses/attachments project verbatim (no secrets). Copy the slices so the view
 	// never aliases the model's backing arrays.

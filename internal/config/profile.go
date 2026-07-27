@@ -44,7 +44,11 @@ var profileSections = []string{
 // which must never travel in a portable profile, and remote_attachments[]
 // references those peers, so it would dangle if carried without them. Peering is
 // re-established per node by pairing, not by importing a profile.
-var profileExcluded = []string{"general", "modem", "display", "lcd", "history", "update", "peers", "remote_attachments", "peering"}
+// Station identification (station_id) is excluded for the same reason general is:
+// it is who the node says it is on the air, and a legal obligation of the licensee
+// operating it. Switching profiles must never change the callsign being keyed, nor
+// silently disable identification — so a profile carries neither.
+var profileExcluded = []string{"general", "modem", "display", "lcd", "history", "station_id", "update", "peers", "remote_attachments", "peering"}
 
 // profileSecretFields registers the secret-bearing fields per section — shared by
 // export scrub and activate reconcile so the two can never drift. The values are

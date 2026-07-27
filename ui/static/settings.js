@@ -21,7 +21,7 @@ const TABS = [
   { id: "profiles",     tag: "PF", label: "Profiles",     sub: "Saved Setups",         crumb: "SYSTEM / PROFILES",       title: "Connection Profiles",   desc: "Named snapshots of your mode & network setup — save the current one, switch to another in a click, or carry a setup between nodes as a file. Callsign, frequencies and calibration are never part of a profile, so switching can't change your identity or detune the radio." },
   { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Routing",   crumb: "BRIDGES / GATEWAYS",      title: "Cross-Mode Gateways",   desc: "Cross-mode routing is being redesigned as a bus system (RFC-0003)." },
   { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "SYSTEM / NETWORK",        title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
-  { id: "station",      tag: "ST", label: "Station",      sub: "History & Beacon",     crumb: "SYSTEM / STATION",        title: "Station Settings",      desc: "Node-wide operating policy: how long the persistent last-heard / event history is kept (pruned nightly), and — coming soon — automatic callsign identification." },
+  { id: "station",      tag: "ST", label: "Station",      sub: "History & ID",         crumb: "SYSTEM / STATION",        title: "Station Settings",      desc: "Node-wide operating policy: how long the persistent last-heard / event history is kept (pruned nightly), and how this node identifies itself on the air." },
   { id: "updates",      tag: "UP", label: "Updates",       sub: "Version & Channel",    crumb: "SYSTEM / UPDATES",        title: "Software Updates",      desc: "Installed versions, available updates from the signed Waypoint apt repo, and the update policy. Updates are applied on the node, health-checked, and rolled back automatically if the modem does not come back up." },
   { id: "expert",       tag: "SY", label: "Expert",       sub: "System & Config",      crumb: "SYSTEM / EXPERT",         title: "Expert & System",       desc: "Firmware versions and low-level configuration." },
 ];
@@ -96,6 +96,17 @@ function buildEdit(c) {
     // body carries retention_days as JSON number, not string (the store field is
     // an int). Falls back to the 7-day default if the view somehow omits it.
     history: { retention_days: (c.history || {}).retention_days ?? 7 },
+    // Automatic CW identification (Station Settings tab). enable defaults ON when
+    // the view omits it — a missing key must never read as "identification off",
+    // which is a legal obligation no operator opted out of by accident. callsign
+    // is the blank-means-inherit override; effective_callsign is derived server-side
+    // and read-only here, so the UI never re-implements the inheritance rule.
+    station_id: {
+      enable: (c.station_id || {}).enable !== false,
+      time_mins: (c.station_id || {}).time_mins || "10",
+      callsign: (c.station_id || {}).callsign || "",
+      tx_level: (c.station_id || {}).tx_level || "50",
+    },
     // Software-update policy (Updates tab, RFC-0014). Channel + quiet window are
     // strings, check_enabled and auto_apply bools; saved through the normal Apply
     // flow. check_enabled defaults ON when the view omits it (#15) — a missing key
@@ -1960,8 +1971,28 @@ function panelStation() {
     row("Retention window",
       `<div class="unit"><input data-sec="history" data-key="retention_days" data-kind="int" inputmode="numeric" value="${esc(days)}"><span class="u">days</span></div>`) +
     note("How long this node keeps its persistent last-heard and event log (stored on-device). <b>0 keeps history forever.</b> Older events are pruned nightly; a longer window uses more SD-card space."));
-  const beacon = card("CALLSIGN BEACON",
-    note("Automatic callsign identification will be configured here. <span style=\"color:var(--muted)\">Not yet available.</span>"));
+  // Automatic CW identification. The effective callsign is echoed back from the
+  // view rather than computed here, so what the operator reads is exactly what the
+  // renderer will put in [CW Id].
+  const sid = edit.station_id || (edit.station_id = { enable: true, time_mins: "10", callsign: "", tx_level: "50" });
+  // effective_callsign is server-derived, so it lags an unsaved callsign edit —
+  // fall back to the working copy so the preview tracks what the operator just typed.
+  const effective = esc(sid.callsign.trim() || (edit.general || {}).callsign || ((state.config || {}).station_id || {}).effective_callsign || "");
+  const idRows =
+    toggle("station_id", "enable", "Identify automatically", "ON", "OFF") +
+    row("Interval",
+      `<div class="unit"><input data-sec="station_id" data-key="time_mins" inputmode="numeric" value="${esc(sid.time_mins)}"><span class="u">minutes</span></div>`) +
+    input("station_id", "callsign", { label: "Callsign override" }) +
+    row("Tone level",
+      `<div class="unit"><input data-sec="station_id" data-key="tx_level" inputmode="numeric" value="${esc(sid.tx_level)}"><span class="u">%</span></div>`);
+  const idNote = sid.enable
+    ? note(`Your node keys <b>${effective}</b> in Morse every <b>${esc(sid.time_mins)}</b> minute(s) while idle, so it identifies itself without you touching it. Leave the override blank to track your station callsign. <b>Most licences require periodic identification</b> — in the US, every 10 minutes (§97.119).`)
+    : note("<b>This node will not identify itself.</b> Automatic identification is off, so nothing announces your callsign on the air. Most licences require periodic identification — turn this on unless you are identifying by another means.");
+  // The host only keys CW between transmissions, so a long transmission is not
+  // identified until after it ends. Say so here rather than let an operator infer a
+  // guarantee the software cannot make.
+  const idCaveat = note("<span style=\"color:var(--muted)\">Identification is sent between transmissions, not during one.</span>");
+  const beacon = card("STATION IDENTIFICATION", idRows + idNote + idCaveat);
   return `<div class="grid2">${retention}${beacon}</div>`;
 }
 
