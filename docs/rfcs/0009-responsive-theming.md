@@ -54,7 +54,10 @@ Three tiers, matching the acceptance widths, applied to both `index.html` and
   is single-column; cards go full-width.
 - **≤ 480 px, tuned at 360 px (phone):** the settings **tab rail becomes a
   horizontally-scrollable strip** (or a native `<select>` jump) instead of a
-  vertical list that eats the viewport; the status bar wraps and shrinks; page
+  vertical list that eats the viewport — *superseded: the strip was replaced by a
+  grid of touch tiles sectioned by nav group once the tab count outgrew a single
+  scrollable row; the intent (a rail that does not eat the viewport, ≥ 44 px
+  targets, no sideways page scroll) is unchanged*; the status bar wraps and shrinks; page
   padding drops from ~30 px to ~14 px; headings scale down; **every interactive
   control is ≥ 44 × 44 px** (WCAG 2.5.5 / Apple HIG touch target); tables get an
   `overflow-x: auto` wrapper so a wide row scrolls inside its card instead of
