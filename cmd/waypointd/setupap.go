@@ -23,6 +23,67 @@ import (
 // says so, and the failure reaches /api/setup/state.
 const apRaiseTimeout = 90 * time.Second
 
+// apRaiseAttempts and apRaiseBackoff bound the cold-boot retry in
+// raiseWithRetry. Four attempts at a backoff that grows 5s, 10s, 15s covers
+// about half a minute of a radio arriving late, which is comfortably longer than
+// brcmfmac takes to load firmware and NetworkManager takes to notice the result.
+const (
+	apRaiseAttempts = 4
+	apRaiseBackoff  = 5 * time.Second
+)
+
+// raiseWithRetry brings the setup access point up, retrying a cold-boot race.
+//
+// waypointd starts early, and on a fresh boot the pieces a raise depends on may
+// not be there yet: brcmfmac is still loading firmware, wlan0 has not appeared,
+// or NetworkManager is still enumerating devices and has no opinion about the
+// radio. Every one of those resolves within seconds on its own. A single attempt
+// turns a transient into a permanent condition — the node has no setup network
+// for the rest of the boot, over a race it would have won a moment later. That
+// is the difference between the bench, where the board had been up for hours
+// before anything was asked of it, and a node someone has just plugged in.
+//
+// The retries are bounded and the last error is kept: a radio that is genuinely
+// absent or blocked must still end up reported rather than retried forever.
+func (s *server) raiseWithRetry(ctx context.Context, ctrl *captive.Controller, ssid string) error {
+	var err error
+	for attempt := 1; attempt <= apRaiseAttempts; attempt++ {
+		raise, cancel := context.WithTimeout(ctx, apRaiseTimeout)
+		err = ctrl.Up(raise)
+		cancel()
+		if err == nil {
+			bootLogAndPrint("setup access point %q is up (attempt %d); join it and browse to http://%s/",
+				ssid, attempt, captive.DefaultAddress)
+			s.apErrMu.Lock()
+			s.apErr = ""
+			s.apErrMu.Unlock()
+			return nil
+		}
+
+		// Recorded on every attempt, not just the last: an operator refreshing
+		// /api/setup/state during a slow boot should see what is being tried
+		// rather than an empty field.
+		s.apErrMu.Lock()
+		s.apErr = err.Error()
+		s.apErrMu.Unlock()
+		bootLogAndPrint("attempt %d of %d to raise the setup access point (%s) failed: %v",
+			attempt, apRaiseAttempts, ssid, err)
+
+		if attempt == apRaiseAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt) * apRaiseBackoff):
+		}
+	}
+
+	bootLogf("the node has NO setup network. Reach it over Ethernet at https://<address>/ , " +
+		"or write a waypoint.toml to this partition (see docs/provisioning.md) to set it up without one.")
+	return err
+}
+
 // protectionOf names the AP's protection for a human reading a log. An empty
 // passphrase is an open network, which is the default (see internal/setupap).
 func protectionOf(psk string) string {
@@ -150,18 +211,9 @@ func (s *server) initSetupAP(ctx context.Context, opts apOptions) {
 		bootLogf("raising the setup access point %q (%s) on %s", ssid, protectionOf(psk.PSK), nonEmpty(opts.Interface, "the first wireless interface"))
 		go s.runSetupPanel(panelCtx)
 		go func() {
-			raise, cancel := context.WithTimeout(ctx, apRaiseTimeout)
-			defer cancel()
-			if err := ctrl.Up(raise); err != nil {
-				bootLogAndPrint("could not raise the setup access point (%s): %v", ssid, err)
-				bootLogf("the node has NO setup network. Reach it over Ethernet at https://<address>/ , " +
-					"or write a waypoint.toml to this partition (see docs/provisioning.md) to set it up without one.")
-				s.apErrMu.Lock()
-				s.apErr = err.Error()
-				s.apErrMu.Unlock()
+			if err := s.raiseWithRetry(ctx, ctrl, ssid); err != nil {
 				return
 			}
-			bootLogAndPrint("setup access point %q is up; join it and browse to http://10.42.0.1/", ssid)
 			sess.serve(ctx)
 			tick := time.NewTicker(time.Minute)
 			defer tick.Stop()
