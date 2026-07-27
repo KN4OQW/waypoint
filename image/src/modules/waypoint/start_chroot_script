@@ -207,6 +207,19 @@ if [ -f "$CMDLINE_TXT" ]; then
   # Strip any serial console token so the modem UART is not also a login console.
   sed -i -E 's/console=(serial0|ttyAMA0|ttyS0),[0-9]+ ?//g' "$CMDLINE_TXT"
 fi
+
+echo "=== enabling I2C for the character LCD"
+# The header I2C bus, off by default on Raspberry Pi OS. Waypoint uses it for the
+# HD44780-on-PCF8574 panels these hotspots are usually built with, and — more
+# importantly — the first-boot setup screen probes for one. On a headless node
+# whose setup access point fails to come up there is no login, no serial console
+# and no network, so a two-line display is the only thing left that can say why.
+# Leaving the bus disabled means that panel can never be found.
+if [ -f "$CONFIG_TXT" ]; then
+  grep -q '^dtparam=i2c_arm=on' "$CONFIG_TXT" || echo 'dtparam=i2c_arm=on' >> "$CONFIG_TXT"
+fi
+# i2c-dev is what creates /dev/i2c-1; the dtparam alone only binds the controller.
+grep -q '^i2c-dev' /etc/modules 2>/dev/null || echo 'i2c-dev' >> /etc/modules
 systemctl disable hciuart.service 2>/dev/null || true
 systemctl disable serial-getty@ttyAMA0.service 2>/dev/null || true
 systemctl disable serial-getty@ttyS0.service 2>/dev/null || true
