@@ -195,39 +195,49 @@ type stackStatusResp struct {
 	Applying   bool                 `json:"applying"`
 	LastResult string               `json:"last_result,omitempty"`
 	History    []stackupdate.Record `json:"history"`
+	// Binary is the cached waypointd signed-manifest verdict (binaryAvailability),
+	// so the panel can show a new release without a fetch on page load. Absent until
+	// a check has run; independent of the stack fields above.
+	Binary          json.RawMessage `json:"binary,omitempty"`
+	LastBinaryCheck time.Time       `json:"last_binary_check"`
 }
 
 // stackStatus handles GET /api/update/stack: installed versions, cached available
-// updates, the operator policy, and recent history — everything the Updates panel
-// paints without triggering apt.
+// updates (stack and waypointd), the operator policy, and recent history —
+// everything the Updates panel paints without triggering apt or a fetch. A node
+// without the apt repo still gets the policy and the binary check, so the panel's
+// update-policy controls work there too.
 func (s *server) stackStatus(w http.ResponseWriter, r *http.Request) {
+	st, _ := config.GetUpdateState(s.store)
+	resp := stackStatusResp{
+		LastBinaryCheck: st.LastBinaryCheck,
+		Binary:          st.Binary,
+	}
+	if m, err := config.Load(s.store); err == nil {
+		resp.Prefs = config.ViewUpdate{
+			Channel:      m.Update.Channel,
+			CheckEnabled: m.Update.CheckEnabled,
+			AutoApply:    m.Update.AutoApply,
+			QuietWindow:  m.Update.QuietWindow,
+		}
+	}
 	if s.stack == nil {
-		writeJSONStatus(w, http.StatusOK, stackStatusResp{Configured: false})
+		writeJSONStatus(w, http.StatusOK, resp)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	installed, _ := s.stack.sys.InstalledVersions(ctx, stackupdate.AllPackages())
 
-	var st config.UpdateState
-	st, _ = config.GetUpdateState(s.store)
-	var available []stackupdate.Update
 	if len(st.Available) > 0 {
-		_ = json.Unmarshal(st.Available, &available)
+		_ = json.Unmarshal(st.Available, &resp.Available)
 	}
-	m, _ := config.Load(s.store)
-	hist, _ := s.stack.hist.Recent(20)
-
-	writeJSONStatus(w, http.StatusOK, stackStatusResp{
-		Configured: s.stack.sourceFile != "",
-		Installed:  installed,
-		Available:  available,
-		Prefs:      config.ViewUpdate{Channel: m.Update.Channel, AutoApply: m.Update.AutoApply, QuietWindow: m.Update.QuietWindow},
-		LastCheck:  st.LastCheck,
-		Applying:   s.stack.isApplying(),
-		LastResult: s.stack.lastResult,
-		History:    hist,
-	})
+	resp.Installed, _ = s.stack.sys.InstalledVersions(ctx, stackupdate.AllPackages())
+	resp.History, _ = s.stack.hist.Recent(20)
+	resp.Configured = s.stack.sourceFile != ""
+	resp.LastCheck = st.LastCheck
+	resp.Applying = s.stack.isApplying()
+	resp.LastResult = s.stack.lastResult
+	writeJSONStatus(w, http.StatusOK, resp)
 }
 
 // stackCheck handles POST /api/update/stack/check: run apt against the Waypoint
@@ -287,26 +297,19 @@ func (s *server) stackApply(w http.ResponseWriter, r *http.Request) {
 
 // --- periodic poller (D2 timing model) ---
 
-// runUpdatePoller reuses the update poll cadence to (1) refresh the stack
-// availability cache and (2) drive opt-in auto-apply inside the quiet window. It
-// ticks more often than hourly so it reliably lands in the one-hour quiet window,
-// but only runs a full apt check every checkEvery to keep apt calls cheap.
+// runUpdatePoller is every *unattended* update action on the node: (1) refreshing
+// the stack availability cache, (2) the periodic signed-manifest check for
+// waypointd itself, and (3) opt-in auto-apply inside the quiet window. It ticks
+// more often than hourly so it reliably lands in the one-hour quiet window, but
+// only runs a full check every checkEvery to keep apt calls (and fetches) cheap.
+//
+// All three are gated on the operator's check_enabled preference (#15): with
+// automatic checks off this loop makes no outbound request at all.
 func (s *server) runUpdatePoller(ctx context.Context, tick, checkEvery time.Duration) {
-	if s.stack == nil {
+	if s.stack == nil && s.update == nil {
 		return
 	}
-	var lastCheck time.Time
-	run := func() {
-		now := time.Now()
-		if now.Sub(lastCheck) >= checkEvery {
-			if _, err := s.stack.check(ctx); err != nil {
-				log.Printf("stack update: periodic check: %v", err)
-			}
-			lastCheck = now
-		}
-		s.maybeAutoApply(ctx)
-	}
-	run()
+	lastCheck := s.pollUpdatesOnce(ctx, time.Time{}, checkEvery)
 	t := time.NewTicker(tick)
 	defer t.Stop()
 	for {
@@ -314,19 +317,55 @@ func (s *server) runUpdatePoller(ctx context.Context, tick, checkEvery time.Dura
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			run()
+			lastCheck = s.pollUpdatesOnce(ctx, lastCheck, checkEvery)
 		}
 	}
+}
+
+// pollUpdatesOnce is one poller tick, returning the last-check stamp to carry into
+// the next one (unchanged when this tick did not check). Split out from the loop so
+// the privacy gate is testable without a ticker.
+func (s *server) pollUpdatesOnce(ctx context.Context, lastCheck time.Time, checkEvery time.Duration) time.Time {
+	m, err := config.Load(s.store)
+	if err != nil {
+		log.Printf("update poller: load config: %v", err)
+		return lastCheck
+	}
+	// The privacy gate (#15 / GOVERNANCE.md principle 2). An operator who turned
+	// automatic checks off gets NO unattended outbound request: not the manifest
+	// fetch, not the apt refresh — and so no auto-apply either, since it exists only
+	// to install what a check found. Everything the operator triggers by hand (the
+	// CHECK NOW buttons, UPDATE NOW, the CLI modes) is untouched.
+	if !m.Update.CheckEnabled {
+		return lastCheck
+	}
+	now := time.Now()
+	if now.Sub(lastCheck) < checkEvery {
+		s.maybeAutoApply(ctx, m) // still evaluate the window against the cached availability
+		return lastCheck
+	}
+	if s.stack != nil {
+		if _, err := s.stack.check(ctx); err != nil {
+			log.Printf("stack update: periodic check: %v", err)
+		}
+	}
+	if s.update != nil {
+		if _, err := s.binaryCheck(ctx); err != nil {
+			log.Printf("update: periodic manifest check: %v", err)
+		}
+	}
+	s.maybeAutoApply(ctx, m)
+	return now
 }
 
 // maybeAutoApply applies stack updates automatically when the operator opted in and
 // the current time is in the quiet window (at most once per local day). Off by
 // default (D2). The throttle stamp (UpdateState.LastAutoApply) is written before
-// the apply so a mid-apply crash cannot loop it.
-func (s *server) maybeAutoApply(ctx context.Context) {
-	m, err := config.Load(s.store)
-	if err != nil {
-		return
+// the apply so a mid-apply crash cannot loop it. m is the caller's already-loaded
+// policy, so one tick reads the store once.
+func (s *server) maybeAutoApply(ctx context.Context, m *config.Model) {
+	if s.stack == nil {
+		return // nothing to auto-apply: this node has no apt stack
 	}
 	st, _ := config.GetUpdateState(s.store)
 	var available []stackupdate.Update

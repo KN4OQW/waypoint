@@ -97,8 +97,15 @@ function buildEdit(c) {
     // an int). Falls back to the 7-day default if the view somehow omits it.
     history: { retention_days: (c.history || {}).retention_days ?? 7 },
     // Software-update policy (Updates tab, RFC-0014). Channel + quiet window are
-    // strings, auto_apply a bool; saved through the normal Apply flow.
-    update: { channel: (c.update || {}).channel || "stable", auto_apply: !!(c.update || {}).auto_apply, quiet_window: (c.update || {}).quiet_window || "04:00" },
+    // strings, check_enabled and auto_apply bools; saved through the normal Apply
+    // flow. check_enabled defaults ON when the view omits it (#15) — a missing key
+    // must never read as "checks off", which is an opt-out an operator never made.
+    update: {
+      channel: (c.update || {}).channel || "stable",
+      check_enabled: (c.update || {}).check_enabled !== false,
+      auto_apply: !!(c.update || {}).auto_apply,
+      quiet_window: (c.update || {}).quiet_window || "04:00",
+    },
     // Mode buses (RFC-0003): buses[] and their attachments. Neither carries a
     // secret — a DMR attachment authenticates through an existing network named by
     // credentials_ref, never its own password (assert-the-shape: no password field
@@ -1977,6 +1984,16 @@ function panelUpdates() {
   }
   const versions = card("INSTALLED VERSIONS", verRows);
 
+  // A new waypointd release, from the cached signed-manifest check (#15). Shown
+  // above the stack rows because it is the node's own binary, not a service.
+  const bin = st.binary || {};
+  let binInner = "";
+  if (bin.available) {
+    binInner = row("waypointd", `<span>${esc(bin.current || wv)} → <span class="accent">${esc(bin.version || "—")}</span></span>`) +
+      (bin.notes_url ? row("Release notes", extLink(bin.notes_url, "What changed")) : "") +
+      note("A new <b>waypointd</b> release is available. Install it on the node with <b>waypointd -update</b>: the download is signature-verified before anything is touched, health-checked after the swap, and rolled back automatically if the new version does not come up.");
+  }
+
   // Available updates + apply/check.
   let availInner;
   if (!st.configured) {
@@ -1992,22 +2009,32 @@ function panelUpdates() {
   } else {
     availInner = note(hasCheck(st) ? `Up to date. Last checked ${fmtWhen(st.last_check)}.` : "No update check has run yet.");
   }
-  if (st.configured) {
-    availInner += `<div class="row"><label></label><button type="button" id="stack-check" class="btn ghost">CHECK NOW</button></div>`;
-    if (st.last_result) availInner += note(`Last result: ${esc(st.last_result)}`);
+  if (!bin.available && hasStamp(st.last_binary_check)) {
+    availInner += note(`waypointd is up to date. Last checked ${fmtWhen(st.last_binary_check)}.`);
   }
-  const available = card("AVAILABLE UPDATES", availInner);
+  // CHECK NOW is offered even without the apt repo: there is always the waypointd
+  // manifest to ask about, and asking is the operator's own action.
+  availInner += `<div class="row"><label></label><button type="button" id="stack-check" class="btn ghost">CHECK NOW</button></div>`;
+  if (st.configured && st.last_result) availInner += note(`Last result: ${esc(st.last_result)}`);
+  // Say so when the node is not checking on its own, so "no update check has run
+  // yet" reads as a setting rather than a fault.
+  if ((st.prefs || {}).check_enabled === false) {
+    availInner += note("<b>Automatic update checks are off.</b> This node checks only when you press <b>CHECK NOW</b>.");
+  }
+  const available = card("AVAILABLE UPDATES", binInner + availInner);
 
   // Update policy (edit-backed; saved with Apply Changes).
-  const u = edit.update || (edit.update = { channel: "stable", auto_apply: false, quiet_window: "04:00" });
+  const u = edit.update || (edit.update = { channel: "stable", check_enabled: true, auto_apply: false, quiet_window: "04:00" });
   const chan = u.channel || "stable";
   const chanSel = `<select data-sec="update" data-key="channel">` +
     [["stable", "Stable"], ["beta", "Beta"]].map(([v, l]) => `<option value="${v}"${v === chan ? " selected" : ""}>${esc(l)}</option>`).join("") +
     `</select>`;
   const policy = card("UPDATE POLICY",
     row("Channel", chanSel) +
+    toggle("update", "check_enabled", "Automatic update checks", "ON", "OFF") +
     toggle("update", "auto_apply", "Automatic updates", "ON", "OFF") +
     row("Quiet window", `<input type="time" data-sec="update" data-key="quiet_window" value="${esc(u.quiet_window || "04:00")}">`) +
+    note("<b>Automatic update checks</b> ask on a schedule whether a newer version exists. The request is an anonymous fetch of a signed, static file — it carries no callsign, no ID, and nothing else about this node, and there is no telemetry anywhere in Waypoint. Turn it OFF and the node stops asking on its own; <b>CHECK NOW</b>, applying an update, and everything else keep working — but automatic updates stop with it, since they install what a check found.") +
     note("Default is notify-and-click: updates wait for you to press <b>UPDATE NOW</b>. Turn <b>Automatic updates</b> ON to apply them during the quiet window (local time) instead."));
 
   // Recent history.
@@ -2022,7 +2049,8 @@ function panelUpdates() {
 
 // hasCheck reports whether a real check timestamp is present (the Go zero time
 // serializes as a 0001 date, which is "never checked").
-function hasCheck(st) { return st.last_check && !String(st.last_check).startsWith("0001"); }
+function hasCheck(st) { return hasStamp(st.last_check); }
+function hasStamp(v) { return v && !String(v).startsWith("0001"); }
 function fmtWhen(iso) { try { return new Date(iso).toLocaleString(); } catch (_) { return iso; } }
 
 // enhanceA11y wires every rendered form control to an accessible name so screen
@@ -2361,22 +2389,30 @@ async function loadUpdateStatus() {
   if (state.tab === "updates") renderPanel();
 }
 
-// stackCheckNow runs an on-demand apt check against the Waypoint source, then
-// repaints with the fresh availability.
+// stackCheckNow runs an on-demand check of both update paths — the signed
+// waypointd manifest, and the apt check against the Waypoint source where the repo
+// is configured — then repaints with the fresh availability. This is the operator
+// asking, so it runs whatever the automatic-check preference says (#15).
 async function stackCheckNow() {
   if (stackBusy) return;
   stackBusy = true;
   const btn = document.getElementById("stack-check");
   if (btn) { btn.textContent = "CHECKING…"; btn.disabled = true; }
-  try {
-    const r = await fetch("/api/update/stack/check", { method: "POST" });
-    if (!r.ok) throw new Error((await r.text()).trim());
-  } catch (err) {
-    banner(String(err.message || err), "bad");
-  } finally {
-    stackBusy = false;
-    await loadUpdateStatus();
-  }
+  const failures = [];
+  const attempt = async (url, opts, okStatus) => {
+    try {
+      const r = await fetch(url, opts);
+      if (!r.ok && r.status !== okStatus) failures.push((await r.text()).trim());
+    } catch (err) {
+      failures.push(String(err.message || err));
+    }
+  };
+  // 501 from the manifest check just means this node has no update URL configured.
+  await attempt("/api/update/check", undefined, 501);
+  if ((stackStatus || {}).configured) await attempt("/api/update/stack/check", { method: "POST" });
+  if (failures.length) banner(failures.join(" · "), "bad");
+  stackBusy = false;
+  await loadUpdateStatus();
 }
 
 // stackApplyNow starts a health-gated apply (the daemon runs it in the background)

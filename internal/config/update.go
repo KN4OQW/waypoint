@@ -27,15 +27,51 @@ const DefaultQuietWindow = "04:00"
 // check state (last check, available cache) lives separately in UpdateState so an
 // operator save never clobbers it and vice-versa.
 type UpdatePrefs struct {
-	Channel     string `json:"channel"`      // ChannelStable | ChannelBeta
-	AutoApply   bool   `json:"auto_apply"`   // apply stack updates automatically in the quiet window
-	QuietWindow string `json:"quiet_window"` // "HH:MM" local time auto-apply runs
+	Channel string `json:"channel"` // ChannelStable | ChannelBeta
+	// CheckEnabled gates every *unattended* check: the periodic signed-manifest
+	// fetch and the periodic apt refresh. Turning it off means this node makes no
+	// outbound request unless an operator asks for one — the "check now" controls
+	// and the CLI modes still work, and nothing else about the node changes
+	// (GOVERNANCE.md principle 2 / issue #15). Auto-apply rides on the check, so it
+	// stops with it; a manual apply does not. Default on. The check carries no
+	// device identifier either way — see docs/updates.md, "What leaves the device".
+	CheckEnabled bool   `json:"check_enabled"`
+	AutoApply    bool   `json:"auto_apply"`   // apply stack updates automatically in the quiet window
+	QuietWindow  string `json:"quiet_window"` // "HH:MM" local time auto-apply runs
 }
 
-// DefaultUpdate is the out-of-the-box policy: stable channel, notify-and-click
-// (auto-apply off), quiet window at 04:00 for when an operator does opt in.
+// DefaultUpdate is the out-of-the-box policy: stable channel, automatic checks on
+// (they are anonymous, and an operator who does not want them turns them off),
+// notify-and-click (auto-apply off), quiet window at 04:00 for when an operator
+// does opt in.
 func DefaultUpdate() UpdatePrefs {
-	return UpdatePrefs{Channel: ChannelStable, AutoApply: false, QuietWindow: DefaultQuietWindow}
+	return UpdatePrefs{Channel: ChannelStable, CheckEnabled: true, AutoApply: false, QuietWindow: DefaultQuietWindow}
+}
+
+// BackfillUpdateCheckEnabled seeds check_enabled=true on an update row written
+// before the field existed. A plain decode reads the missing key as Go's false,
+// which would silently switch a node's update checks off across an upgrade — so
+// this inspects the *stored JSON* for the key rather than the decoded value. A row
+// that already carries the field is left alone in either state: an operator who
+// opted out stays opted out. Returns whether it wrote.
+func BackfillUpdateCheckEnabled(s *store.Store) (bool, error) {
+	raw, ok, err := s.Get("update")
+	if err != nil || !ok {
+		return false, err
+	}
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &present); err != nil {
+		return false, err
+	}
+	if _, ok := present["check_enabled"]; ok {
+		return false, nil
+	}
+	var u UpdatePrefs
+	if err := json.Unmarshal(raw, &u); err != nil {
+		return false, err
+	}
+	u.CheckEnabled = true
+	return true, s.Set("update", &u, "backfill")
 }
 
 // ValidateUpdate enforces the channel enum and the HH:MM quiet-window format.
@@ -82,6 +118,12 @@ type UpdateState struct {
 	LastCheck     time.Time       `json:"last_check"`
 	Available     json.RawMessage `json:"available,omitempty"`
 	LastAutoApply time.Time       `json:"last_auto_apply,omitempty"` // when auto-apply last ran (quiet-window throttle)
+	// Binary is the same thing for the waypointd signed-manifest check — an opaque
+	// blob whose shape the update API owns — with its own stamp, because the two
+	// checks are independent (a node can have the apt repo without the manifest,
+	// and vice versa).
+	Binary          json.RawMessage `json:"binary,omitempty"`
+	LastBinaryCheck time.Time       `json:"last_binary_check,omitempty"`
 }
 
 // GetUpdateState reads the cached check state (zero value if never checked).

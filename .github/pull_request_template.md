@@ -14,6 +14,28 @@ Closes #
 - [ ] `go test ./...` passes
 - [ ] Behavior changes are covered by tests
 
+## Privacy (no telemetry)
+
+<!-- GOVERNANCE.md principle 2 is a merge gate too (issue #15): a Waypoint device
+     contacts project infrastructure only to check for updates and refresh public
+     host/ID databases, both user-disableable, and support is never conditioned on
+     data collection. Fill this in for every PR. -->
+
+- [ ] **No new outbound request** — this PR does not make the device contact any
+      host it did not already contact.
+
+If it *does* add or change one, confirm each of these:
+
+- [ ] It sends **no device identifier** — no callsign, DMR/CCS7 ID, hostname, MAC,
+      serial, per-device token, cookie, or version/config detail, in the URL, the
+      headers, or a body.
+- [ ] It is **gated on an operator-visible off switch**, and turning that switch
+      off breaks nothing else.
+- [ ] It is **documented** where an operator can find it (docs/updates.md's "What
+      leaves the device", or the equivalent for that subsystem).
+- [ ] The gate and the absence of identifiers are **covered by a test**, not just
+      by intent.
+
 ## Accessibility impact
 
 <!-- Accessibility is a merge gate (issue #7). Fill this in for every PR.

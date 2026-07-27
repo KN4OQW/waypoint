@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -171,19 +172,30 @@ func runUpdateBootCheck(cfg updateConfig) {
 
 // --- API surface (behind the session wall) ---
 
-// updateCheck handles GET /api/update/check: fetch + verify the manifest and
-// report availability without changing anything.
-func (s *server) updateCheck(w http.ResponseWriter, r *http.Request) {
-	if s.update == nil {
-		http.Error(w, "updates not configured", http.StatusNotImplemented)
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
+// binaryAvailability is what a signed-manifest check concluded for this node: the
+// API response body, and — cached in UpdateState — what the Updates panel paints
+// without triggering a fetch on every page load.
+type binaryAvailability struct {
+	Current   string `json:"current"`
+	Available bool   `json:"available"`
+	Version   string `json:"version"`
+	NotesURL  string `json:"notes_url"`
+	Channel   string `json:"channel"`
+	Reason    string `json:"reason"`
+}
+
+// binaryCheck fetches + verifies the manifest, applies the operator's channel gate,
+// and caches the verdict. It is the one code path behind both the manual check
+// (GET /api/update/check) and the periodic one (the poller) — so the two can never
+// disagree about what "available" means.
+//
+// The request itself is a plain GET of a static file with a fixed User-Agent and no
+// query string: the node's version, platform and channel are compared locally,
+// after the download, and never leave the device (GOVERNANCE.md principle 2).
+func (s *server) binaryCheck(ctx context.Context) (binaryAvailability, error) {
 	plan, manifest, err := s.update.plan(ctx)
 	if err != nil {
-		writeJSONStatus(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
-		return
+		return binaryAvailability{}, err
 	}
 	// Channel gate (RFC-0014): only offer a manifest whose channel matches the
 	// operator's selected channel. For now the channel gates only this signed binary
@@ -196,14 +208,50 @@ func (s *server) updateCheck(w http.ResponseWriter, r *http.Request) {
 		plan.Available = false
 		plan.Reason = fmt.Sprintf("release %s is on the %s channel; this node is on %s", plan.Version, manifest.ManifestChannel(), selected)
 	}
-	writeJSONStatus(w, http.StatusOK, map[string]any{
-		"current":   Version,
-		"available": plan.Available,
-		"version":   plan.Version,
-		"notes_url": plan.NotesURL,
-		"channel":   selected,
-		"reason":    plan.Reason,
-	})
+	avail := binaryAvailability{
+		Current:   Version,
+		Available: plan.Available,
+		Version:   plan.Version,
+		NotesURL:  plan.NotesURL,
+		Channel:   selected,
+		Reason:    plan.Reason,
+	}
+	s.cacheBinaryAvailability(avail)
+	return avail, nil
+}
+
+// cacheBinaryAvailability persists the verdict + a fresh stamp. Like the stack
+// cache it read-modify-writes, so it never clobbers the stack availability or the
+// auto-apply throttle stamp living in the same row.
+func (s *server) cacheBinaryAvailability(a binaryAvailability) {
+	st, _ := config.GetUpdateState(s.store)
+	blob, err := json.Marshal(a)
+	if err != nil {
+		return
+	}
+	st.Binary, st.LastBinaryCheck = blob, time.Now().UTC()
+	if err := config.SetUpdateState(s.store, st, "update-check"); err != nil {
+		log.Printf("update: cache manifest check: %v", err)
+	}
+}
+
+// updateCheck handles GET /api/update/check: fetch + verify the manifest and
+// report availability without changing anything. This is an operator-triggered
+// check, so it runs regardless of the automatic-check preference (#15) — the
+// preference governs unattended traffic, not a button the operator just pressed.
+func (s *server) updateCheck(w http.ResponseWriter, r *http.Request) {
+	if s.update == nil {
+		http.Error(w, "updates not configured", http.StatusNotImplemented)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	avail, err := s.binaryCheck(ctx)
+	if err != nil {
+		writeJSONStatus(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSONStatus(w, http.StatusOK, avail)
 }
 
 // updateApply handles POST /api/update/apply: launch the standalone `-update`

@@ -1203,6 +1203,17 @@ func (s *server) backfillDefaults() error {
 		}
 		log.Printf("config store: backfilled update defaults")
 	}
+	// The automatic-check opt-out (#15) arrived after the update policy itself, so a
+	// row written before it has no check_enabled key — which would decode as false
+	// and quietly stop a node from noticing releases. Seed it on; an operator who
+	// already turned it off keeps that.
+	wroteCheckEnabled, err := config.BackfillUpdateCheckEnabled(s.store)
+	if err != nil {
+		return err
+	}
+	if wroteCheckEnabled {
+		log.Printf("config store: backfilled update check_enabled=true")
+	}
 	// Mode buses (RFC-0003) arrived after the LCD driver: a store seeded before them
 	// lacks both sections. Backfill the empty defaults so Load never returns a nil
 	// surprise; a fresh node starts with no buses.
@@ -1972,11 +1983,12 @@ func main() {
 		// restarted gateway shows truth within the probe interval — the #5 acceptance,
 		// from systemd state (not log scraping). Live mode only (a demo runs no gateways).
 		go s.runLivenessProbe(context.Background(), *probeInterval)
-		// Stack-update poller (D2): periodically refresh the available-updates cache
-		// and drive opt-in quiet-window auto-apply. Live mode only. Ticks every 15 min
-		// so it reliably lands in the one-hour quiet window; a full apt check runs only
-		// every updatePollInterval. Off if the stack updater is disabled.
-		if s.stack != nil {
+		// Update poller (D2 / #15): periodically refresh the stack and waypointd
+		// available-update caches and drive opt-in quiet-window auto-apply. Live mode
+		// only. Ticks every 15 min so it reliably lands in the one-hour quiet window; a
+		// full check runs only every updatePollInterval. Every outbound request it makes
+		// is gated on the operator's check_enabled preference.
+		if s.stack != nil || s.update != nil {
 			go s.runUpdatePoller(context.Background(), 15*time.Minute, *updatePollInterval)
 		}
 		// Republish the normalized status onto retained waypoint/status/# topics for
