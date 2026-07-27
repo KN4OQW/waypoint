@@ -244,12 +244,17 @@ systemctl mask serial-getty@ttyAMA0.service 2>/dev/null || true
 # That is the same Imager dependency this whole provisioning flow exists to
 # remove, one layer below where the rest of it was fixed. Masking rather than
 # disabling: masking survives anything that would otherwise re-enable the unit.
+#
+# Disable BEFORE mask, in that order. Masking replaces the unit with a symlink to
+# /dev/null, after which systemctl will not act on it — so a disable issued
+# afterwards is silently a no-op and leaves the multi-user.target.wants symlink in
+# place. The mask still wins at boot (systemd refuses to start a masked unit and
+# logs that it ignored the dependency), but the dangling want produces an error
+# line on every first boot, which is exactly the noise a setup image should not
+# have somebody trying to interpret.
 echo "=== masking Raspberry Pi OS's interactive first-boot user dialog"
-systemctl mask userconfig.service 2>/dev/null || true
-# The dialog's companion units assume it ran. They are harmless on their own, but
-# a first boot that tries to rename a user that does not exist logs failures that
-# read like real faults during setup.
 systemctl disable userconfig.service 2>/dev/null || true
+systemctl mask userconfig.service 2>/dev/null || true
 
 ########################################################################
 # Enable services + clean up
