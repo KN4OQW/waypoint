@@ -64,7 +64,9 @@ func bootLogf(format string, args ...any) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	// Discarded explicitly: the content is already synced below, so a Close error
+	// has nothing left to tell us about a log written to explain something else.
+	defer func() { _ = f.Close() }()
 
 	line := fmt.Sprintf(format, args...)
 	// UTC and RFC3339: a node that has never had a network has never seen NTP, so

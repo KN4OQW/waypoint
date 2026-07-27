@@ -175,7 +175,7 @@ func RunSetupScreen(ctx context.Context, dev LCDDevice, status func() SetupStatu
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	defer dev.Close()
+	defer func() { _ = dev.Close() }()
 
 	if err := dev.Init(SetupRows, SetupCols); err != nil {
 		return err
