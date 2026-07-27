@@ -1,5 +1,61 @@
 # Full first-boot flow test — bench Pi 3
 
+## Result — PASSED, 2026-07-27, image `local-37f1cde`
+
+The whole flow ran end to end on a Raspberry Pi 3B, from a card flashed with
+`dd`, with no Raspberry Pi Imager customisation and no Ethernet. Setup was driven
+entirely from a phone over the setup access point.
+
+| | |
+|---|---|
+| Boot | Reached a login prompt, not a user dialog |
+| Setup access point | Came up on a cold boot |
+| Wizard | Completed on a phone: hostname, account, key, Wi-Fi, finish |
+| Wi-Fi join | Joined and moved to `10.10.0.27` — a different subnet, so genuinely wireless |
+| `kn4oqw.local` | Resolved |
+| Finish | Returned a completion screen; no stuck spinner |
+| Claim | `mode: done`, `claimed: true` |
+
+Verified from another host afterwards: `avahi-resolve` returns
+`KN4OQW.local → 10.10.0.27`, and `/api/health` reports
+`last_down_reason: "setup completed"` with the access point spent.
+
+### What it took to get here
+
+Five separate defects, each of which independently produced "the node is dark
+and I cannot tell why":
+
+1. **Raspberry Pi OS's `userconfig.service`** — an interactive whiptail dialog
+   wired into `multi-user.target`, suppressed only by the `userconf.txt` that
+   Imager no longer writes. It is a *rename* tool, so on an image with no uid
+   1000 it can never be satisfied: no answer typed at the console completes it.
+   The node pinged and served nothing.
+2. **The access point raise blocked daemon startup** — inline, before the
+   listener bound and before `READY=1`, so a slow radio meant systemd killed and
+   restarted the daemon into the same wait.
+3. **No retry on a cold boot** — a race with brcmfmac and NetworkManager that
+   resolves in seconds became permanent for the whole boot. This is why the
+   earlier bench passes were misleading: that board had been up for hours.
+4. **Finishing spent the access point mid-response** — the reply crossed the
+   network it had just switched off, so a node that finished perfectly showed a
+   spinner forever.
+5. **The chosen hostname never reached mDNS** — Avahi kept announcing
+   `waypointos.local`, so the address setup told the operator to use did not
+   exist, and a successful Wi-Fi join was indistinguishable from a failed one.
+
+### Still not verified
+
+- The captive sheet opening by itself. Setup was reached, but whether the phone
+  auto-opened it or the address was entered by hand was not recorded.
+- The **wrong-passphrase rollback** — the failure half of the join. This run only
+  exercised the success path.
+- Reboot persistence and both reset depths.
+- The network list with a populated cache. If the radio has been in AP mode since
+  boot, NetworkManager may have nothing cached and the list renders empty with a
+  note; that path was not confirmed either way.
+
+
+
 The run this plan is written for is the first one where every step has a fix in
 it that has never met hardware. Previous bench runs exercised the access point on
 a board that had been up for hours; this is the first end-to-end pass on a node
