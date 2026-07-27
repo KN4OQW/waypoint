@@ -85,6 +85,98 @@ func (r *repeaterSide) send(frame []byte) error {
 	return err
 }
 
+// ysfRepeaterSide stands in for MMDVM-Host on the YSF loopback: it binds the
+// port MMDVM-Host binds (3200) and talks to the gateway on 4200. Like the DMR
+// side, injection happens exactly where a decoded transmission enters.
+//
+// It must answer the gateway's "YSFP" polls: CYSFNetwork::write drops everything
+// unless the link reached LINKED, and that transition only happens when a poll
+// comes back (YSFNetwork.cpp @ YSFClients 2b480aa). A real MMDVM-Host polls the
+// same way, so without this the echo path is silently dead.
+type ysfRepeaterSide struct {
+	conn     *net.UDPConn
+	gw       *net.UDPAddr
+	callsign string
+
+	mu       sync.Mutex
+	received [][]byte
+	done     chan struct{}
+}
+
+func newYSFRepeaterSide(localPort, gatewayPort int, callsign string) (*ysfRepeaterSide, error) {
+	c, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: localPort})
+	if err != nil {
+		return nil, fmt.Errorf("bind YSF repeater side :%d: %w", localPort, err)
+	}
+	r := &ysfRepeaterSide{
+		conn:     c,
+		gw:       &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: gatewayPort},
+		callsign: callsign,
+		done:     make(chan struct{}),
+	}
+	go r.serve()
+	return r, nil
+}
+
+func (r *ysfRepeaterSide) close() { close(r.done); r.conn.Close() }
+
+func (r *ysfRepeaterSide) serve() {
+	buf := make([]byte, 1024)
+	nextPoll := time.Now()
+	for {
+		select {
+		case <-r.done:
+			return
+		default:
+		}
+		// Poll on our own timer as well as on demand: the gateway's receive-poll
+		// timer unlinks a silent repeater.
+		if time.Now().After(nextPoll) {
+			r.poll()
+			nextPoll = time.Now().Add(time.Second)
+		}
+		r.conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
+		n, _, err := r.conn.ReadFromUDP(buf)
+		if err != nil {
+			continue
+		}
+		switch {
+		case n >= 4 && string(buf[:4]) == "YSFP":
+			r.poll()
+		case n == 155 && string(buf[:4]) == "YSFD":
+			r.mu.Lock()
+			r.received = append(r.received, append([]byte(nil), buf[:n]...))
+			r.mu.Unlock()
+		}
+	}
+}
+
+// poll sends the 14-byte "YSFP" + 10-byte callsign poll MMDVM-Host sends.
+func (r *ysfRepeaterSide) poll() {
+	pkt := make([]byte, 14)
+	copy(pkt, "YSFP")
+	cs := r.callsign
+	for i := 0; i < 10; i++ {
+		if i < len(cs) {
+			pkt[4+i] = cs[i]
+		} else {
+			pkt[4+i] = ' '
+		}
+	}
+	r.conn.WriteToUDP(pkt, r.gw)
+}
+
+func (r *ysfRepeaterSide) send(frame []byte) error {
+	_, err := r.conn.WriteToUDP(frame, r.gw)
+	return err
+}
+
+func (r *ysfRepeaterSide) got() [][]byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([][]byte(nil), r.received...)
+}
+
 // repeaterConfig is a standard homebrew repeater-config payload: fixed-width
 // space-padded fields, 293 bytes, matching what MMDVM-Host sends.
 func repeaterConfig() []byte {

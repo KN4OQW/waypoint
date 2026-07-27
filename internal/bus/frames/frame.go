@@ -150,6 +150,7 @@ type Params struct {
 
 	// YSF destination.
 	Target            string // reflector / DG-ID target label (carried for the hub; not in the audio path)
+	DGId              uint8  // DGIdGateway DG-ID slot (0-127) stamped into the FICH; 0 is the Wires-X gateway slot
 	WiresXPassthrough bool
 
 	// NXDN destination.

@@ -20,7 +20,10 @@ gateway binds the other:
 `repeater.go` stands in for MMDVM-Host: it binds `62032`, announces itself with
 the `DMRC` config packet DMRGateway waits for, and injects `DMRD` frames exactly
 where a keyed transmission enters the system. Nothing below that line — modem,
-RF decode — is involved, and nothing above it is faked.
+RF decode — is involved, and nothing above it is faked. Its YSF counterpart binds
+`3200` and answers DGIdGateway's `YSFP` polls, because `CYSFNetwork::write` drops
+everything until the link reaches LINKED and only a returned poll gets it there —
+without that the echo path is silently dead.
 
 `homebrew.go` is a stub upstream master implementing enough of the homebrew
 protocol (`RPTL`/`RPTK`/`RPTC`/`RPTPING`) for a real DMRGateway to log in. It
@@ -71,6 +74,12 @@ directory with `WAYPOINT_GW_BIN`.
 - `TestTier2_DGIdGatewayAcceptsRenderedConfig` — the pinned DGIdGateway parses
   our generated INI, stays up, binds `:4200`, and materializes the generated
   DG-ID table.
+- `TestTier2_DGIdParrotEcho` — voice keyed on DG-ID 1 reaches the local Parrot
+  the generated config declares and comes back: every returning frame carries
+  DG-ID 1 (DGIdGateway stamps the slot on the way back) and the AMBE returns
+  byte-exactly. Self-contained — no reflector, no internet, no credential. The
+  injected transmission is the real bench Parrot audio, reframed DMR→YSF by
+  `internal/bus/frames` and addressed with `Params.DGId`.
 - `TestTier2_BackToBackCrossNetwork` / `...SameNetwork` — diagnostics, not
   acceptance. See below.
 
