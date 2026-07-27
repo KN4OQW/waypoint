@@ -28,6 +28,7 @@ func (w *Wizard) Handler() http.Handler {
 	mux.HandleFunc(Prefix+"key", post(w.handleKey))
 	mux.HandleFunc(Prefix+"lock", post(w.handleLock))
 	mux.HandleFunc(Prefix+"network", post(w.handleJoin))
+	mux.HandleFunc(Prefix+"networks", w.handleNetworks)
 	mux.HandleFunc(Prefix+"prior-admins", w.handlePriorAdmins)
 	return mux
 }
@@ -100,6 +101,34 @@ func (w *Wizard) handleJoin(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(rw, http.StatusOK, got)
+}
+
+// handleNetworks lists the wireless networks the node can see, for the Wi-Fi
+// step to offer instead of a bare text field.
+//
+// A scan failure is reported as an empty list with a note rather than an error
+// status. The operator can always type a network name — they must be able to,
+// for one that does not broadcast — so a node whose radio cannot scan should
+// show a form with a caveat, not a dead end.
+func (w *Wizard) handleNetworks(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	got, err := w.VisibleNetworks(r.Context())
+	if err != nil {
+		w.logf("wizard: could not list wireless networks: %v", err)
+		writeJSON(rw, http.StatusOK, map[string]any{
+			"networks": []any{},
+			"note":     "This node could not list nearby networks, so enter the name yourself.",
+		})
+		return
+	}
+	body := map[string]any{"networks": got.Networks, "cached": got.Cached}
+	if len(got.Networks) == 0 {
+		body["note"] = "No networks were visible from here — its radio is busy running this setup network. Enter the name yourself."
+	}
+	writeJSON(rw, http.StatusOK, body)
 }
 
 // handlePriorAdmins lists prior administrator accounts (GET) and removes the ones

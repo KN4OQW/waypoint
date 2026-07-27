@@ -47,7 +47,38 @@ func (s *System) SetHostname(ctx context.Context, req privhelper.SetHostnameRequ
 		}
 		resp.Changed = resp.Changed || changed
 	}
+	if resp.Changed {
+		s.refreshMDNS(ctx, req.Hostname)
+	}
 	return resp, nil
+}
+
+// refreshMDNS makes Avahi announce the name the operator just chose.
+//
+// This is the difference between a node the operator can find and one they
+// cannot. Setup tells them where the node will be — "continue at
+// <name>.local" — and mDNS is what makes that true. Avahi reads the hostname
+// when it starts and does not reliably notice a later hostnamectl change, so
+// without this it keeps announcing the name the image shipped with. On the bench
+// that meant a node set up as KN4OQW was still published as waypointos.local:
+// the address the wizard had just told the operator to use did not exist, and a
+// Wi-Fi join that had actually succeeded was indistinguishable from one that had
+// failed.
+//
+// Best-effort by design. A node with no Avahi is reachable by address, and a node
+// whose hostname is set but whose mDNS is stale is still a working node — neither
+// is worth failing a hostname change that has already been applied.
+func (s *System) refreshMDNS(ctx context.Context, name string) {
+	if !s.hasSystemd() {
+		return
+	}
+	// try-restart, not restart: it does nothing if Avahi is not running, so this
+	// never starts a daemon on a node whose operator disabled it.
+	if _, err := s.run(ctx, nil, "systemctl", "try-restart", "avahi-daemon.service"); err != nil {
+		s.logf("sysprov: could not restart avahi-daemon, so %q.local may not resolve until reboot: %v", name, err)
+		return
+	}
+	s.logf("sysprov: restarted avahi-daemon so %q.local resolves", name)
 }
 
 // currentHostname reads the static hostname, preferring hostnamectl and falling

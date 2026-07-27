@@ -104,6 +104,14 @@ func SetupFrames(st SetupStatus, rows, cols int) [][]string {
 			add("No network yet.", "Plug in ethernet")
 		}
 		add("Why: see", "setup log on card")
+	case st.IP != "":
+		// The access point is down, setup is not finished, and the node has an
+		// address — which is what a committed Wi-Fi join or a plugged-in Ethernet
+		// cable leaves behind. The panel said "starting up..." here, on a node that
+		// had been up for a quarter of an hour and was waiting to be finished. The
+		// address is the only thing that gets the operator back to the wizard.
+		add("Setup wifi is off", "Setup not done")
+		add("Continue setup at", st.IP)
 	default:
 		add("Waypoint", "starting up...")
 	}

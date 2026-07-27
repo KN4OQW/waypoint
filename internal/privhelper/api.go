@@ -61,6 +61,14 @@ type Provisioner interface {
 	// the operator's network and been confirmed reachable on it.
 	APDown(ctx context.Context, req APDownRequest) (APDownResponse, error)
 
+	// NetScan lists the wireless networks the node can see, so the operator picks
+	// their network from a list instead of typing its name from memory into a
+	// phone keyboard. A mistyped SSID and a wrong password fail identically —
+	// the join simply does not associate — so removing the chance to mistype one
+	// of them is the difference between an error the operator can act on and a
+	// guess.
+	NetScan(ctx context.Context, req NetScanRequest) (NetScanResponse, error)
+
 	// NetJoin joins a Wi-Fi network, writing the managed profile and waiting for
 	// the association to come up (or not) within the request's timeout.
 	NetJoin(ctx context.Context, req NetJoinRequest) (NetJoinResponse, error)
@@ -381,6 +389,55 @@ type APDownResponse struct {
 // --- NetJoin -------------------------------------------------------------
 
 // NetJoinRequest joins a Wi-Fi network.
+// --- NetScan -------------------------------------------------------------
+
+// NetScanRequest asks what wireless networks the node can see.
+type NetScanRequest struct {
+	// Interface is optional; empty lets the implementation choose.
+	Interface string `json:"interface,omitempty"`
+	// Rescan asks for a fresh sweep rather than the supplicant's cached results.
+	//
+	// It defaults to false, and during setup it must stay false. A node running
+	// the setup access point is using its only radio to do so; asking brcmfmac to
+	// leave the channel and sweep the band would interrupt the network the
+	// operator is currently connected over — to fetch a list for a form they are
+	// looking at right now. The cache NetworkManager built before the access point
+	// went up is what the wizard wants.
+	Rescan bool `json:"rescan,omitempty"`
+}
+
+// Validate accepts anything. Both fields are optional, neither reaches a shell —
+// the interface name is passed as an argv element to nmcli — and an interface
+// that does not exist is reported by nmcli far more usefully than a regex here
+// could. APUpRequest treats its own Interface field the same way. This exists so
+// the type satisfies the same contract as its siblings.
+func (r NetScanRequest) Validate() error { return nil }
+
+// ScanNetwork is one visible wireless network.
+type ScanNetwork struct {
+	SSID string `json:"ssid"`
+	// Signal is 0-100 as NetworkManager reports it.
+	Signal int `json:"signal"`
+	// Security is a short description ("WPA2", "open", …) so the wizard can warn
+	// before an operator types a password onto an open network.
+	Security string `json:"security,omitempty"`
+	// InUse marks the network this node is already on.
+	InUse bool `json:"in_use,omitempty"`
+}
+
+// Open reports a network with no protection.
+func (n ScanNetwork) Open() bool { return n.Security == "" || n.Security == "open" }
+
+// NetScanResponse is what the node can see, strongest first.
+type NetScanResponse struct {
+	Networks []ScanNetwork `json:"networks"`
+	// Cached reports that these came from the supplicant's existing results
+	// rather than a fresh sweep, which is the normal case while the setup access
+	// point holds the radio. The wizard says so rather than implying the list is
+	// live.
+	Cached bool `json:"cached,omitempty"`
+}
+
 type NetJoinRequest struct {
 	SSID string `json:"ssid"`
 	// PSK, when empty, joins an open network.

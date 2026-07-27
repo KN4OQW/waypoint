@@ -81,6 +81,7 @@ const (
 	MethodLockRoot              Method = "lock_root"
 	MethodAPUp                  Method = "ap_up"
 	MethodAPDown                Method = "ap_down"
+	MethodNetScan               Method = "net_scan"
 	MethodNetJoin               Method = "net_join"
 	MethodNetCheckpointCreate   Method = "net_checkpoint_create"
 	MethodNetCheckpointDestroy  Method = "net_checkpoint_destroy"
@@ -101,6 +102,7 @@ func Methods() []Method {
 		MethodLockRoot,
 		MethodAPUp,
 		MethodAPDown,
+		MethodNetScan,
 		MethodNetJoin,
 		MethodNetCheckpointCreate,
 		MethodNetCheckpointDestroy,

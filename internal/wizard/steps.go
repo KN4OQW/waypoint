@@ -433,6 +433,21 @@ type JoinResult struct {
 	Interface string `json:"interface,omitempty"`
 }
 
+// VisibleNetworks lists the wireless networks the node can see.
+//
+// It never rescans. The setup access point is running on the node's only radio,
+// and a sweep would drop the network the operator is reading the list over — to
+// populate a form they are looking at right now. NetworkManager's cache, built
+// before the access point went up, is the list of networks this node can
+// actually reach from where it is sitting.
+//
+// An empty list is not an error. A node whose radio has been in AP mode since
+// boot may have nothing cached, and the wizard still has to let the operator
+// type a name — including for a network that does not broadcast one.
+func (w *Wizard) VisibleNetworks(ctx context.Context) (privhelper.NetScanResponse, error) {
+	return w.Prov.NetScan(ctx, privhelper.NetScanRequest{})
+}
+
 // JoinNetwork puts the node on the operator's network under a confirm-or-revert
 // checkpoint.
 //

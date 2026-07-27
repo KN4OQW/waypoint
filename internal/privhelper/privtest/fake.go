@@ -97,6 +97,15 @@ type Fake struct {
 	// trying to reach the node afterwards.
 	NetJoinResult *privhelper.NetJoinResponse
 
+	// ScanResult overrides what NetScan reports, so a test can drive an empty
+	// list — the case where the radio is busy running the access point and has
+	// nothing cached, which the wizard has to handle without stranding the
+	// operator on a form with no manual entry.
+	ScanResult *privhelper.NetScanResponse
+	// Scanned counts NetScan calls, so a test can assert the wizard is not
+	// re-scanning on every render.
+	Scanned int
+
 	// Clock is the time source, injectable so checkpoint expiries are assertable.
 	Clock func() time.Time
 
@@ -361,6 +370,30 @@ func (f *Fake) APDown(ctx context.Context, req privhelper.APDownRequest) (privhe
 	changed := f.AP != nil
 	f.AP = nil
 	return privhelper.APDownResponse{Active: false, Changed: changed}, nil
+}
+
+// NetScan reports whatever ScanResult holds, defaulting to a small plausible
+// list. The default includes an open network, because "the operator picked an
+// open network" is a case the wizard has to render a warning for and a fake that
+// only ever returns WPA2 would never exercise it.
+func (f *Fake) NetScan(ctx context.Context, req privhelper.NetScanRequest) (privhelper.NetScanResponse, error) {
+	if err := f.enter(ctx, privhelper.MethodNetScan, req); err != nil {
+		return privhelper.NetScanResponse{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Scanned++
+	if f.ScanResult != nil {
+		return *f.ScanResult, nil
+	}
+	return privhelper.NetScanResponse{
+		Cached: !req.Rescan,
+		Networks: []privhelper.ScanNetwork{
+			{SSID: "DeathStar", Signal: 82, Security: "WPA2"},
+			{SSID: "hamshack-2g", Signal: 61, Security: "WPA2"},
+			{SSID: "GuestWiFi", Signal: 40, Security: "open"},
+		},
+	}, nil
 }
 
 // NetJoin records the join.

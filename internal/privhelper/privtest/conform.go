@@ -666,6 +666,10 @@ func allCalls(ctx context.Context) map[privhelper.Method]func(privhelper.Provisi
 			_, err := p.APDown(ctx, privhelper.APDownRequest{})
 			return err
 		},
+		privhelper.MethodNetScan: func(p privhelper.Provisioner) error {
+			_, err := p.NetScan(ctx, privhelper.NetScanRequest{})
+			return err
+		},
 		privhelper.MethodNetJoin: func(p privhelper.Provisioner) error {
 			_, err := p.NetJoin(ctx, privhelper.NetJoinRequest{SSID: "home-network"})
 			return err

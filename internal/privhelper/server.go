@@ -379,6 +379,12 @@ func (s *Server) dispatch() map[Method]handler {
 				return p.APDown(ctx, r)
 			})
 		},
+		MethodNetScan: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			return call(raw, func(r NetScanRequest) (NetScanResponse, error) {
+				s.Logf("privhelper: net_scan (rescan=%v)", r.Rescan)
+				return p.NetScan(ctx, r)
+			})
+		},
 		MethodNetJoin: func(ctx context.Context, raw json.RawMessage) (any, error) {
 			return call(raw, func(r NetJoinRequest) (NetJoinResponse, error) {
 				s.Logf("privhelper: %s", r) // String redacts the PSK

@@ -70,6 +70,19 @@
          padding: .1em .35em; border-radius: .25em; font-size: .9em; }
   label.chk { display: flex; align-items: center; gap: .5rem; font-weight: 400; }
   label.chk input { width: auto; margin: 0; }
+  select { width: 100%; padding: .6rem .7rem; border-radius: .3rem; font: inherit;
+           background: var(--bg); color: var(--ink); border: 1px solid var(--line); }
+  ul.nets { list-style: none; margin: .3rem 0 .6rem; padding: 0;
+            max-height: 13rem; overflow-y: auto; border: 1px solid var(--line); border-radius: .3rem; }
+  ul.nets li + li { border-top: 1px solid var(--line); }
+  button.net { display: flex; justify-content: space-between; align-items: center; gap: .6rem;
+               width: 100%; background: transparent; color: var(--ink); border: 0;
+               border-radius: 0; padding: .6rem .7rem; text-align: left; font: inherit; }
+  button.net:hover, button.net:focus { background: var(--line); }
+  button.net .ss { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button.net .meta { flex: none; font-size: .85em; opacity: .85; }
+  .dim { opacity: .3; }
+  .warnpill { color: var(--warn); font-weight: 600; }
   .done-msg { text-align: center; padding: 2rem 0; }
   .done-msg a { color: var(--accent); }
 </style>
@@ -341,6 +354,71 @@ async function stepLock() {
   });
 }
 
+// COUNTRIES is a select rather than a text field with a placeholder.
+//
+// The placeholder read as a filled-in value: it looked like the country was
+// already set to US, so there was nothing to do. A greyed-out suggestion and a
+// real answer are indistinguishable at a glance on a phone, and this field
+// decides which channels the radio is allowed to use — getting it silently wrong
+// is not a cosmetic failure. A select has no empty-looking state that means
+// something.
+var COUNTRIES = [
+  ["", "Select your country…"],
+  ["US", "United States"], ["CA", "Canada"], ["GB", "United Kingdom"],
+  ["IE", "Ireland"], ["AU", "Australia"], ["NZ", "New Zealand"],
+  ["DE", "Germany"], ["FR", "France"], ["ES", "Spain"], ["IT", "Italy"],
+  ["NL", "Netherlands"], ["BE", "Belgium"], ["SE", "Sweden"], ["NO", "Norway"],
+  ["DK", "Denmark"], ["FI", "Finland"], ["PL", "Poland"], ["PT", "Portugal"],
+  ["CH", "Switzerland"], ["AT", "Austria"], ["CZ", "Czechia"],
+  ["JP", "Japan"], ["BR", "Brazil"], ["MX", "Mexico"], ["ZA", "South Africa"],
+  ["IN", "India"]
+];
+
+function countryOptions() {
+  return COUNTRIES.map(function (c) {
+    return '<option value="' + esc(c[0]) + '">' + esc(c[1]) + "</option>";
+  }).join("");
+}
+
+// bars renders signal strength without an image, since nothing external loads
+// here.
+function bars(signal) {
+  var n = signal >= 75 ? 4 : signal >= 50 ? 3 : signal >= 25 ? 2 : 1;
+  return "▁▃▅▇".slice(0, n) + '<span class="dim">' + "▁▃▅▇".slice(n) + "</span>";
+}
+
+function renderNetworkList(data) {
+  var box = el("netlist");
+  if (!box) return;
+  var nets = (data && data.networks) || [];
+  if (!nets.length) {
+    box.innerHTML = '<p class="hint">' + esc((data && data.note) ||
+      "No networks visible. Enter the name yourself.") + "</p>";
+    return;
+  }
+  box.innerHTML =
+    '<p class="hint">Networks this node can see' +
+    (data.cached ? " (seen before the setup network started)" : "") + ":</p>" +
+    '<ul class="nets">' + nets.map(function (n, i) {
+      return '<li><button type="button" class="net" data-ssid="' + esc(n.ssid) +
+        '" data-open="' + (n.security === "open" ? "1" : "") + '">' +
+        '<span class="ss">' + esc(n.ssid) + "</span>" +
+        '<span class="meta">' + bars(n.signal) + " " +
+        (n.security === "open" ? '<span class="warnpill">open</span>' : esc(n.security)) +
+        "</span></button></li>";
+    }).join("") + "</ul>";
+
+  Array.prototype.slice.call(box.querySelectorAll("button.net")).forEach(function (b) {
+    b.addEventListener("click", function () {
+      el("ssid").value = b.getAttribute("data-ssid");
+      // An open network needs no password, and leaving a stale one in the field
+      // would be sent as a passphrase for a network that has none.
+      if (b.getAttribute("data-open")) { el("psk").value = ""; }
+      el("psk").focus();
+    });
+  });
+}
+
 function stepWifi() {
   var host = state.hostname || "";
   var where = host ? "https://" + esc(host) + ".local/" : "this node's address on your network";
@@ -352,15 +430,15 @@ function stepWifi() {
     "once setup finishes.</p>" +
     '<p class="hint">On Ethernet? Skip this. The node is already on your network, and you ' +
     "can set up Wi-Fi later from the dashboard.</p>" +
+    '<div id="netlist"><p class="hint">Looking for nearby networks…</p></div>' +
     '<form id="f">' +
     '<label for="ssid">Network name (SSID)</label>' +
     '<input type="text" id="ssid" autocapitalize="none" autocorrect="off" spellcheck="false" required>' +
     '<label for="psk">Password <span class="hint">Leave empty for an open network.</span></label>' +
     '<input type="password" id="psk" autocomplete="off">' +
-    '<label for="country">Country code <span class="hint">Two letters, e.g. US. Sets the ' +
-    "radio's regulatory domain.</span></label>" +
-    '<input type="text" id="country" maxlength="2" autocapitalize="characters" autocorrect="off" ' +
-    'spellcheck="false" placeholder="US">' +
+    '<label for="country">Country <span class="hint">Sets which channels the radio may ' +
+    "use. Required.</span></label>" +
+    '<select id="country" required>' + countryOptions() + "</select>" +
     '<label class="chk"><input type="checkbox" id="hidden"> This network does not broadcast its name</label>' +
     '<div class="note">This node has one radio, so it cannot run the setup network and join ' +
     "yours at the same time. When you press Connect the setup network disappears. If the join " +
@@ -371,6 +449,13 @@ function stepWifi() {
     "</form>";
 
   el("skip").addEventListener("click", function () { wifiHandled = true; render(); });
+
+  // Fetched once when the step renders, not polled: each scan asks the helper,
+  // and the answer is a cache that does not change while the access point holds
+  // the radio.
+  api("/api/setup/networks").then(renderNetworkList).catch(function () {
+    renderNetworkList({ networks: [], note: "Could not list nearby networks. Enter the name yourself." });
+  });
 
   el("f").addEventListener("submit", function (ev) {
     ev.preventDefault(); showError(null); busy(true, "Connecting…");
