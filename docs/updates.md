@@ -89,10 +89,53 @@ ExecStartPre=-/home/pi-star/waypoint/bin/waypointd -update-boot-check \
 ExecStart=/home/pi-star/waypoint/bin/waypointd -addr 0.0.0.0:443 …
 ```
 
-An optional periodic check (opt-in, privacy-preserving — a plain signed-manifest
-fetch with no identifiers; the opt-out policy is [#15](https://github.com/KN4OQW/waypoint/issues/15))
-can be a `systemd` timer running `waypointd -update-check`, surfacing availability
-without applying anything automatically.
+`waypointd` also checks on its own schedule (see [Automatic checks and the
+opt-out](#automatic-checks-and-the-opt-out)), so no `systemd` timer is needed;
+`waypointd -update-check` remains the way to ask from a shell or a cron of your
+own.
+
+## Automatic checks and the opt-out
+
+Every `-update-poll-interval` (default 6h) the daemon checks whether a newer
+release exists — the signed `waypointd` manifest and, on a node with the apt repo,
+the stack packages — and caches the answer for the Updates tab. It only *reports*;
+applying still waits for you unless auto-apply is on.
+
+**One switch turns all of that off:** *Settings → Updates → Update policy →
+Automatic update checks* (`check_enabled` in the `update` config section, on by
+default). With it off the daemon makes **no unattended outbound request at all** —
+no manifest fetch, no apt refresh — and since auto-apply exists only to install
+what a check found, it stops too. Everything you trigger yourself is untouched:
+**CHECK NOW**, **UPDATE NOW**, `GET /api/update/check`, `POST /api/update/stack/check`,
+and the CLI modes all still work, and no other feature of the node changes. That is
+[#15](https://github.com/KN4OQW/waypoint/issues/15), and it is the code half of
+GOVERNANCE.md's no-telemetry commitment.
+
+### What leaves the device
+
+A check is a plain `GET` of a static file:
+
+```
+GET /KN4OQW/waypoint/releases/latest/download/update.json
+User-Agent: Waypoint updater
+```
+
+No query string, no cookies, no request body, no per-device token, and a
+`User-Agent` that is the same fixed string on every Waypoint in the world. Your
+callsign, DMR/CCS7 ID, hostname, MAC, serial, current version, architecture and
+channel are **not** sent: the manifest is downloaded first and compared against
+them *locally*, in `PlanUpdate`, after the bytes are already on the box. The
+server learns what any static-file host learns from a download — an IP address and
+a timestamp — and nothing that identifies the node behind it. This is asserted by
+tests (`TestCheckSendsNoDeviceIdentifier`, `TestUpdatePollerHonorsCheckEnabled`),
+not just by policy, and it is verifiable from outside:
+
+```console
+$ sudo tcpdump -n -s0 -A 'tcp port 443 and host <release host>'
+```
+
+Support is never conditioned on any of this, and there is no other channel: no
+crash reports, no usage counters, no "diagnostics" bundle, opt-in or otherwise.
 
 ## Flags
 
@@ -204,6 +247,9 @@ table for the audit and revert trail.
   automatically inside a **quiet window** (default 04:00 local), at most once per
   day. The poller ticks more often than hourly so it reliably lands in the
   one-hour window.
+- **Automatic checks, opt-out.** The poll above is the only thing the node does on
+  its own, and `check_enabled` (on by default) turns it off — including auto-apply,
+  which rides on it. See [Automatic checks and the opt-out](#automatic-checks-and-the-opt-out).
 
 ### Channels
 
@@ -241,7 +287,7 @@ update-stack: confirmed — waypoint-mmdvmhost=0~gitNEW+wp1, …
 | `-update-stack` | — | Apply available stack updates (health-gated, auto-revert) and exit. |
 | `-update-stack-check` | — | Report available stack updates and exit. |
 | `-apt-source-file` | `/etc/apt/sources.list.d/waypoint.sources` | The signed-repo deb822 source; the check limits apt to it (D2). |
-| `-update-poll-interval` | `6h` | How often waypointd checks for updates and evaluates quiet-window auto-apply. |
+| `-update-poll-interval` | `6h` | How often waypointd checks for updates (manifest + apt) and evaluates quiet-window auto-apply. Gated on `check_enabled` — off means no unattended request at all (#15). |
 
 ## What is not here yet
 
@@ -249,8 +295,6 @@ update-stack: confirmed — waypoint-mmdvmhost=0~gitNEW+wp1, …
   over boot slots instead of a binary, for the built-image layout ([#64]). The
   engine's swap/revert/confirm steps are already behind an interface so the A/B
   backend slots in without a rewrite.
-- **Automatic periodic checks with an opt-out** — the mechanism and manual trigger
-  are here; the automatic-check policy is [#15](https://github.com/KN4OQW/waypoint/issues/15).
 - **Delta/partial updates** — the engine fetches a whole signed binary (~13 MB).
 
 [#64]: https://github.com/KN4OQW/waypoint/issues/64
