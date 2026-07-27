@@ -72,3 +72,27 @@ transparency log at verify time. minisign's pinned public key verifies offline
 with a few hundred lines of Go (Ed25519 is in the standard library; BLAKE2b is
 already a dependency), which is the right fit for a Pi. See RFC-0013 for the full
 rationale.
+
+## Hostfiles
+
+The reflector, master and talkgroup lists published to `hostfiles.kn4oqw.com` are
+signed the same way releases are, by `.github/workflows/hostfiles.yml`: prehashed
+minisign (`-H`) with the same `MINISIGN_SECRET_KEY` / `MINISIGN_PASSWORD` secrets,
+producing a `<file>.minisig` alongside each list.
+
+A node verifies them only when it is configured with the matching public key:
+
+```sh
+waypointd -hostfile-pubkey /usr/share/waypoint/waypoint-release.pub
+```
+
+Without that flag the lists are fetched unverified, exactly as before — signing
+adds an integrity guarantee for operators who want it rather than a hard
+requirement. `-require-signed-hostfiles` makes it mandatory, so an unsigned or
+tampered list is rejected and the previous cache kept.
+
+This matters more for hostfiles than it looks: they are operational data fetched
+over plain HTTP from a host the node does not authenticate, and they contain the
+addresses the node will connect to. Signing is what makes republishing them from
+the project's own bucket a security improvement rather than merely an
+availability one.

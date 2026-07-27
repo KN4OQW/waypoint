@@ -1,0 +1,123 @@
+name: Publish hostfiles
+
+# Captures the reflector, master and talkgroup lists, signs them with minisign
+# (RFC-0013), and publishes them to the project's own bucket at
+# hostfiles.kn4oqw.com — the primary source every node now tries first (#138).
+#
+# Why the project publishes these at all: six of the seven lists used to come from
+# a single third-party host, and when it started refusing connections every
+# reflector and talkgroup picker went quietly empty. Republishing them here means
+# availability is ours to control, and signing means a node can tell a real list
+# from a tampered one, which a plain third-party HTTP fetch never could.
+#
+# Sources and validity rules come from cmd/hostseed, the same tool that refreshes
+# the copies shipped in the binary — so what is published and what ships cannot
+# drift apart.
+#
+# Signing is gated on MINISIGN_SECRET_KEY exactly as the release workflow is: with
+# no key the lists still publish, unsigned, rather than the job hard-failing. A
+# node only enforces signatures when it is configured with the matching public key
+# (-hostfile-pubkey), so unsigned lists stay usable meanwhile.
+
+on:
+  schedule:
+    # Every six hours, matching the refresh interval nodes use. Offset off the hour
+    # so this is not competing with every other cron on the runner fleet.
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Capture and sign, but do not upload"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never let two publishes race for the same objects.
+  group: hostfiles-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Capture the lists
+        # hostseed exits non-zero if a source is unreachable or returns something
+        # too small to be a real list, so a bad capture never reaches the bucket.
+        run: go run ./cmd/hostseed -out dist
+
+      - name: Sign with minisign (RFC-0013)
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::warning::MINISIGN_SECRET_KEY not set — publishing UNSIGNED lists (docs/signing.md)."
+            exit 0
+          fi
+          sudo apt-get update && sudo apt-get install -y minisign
+          printf '%s' "$MINISIGN_SECRET_KEY" > minisign.key
+          # -H (prehashed BLAKE2b) is the variant internal/minisign verifies. The
+          # trusted comment binds the filename and capture time into the signature.
+          for f in dist/*; do
+            [ -e "$f" ] || continue
+            echo "$MINISIGN_PASSWORD" | minisign -S -H -s minisign.key \
+              -m "$f" \
+              -t "waypoint hostfile $(basename "$f") captured $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          done
+          rm -f minisign.key
+          ls -la dist/
+
+      - name: Publish to R2
+        if: ${{ !inputs.dry_run }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BUCKET: ${{ vars.HOSTFILES_R2_BUCKET || 'waypoint-hostfiles' }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set — cannot publish."
+            exit 1
+          fi
+          # Upload the .minisig alongside its list, and the list last: a node that
+          # fetches mid-publish should never find a new signature over an old body.
+          for f in dist/*.minisig; do
+            [ -e "$f" ] || continue
+            npx --yes wrangler@4 r2 object put "$BUCKET/$(basename "$f")" \
+              --file "$f" --content-type "text/plain" --remote
+          done
+          for f in dist/*; do
+            case "$f" in *.minisig) continue ;; esac
+            case "$f" in
+              *.json) ct="application/json" ;;
+              *)      ct="text/plain; charset=utf-8" ;;
+            esac
+            npx --yes wrangler@4 r2 object put "$BUCKET/$(basename "$f")" \
+              --file "$f" --content-type "$ct" --remote
+          done
+
+      - name: Verify what nodes will fetch
+        if: ${{ !inputs.dry_run }}
+        run: |
+          fail=0
+          for f in dist/*; do
+            case "$f" in *.minisig) continue ;; esac
+            name=$(basename "$f")
+            code=$(curl -s -o /tmp/got -w '%{http_code}' --max-time 30 "https://hostfiles.kn4oqw.com/$name")
+            if [ "$code" != "200" ]; then
+              echo "::error::$name served HTTP $code"; fail=1; continue
+            fi
+            if ! cmp -s /tmp/got "$f"; then
+              echo "::error::$name served content differs from what was published"; fail=1; continue
+            fi
+            echo "  ok $name ($(wc -c < "$f") bytes)"
+          done
+          exit $fail

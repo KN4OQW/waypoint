@@ -10,8 +10,13 @@
 // node. A source that is unreachable leaves its existing copy untouched rather
 // than truncating it.
 //
-//	go run ./cmd/hostseed          # refresh in place
-//	go run ./cmd/hostseed -check   # report staleness, change nothing (CI)
+// The same capture list feeds the published copies at hostfiles.kn4oqw.com, so
+// -out writes to a staging directory instead of the shipped ones. Publishing and
+// seeding then cannot drift: one list of sources, one set of validity rules.
+//
+//	go run ./cmd/hostseed              # refresh the shipped copies in place
+//	go run ./cmd/hostseed -check       # report staleness, change nothing (CI)
+//	go run ./cmd/hostseed -out dist    # capture for publishing
 package main
 
 import (
@@ -46,7 +51,18 @@ const minSize = 1024
 func main() {
 	check := flag.Bool("check", false, "report what would change without writing")
 	dir := flag.String("dir", "internal/hostsrc/seed", "directory holding the shipped copies")
+	out := flag.String("out", "", "capture into this directory instead of -dir (for publishing); created if absent")
 	flag.Parse()
+
+	if *out != "" {
+		if err := os.MkdirAll(*out, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "cannot create %s: %v\n", *out, err)
+			os.Exit(1)
+		}
+		// Capturing to a staging directory is always a fresh write: there is no
+		// existing copy to compare against, so "unchanged" is not a useful verdict.
+		*dir = *out
+	}
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	var changed, failed int
