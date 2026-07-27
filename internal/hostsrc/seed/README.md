@@ -23,6 +23,12 @@ bad capture ships a broken picker to every node.
 | `TGList_BM.txt` | `https://www.pistar.uk/downloads/TGList_BM.txt` | BrandMeister talkgroup names. |
 | `DStar_Hosts.json` | `g4klx/DStarGateway` @ `612f388` `Data/DStar_Hosts.json` | Pinned to the same commit the stack pins the gateway to, so the format matches the parser in the shipped binary. Bump both together. |
 
+`DMRIds.dat` is captured and **published** by the same tool, but is deliberately
+not shipped: at 6.6 MB it is a third of the binary again, and it goes out of date
+continuously rather than slowly, so an embedded copy would be both large and
+wrong. A node with no network resolves numeric IDs instead of callsigns — the
+behaviour it had before anything downloaded the table at all.
+
 Captured 2026-07-27.
 
 ## Lists with no shipped copy

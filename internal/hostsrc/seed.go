@@ -15,6 +15,11 @@ import (
 // `go run ./cmd/hostseed` when cutting a release; see seed/README.md for where
 // each came from.
 //
+// DMRIds.dat ships no copy for a different reason from the rest: at 6.6 MB it is
+// a third of the binary again, and it goes out of date continuously rather than
+// slowly, so a shipped copy would be large and wrong. A node with no network
+// resolves numeric IDs instead of callsigns.
+//
 // Only lists with a reachable upstream at capture time are shipped. YSF, P25,
 // NXDN and M17 have none right now — every source for them resolved to a host
 // that is refusing connections (#138) — so they have no floor until
@@ -39,6 +44,7 @@ const (
 	P25Hosts      = "p25_hosts"
 	NXDNHosts     = "nxdn_hosts"
 	M17Hosts      = "m17_hosts"
+	DMRIds        = "dmr_ids"
 )
 
 var seeds = map[string][]byte{

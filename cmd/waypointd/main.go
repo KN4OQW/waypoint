@@ -28,6 +28,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/demo"
 	"github.com/KN4OQW/waypoint/internal/dmrhosts"
+	"github.com/KN4OQW/waypoint/internal/dmrids"
 	"github.com/KN4OQW/waypoint/internal/dmrtg"
 	"github.com/KN4OQW/waypoint/internal/dstarhosts"
 	"github.com/KN4OQW/waypoint/internal/events"
@@ -111,6 +112,7 @@ type server struct {
 	m17Hosts   string // cached M17 reflector hostlist (space/tab text)
 	dmrHosts   string // cached DMR master hostlist (DMR_Hosts.txt, space/tab text)
 	dmrTGs     string // cached DMR talkgroup-name list (RFC-0010)
+	dmrIDs     string // cached DMR/NXDN id<->callsign table (DMRIds.dat), shared with every gateway
 
 	// Atomic-update surface (RFC-0014 / issue #13). update holds the manifest URL,
 	// release key, and OS seams; updateArgs is the `-update` invocation the apply
@@ -245,6 +247,9 @@ func (s *server) countHostlists() {
 	}
 	if r, err := dstarhosts.Reflectors(s.dstarHosts); err == nil {
 		hostsrc.SetEntries(hostsrc.DStarHosts, len(r))
+	}
+	if t, err := dmrids.Load(s.dmrIDs); err == nil {
+		hostsrc.SetEntries(hostsrc.DMRIds, t.Len())
 	}
 }
 
@@ -1794,6 +1799,8 @@ func main() {
 	dmrHostsURL := flag.String("dmr-hosts-url", dmrhosts.DefaultURL, "DMR master hostlist source URL (comma-separated; tried in order)")
 	dmrTGs := flag.String("dmr-talkgroups", "/home/pi-star/waypoint/etc/TGList.txt", "cached DMR talkgroup-name list path (RFC-0010)")
 	dmrTGsURL := flag.String("dmr-talkgroups-url", dmrtg.DefaultURL, "DMR talkgroup-name list source URL (comma-separated; tried in order)")
+	dmrIDs := flag.String("dmr-ids", dmrids.DefaultPath, "cached DMR/NXDN id<->callsign table (DMRIds.dat); the path every rendered gateway config points at")
+	dmrIDsURL := flag.String("dmr-ids-url", dmrids.DefaultURL, "DMR id<->callsign table source URL (comma-separated; tried in order)")
 	hostfilePubkey := flag.String("hostfile-pubkey", "", "minisign public key (file path) to verify signed hostfile/TG downloads against (RFC-0013; empty = no verification)")
 	requireSignedHostfiles := flag.Bool("require-signed-hostfiles", false, "reject any hostfile/TG download that is not verified (RFC-0013)")
 	verifyFile := flag.String("verify", "", "verify a signed artifact against a minisign key and exit (RFC-0013); use with -verify-pubkey")
@@ -1947,7 +1954,7 @@ func main() {
 			// empty path so the render is emitted verbatim (RFC-0005).
 			OverridesDir: overridesRoot(*overridesDir, *demoMode),
 		},
-		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts, dmrTGs: *dmrTGs,
+		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts, dmrTGs: *dmrTGs, dmrIDs: *dmrIDs,
 		netKeyfileDir: *nmKeyfileDir, netConfirmTimeout: *netConfirmTimeout, netBackend: *netBackend,
 		timesyncdConf: *timesyncdConf,
 	}
@@ -2141,6 +2148,9 @@ func main() {
 		hostVerify := hostfileVerify(*hostfilePubkey, *requireSignedHostfiles)
 		go dmrhosts.Run(context.Background(), hostsrc.Split(*dmrHostsURL), *dmrHosts, 6*time.Hour, hostVerify)
 		go dmrtg.Run(context.Background(), hostsrc.Split(*dmrTGsURL), *dmrTGs, 24*time.Hour, hostVerify)
+		// The id<->callsign table every gateway is configured to read. Nothing used
+		// to download it, so the lookups silently resolved nothing (#138).
+		go dmrids.Run(context.Background(), hostsrc.Split(*dmrIDsURL), *dmrIDs, 24*time.Hour, hostVerify)
 	}
 
 	mode := "live, mqtt " + *broker

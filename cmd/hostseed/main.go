@@ -36,12 +36,19 @@ import (
 var captures = []struct {
 	File string
 	URL  string
+	// Shipped marks a copy that is embedded in the binary. An unshipped capture is
+	// published but never committed: DMRIds.dat is 6.6 MB, which is a third of the
+	// binary again, and it goes out of date continuously rather than slowly.
+	Shipped bool
 }{
-	{"DMR_Hosts.txt", "https://www.pistar.uk/downloads/DMR_Hosts.txt"},
-	{"TGList_BM.txt", "https://www.pistar.uk/downloads/TGList_BM.txt"},
+	{"DMR_Hosts.txt", "https://www.pistar.uk/downloads/DMR_Hosts.txt", true},
+	{"TGList_BM.txt", "https://www.pistar.uk/downloads/TGList_BM.txt", true},
 	// Pinned to the same DStarGateway commit the stack pins the gateway binary to,
 	// so the format matches the parser that reads it. Bump both together.
-	{"DStar_Hosts.json", "https://raw.githubusercontent.com/g4klx/DStarGateway/612f388727a9bb47aaeaae3a89f5abff3152ed93/Data/DStar_Hosts.json"},
+	{"DStar_Hosts.json", "https://raw.githubusercontent.com/g4klx/DStarGateway/612f388727a9bb47aaeaae3a89f5abff3152ed93/Data/DStar_Hosts.json", true},
+	// The id<->callsign table every rendered gateway config points at. Published
+	// only — see Shipped above.
+	{"DMRIds.dat", "https://www.pistar.uk/downloads/DMRIds.dat", false},
 }
 
 // minSize guards against shipping a truncated list: an error page is small, a
@@ -65,8 +72,13 @@ func main() {
 	}
 
 	client := &http.Client{Timeout: 60 * time.Second}
-	var changed, failed int
+	var changed, failed, considered int
 	for _, c := range captures {
+		// Refreshing the shipped copies must not drag in the publish-only ones.
+		if *out == "" && !c.Shipped {
+			continue
+		}
+		considered++
 		path := filepath.Join(*dir, c.File)
 		old, _ := os.ReadFile(path)
 
@@ -98,7 +110,7 @@ func main() {
 		fmt.Printf("  ++ %-18s updated: %d -> %d bytes\n", c.File, len(old), len(body))
 	}
 
-	fmt.Printf("\n%d changed, %d failed, %d total\n", changed, failed, len(captures))
+	fmt.Printf("\n%d changed, %d failed, %d considered\n", changed, failed, considered)
 	if failed > 0 {
 		os.Exit(1)
 	}
