@@ -78,6 +78,21 @@ grep -q 'update-boot-check' "$ROOTFS/etc/systemd/system/waypointd.service" 2>/de
 have /etc/systemd/system/waypoint-mmdvm.service && ok "gateway units present" || bad "gateway units missing"
 [ -L "$wants/waypoint-mmdvm.service" ] && bad "gateway unit wrongly enabled on a fresh image" || ok "gateways not enabled on a fresh node"
 
+# Raspberry Pi OS's interactive first-boot user dialog must not run. It is
+# WantedBy=multi-user.target and, on an image that ships no account, loops on a
+# whiptail prompt for a username and password. A headless node has no keyboard to
+# answer it, so the boot stops there and nothing else in this file matters. This
+# check exists because that failure is invisible from the outside: the node pings
+# and serves nothing, which reads like a dead daemon rather than a dialog.
+if [ -e "$ROOTFS/etc/systemd/system/userconfig.service" ] &&
+   [ "$(readlink "$ROOTFS/etc/systemd/system/userconfig.service")" = "/dev/null" ]; then
+  ok "Raspberry Pi OS first-boot user dialog is masked"
+elif [ -L "$wants/userconfig.service" ]; then
+  bad "userconfig.service is ENABLED — a headless node will hang on its username prompt"
+else
+  ok "Raspberry Pi OS first-boot user dialog is not enabled"
+fi
+
 # 5. unattended-upgrades config exactly as specified (per arch)
 uu="$ROOTFS/etc/apt/apt.conf.d/51waypoint-unattended-upgrades"
 if have "/etc/apt/apt.conf.d/51waypoint-unattended-upgrades"; then
