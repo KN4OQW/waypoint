@@ -130,7 +130,9 @@ async function setGroups(page, expanded) {
 
 for (const theme of THEMES) {
   console.log(`\n=== theme: ${theme} ===`);
-  const context = await browser.newContext();
+  // ignoreHTTPSErrors: a real node serves the RFC-0012 self-signed device cert, so
+  // pointing BASE at one would otherwise fail the handshake before axe sees a page.
+  const context = await browser.newContext({ ignoreHTTPSErrors: true });
   await context.addInitScript((t) => localStorage.setItem("wp-theme", t), theme);
   await authenticate(context);
   const page = await context.newPage();
