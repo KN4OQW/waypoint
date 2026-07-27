@@ -4,26 +4,43 @@
 // INIs and restarts them. Values are never hard-coded and never patched into
 // INIs — the store is authoritative (RFC-0001).
 
+// Every tab's `crumb` carries its taxonomy: the segment before the "/" is the nav
+// group, the segment after it is the section. renderNav derives the sidebar groups
+// straight from that prefix, so a tab is filed simply by giving it the right crumb
+// — there is no second list to keep in step.
+//
+// The eight per-mode panels are not top-level tabs: they are sub-tabs of the single
+// "modes" entry below (see MODE_SUBS). Their old ids still resolve as deep links.
 const TABS = [
   { id: "general",      tag: "RF", label: "General",      sub: "Radio & Station",     crumb: "SYSTEM / GENERAL",        title: "General Configuration", desc: "Station identity, operating frequencies and modem hardware for this hotspot node." },
   { id: "setup",        tag: "SU", label: "Setup",         sub: "Control & Display",    crumb: "SYSTEM / SETUP",          title: "Control Software & Display", desc: "TRX mode and the MMDVM-Host display driver. Waypoint runs display-free (status is served over MQTT); these fields are here for parity and for nodes driving a physical panel." },
   { id: "lcd",          tag: "LC", label: "LCD",           sub: "HD44780 Panel",        crumb: "SYSTEM / LCD",            title: "LCD Display",           desc: "Drive a physical HD44780 character panel over I2C, with pages of live status that rotate. Disabled by default; the node stays headless until you turn it on." },
-  { id: "brandmeister", tag: "BM", label: "BrandMeister", sub: "Network & Security",   crumb: "NETWORKS / BRANDMEISTER", title: "DMR Networks",          desc: "Master servers this node bridges DMR traffic to. Passwords are stored on the node and never shown." },
-  { id: "dmr",          tag: "DM", label: "DMR",          sub: "Master & Slots",       crumb: "MODES / DMR",             title: "DMR Settings",          desc: "Color code and per-slot behaviour for Digital Mobile Radio." },
-  { id: "dstar",        tag: "DS", label: "D-Star",        sub: "ircDDB & reflectors",  crumb: "MODES / D-STAR",          title: "D-Star",                desc: "D-Star gateway: module band letter, ircDDB callsign routing, startup reflector, and which reflector protocols are on." },
-  { id: "ysf",          tag: "YS", label: "System Fusion", sub: "YSF / FCS reflectors", crumb: "MODES / SYSTEM FUSION",   title: "System Fusion (YSF)",   desc: "C4FM gateway: startup reflector or FCS room, Wires-X, and which reflector networks are on." },
-  { id: "p25",          tag: "25", label: "P25",          sub: "NAC & Talkgroups",     crumb: "MODES / P25",             title: "P25 (Phase 1)",         desc: "APCO P25 gateway: network access code, startup talkgroups, and gateway behaviour." },
-  { id: "nxdn",         tag: "NX", label: "NXDN",         sub: "RAN & Talkgroups",     crumb: "MODES / NXDN",            title: "NXDN",                  desc: "NXDN gateway: radio access number, startup talkgroups, and gateway behaviour." },
-  { id: "m17",          tag: "17", label: "M17",          sub: "CAN & Reflectors",     crumb: "MODES / M17",             title: "M17",                   desc: "M17 gateway: channel access number, startup reflector + module, and gateway behaviour." },
-  { id: "pocsag",       tag: "PG", label: "POCSAG",       sub: "DAPNET Paging",        crumb: "MODES / POCSAG",          title: "POCSAG (DAPNET)",       desc: "Amateur paging: the paging channel and the DAPNETGateway login (server, callsign, AuthKey). The AuthKey is stored on the node and never shown." },
-  { id: "fm",           tag: "FM", label: "FM",           sub: "Analog Voice",         crumb: "MODES / FM",              title: "FM (Analog)",           desc: "Analog FM has no gateway — just the MMDVM-Host [FM] parameters: CTCSS tone, timeout, kerchunk time, audio levels, and access mode." },
-  { id: "modes",        tag: "MD", label: "Modes",        sub: "Digital Modes",        crumb: "MODES / DIGITAL",         title: "Digital Mode Control",  desc: "Which digital voice / data modes MMDVM-Host handles. Toggling one restarts the stack on Apply." },
-  { id: "profiles",     tag: "PF", label: "Profiles",     sub: "Saved Setups",         crumb: "SYSTEM / PROFILES",       title: "Connection Profiles",   desc: "Named snapshots of your mode & network setup — save the current one, switch to another in a click, or carry a setup between nodes as a file. Callsign, frequencies and calibration are never part of a profile, so switching can't change your identity or detune the radio." },
-  { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Routing",   crumb: "BRIDGES / GATEWAYS",      title: "Cross-Mode Gateways",   desc: "Cross-mode routing is being redesigned as a bus system (RFC-0003)." },
-  { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "SYSTEM / NETWORK",        title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
   { id: "station",      tag: "ST", label: "Station",      sub: "History & ID",         crumb: "SYSTEM / STATION",        title: "Station Settings",      desc: "Node-wide operating policy: how long the persistent last-heard / event history is kept (pruned nightly), and how this node identifies itself on the air." },
-  { id: "updates",      tag: "UP", label: "Updates",       sub: "Version & Channel",    crumb: "SYSTEM / UPDATES",        title: "Software Updates",      desc: "Installed versions, available updates from the signed Waypoint apt repo, and the update policy. Updates are applied on the node, health-checked, and rolled back automatically if the modem does not come back up." },
-  { id: "expert",       tag: "SY", label: "Expert",       sub: "System & Config",      crumb: "SYSTEM / EXPERT",         title: "Expert & System",       desc: "Firmware versions and low-level configuration." },
+  { id: "modes",        tag: "MD", label: "Modes",        sub: "Enable & Configure",   crumb: "MODES / ALL MODES",       title: "Modes",                 desc: "Which digital voice / data modes MMDVM-Host handles, and the per-mode settings behind each one. Toggling a mode restarts the stack on Apply." },
+  { id: "brandmeister", tag: "BM", label: "BrandMeister", sub: "Network & Security",   crumb: "NETWORKS / BRANDMEISTER", title: "DMR Networks",          desc: "Master servers this node bridges DMR traffic to. Passwords are stored on the node and never shown." },
+  { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "NETWORKS / HOST",         title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
+  { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Routing",   crumb: "NETWORKS / GATEWAYS",     title: "Cross-Mode Gateways",   desc: "Cross-mode routing is being redesigned as a bus system (RFC-0003)." },
+  { id: "profiles",     tag: "PF", label: "Profiles",     sub: "Saved Setups",         crumb: "ADMIN / PROFILES",        title: "Connection Profiles",   desc: "Named snapshots of your mode & network setup — save the current one, switch to another in a click, or carry a setup between nodes as a file. Callsign, frequencies and calibration are never part of a profile, so switching can't change your identity or detune the radio." },
+  { id: "updates",      tag: "UP", label: "Updates",       sub: "Version & Channel",    crumb: "ADMIN / UPDATES",         title: "Software Updates",      desc: "Installed versions, available updates from the signed Waypoint apt repo, and the update policy. Updates are applied on the node, health-checked, and rolled back automatically if the modem does not come back up." },
+  { id: "expert",       tag: "SY", label: "Expert",       sub: "System & Config",      crumb: "ADMIN / EXPERT",          title: "Expert & System",       desc: "Firmware versions and low-level configuration." },
+];
+
+// Sidebar group order. Anything whose crumb prefix is not listed here still renders,
+// appended after these in first-seen order, so a new crumb can never drop a tab.
+const NAV_GROUPS = ["SYSTEM", "MODES", "NETWORKS", "ADMIN"];
+
+// The Modes tab's sub-tabs. Each renders one of the existing per-mode panel builders
+// unchanged; `id` doubles as the legacy top-level tab id for deep links (#dmr →
+// #modes/dmr) and as the key into edit.modes for the enable toggles.
+const MODE_SUBS = [
+  { id: "dstar",  label: "D-Star",        crumb: "D-STAR",        panel: () => panelDStar() },
+  { id: "dmr",    label: "DMR",           crumb: "DMR",           panel: () => panelDmr() },
+  { id: "ysf",    label: "System Fusion", crumb: "SYSTEM FUSION", panel: () => panelYSF() },
+  { id: "p25",    label: "P25",           crumb: "P25",           panel: () => panelP25() },
+  { id: "nxdn",   label: "NXDN",          crumb: "NXDN",          panel: () => panelNXDN() },
+  { id: "m17",    label: "M17",           crumb: "M17",           panel: () => panelM17() },
+  { id: "pocsag", label: "POCSAG",        crumb: "POCSAG",        panel: () => panelPocsag() },
+  { id: "fm",     label: "FM",            crumb: "FM",            panel: () => panelFm() },
 ];
 
 const THEMES = [
@@ -32,7 +49,7 @@ const THEMES = [
   { key: "ice",      color: "#4db8ff", attr: "ice" },
 ];
 
-let state = { tab: "general", config: null, health: null };
+let state = { tab: "general", sub: MODE_SUBS[0].id, config: null, health: null };
 let edit = {};              // section -> {field: value} working copy
 let dirty = new Set();      // sections with unsaved changes
 let applying = false;
@@ -59,6 +76,17 @@ let netTimezones = [];       // cached /api/network/timezones for the tz datalis
 let netCountdown = null;     // interval handle for the confirm-or-revert countdown bar
 let netApplying = false;     // an Apply Network is in flight
 let netApplyingHost = false; // an Apply Host Settings is in flight
+
+// --- navigation state ----------------------------------------------------
+// Desktop renders the sidebar as collapsible groups; below 1024px the same tabs
+// render as a grid of touch tiles with a back control (RFC-0009). The breakpoint is
+// read through matchMedia rather than inferred, so a resize re-renders the nav with
+// the right semantics instead of leaving a stale aria-expanded behind.
+const NAV_NARROW = window.matchMedia("(max-width: 1023px)");
+const NAV_OPEN_KEY = "wp-nav-groups";   // persisted group expansion (D2)
+const MODE_SUB_KEY = "wp-mode-sub";     // persisted Modes sub-tab (D5)
+let navOpen = loadNavOpen();  // group name -> expanded?
+let navView = "panel";        // narrow-viewport view: "grid" (tiles) or "panel"
 
 const el = (t, cls, html) => { const e = document.createElement(t); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -477,6 +505,30 @@ function panelModes() {
     </button>`;
   }).join("");
   return `<div class="modes-grid">${cards}</div>`;
+}
+
+// The Modes tab (D4): the enable toggles as the header area, then a sub-tab strip
+// over the existing per-mode panels. The panel builders themselves are untouched —
+// this is navigation, not a panel refactor. Switching a sub-tab only re-renders, so
+// `edit` and `dirty` carry across unchanged (D6).
+function panelModesSection() {
+  const cur = MODE_SUBS.find((m) => m.id === currentModeSub()) || MODE_SUBS[0];
+  const tabs = MODE_SUBS.map((m) => {
+    const on = m.id === cur.id;
+    const enabled = !!(edit.modes || {})[m.id];
+    // Roving tabindex: only the selected tab is in the Tab order, arrows move within
+    // the strip (WAI-ARIA tabs pattern).
+    return `<button type="button" role="tab" class="msub${enabled ? " live" : ""}"
+      id="msub-${esc(m.id)}" data-modesub="${esc(m.id)}" aria-selected="${on}"
+      aria-controls="mode-subpanel" tabindex="${on ? 0 : -1}">${esc(m.label)}<span class="msub-dot" aria-hidden="true"></span><span class="sr-only">${enabled ? " (enabled)" : " (disabled)"}</span></button>`;
+  }).join("");
+  return `
+    <div class="mode-sec-t">MODE ENABLE</div>
+    <p class="mode-sec-d">Turn a mode on to have MMDVM-Host handle it. Toggling one restarts the stack on Apply.</p>
+    ${panelModes()}
+    <div class="mode-sec-t mode-sec-gap">MODE SETTINGS</div>
+    <div class="mode-subs" role="tablist" aria-label="Mode settings">${tabs}</div>
+    <div class="mode-subpanel" id="mode-subpanel" role="tabpanel" tabindex="0" aria-labelledby="msub-${esc(cur.id)}">${cur.panel()}</div>`;
 }
 
 // --- Setup: Control Software + Display ------------------------------------
@@ -2121,15 +2173,7 @@ function renderPanel() {
     case "general":      box.innerHTML = panelGeneral(); break;
     case "setup":        box.innerHTML = panelDisplay(); break;
     case "lcd":          box.innerHTML = panelLCD(); break;
-    case "dmr":          box.innerHTML = panelDmr(); break;
-    case "dstar":        box.innerHTML = panelDStar(); break;
-    case "ysf":          box.innerHTML = panelYSF(); break;
-    case "p25":          box.innerHTML = panelP25(); break;
-    case "nxdn":         box.innerHTML = panelNXDN(); break;
-    case "m17":          box.innerHTML = panelM17(); break;
-    case "pocsag":       box.innerHTML = panelPocsag(); break;
-    case "fm":           box.innerHTML = panelFm(); break;
-    case "modes":        box.innerHTML = panelModes(); break;
+    case "modes":        box.innerHTML = panelModesSection(); break;
     case "profiles":     box.innerHTML = panelProfiles(); break;
     case "station":      box.innerHTML = panelStation(); break;
     case "updates":      box.innerHTML = panelUpdates(); break;
@@ -2211,43 +2255,233 @@ function reset() {
 }
 
 // --- chrome --------------------------------------------------------------
+// A tab's nav group is the crumb prefix (D1) — "SYSTEM / GENERAL" files General
+// under SYSTEM. Filing a new tab is therefore just a matter of its crumb.
+function groupOf(t) { return String(t.crumb || "").split("/")[0].trim().toUpperCase() || "OTHER"; }
+
+// Groups in NAV_GROUPS order, then any prefix not on that list in first-seen order,
+// so an unrecognised crumb can never silently drop its tab off the sidebar.
+function navGroups() {
+  const seen = [];
+  TABS.forEach((t) => { const g = groupOf(t); if (!seen.includes(g)) seen.push(g); });
+  const order = NAV_GROUPS.filter((g) => seen.includes(g)).concat(seen.filter((g) => !NAV_GROUPS.includes(g)));
+  return order.map((name) => ({ name, id: "navg-" + name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), items: TABS.filter((t) => groupOf(t) === name) }));
+}
+
+// Group expansion persists across reloads (D2). The default is everything expanded —
+// the flat list is what operators already know, so collapsing is theirs to opt into
+// and only a stored map narrows it.
+function loadNavOpen() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(NAV_OPEN_KEY) || "{}");
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  } catch (e) { return {}; }
+}
+function saveNavOpen() {
+  try { localStorage.setItem(NAV_OPEN_KEY, JSON.stringify(navOpen)); } catch (e) { /* storage blocked — expansion is per-session */ }
+}
+function groupExpanded(name) { return navOpen[name] !== false; }
+function toggleGroup(name) {
+  navOpen[name] = !groupExpanded(name);
+  saveNavOpen();
+  renderNav();
+  const again = document.getElementById(navGroups().find((g) => g.name === name).id);
+  const btn = again && document.querySelector(`[aria-controls="${CSS.escape(again.id)}"]`);
+  if (btn) btn.focus(); // keep a keyboard user on the header they just toggled
+}
+
 function renderNav() {
   const nav = document.getElementById("nav");
-  nav.querySelectorAll(".nav-item").forEach((n) => n.remove());
-  TABS.forEach((t) => {
-    const on = t.id === state.tab;
-    const item = el("button", "nav-item" + (on ? " on" : ""));
-    item.type = "button";
-    if (on) item.setAttribute("aria-current", "page");
-    item.setAttribute("aria-label", t.label + " — " + t.sub);
-    item.innerHTML = `<div class="bar" aria-hidden="true"></div><div class="tag" aria-hidden="true">${esc(t.tag)}</div><div><div class="label">${esc(t.label)}</div><div class="sub">${esc(t.sub)}</div></div>`;
-    item.onclick = () => selectTab(t.id);
-    nav.appendChild(item);
+  const body = el("div", "nav-body");
+  if (NAV_NARROW.matches) buildNavTiles(body);
+  else buildNavGroups(body);
+  const old = nav.querySelector(".nav-body");
+  if (old) old.replaceWith(body);
+  else nav.appendChild(body);
+}
+
+// Desktop (D2): each group is a disclosure — a real <button> in a heading, so it is
+// tab-reachable and Enter/Space toggle it natively, controlling the item list by id.
+function buildNavGroups(body) {
+  navGroups().forEach((g) => {
+    const open = groupExpanded(g.name);
+    const wrap = el("div", "nav-group");
+    const head = el("h2", "nav-group-h");
+    const btn = el("button", "nav-group-btn" + (open ? " open" : ""));
+    btn.type = "button";
+    btn.setAttribute("aria-expanded", String(open));
+    btn.setAttribute("aria-controls", g.id);
+    btn.innerHTML = `<span class="chev" aria-hidden="true"></span><span class="gname">${esc(g.name)}</span><span class="gcount" aria-hidden="true">${g.items.length}</span>`;
+    btn.onclick = () => toggleGroup(g.name);
+    head.appendChild(btn);
+    wrap.appendChild(head);
+
+    const items = el("div", "nav-group-items");
+    items.id = g.id;
+    if (!open) items.hidden = true;
+    g.items.forEach((t) => items.appendChild(navItem(t)));
+    wrap.appendChild(items);
+    body.appendChild(wrap);
   });
 }
 
-function selectTab(id) {
+function navItem(t) {
+  const on = t.id === state.tab;
+  const item = el("button", "nav-item" + (on ? " on" : ""));
+  item.type = "button";
+  if (on) item.setAttribute("aria-current", "page");
+  item.setAttribute("aria-label", t.label + " — " + t.sub);
+  item.innerHTML = `<div class="bar" aria-hidden="true"></div><div class="tag" aria-hidden="true">${esc(t.tag)}</div><div><div class="label">${esc(t.label)}</div><div class="sub">${esc(t.sub)}</div></div>`;
+  item.onclick = () => selectTab(t.id);
+  return item;
+}
+
+// Narrow viewports (D3): a grid of large touch tiles sectioned by group, replacing
+// the old horizontal scroll strip. Picking a tile swaps the grid for the panel and a
+// back control, so a phone shows one thing at a time and the page never scrolls
+// sideways.
+function buildNavTiles(body) {
+  const back = el("button", "nav-back");
+  back.type = "button";
+  back.innerHTML = `<span class="chev" aria-hidden="true">←</span><span>All settings</span>`;
+  back.onclick = () => showNavGrid(true);
+  body.appendChild(back);
+
+  const grid = el("div", "nav-grid");
+  navGroups().forEach((g) => {
+    const head = el("h2", "tile-sec");
+    head.id = "tile-" + g.id;
+    head.textContent = g.name;
+    grid.appendChild(head);
+    const row = el("div", "tile-row");
+    row.setAttribute("role", "group");
+    row.setAttribute("aria-labelledby", head.id);
+    g.items.forEach((t) => {
+      const on = t.id === state.tab;
+      const tile = el("button", "nav-tile" + (on ? " on" : ""));
+      tile.type = "button";
+      if (on) tile.setAttribute("aria-current", "page");
+      tile.innerHTML = `<span class="tag" aria-hidden="true">${esc(t.tag)}</span><span class="label">${esc(t.label)}</span><span class="sub">${esc(t.sub)}</span>`;
+      tile.onclick = () => selectTab(t.id);
+      row.appendChild(tile);
+    });
+    grid.appendChild(row);
+  });
+  body.appendChild(grid);
+}
+
+function setNavView(v) {
+  navView = v;
+  document.documentElement.setAttribute("data-nav-view", v);
+}
+
+// Back to the tile grid. The page head stops describing a section that is no longer
+// on screen, but APPLY/RESET stay exactly where they were so unsaved edits are never
+// stranded behind the back button (D6).
+function showNavGrid(focus) {
+  setNavView("grid");
+  document.getElementById("crumb").textContent = "SETTINGS";
+  document.getElementById("title").textContent = "Settings";
+  document.getElementById("desc").textContent = "Choose a section to configure this node.";
+  renderNav();
+  if (!focus) return;
+  const first = document.querySelector("#nav .nav-tile.on") || document.querySelector("#nav .nav-tile");
+  if (first) first.focus();
+}
+
+// Re-render on a breakpoint crossing so the nav carries the semantics of the layout
+// actually on screen — no stale aria-expanded on a tile grid, no orphaned grid view
+// once the sidebar is back.
+NAV_NARROW.addEventListener("change", () => {
+  if (!NAV_NARROW.matches && navView === "grid") { selectTab(state.tab, state.sub); return; }
+  renderNav();
+});
+
+// --- deep links (D5) ------------------------------------------------------
+// The retired per-mode ids still resolve: "#dmr" lands on the Modes tab with the DMR
+// sub-tab active. The canonical form is "#modes/<sub>"; the last sub-tab is
+// remembered so a bare "#modes" reopens where the operator left off.
+function isModeSub(id) { return MODE_SUBS.some((m) => m.id === id); }
+function storedModeSub() {
+  try { const v = localStorage.getItem(MODE_SUB_KEY); if (isModeSub(v)) return v; } catch (e) { /* storage blocked */ }
+  return MODE_SUBS[0].id;
+}
+function currentModeSub() { return isModeSub(state.sub) ? state.sub : MODE_SUBS[0].id; }
+// True when the given mode's panel is the one on screen — the lazy reflector/master
+// loads use this to decide whether a fetch should repaint the current panel.
+function showingMode(k) { return state.tab === "modes" && currentModeSub() === k; }
+
+function resolveTarget(raw) {
+  const parts = String(raw || "").split("/");
+  let id = safeDecode(parts[0]).trim();
+  let sub = safeDecode(parts[1]).trim();
+  if (isModeSub(id)) { sub = id; id = "modes"; }   // legacy per-mode deep link
+  if (id === "mode") id = "modes";
   if (!TABS.some((x) => x.id === id)) id = TABS[0].id;
-  state.tab = id;
-  const t = TABS.find((x) => x.id === id);
-  if (location.hash !== "#" + id) history.replaceState(null, "", "#" + id);
-  document.getElementById("crumb").textContent = t.crumb;
+  if (id === "modes") sub = isModeSub(sub) ? sub : storedModeSub();
+  return { id, sub };
+}
+function safeDecode(s) { try { return decodeURIComponent(s || ""); } catch (e) { return String(s || ""); } }
+
+function crumbFor(t) {
+  if (t.id !== "modes") return t.crumb;
+  const m = MODE_SUBS.find((x) => x.id === currentModeSub()) || MODE_SUBS[0];
+  return "MODES / " + m.crumb;
+}
+
+function selectTab(id, sub) {
+  const target = resolveTarget(sub ? id + "/" + sub : id);
+  state.tab = target.id;
+  if (target.id === "modes") {
+    state.sub = target.sub;
+    try { localStorage.setItem(MODE_SUB_KEY, target.sub); } catch (e) { /* storage blocked — sub-tab is per-session */ }
+  }
+  const t = TABS.find((x) => x.id === state.tab);
+  const hash = "#" + (state.tab === "modes" ? "modes/" + currentModeSub() : state.tab);
+  if (location.hash !== hash) history.replaceState(null, "", hash);
+  // A deep link can land on a tab inside a collapsed group; open it so the active
+  // item is never hidden (D2). Collapsing it again is the operator's call and sticks.
+  const g = groupOf(t);
+  if (!groupExpanded(g)) { navOpen[g] = true; saveNavOpen(); }
+  setNavView("panel");
+  document.getElementById("crumb").textContent = crumbFor(t);
   document.getElementById("title").textContent = t.title;
   document.getElementById("desc").textContent = t.desc;
   renderNav();
   renderPanel();
   // The Network tab shows live system state, fetched on demand (not part of the
   // store config load).
-  if (id === "network") loadNetwork();
+  if (state.tab === "network") loadNetwork();
   // The Expert tab's override view is fetched on demand (read-only, RFC-0005),
   // re-fetched each open so it reflects the current store render.
-  if (id === "expert") loadOverrides();
+  if (state.tab === "expert") loadOverrides();
   // Connection profiles are fetched on demand (RFC-0006), refreshed each open so
   // the ACTIVE badge reflects the live store.
-  if (id === "profiles") loadProfiles();
+  if (state.tab === "profiles") loadProfiles();
   // The Updates tab reads installed/available versions from the daemon on demand
   // (RFC-0014), re-fetched each open so it reflects the live apt/dpkg state.
-  if (id === "updates") loadUpdateStatus();
+  if (state.tab === "updates") loadUpdateStatus();
+}
+
+// A hash set from outside the page — a link to #modes/dmr elsewhere in the UI, a
+// pasted deep link on an already-open tab, an edited address bar — has to move the
+// selection too. selectTab's own replaceState does not fire this event, so there is
+// no loop; the guard just avoids a pointless re-render when the hash is already the
+// one on screen.
+window.addEventListener("hashchange", () => {
+  const raw = (location.hash || "").slice(1);
+  const t = resolveTarget(raw);
+  if (t.id === state.tab && (t.id !== "modes" || t.sub === currentModeSub())) return;
+  selectTab(t.id, t.sub);
+});
+
+// Switch the Modes sub-tab. Only the rendered panel changes: `edit` and the per-
+// section `dirty` set are untouched, so unsaved edits survive the switch (D6).
+function selectModeSub(sub) {
+  if (!isModeSub(sub) || sub === currentModeSub()) return;
+  selectTab("modes", sub);
+  const btn = document.querySelector(`[data-modesub="${CSS.escape(sub)}"]`);
+  if (btn) btn.focus(); // the tablist re-renders; keep the keyboard user on their tab
 }
 
 function renderThemes() {
@@ -2329,23 +2563,23 @@ async function load() {
   // Reflector lists load lazily; refresh the relevant panel if it's showing.
   try {
     ysfRefs = await fetch("/api/ysf/reflectors").then((r) => r.json());
-    if (state.tab === "ysf") renderPanel();
+    if (showingMode("ysf")) renderPanel();
   } catch { /* offline — the picker still accepts a typed id */ }
   try {
     p25Refs = await fetch("/api/p25/reflectors").then((r) => r.json());
-    if (state.tab === "p25") renderPanel();
+    if (showingMode("p25")) renderPanel();
   } catch { /* offline — the picker still accepts a typed TG */ }
   try {
     nxdnRefs = await fetch("/api/nxdn/reflectors").then((r) => r.json());
-    if (state.tab === "nxdn") renderPanel();
+    if (showingMode("nxdn")) renderPanel();
   } catch { /* offline — the picker still accepts a typed TG */ }
   try {
     dstarRefs = await fetch("/api/dstar/reflectors").then((r) => r.json());
-    if (state.tab === "dstar") renderPanel();
+    if (showingMode("dstar")) renderPanel();
   } catch { /* offline — the picker still accepts a typed reflector */ }
   try {
     m17Refs = await fetch("/api/m17/reflectors").then((r) => r.json());
-    if (state.tab === "m17") renderPanel();
+    if (showingMode("m17")) renderPanel();
   } catch { /* offline — the picker still accepts a typed reflector */ }
   try {
     dmrMasters = await fetch("/api/dmr/masters").then((r) => r.json()) || [];
@@ -2353,7 +2587,7 @@ async function load() {
   } catch { /* offline — the master dropdowns show what's cached (may be empty) */ }
   try {
     dmrTGs = await fetch("/api/dmr/talkgroups").then((r) => r.json()) || [];
-    if (state.tab === "dmr") renderPanel();
+    if (showingMode("dmr")) renderPanel();
   } catch { /* offline — the TG picker still accepts a typed number */ }
   // Host-network status is live system state, fetched separately from the store
   // config. Refresh whenever the Network tab is showing.
@@ -2743,6 +2977,9 @@ document.getElementById("panels").addEventListener("input", (e) => {
   }
 });
 document.getElementById("panels").addEventListener("click", (e) => {
+  // --- Modes sub-tab strip (D4) ---
+  const ms = e.target.closest("[data-modesub]");
+  if (ms) { selectModeSub(ms.dataset.modesub); return; }
   // --- network editable controls (separate state; guarded apply) ---
   const nh = e.target.closest("[data-nethidden]");
   if (nh) { const c = netConnByType(nh.dataset.nethidden); c.hidden = !c.hidden; netMarkDirty(); renderPanel(); return; }
@@ -2898,6 +3135,20 @@ document.getElementById("panels").addEventListener("change", (e) => {
 // re-render so the keyboard user stays put.
 document.getElementById("panels").addEventListener("keydown", (e) => {
   const t = e.target;
+  // Modes sub-tab strip: arrows move between tabs, Home/End jump to the ends
+  // (WAI-ARIA tabs pattern). Enter/Space need no handler — they are real buttons.
+  const mt = t.closest && t.closest("[data-modesub]");
+  if (mt) {
+    const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    let next = null;
+    if (step) {
+      const i = MODE_SUBS.findIndex((m) => m.id === mt.dataset.modesub);
+      next = MODE_SUBS[(i + step + MODE_SUBS.length) % MODE_SUBS.length].id;
+    } else if (e.key === "Home") next = MODE_SUBS[0].id;
+    else if (e.key === "End") next = MODE_SUBS[MODE_SUBS.length - 1].id;
+    if (next) { e.preventDefault(); selectModeSub(next); }
+    return;
+  }
   if (!t.dataset) return;
   if (e.key !== "Enter" && e.key !== " ") return;
   if (t.dataset.nethidden != null) {
@@ -2924,7 +3175,15 @@ document.getElementById("btn-reset").onclick = reset;
 
 renderNav();
 renderThemes();
-selectTab((location.hash || "").slice(1) || "general");
+{
+  // A deep link opens straight onto its panel — including the retired per-mode ids.
+  // Without one, a narrow viewport opens on the tile grid (there is nothing to go
+  // "back" to yet); the sidebar layout has no grid view and just lands on the first
+  // tab, as before.
+  const target = (location.hash || "").slice(1);
+  selectTab(target || "general");
+  if (!target && NAV_NARROW.matches) showNavGrid(false);
+}
 load();
 initBusEvents(); // live bus_busy surfacing on the Buses tab (RFC-0003 §5)
 // LAN peering (RFC-0016): a modal overlay for the active pairing, and a poll so a
