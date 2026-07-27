@@ -878,6 +878,49 @@ function insertLcdToken(pi, token) {
 // Each section binds to the single network of its type in edit.networks, created
 // on demand when its master/enable is set. Routing itself is generated on the
 // node from type + primary — no hand-written rewrites.
+// Supply state of the downloaded reflector/master/talkgroup lists, from
+// /api/hostlists (#138). An empty picker used to be indistinguishable from a
+// picker whose list never downloaded; this is what lets a panel say which.
+let hostLists = [];
+function hostList(name) { return hostLists.find((h) => h.name === name); }
+
+// hostlistNote renders an explanation above a picker when its list is not in good
+// shape, and nothing at all when it is — a healthy list should not be narrated.
+function hostlistNote(name) {
+  const h = hostList(name);
+  if (!h) return "";
+  const when = h.last_success && !String(h.last_success).startsWith("0001")
+    ? new Date(h.last_success).toLocaleString() : null;
+  // Nothing to show: downloaded recently and has content.
+  if (h.entries > 0 && !h.from_seed && !h.stale) return "";
+
+  if (h.entries === 0 && !h.has_seed && h.last_error) {
+    return note(`<b>This list could not be downloaded, so the picker below is empty.</b> ` +
+      `Every source failed${when ? ` — the last successful download was ${esc(when)}` : ", and it has never downloaded"}. ` +
+      `You can still type a value in by hand. <span style="color:var(--muted)">${esc(shortErr(h.last_error))}</span>`);
+  }
+  if (h.from_seed) {
+    return note(`<b>Showing the list that shipped with Waypoint.</b> ` +
+      `The node has not managed to download a newer one${h.last_error ? "" : " yet"}, so entries added upstream since the release will be missing. ` +
+      `You can still type a value in by hand.`);
+  }
+  if (h.stale && when) {
+    return note(`<b>This list may be out of date.</b> It last downloaded on ${esc(when)}; refreshes since then have failed. ` +
+      `<span style="color:var(--muted)">${esc(shortErr(h.last_error))}</span>`);
+  }
+  if (h.entries === 0) {
+    return note(`<b>This list is empty.</b> It downloaded without error but contained no entries. You can still type a value in by hand.`);
+  }
+  return "";
+}
+// The stored error names every source tried, which is right for the API and too
+// much for a panel; keep the first failure and say how many followed.
+function shortErr(err) {
+  const s = String(err || "");
+  const parts = s.split("; ");
+  return parts.length > 1 ? `${parts[0]} (and ${parts.length - 1} more)` : s;
+}
+
 let dmrMasters = []; // cached /api/dmr/masters, for the master dropdowns
 let dmrTGs = [];     // cached /api/dmr/talkgroups, for the searchable TG picker (RFC-0010)
 
@@ -928,6 +971,7 @@ function sectionHead(title, type, n) {
 
 function panelBrandmeister() {
   const d = edit.dmr || (edit.dmr = {});
+  const supply = hostlistNote("dmr_hosts") + hostlistNote("dmr_talkgroups");
   const bm = netOf("brandmeister"), dp = netOf("dmrplus"), sx = netOf("systemx"), tg = netOf("tgif"), xl = netOf("xlx");
   const primaryType = ((edit.networks || []).find((n) => n.primary) || {}).type || "brandmeister";
   const masterSel = [["brandmeister", "Brandmeister"], ["dmrplus", "DMR+ / FreeDMR / HBlink Network"], ["systemx", "SystemX"], ["tgif", "TGIF"]]
@@ -990,7 +1034,7 @@ function panelBrandmeister() {
       ${note("<b>Private</b> locks TX to this node's own DMR ID; <b>Public</b> allows other DMR IDs through the hotspot.")}
     </section>`;
 
-  return `<div class="stack">${master}${bmSec}${dpSec}${sxSec}${tgSec}${xlSec}${general}</div>${routingTable()}`;
+  return `${supply}<div class="stack">${master}${bmSec}${dpSec}${sxSec}${tgSec}${xlSec}${general}</div>${routingTable()}`;
 }
 
 // The talkgroup routing override table — "tie this dialed TG to this gateway".
@@ -1986,6 +2030,7 @@ function startPeeringPoll() {
 }
 
 function panelYSF() {
+  const supply = hostlistNote("ysf_hosts");
   // Startup reflector picker: a datalist over the fetched hostlist so the user
   // can type-filter YSF reflectors / FCS rooms while still allowing a raw id.
   const opts = ysfRefs.map((r) => `<option value="${esc(r.name)}">${esc([r.country, r.description].filter(Boolean).join(" · "))}</option>`).join("");
@@ -2019,10 +2064,11 @@ function panelYSF() {
     toggleRow("ysfgw", "ycs_network", "Link the startup reflector as a DG-ID network (YCS)") +
     toggleRow("ysfgw", "upper_hostfiles", "UPPERCASE reflector names in the hostlist"));
   const hint = ysfRefs.length ? "" : note("Reflector list not loaded yet (fetched from the YSF register on a schedule). You can still type a reflector id above.");
-  return `<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}${networks}${dgid}</div></div>${hint}`;
+  return `${supply}<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}${networks}${dgid}</div></div>${hint}`;
 }
 
 function panelP25() {
+  const supply = hostlistNote("p25_hosts");
   // Startup-TG picker: a datalist over the fetched talkgroup list. Static is a
   // comma-separated list, so the datalist is a reference the user types from.
   const opts = p25Refs.map((r) => `<option value="${esc(r.designator)}">${esc([r.name, r.country, r.sponsor].filter(Boolean).join(" · "))}</option>`).join("");
@@ -2040,10 +2086,11 @@ function panelP25() {
     input("p25gw", "rf_hang_time", { label: "RF hang", unit: "sec" }) +
     input("p25gw", "net_hang_time", { label: "Network hang", unit: "sec" }));
   const hint = p25Refs.length ? "" : note("Talkgroup list not loaded yet (fetched from the P25 register on a schedule). You can still type talkgroup numbers above.");
-  return `<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
+  return `${supply}<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
 }
 
 function panelNXDN() {
+  const supply = hostlistNote("nxdn_hosts");
   // Startup-TG picker: a datalist over the fetched talkgroup list. Static is a
   // comma-separated list, so the datalist is a reference the user types from.
   const opts = nxdnRefs.map((r) => `<option value="${esc(r.designator)}">${esc([r.name, r.country, r.sponsor].filter(Boolean).join(" · "))}</option>`).join("");
@@ -2060,10 +2107,11 @@ function panelNXDN() {
     input("nxdngw", "rf_hang_time", { label: "RF hang", unit: "sec" }) +
     input("nxdngw", "net_hang_time", { label: "Network hang", unit: "sec" }));
   const hint = nxdnRefs.length ? "" : note("Talkgroup list not loaded yet (fetched from the NXDN register on a schedule). You can still type talkgroup numbers above.");
-  return `<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
+  return `${supply}<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
 }
 
 function panelDStar() {
+  const supply = hostlistNote("dstar_hosts");
   // Startup reflector picker: a datalist over the fetched hostlist so the user
   // can type-filter reflectors (REF/XRF/DCS) while still allowing a raw value.
   // The gateway wants "name module", e.g. "REF001 C", so the datalist offers
@@ -2090,10 +2138,11 @@ function panelDStar() {
     toggleRow("dstargw", "dcs", "DCS") +
     toggleRow("dstargw", "xlx", "XLX"));
   const hint = dstarRefs.length ? "" : note("Reflector list not loaded yet (fetched from the pinned D-Star register on a schedule). You can still type a reflector above.");
-  return `<div class="grid2"><div class="stack">${gateway}${ircddb}</div><div class="stack">${behaviour}${protocols}</div></div>${hint}`;
+  return `${supply}<div class="grid2"><div class="stack">${gateway}${ircddb}</div><div class="stack">${behaviour}${protocols}</div></div>${hint}`;
 }
 
 function panelM17() {
+  const supply = hostlistNote("m17_hosts");
   const opts = m17Refs.map((r) => `<option value="${esc(r.name)} ">${esc(r.address)}</option>`).join("");
   const gw = edit.m17gw || {};
   const suffix = (gw.suffix || "H").toUpperCase();
@@ -2112,7 +2161,7 @@ function panelM17() {
   const timers = card("HANG TIMER",
     input("m17gw", "hang_time", { label: "Network hang", unit: "sec" }));
   const hint = m17Refs.length ? "" : note("Reflector list not loaded yet (fetched from the M17 register on a schedule). You can still type a reflector above.");
-  return `<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
+  return `${supply}<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
 }
 
 // The POCSAG panel splits into the "modes" enable + the "pocsag" store section
@@ -2766,6 +2815,12 @@ async function load() {
   renderStatus();
   renderPanel();
   // Reflector lists load lazily; refresh the relevant panel if it's showing.
+  // Hostlist supply state (#138): fetched with the lists so a panel can explain an
+  // empty picker instead of just showing one.
+  try {
+    hostLists = await fetch("/api/hostlists").then((r) => r.json()) || [];
+    renderPanel();
+  } catch { /* older daemon without the endpoint — panels just stay quiet */ }
   try {
     ysfRefs = await fetch("/api/ysf/reflectors").then((r) => r.json());
     if (showingMode("ysf")) renderPanel();

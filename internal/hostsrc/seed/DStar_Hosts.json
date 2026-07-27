@@ -1,0 +1,5304 @@
+{
+  "reflectors": [
+    {
+      "name": "DCS000",
+      "reflector_type": "DCS",
+      "ipv4": "23.111.174.198"
+    },
+    {
+      "name": "DCS001",
+      "reflector_type": "DCS",
+      "ipv4": "dcs001.xreflector.net"
+    },
+    {
+      "name": "DCS002",
+      "reflector_type": "DCS",
+      "ipv4": "dcs002.xreflector.net"
+    },
+    {
+      "name": "DCS003",
+      "reflector_type": "DCS",
+      "ipv4": "dcs003.xreflector.net"
+    },
+    {
+      "name": "DCS004",
+      "reflector_type": "DCS",
+      "ipv4": "dcs004.xreflector.net"
+    },
+    {
+      "name": "DCS005",
+      "reflector_type": "DCS",
+      "ipv4": "dcs.bm-dmr.uk"
+    },
+    {
+      "name": "DCS006",
+      "reflector_type": "DCS",
+      "ipv4": "dcs006.xreflector.net"
+    },
+    {
+      "name": "DCS007",
+      "reflector_type": "DCS",
+      "ipv4": "dcs007.xreflector.net"
+    },
+    {
+      "name": "DCS008",
+      "reflector_type": "DCS",
+      "ipv4": "dcs008.xreflector.net"
+    },
+    {
+      "name": "DCS009",
+      "reflector_type": "DCS",
+      "ipv4": "dcs009.xreflector.net"
+    },
+    {
+      "name": "DCS010",
+      "reflector_type": "DCS",
+      "ipv4": "85.197.129.86"
+    },
+    {
+      "name": "DCS011",
+      "reflector_type": "DCS",
+      "ipv4": "dcs011.xreflector.net"
+    },
+    {
+      "name": "DCS012",
+      "reflector_type": "DCS",
+      "ipv4": "194.38.140.205"
+    },
+    {
+      "name": "DCS013",
+      "reflector_type": "DCS",
+      "ipv4": "dcs013.xreflector.net"
+    },
+    {
+      "name": "DCS014",
+      "reflector_type": "DCS",
+      "ipv4": "dcs014.xreflector.net"
+    },
+    {
+      "name": "DCS015",
+      "reflector_type": "DCS",
+      "ipv4": "dcs015.xreflector.net"
+    },
+    {
+      "name": "DCS016",
+      "reflector_type": "DCS",
+      "ipv4": "dcs016.xreflector.net"
+    },
+    {
+      "name": "DCS017",
+      "reflector_type": "DCS",
+      "ipv4": "dcs017.xreflector.net"
+    },
+    {
+      "name": "DCS018",
+      "reflector_type": "DCS",
+      "ipv4": "dcs018.xreflector.net"
+    },
+    {
+      "name": "DCS019",
+      "reflector_type": "DCS",
+      "ipv4": "dcs019.xreflector.net"
+    },
+    {
+      "name": "DCS020",
+      "reflector_type": "DCS",
+      "ipv4": "3.208.40.45"
+    },
+    {
+      "name": "DCS021",
+      "reflector_type": "DCS",
+      "ipv4": "dcs021.xreflector.net"
+    },
+    {
+      "name": "DCS022",
+      "reflector_type": "DCS",
+      "ipv4": "dcs022.xreflector.net"
+    },
+    {
+      "name": "DCS023",
+      "reflector_type": "DCS",
+      "ipv4": "dcs023.xreflector.net"
+    },
+    {
+      "name": "DCS024",
+      "reflector_type": "DCS",
+      "ipv4": "dcs024.xreflector.net"
+    },
+    {
+      "name": "DCS025",
+      "reflector_type": "DCS",
+      "ipv4": "dcs025.xreflector.net"
+    },
+    {
+      "name": "DCS026",
+      "reflector_type": "DCS",
+      "ipv4": "dcs026.xreflector.net"
+    },
+    {
+      "name": "DCS027",
+      "reflector_type": "DCS",
+      "ipv4": "dcs027.xreflector.net"
+    },
+    {
+      "name": "DCS028",
+      "reflector_type": "DCS",
+      "ipv4": "xlx028.org"
+    },
+    {
+      "name": "DCS029",
+      "reflector_type": "DCS",
+      "ipv4": "dcs029.xreflector.net"
+    },
+    {
+      "name": "DCS030",
+      "reflector_type": "DCS",
+      "ipv4": "194.59.177.44"
+    },
+    {
+      "name": "DCS032",
+      "reflector_type": "DCS",
+      "ipv4": "dcs032.xreflector.net"
+    },
+    {
+      "name": "DCS033",
+      "reflector_type": "DCS",
+      "ipv4": "dcs033.xreflector.net"
+    },
+    {
+      "name": "DCS035",
+      "reflector_type": "DCS",
+      "ipv4": "45.79.94.184"
+    },
+    {
+      "name": "DCS036",
+      "reflector_type": "DCS",
+      "ipv4": "151.12.36.112"
+    },
+    {
+      "name": "DCS038",
+      "reflector_type": "DCS",
+      "ipv4": "5.249.151.111"
+    },
+    {
+      "name": "DCS039",
+      "reflector_type": "DCS",
+      "ipv4": "31.14.142.119"
+    },
+    {
+      "name": "DCS040",
+      "reflector_type": "DCS",
+      "ipv4": "109.71.45.29"
+    },
+    {
+      "name": "DCS041",
+      "reflector_type": "DCS",
+      "ipv4": "45.62.226.137"
+    },
+    {
+      "name": "DCS044",
+      "reflector_type": "DCS",
+      "ipv4": "dcs044.xreflector.net"
+    },
+    {
+      "name": "DCS045",
+      "reflector_type": "DCS",
+      "ipv4": "64.137.172.60"
+    },
+    {
+      "name": "DCS046",
+      "reflector_type": "DCS",
+      "ipv4": "176.10.140.161"
+    },
+    {
+      "name": "DCS047",
+      "reflector_type": "DCS",
+      "ipv4": "202.171.147.58"
+    },
+    {
+      "name": "DCS049",
+      "reflector_type": "DCS",
+      "ipv4": "212.71.234.224"
+    },
+    {
+      "name": "DCS050",
+      "reflector_type": "DCS",
+      "ipv4": "80.211.155.206"
+    },
+    {
+      "name": "DCS051",
+      "reflector_type": "DCS",
+      "ipv4": "93.186.254.219"
+    },
+    {
+      "name": "DCS052",
+      "reflector_type": "DCS",
+      "ipv4": "121.116.69.175"
+    },
+    {
+      "name": "DCS053",
+      "reflector_type": "DCS",
+      "ipv4": "5.133.99.12"
+    },
+    {
+      "name": "DCS054",
+      "reflector_type": "DCS",
+      "ipv4": "52.86.180.251"
+    },
+    {
+      "name": "DCS055",
+      "reflector_type": "DCS",
+      "ipv4": "52.80.4.154"
+    },
+    {
+      "name": "DCS057",
+      "reflector_type": "DCS",
+      "ipv4": "74.193.217.15"
+    },
+    {
+      "name": "DCS058",
+      "reflector_type": "DCS",
+      "ipv4": "150.66.16.176"
+    },
+    {
+      "name": "DCS059",
+      "reflector_type": "DCS",
+      "ipv4": "18.219.32.21"
+    },
+    {
+      "name": "DCS060",
+      "reflector_type": "DCS",
+      "ipv4": "212.237.36.181"
+    },
+    {
+      "name": "DCS061",
+      "reflector_type": "DCS",
+      "ipv4": "208.71.169.83"
+    },
+    {
+      "name": "DCS062",
+      "reflector_type": "DCS",
+      "ipv4": "72.17.20.173"
+    },
+    {
+      "name": "DCS064",
+      "reflector_type": "DCS",
+      "ipv4": "122.222.1.50"
+    },
+    {
+      "name": "DCS066",
+      "reflector_type": "DCS",
+      "ipv4": "79.55.195.190"
+    },
+    {
+      "name": "DCS067",
+      "reflector_type": "DCS",
+      "ipv4": "95.60.130.176"
+    },
+    {
+      "name": "DCS068",
+      "reflector_type": "DCS",
+      "ipv4": "92.222.145.202"
+    },
+    {
+      "name": "DCS069",
+      "reflector_type": "DCS",
+      "ipv4": "89.36.214.120"
+    },
+    {
+      "name": "DCS071",
+      "reflector_type": "DCS",
+      "ipv4": "211.60.41.185"
+    },
+    {
+      "name": "DCS072",
+      "reflector_type": "DCS",
+      "ipv4": "75.60.237.17"
+    },
+    {
+      "name": "DCS073",
+      "reflector_type": "DCS",
+      "ipv4": "114.224.6.211"
+    },
+    {
+      "name": "DCS074",
+      "reflector_type": "DCS",
+      "ipv4": "212.237.211.82"
+    },
+    {
+      "name": "DCS075",
+      "reflector_type": "DCS",
+      "ipv4": "5.135.162.136"
+    },
+    {
+      "name": "DCS076",
+      "reflector_type": "DCS",
+      "ipv4": "203.137.116.117"
+    },
+    {
+      "name": "DCS077",
+      "reflector_type": "DCS",
+      "ipv4": "216.21.9.156"
+    },
+    {
+      "name": "DCS078",
+      "reflector_type": "DCS",
+      "ipv4": "109.15.57.11"
+    },
+    {
+      "name": "DCS079",
+      "reflector_type": "DCS",
+      "ipv4": "121.162.91.31"
+    },
+    {
+      "name": "DCS080",
+      "reflector_type": "DCS",
+      "ipv4": "121.81.128.207"
+    },
+    {
+      "name": "DCS081",
+      "reflector_type": "DCS",
+      "ipv4": "121.82.151.243"
+    },
+    {
+      "name": "DCS082",
+      "reflector_type": "DCS",
+      "ipv4": "110.232.113.108"
+    },
+    {
+      "name": "DCS083",
+      "reflector_type": "DCS",
+      "ipv4": "185.205.210.217"
+    },
+    {
+      "name": "DCS084",
+      "reflector_type": "DCS",
+      "ipv4": "45.79.93.167"
+    },
+    {
+      "name": "DCS085",
+      "reflector_type": "DCS",
+      "ipv4": "113.150.26.8"
+    },
+    {
+      "name": "DCS086",
+      "reflector_type": "DCS",
+      "ipv4": "52.80.139.252"
+    },
+    {
+      "name": "DCS087",
+      "reflector_type": "DCS",
+      "ipv4": "44.137.36.209"
+    },
+    {
+      "name": "DCS088",
+      "reflector_type": "DCS",
+      "ipv4": "194.109.192.235"
+    },
+    {
+      "name": "DCS089",
+      "reflector_type": "DCS",
+      "ipv4": "194.109.192.236"
+    },
+    {
+      "name": "DCS090",
+      "reflector_type": "DCS",
+      "ipv4": "91.92.136.252"
+    },
+    {
+      "name": "DCS092",
+      "reflector_type": "DCS",
+      "ipv4": "104.200.25.53"
+    },
+    {
+      "name": "DCS093",
+      "reflector_type": "DCS",
+      "ipv4": "185.177.59.221"
+    },
+    {
+      "name": "DCS095",
+      "reflector_type": "DCS",
+      "ipv4": "203.137.76.53"
+    },
+    {
+      "name": "DCS097",
+      "reflector_type": "DCS",
+      "ipv4": "80.211.154.173"
+    },
+    {
+      "name": "DCS098",
+      "reflector_type": "DCS",
+      "ipv4": "203.136.233.165"
+    },
+    {
+      "name": "DCS099",
+      "reflector_type": "DCS",
+      "ipv4": "80.211.27.75"
+    },
+    {
+      "name": "DCS100",
+      "reflector_type": "DCS",
+      "ipv4": "45.62.234.223"
+    },
+    {
+      "name": "DCS101",
+      "reflector_type": "DCS",
+      "ipv4": "64.137.236.164"
+    },
+    {
+      "name": "DCS102",
+      "reflector_type": "DCS",
+      "ipv4": "23.111.174.196"
+    },
+    {
+      "name": "DCS103",
+      "reflector_type": "DCS",
+      "ipv4": "64.137.224.126"
+    },
+    {
+      "name": "DCS104",
+      "reflector_type": "DCS",
+      "ipv4": "23.111.174.197"
+    },
+    {
+      "name": "DCS105",
+      "reflector_type": "DCS",
+      "ipv4": "51.254.99.78"
+    },
+    {
+      "name": "DCS109",
+      "reflector_type": "DCS",
+      "ipv4": "115.179.53.132"
+    },
+    {
+      "name": "DCS110",
+      "reflector_type": "DCS",
+      "ipv4": "150.7.164.10"
+    },
+    {
+      "name": "DCS111",
+      "reflector_type": "DCS",
+      "ipv4": "61.195.96.160"
+    },
+    {
+      "name": "DCS112",
+      "reflector_type": "DCS",
+      "ipv4": "94.177.235.81"
+    },
+    {
+      "name": "DCS113",
+      "reflector_type": "DCS",
+      "ipv4": "151.12.36.103"
+    },
+    {
+      "name": "DCS114",
+      "reflector_type": "DCS",
+      "ipv4": "5.135.188.16"
+    },
+    {
+      "name": "DCS115",
+      "reflector_type": "DCS",
+      "ipv4": "217.182.128.3"
+    },
+    {
+      "name": "DCS116",
+      "reflector_type": "DCS",
+      "ipv4": "31.185.101.211"
+    },
+    {
+      "name": "DCS118",
+      "reflector_type": "DCS",
+      "ipv4": "5.249.148.252"
+    },
+    {
+      "name": "DCS119",
+      "reflector_type": "DCS",
+      "ipv4": "125.129.207.86"
+    },
+    {
+      "name": "DCS120",
+      "reflector_type": "DCS",
+      "ipv4": "81.150.10.63"
+    },
+    {
+      "name": "DCS121",
+      "reflector_type": "DCS",
+      "ipv4": "174.37.249.156"
+    },
+    {
+      "name": "DCS122",
+      "reflector_type": "DCS",
+      "ipv4": "83.137.45.126"
+    },
+    {
+      "name": "DCS124",
+      "reflector_type": "DCS",
+      "ipv4": "211.14.169.234"
+    },
+    {
+      "name": "DCS125",
+      "reflector_type": "DCS",
+      "ipv4": "213.181.208.52"
+    },
+    {
+      "name": "DCS127",
+      "reflector_type": "DCS",
+      "ipv4": "190.112.228.107"
+    },
+    {
+      "name": "DCS128",
+      "reflector_type": "DCS",
+      "ipv4": "153.248.144.11"
+    },
+    {
+      "name": "DCS129",
+      "reflector_type": "DCS",
+      "ipv4": "111.64.166.200"
+    },
+    {
+      "name": "DCS130",
+      "reflector_type": "DCS",
+      "ipv4": "194.59.177.45"
+    },
+    {
+      "name": "DCS131",
+      "reflector_type": "DCS",
+      "ipv4": "80.127.118.226"
+    },
+    {
+      "name": "DCS132",
+      "reflector_type": "DCS",
+      "ipv4": "91.203.55.87"
+    },
+    {
+      "name": "DCS134",
+      "reflector_type": "DCS",
+      "ipv4": "159.89.176.86"
+    },
+    {
+      "name": "DCS135",
+      "reflector_type": "DCS",
+      "ipv4": "74.208.214.69"
+    },
+    {
+      "name": "DCS140",
+      "reflector_type": "DCS",
+      "ipv4": "95.211.211.145"
+    },
+    {
+      "name": "DCS142",
+      "reflector_type": "DCS",
+      "ipv4": "44.168.48.8"
+    },
+    {
+      "name": "DCS145",
+      "reflector_type": "DCS",
+      "ipv4": "178.59.23.138"
+    },
+    {
+      "name": "DCS146",
+      "reflector_type": "DCS",
+      "ipv4": "213.7.197.202"
+    },
+    {
+      "name": "DCS147",
+      "reflector_type": "DCS",
+      "ipv4": "46.41.1.127"
+    },
+    {
+      "name": "DCS150",
+      "reflector_type": "DCS",
+      "ipv4": "80.211.10.212"
+    },
+    {
+      "name": "DCS153",
+      "reflector_type": "DCS",
+      "ipv4": "210.189.104.236"
+    },
+    {
+      "name": "DCS155",
+      "reflector_type": "DCS",
+      "ipv4": "18.235.96.93"
+    },
+    {
+      "name": "DCS158",
+      "reflector_type": "DCS",
+      "ipv4": "150.66.16.176"
+    },
+    {
+      "name": "DCS160",
+      "reflector_type": "DCS",
+      "ipv4": "61.195.109.179"
+    },
+    {
+      "name": "DCS170",
+      "reflector_type": "DCS",
+      "ipv4": "210.178.113.173"
+    },
+    {
+      "name": "DCS171",
+      "reflector_type": "DCS",
+      "ipv4": "210.178.113.123"
+    },
+    {
+      "name": "DCS175",
+      "reflector_type": "DCS",
+      "ipv4": "162.248.92.25"
+    },
+    {
+      "name": "DCS180",
+      "reflector_type": "DCS",
+      "ipv4": "192.241.240.7"
+    },
+    {
+      "name": "DCS185",
+      "reflector_type": "DCS",
+      "ipv4": "89.106.108.151"
+    },
+    {
+      "name": "DCS190",
+      "reflector_type": "DCS",
+      "ipv4": "190.194.12.53"
+    },
+    {
+      "name": "DCS199",
+      "reflector_type": "DCS",
+      "ipv4": "153.126.179.214"
+    },
+    {
+      "name": "DCS200",
+      "reflector_type": "DCS",
+      "ipv4": "185.203.119.158"
+    },
+    {
+      "name": "DCS202",
+      "reflector_type": "DCS",
+      "ipv4": "148.251.122.251"
+    },
+    {
+      "name": "DCS204",
+      "reflector_type": "DCS",
+      "ipv4": "85.214.126.111"
+    },
+    {
+      "name": "DCS206",
+      "reflector_type": "DCS",
+      "ipv4": "193.190.240.227"
+    },
+    {
+      "name": "DCS208",
+      "reflector_type": "DCS",
+      "ipv4": "xlx208.f5kav.fr"
+    },
+    {
+      "name": "DCS210",
+      "reflector_type": "DCS",
+      "ipv4": "64.137.224.107"
+    },
+    {
+      "name": "DCS212",
+      "reflector_type": "DCS",
+      "ipv4": "52.38.90.188"
+    },
+    {
+      "name": "DCS214",
+      "reflector_type": "DCS",
+      "ipv4": "185.47.129.230"
+    },
+    {
+      "name": "DCS215",
+      "reflector_type": "DCS",
+      "ipv4": "185.87.96.172"
+    },
+    {
+      "name": "DCS216",
+      "reflector_type": "DCS",
+      "ipv4": "74.214.25.135"
+    },
+    {
+      "name": "DCS220",
+      "reflector_type": "DCS",
+      "ipv4": "124.41.83.11"
+    },
+    {
+      "name": "DCS222",
+      "reflector_type": "DCS",
+      "ipv4": "212.43.96.84"
+    },
+    {
+      "name": "DCS224",
+      "reflector_type": "DCS",
+      "ipv4": "203.137.99.97"
+    },
+    {
+      "name": "DCS226",
+      "reflector_type": "DCS",
+      "ipv4": "2.226.183.226"
+    },
+    {
+      "name": "DCS227",
+      "reflector_type": "DCS",
+      "ipv4": "89.33.44.100"
+    },
+    {
+      "name": "DCS228",
+      "reflector_type": "DCS",
+      "ipv4": "85.6.171.146"
+    },
+    {
+      "name": "DCS229",
+      "reflector_type": "DCS",
+      "ipv4": "194.191.4.54"
+    },
+    {
+      "name": "DCS230",
+      "reflector_type": "DCS",
+      "ipv4": "80.250.3.114"
+    },
+    {
+      "name": "DCS232",
+      "reflector_type": "DCS",
+      "ipv4": "89.185.97.35"
+    },
+    {
+      "name": "DCS235",
+      "reflector_type": "DCS",
+      "ipv4": "5.150.254.97"
+    },
+    {
+      "name": "DCS238",
+      "reflector_type": "DCS",
+      "ipv4": "172.104.239.219"
+    },
+    {
+      "name": "DCS241",
+      "reflector_type": "DCS",
+      "ipv4": "151.80.158.227"
+    },
+    {
+      "name": "DCS242",
+      "reflector_type": "DCS",
+      "ipv4": "73.14.84.43"
+    },
+    {
+      "name": "DCS246",
+      "reflector_type": "DCS",
+      "ipv4": "172.93.48.159"
+    },
+    {
+      "name": "DCS255",
+      "reflector_type": "DCS",
+      "ipv4": "142.91.158.199"
+    },
+    {
+      "name": "DCS257",
+      "reflector_type": "DCS",
+      "ipv4": "47.157.82.87"
+    },
+    {
+      "name": "DCS258",
+      "reflector_type": "DCS",
+      "ipv4": "75.60.237.19"
+    },
+    {
+      "name": "DCS261",
+      "reflector_type": "DCS",
+      "ipv4": "44.144.0.23"
+    },
+    {
+      "name": "DCS262",
+      "reflector_type": "DCS",
+      "ipv4": "87.139.70.67"
+    },
+    {
+      "name": "DCS263",
+      "reflector_type": "DCS",
+      "ipv4": "85.214.193.146"
+    },
+    {
+      "name": "DCS264",
+      "reflector_type": "DCS",
+      "ipv4": "52.2.131.118"
+    },
+    {
+      "name": "DCS265",
+      "reflector_type": "DCS",
+      "ipv4": "212.237.51.82"
+    },
+    {
+      "name": "DCS266",
+      "reflector_type": "DCS",
+      "ipv4": "212.237.51.82"
+    },
+    {
+      "name": "DCS268",
+      "reflector_type": "DCS",
+      "ipv4": "194.38.140.204"
+    },
+    {
+      "name": "DCS270",
+      "reflector_type": "DCS",
+      "ipv4": "158.64.26.132"
+    },
+    {
+      "name": "DCS272",
+      "reflector_type": "DCS",
+      "ipv4": "177.194.25.234"
+    },
+    {
+      "name": "DCS274",
+      "reflector_type": "DCS",
+      "ipv4": "75.115.207.48"
+    },
+    {
+      "name": "DCS280",
+      "reflector_type": "DCS",
+      "ipv4": "87.19.134.242"
+    },
+    {
+      "name": "DCS282",
+      "reflector_type": "DCS",
+      "ipv4": "210.188.25.17"
+    },
+    {
+      "name": "DCS284",
+      "reflector_type": "DCS",
+      "ipv4": "95.158.165.32"
+    },
+    {
+      "name": "DCS285",
+      "reflector_type": "DCS",
+      "ipv4": "91.92.93.15"
+    },
+    {
+      "name": "DCS287",
+      "reflector_type": "DCS",
+      "ipv4": "43.245.172.2"
+    },
+    {
+      "name": "DCS288",
+      "reflector_type": "DCS",
+      "ipv4": "121.75.75.200"
+    },
+    {
+      "name": "DCS290",
+      "reflector_type": "DCS",
+      "ipv4": "44.182.7.20"
+    },
+    {
+      "name": "DCS291",
+      "reflector_type": "DCS",
+      "ipv4": "101.143.242.189"
+    },
+    {
+      "name": "DCS295",
+      "reflector_type": "DCS",
+      "ipv4": "45.62.224.93"
+    },
+    {
+      "name": "DCS298",
+      "reflector_type": "DCS",
+      "ipv4": "122.131.152.80"
+    },
+    {
+      "name": "DCS299",
+      "reflector_type": "DCS",
+      "ipv4": "203.86.194.92"
+    },
+    {
+      "name": "DCS300",
+      "reflector_type": "DCS",
+      "ipv4": "45.62.247.43"
+    },
+    {
+      "name": "DCS302",
+      "reflector_type": "DCS",
+      "ipv4": "144.217.241.23"
+    },
+    {
+      "name": "DCS303",
+      "reflector_type": "DCS",
+      "ipv4": "75.70.52.143"
+    },
+    {
+      "name": "DCS305",
+      "reflector_type": "DCS",
+      "ipv4": "145.239.116.57"
+    },
+    {
+      "name": "DCS307",
+      "reflector_type": "DCS",
+      "ipv4": "72.21.76.154"
+    },
+    {
+      "name": "DCS310",
+      "reflector_type": "DCS",
+      "ipv4": "52.11.207.121"
+    },
+    {
+      "name": "DCS311",
+      "reflector_type": "DCS",
+      "ipv4": "46.41.0.214"
+    },
+    {
+      "name": "DCS312",
+      "reflector_type": "DCS",
+      "ipv4": "192.241.160.183"
+    },
+    {
+      "name": "DCS313",
+      "reflector_type": "DCS",
+      "ipv4": "34.213.108.164"
+    },
+    {
+      "name": "DCS315",
+      "reflector_type": "DCS",
+      "ipv4": "65.101.7.50"
+    },
+    {
+      "name": "DCS317",
+      "reflector_type": "DCS",
+      "ipv4": "44.48.8.15"
+    },
+    {
+      "name": "DCS321",
+      "reflector_type": "DCS",
+      "ipv4": "31.207.110.45"
+    },
+    {
+      "name": "DCS328",
+      "reflector_type": "DCS",
+      "ipv4": "212.237.33.114"
+    },
+    {
+      "name": "DCS329",
+      "reflector_type": "DCS",
+      "ipv4": "114.181.139.32"
+    },
+    {
+      "name": "DCS330",
+      "reflector_type": "DCS",
+      "ipv4": "18.222.199.205"
+    },
+    {
+      "name": "DCS332",
+      "reflector_type": "DCS",
+      "ipv4": "188.213.168.99"
+    },
+    {
+      "name": "DCS333",
+      "reflector_type": "DCS",
+      "ipv4": "194.116.29.73"
+    },
+    {
+      "name": "DCS334",
+      "reflector_type": "DCS",
+      "ipv4": "96.47.95.121"
+    },
+    {
+      "name": "DCS335",
+      "reflector_type": "DCS",
+      "ipv4": "185.206.145.2"
+    },
+    {
+      "name": "DCS336",
+      "reflector_type": "DCS",
+      "ipv4": "23.226.233.133"
+    },
+    {
+      "name": "DCS338",
+      "reflector_type": "DCS",
+      "ipv4": "122.116.216.47"
+    },
+    {
+      "name": "DCS339",
+      "reflector_type": "DCS",
+      "ipv4": "198.98.53.247"
+    },
+    {
+      "name": "DCS345",
+      "reflector_type": "DCS",
+      "ipv4": "45.62.237.34"
+    },
+    {
+      "name": "DCS352",
+      "reflector_type": "DCS",
+      "ipv4": "35.230.162.146"
+    },
+    {
+      "name": "DCS357",
+      "reflector_type": "DCS",
+      "ipv4": "93.152.167.4"
+    },
+    {
+      "name": "DCS358",
+      "reflector_type": "DCS",
+      "ipv4": "93.152.167.4"
+    },
+    {
+      "name": "DCS359",
+      "reflector_type": "DCS",
+      "ipv4": "94.156.172.213"
+    },
+    {
+      "name": "DCS360",
+      "reflector_type": "DCS",
+      "ipv4": "222.229.25.105"
+    },
+    {
+      "name": "DCS364",
+      "reflector_type": "DCS",
+      "ipv4": "159.65.231.53"
+    },
+    {
+      "name": "DCS365",
+      "reflector_type": "DCS",
+      "ipv4": "59.139.141.204"
+    },
+    {
+      "name": "DCS367",
+      "reflector_type": "DCS",
+      "ipv4": "xrf367.ad6dm.net"
+    },
+    {
+      "name": "DCS370",
+      "reflector_type": "DCS",
+      "ipv4": "188.213.168.24"
+    },
+    {
+      "name": "DCS371",
+      "reflector_type": "DCS",
+      "ipv4": "212.237.8.77"
+    },
+    {
+      "name": "DCS373",
+      "reflector_type": "DCS",
+      "ipv4": "119.229.134.1"
+    },
+    {
+      "name": "DCS374",
+      "reflector_type": "DCS",
+      "ipv4": "61.195.108.146"
+    },
+    {
+      "name": "DCS376",
+      "reflector_type": "DCS",
+      "ipv4": "75.145.119.225"
+    },
+    {
+      "name": "DCS377",
+      "reflector_type": "DCS",
+      "ipv4": "186.159.96.100"
+    },
+    {
+      "name": "DCS379",
+      "reflector_type": "DCS",
+      "ipv4": "104.218.36.162"
+    },
+    {
+      "name": "DCS380",
+      "reflector_type": "DCS",
+      "ipv4": "160.16.65.39"
+    },
+    {
+      "name": "DCS382",
+      "reflector_type": "DCS",
+      "ipv4": "211.131.3.119"
+    },
+    {
+      "name": "DCS388",
+      "reflector_type": "DCS",
+      "ipv4": "138.197.67.52"
+    },
+    {
+      "name": "DCS389",
+      "reflector_type": "DCS",
+      "ipv4": "106.71.212.36"
+    },
+    {
+      "name": "DCS390",
+      "reflector_type": "DCS",
+      "ipv4": "149.7.214.253"
+    },
+    {
+      "name": "DCS393",
+      "reflector_type": "DCS",
+      "ipv4": "139.91.200.186"
+    },
+    {
+      "name": "DCS395",
+      "reflector_type": "DCS",
+      "ipv4": "5.249.151.111"
+    },
+    {
+      "name": "DCS398",
+      "reflector_type": "DCS",
+      "ipv4": "45.62.243.153"
+    },
+    {
+      "name": "DCS399",
+      "reflector_type": "DCS",
+      "ipv4": "185.227.110.247"
+    },
+    {
+      "name": "DCS400",
+      "reflector_type": "DCS",
+      "ipv4": "13.58.192.185"
+    },
+    {
+      "name": "DCS404",
+      "reflector_type": "DCS",
+      "ipv4": "91.229.143.187"
+    },
+    {
+      "name": "DCS410",
+      "reflector_type": "DCS",
+      "ipv4": "166.78.145.146"
+    },
+    {
+      "name": "DCS411",
+      "reflector_type": "DCS",
+      "ipv4": "82.171.119.45"
+    },
+    {
+      "name": "DCS412",
+      "reflector_type": "DCS",
+      "ipv4": "61.195.107.113"
+    },
+    {
+      "name": "DCS420",
+      "reflector_type": "DCS",
+      "ipv4": "174.138.113.116"
+    },
+    {
+      "name": "DCS421",
+      "reflector_type": "DCS",
+      "ipv4": "118.189.181.236"
+    },
+    {
+      "name": "DCS431",
+      "reflector_type": "DCS",
+      "ipv4": "61.195.98.225"
+    },
+    {
+      "name": "DCS433",
+      "reflector_type": "DCS",
+      "ipv4": "217.160.22.17"
+    },
+    {
+      "name": "DCS434",
+      "reflector_type": "DCS",
+      "ipv4": "51.254.128.134"
+    },
+    {
+      "name": "DCS438",
+      "reflector_type": "DCS",
+      "ipv4": "80.211.189.236"
+    },
+    {
+      "name": "DCS440",
+      "reflector_type": "DCS",
+      "ipv4": "153.176.140.229"
+    },
+    {
+      "name": "DCS441",
+      "reflector_type": "DCS",
+      "ipv4": "203.137.99.110"
+    },
+    {
+      "name": "DCS444",
+      "reflector_type": "DCS",
+      "ipv4": "188.68.37.51"
+    },
+    {
+      "name": "DCS449",
+      "reflector_type": "DCS",
+      "ipv4": "159.89.183.117"
+    },
+    {
+      "name": "DCS450",
+      "reflector_type": "DCS",
+      "ipv4": "64.137.224.233"
+    },
+    {
+      "name": "DCS454",
+      "reflector_type": "DCS",
+      "ipv4": "218.250.250.21"
+    },
+    {
+      "name": "DCS455",
+      "reflector_type": "DCS",
+      "ipv4": "208.71.169.83"
+    },
+    {
+      "name": "DCS456",
+      "reflector_type": "DCS",
+      "ipv4": "xrf456.de"
+    },
+    {
+      "name": "DCS460",
+      "reflector_type": "DCS",
+      "ipv4": "183.53.66.145"
+    },
+    {
+      "name": "DCS464",
+      "reflector_type": "DCS",
+      "ipv4": "52.192.129.174"
+    },
+    {
+      "name": "DCS470",
+      "reflector_type": "DCS",
+      "ipv4": "104.49.29.243"
+    },
+    {
+      "name": "DCS477",
+      "reflector_type": "DCS",
+      "ipv4": "139.162.213.89"
+    },
+    {
+      "name": "DCS479",
+      "reflector_type": "DCS",
+      "ipv4": "198.58.106.10"
+    },
+    {
+      "name": "DCS486",
+      "reflector_type": "DCS",
+      "ipv4": "51.255.172.249"
+    },
+    {
+      "name": "DCS487",
+      "reflector_type": "DCS",
+      "ipv4": "93.66.214.109"
+    },
+    {
+      "name": "DCS499",
+      "reflector_type": "DCS",
+      "ipv4": "203.137.76.22"
+    },
+    {
+      "name": "DCS500",
+      "reflector_type": "DCS",
+      "ipv4": "58.96.21.253"
+    },
+    {
+      "name": "DCS501",
+      "reflector_type": "DCS",
+      "ipv4": "198.211.98.63"
+    },
+    {
+      "name": "DCS502",
+      "reflector_type": "DCS",
+      "ipv4": "190.148.222.28"
+    },
+    {
+      "name": "DCS505",
+      "reflector_type": "DCS",
+      "ipv4": "45.248.50.37"
+    },
+    {
+      "name": "DCS506",
+      "reflector_type": "DCS",
+      "ipv4": "121.200.19.211"
+    },
+    {
+      "name": "DCS508",
+      "reflector_type": "DCS",
+      "ipv4": "185.188.4.15"
+    },
+    {
+      "name": "DCS510",
+      "reflector_type": "DCS",
+      "ipv4": "110.141.219.161"
+    },
+    {
+      "name": "DCS511",
+      "reflector_type": "DCS",
+      "ipv4": "213.172.232.13"
+    },
+    {
+      "name": "DCS515",
+      "reflector_type": "DCS",
+      "ipv4": "203.137.78.35"
+    },
+    {
+      "name": "DCS518",
+      "reflector_type": "DCS",
+      "ipv4": "176.9.1.168"
+    },
+    {
+      "name": "DCS519",
+      "reflector_type": "DCS",
+      "ipv4": "149.56.165.76"
+    },
+    {
+      "name": "DCS520",
+      "reflector_type": "DCS",
+      "ipv4": "xlx.dtdxa.com"
+    },
+    {
+      "name": "DCS521",
+      "reflector_type": "DCS",
+      "ipv4": "150.129.184.54"
+    },
+    {
+      "name": "DCS522",
+      "reflector_type": "DCS",
+      "ipv4": "14.102.146.160"
+    },
+    {
+      "name": "DCS523",
+      "reflector_type": "DCS",
+      "ipv4": "175.142.199.32"
+    },
+    {
+      "name": "DCS525",
+      "reflector_type": "DCS",
+      "ipv4": "80.211.68.38"
+    },
+    {
+      "name": "DCS530",
+      "reflector_type": "DCS",
+      "ipv4": "116.251.193.99"
+    },
+    {
+      "name": "DCS534",
+      "reflector_type": "DCS",
+      "ipv4": "208.71.169.83"
+    },
+    {
+      "name": "DCS538",
+      "reflector_type": "DCS",
+      "ipv4": "131.129.217.94"
+    },
+    {
+      "name": "DCS544",
+      "reflector_type": "DCS",
+      "ipv4": "202.218.152.66"
+    },
+    {
+      "name": "DCS550",
+      "reflector_type": "DCS",
+      "ipv4": "89.36.222.146"
+    },
+    {
+      "name": "DCS551",
+      "reflector_type": "DCS",
+      "ipv4": "140.227.198.45"
+    },
+    {
+      "name": "DCS553",
+      "reflector_type": "DCS",
+      "ipv4": "45.79.92.86"
+    },
+    {
+      "name": "DCS554",
+      "reflector_type": "DCS",
+      "ipv4": "52.35.183.178"
+    },
+    {
+      "name": "DCS555",
+      "reflector_type": "DCS",
+      "ipv4": "xlx555.dtdxa.com"
+    },
+    {
+      "name": "DCS567",
+      "reflector_type": "DCS",
+      "ipv4": "212.91.156.69"
+    },
+    {
+      "name": "DCS569",
+      "reflector_type": "DCS",
+      "ipv4": "203.137.111.98"
+    },
+    {
+      "name": "DCS570",
+      "reflector_type": "DCS",
+      "ipv4": "172.104.13.31"
+    },
+    {
+      "name": "DCS573",
+      "reflector_type": "DCS",
+      "ipv4": "216.189.148.204"
+    },
+    {
+      "name": "DCS583",
+      "reflector_type": "DCS",
+      "ipv4": "116.70.240.104"
+    },
+    {
+      "name": "DCS587",
+      "reflector_type": "DCS",
+      "ipv4": "68.32.126.21"
+    },
+    {
+      "name": "DCS595",
+      "reflector_type": "DCS",
+      "ipv4": "220.146.24.34"
+    },
+    {
+      "name": "DCS599",
+      "reflector_type": "DCS",
+      "ipv4": "203.137.118.190"
+    },
+    {
+      "name": "DCS600",
+      "reflector_type": "DCS",
+      "ipv4": "13.69.14.204"
+    },
+    {
+      "name": "DCS601",
+      "reflector_type": "DCS",
+      "ipv4": "51.141.52.193"
+    },
+    {
+      "name": "DCS602",
+      "reflector_type": "DCS",
+      "ipv4": "212.56.100.200"
+    },
+    {
+      "name": "DCS603",
+      "reflector_type": "DCS",
+      "ipv4": "216.246.155.99"
+    },
+    {
+      "name": "DCS604",
+      "reflector_type": "DCS",
+      "ipv4": "139.162.241.24"
+    },
+    {
+      "name": "DCS605",
+      "reflector_type": "DCS",
+      "ipv4": "183.76.179.238"
+    },
+    {
+      "name": "DCS608",
+      "reflector_type": "DCS",
+      "ipv4": "219.122.253.83"
+    },
+    {
+      "name": "DCS609",
+      "reflector_type": "DCS",
+      "ipv4": "219.122.253.83"
+    },
+    {
+      "name": "DCS610",
+      "reflector_type": "DCS",
+      "ipv4": "89.186.80.81"
+    },
+    {
+      "name": "DCS613",
+      "reflector_type": "DCS",
+      "ipv4": "198.50.202.39"
+    },
+    {
+      "name": "DCS619",
+      "reflector_type": "DCS",
+      "ipv4": "167.99.168.82"
+    },
+    {
+      "name": "DCS626",
+      "reflector_type": "DCS",
+      "ipv4": "45.77.234.162"
+    },
+    {
+      "name": "DCS627",
+      "reflector_type": "DCS",
+      "ipv4": "121.75.75.200"
+    },
+    {
+      "name": "DCS630",
+      "reflector_type": "DCS",
+      "ipv4": "61.195.125.81"
+    },
+    {
+      "name": "DCS634",
+      "reflector_type": "DCS",
+      "ipv4": "222.148.104.64"
+    },
+    {
+      "name": "DCS647",
+      "reflector_type": "DCS",
+      "ipv4": "217.182.168.54"
+    },
+    {
+      "name": "DCS651",
+      "reflector_type": "DCS",
+      "ipv4": "198.96.90.144"
+    },
+    {
+      "name": "DCS655",
+      "reflector_type": "DCS",
+      "ipv4": "146.64.235.19"
+    },
+    {
+      "name": "DCS666",
+      "reflector_type": "DCS",
+      "ipv4": "86.153.215.35"
+    },
+    {
+      "name": "DCS672",
+      "reflector_type": "DCS",
+      "ipv4": "180.27.223.252"
+    },
+    {
+      "name": "DCS673",
+      "reflector_type": "DCS",
+      "ipv4": "180.147.243.178"
+    },
+    {
+      "name": "DCS684",
+      "reflector_type": "DCS",
+      "ipv4": "212.237.17.83"
+    },
+    {
+      "name": "DCS689",
+      "reflector_type": "DCS",
+      "ipv4": "97.107.128.47"
+    },
+    {
+      "name": "DCS695",
+      "reflector_type": "DCS",
+      "ipv4": "155.254.33.145"
+    },
+    {
+      "name": "DCS698",
+      "reflector_type": "DCS",
+      "ipv4": "203.137.123.89"
+    },
+    {
+      "name": "DCS699",
+      "reflector_type": "DCS",
+      "ipv4": "82.102.5.239"
+    },
+    {
+      "name": "DCS700",
+      "reflector_type": "DCS",
+      "ipv4": "2.29.27.21"
+    },
+    {
+      "name": "DCS701",
+      "reflector_type": "DCS",
+      "ipv4": "61.195.107.77"
+    },
+    {
+      "name": "DCS703",
+      "reflector_type": "DCS",
+      "ipv4": "61.195.98.254"
+    },
+    {
+      "name": "DCS704",
+      "reflector_type": "DCS",
+      "ipv4": "150.66.34.110"
+    },
+    {
+      "name": "DCS706",
+      "reflector_type": "DCS",
+      "ipv4": "93.186.255.126"
+    },
+    {
+      "name": "DCS707",
+      "reflector_type": "DCS",
+      "ipv4": "90.145.156.196"
+    },
+    {
+      "name": "DCS708",
+      "reflector_type": "DCS",
+      "ipv4": "150.66.20.222"
+    },
+    {
+      "name": "DCS709",
+      "reflector_type": "DCS",
+      "ipv4": "212.237.34.32"
+    },
+    {
+      "name": "DCS711",
+      "reflector_type": "DCS",
+      "ipv4": "212.237.18.27"
+    },
+    {
+      "name": "DCS712",
+      "reflector_type": "DCS",
+      "ipv4": "153.215.181.34"
+    },
+    {
+      "name": "DCS713",
+      "reflector_type": "DCS",
+      "ipv4": "218.251.63.99"
+    },
+    {
+      "name": "DCS714",
+      "reflector_type": "DCS",
+      "ipv4": "81.169.140.163"
+    },
+    {
+      "name": "DCS717",
+      "reflector_type": "DCS",
+      "ipv4": "44.137.70.100"
+    },
+    {
+      "name": "DCS722",
+      "reflector_type": "DCS",
+      "ipv4": "80.211.2.161"
+    },
+    {
+      "name": "DCS723",
+      "reflector_type": "DCS",
+      "ipv4": "45.33.118.112"
+    },
+    {
+      "name": "DCS724",
+      "reflector_type": "DCS",
+      "ipv4": "xlx.dvbrazil.com.br"
+    },
+    {
+      "name": "DCS725",
+      "reflector_type": "DCS",
+      "ipv4": "172.245.9.180"
+    },
+    {
+      "name": "DCS730",
+      "reflector_type": "DCS",
+      "ipv4": "190.14.50.165"
+    },
+    {
+      "name": "DCS732",
+      "reflector_type": "DCS",
+      "ipv4": "190.159.68.105"
+    },
+    {
+      "name": "DCS733",
+      "reflector_type": "DCS",
+      "ipv4": "45.56.117.158"
+    },
+    {
+      "name": "DCS734",
+      "reflector_type": "DCS",
+      "ipv4": "181.208.254.236"
+    },
+    {
+      "name": "DCS735",
+      "reflector_type": "DCS",
+      "ipv4": "104.131.81.32"
+    },
+    {
+      "name": "DCS737",
+      "reflector_type": "DCS",
+      "ipv4": "195.130.75.246"
+    },
+    {
+      "name": "DCS738",
+      "reflector_type": "DCS",
+      "ipv4": "210.171.151.238"
+    },
+    {
+      "name": "DCS740",
+      "reflector_type": "DCS",
+      "ipv4": "104.167.114.230"
+    },
+    {
+      "name": "DCS741",
+      "reflector_type": "DCS",
+      "ipv4": "203.137.78.41"
+    },
+    {
+      "name": "DCS746",
+      "reflector_type": "DCS",
+      "ipv4": "178.254.34.44"
+    },
+    {
+      "name": "DCS747",
+      "reflector_type": "DCS",
+      "ipv4": "93.209.44.227"
+    },
+    {
+      "name": "DCS748",
+      "reflector_type": "DCS",
+      "ipv4": "64.137.197.36"
+    },
+    {
+      "name": "DCS749",
+      "reflector_type": "DCS",
+      "ipv4": "45.77.102.203"
+    },
+    {
+      "name": "DCS750",
+      "reflector_type": "DCS",
+      "ipv4": "203.86.206.49"
+    },
+    {
+      "name": "DCS751",
+      "reflector_type": "DCS",
+      "ipv4": "203.118.145.79"
+    },
+    {
+      "name": "DCS752",
+      "reflector_type": "DCS",
+      "ipv4": "66.154.105.195"
+    },
+    {
+      "name": "DCS755",
+      "reflector_type": "DCS",
+      "ipv4": "178.22.148.229"
+    },
+    {
+      "name": "DCS757",
+      "reflector_type": "DCS",
+      "ipv4": "43.229.63.42"
+    },
+    {
+      "name": "DCS762",
+      "reflector_type": "DCS",
+      "ipv4": "129.21.36.65"
+    },
+    {
+      "name": "DCS766",
+      "reflector_type": "DCS",
+      "ipv4": "201.62.48.61"
+    },
+    {
+      "name": "DCS768",
+      "reflector_type": "DCS",
+      "ipv4": "80.211.199.231"
+    },
+    {
+      "name": "DCS770",
+      "reflector_type": "DCS",
+      "ipv4": "153.126.173.9"
+    },
+    {
+      "name": "DCS773",
+      "reflector_type": "DCS",
+      "ipv4": "89.46.75.166"
+    },
+    {
+      "name": "DCS775",
+      "reflector_type": "DCS",
+      "ipv4": "149.202.61.17"
+    },
+    {
+      "name": "DCS776",
+      "reflector_type": "DCS",
+      "ipv4": "182.168.37.205"
+    },
+    {
+      "name": "DCS777",
+      "reflector_type": "DCS",
+      "ipv4": "194.182.66.76"
+    },
+    {
+      "name": "DCS781",
+      "reflector_type": "DCS",
+      "ipv4": "101.143.242.199"
+    },
+    {
+      "name": "DCS782",
+      "reflector_type": "DCS",
+      "ipv4": "153.221.123.92"
+    },
+    {
+      "name": "DCS787",
+      "reflector_type": "DCS",
+      "ipv4": "46.41.1.96"
+    },
+    {
+      "name": "DCS788",
+      "reflector_type": "DCS",
+      "ipv4": "192.168.0.96"
+    },
+    {
+      "name": "DCS789",
+      "reflector_type": "DCS",
+      "ipv4": "45.33.119.142"
+    },
+    {
+      "name": "DCS794",
+      "reflector_type": "DCS",
+      "ipv4": "101.143.242.95"
+    },
+    {
+      "name": "DCS800",
+      "reflector_type": "DCS",
+      "ipv4": "87.252.188.119"
+    },
+    {
+      "name": "DCS801",
+      "reflector_type": "DCS",
+      "ipv4": "213.47.71.17"
+    },
+    {
+      "name": "DCS803",
+      "reflector_type": "DCS",
+      "ipv4": "77.117.21.251"
+    },
+    {
+      "name": "DCS806",
+      "reflector_type": "DCS",
+      "ipv4": "92.107.25.23"
+    },
+    {
+      "name": "DCS807",
+      "reflector_type": "DCS",
+      "ipv4": "153.167.124.196"
+    },
+    {
+      "name": "DCS808",
+      "reflector_type": "DCS",
+      "ipv4": "18.220.252.27"
+    },
+    {
+      "name": "DCS809",
+      "reflector_type": "DCS",
+      "ipv4": "78.46.11.69"
+    },
+    {
+      "name": "DCS810",
+      "reflector_type": "DCS",
+      "ipv4": "71.41.121.228"
+    },
+    {
+      "name": "DCS811",
+      "reflector_type": "DCS",
+      "ipv4": "64.137.238.189"
+    },
+    {
+      "name": "DCS812",
+      "reflector_type": "DCS",
+      "ipv4": "203.145.233.141"
+    },
+    {
+      "name": "DCS813",
+      "reflector_type": "DCS",
+      "ipv4": "97.76.81.165"
+    },
+    {
+      "name": "DCS817",
+      "reflector_type": "DCS",
+      "ipv4": "18.235.96.93"
+    },
+    {
+      "name": "DCS818",
+      "reflector_type": "DCS",
+      "ipv4": "120.79.155.116"
+    },
+    {
+      "name": "DCS825",
+      "reflector_type": "DCS",
+      "ipv4": "51.75.252.197"
+    },
+    {
+      "name": "DCS828",
+      "reflector_type": "DCS",
+      "ipv4": "195.225.116.244"
+    },
+    {
+      "name": "DCS833",
+      "reflector_type": "DCS",
+      "ipv4": "78.226.112.146"
+    },
+    {
+      "name": "DCS844",
+      "reflector_type": "DCS",
+      "ipv4": "137.226.79.122"
+    },
+    {
+      "name": "DCS847",
+      "reflector_type": "DCS",
+      "ipv4": "162.243.4.29"
+    },
+    {
+      "name": "DCS850",
+      "reflector_type": "DCS",
+      "ipv4": "88.198.94.77"
+    },
+    {
+      "name": "DCS852",
+      "reflector_type": "DCS",
+      "ipv4": "42.2.140.44"
+    },
+    {
+      "name": "DCS858",
+      "reflector_type": "DCS",
+      "ipv4": "54.227.203.214"
+    },
+    {
+      "name": "DCS859",
+      "reflector_type": "DCS",
+      "ipv4": "54.227.203.214"
+    },
+    {
+      "name": "DCS860",
+      "reflector_type": "DCS",
+      "ipv4": "24.134.86.93"
+    },
+    {
+      "name": "DCS861",
+      "reflector_type": "DCS",
+      "ipv4": "66.175.218.63"
+    },
+    {
+      "name": "DCS865",
+      "reflector_type": "DCS",
+      "ipv4": "45.32.212.226"
+    },
+    {
+      "name": "DCS866",
+      "reflector_type": "DCS",
+      "ipv4": "93.233.182.237"
+    },
+    {
+      "name": "DCS867",
+      "reflector_type": "DCS",
+      "ipv4": "51.254.115.5"
+    },
+    {
+      "name": "DCS870",
+      "reflector_type": "DCS",
+      "ipv4": "103.3.234.95"
+    },
+    {
+      "name": "DCS871",
+      "reflector_type": "DCS",
+      "ipv4": "182.245.190.200"
+    },
+    {
+      "name": "DCS878",
+      "reflector_type": "DCS",
+      "ipv4": "203.137.123.113"
+    },
+    {
+      "name": "DCS880",
+      "reflector_type": "DCS",
+      "ipv4": "176.10.105.211"
+    },
+    {
+      "name": "DCS883",
+      "reflector_type": "DCS",
+      "ipv4": "153.179.224.224"
+    },
+    {
+      "name": "DCS886",
+      "reflector_type": "DCS",
+      "ipv4": "118.163.103.178"
+    },
+    {
+      "name": "DCS887",
+      "reflector_type": "DCS",
+      "ipv4": "118.163.103.177"
+    },
+    {
+      "name": "DCS888",
+      "reflector_type": "DCS",
+      "ipv4": "46.18.142.169"
+    },
+    {
+      "name": "DCS889",
+      "reflector_type": "DCS",
+      "ipv4": "130.149.36.93"
+    },
+    {
+      "name": "DCS893",
+      "reflector_type": "DCS",
+      "ipv4": "104.223.59.212"
+    },
+    {
+      "name": "DCS897",
+      "reflector_type": "DCS",
+      "ipv4": "212.237.2.183"
+    },
+    {
+      "name": "DCS900",
+      "reflector_type": "DCS",
+      "ipv4": "94.177.237.192"
+    },
+    {
+      "name": "DCS903",
+      "reflector_type": "DCS",
+      "ipv4": "80.211.29.226"
+    },
+    {
+      "name": "DCS904",
+      "reflector_type": "DCS",
+      "ipv4": "211.14.169.215"
+    },
+    {
+      "name": "DCS906",
+      "reflector_type": "DCS",
+      "ipv4": "212.237.11.53"
+    },
+    {
+      "name": "DCS907",
+      "reflector_type": "DCS",
+      "ipv4": "176.84.63.187"
+    },
+    {
+      "name": "DCS908",
+      "reflector_type": "DCS",
+      "ipv4": "92.222.23.124"
+    },
+    {
+      "name": "DCS909",
+      "reflector_type": "DCS",
+      "ipv4": "216.86.147.198"
+    },
+    {
+      "name": "DCS910",
+      "reflector_type": "DCS",
+      "ipv4": "94.177.207.26"
+    },
+    {
+      "name": "DCS911",
+      "reflector_type": "DCS",
+      "ipv4": "xlx911.patrweb.com"
+    },
+    {
+      "name": "DCS912",
+      "reflector_type": "DCS",
+      "ipv4": "80.211.1.143"
+    },
+    {
+      "name": "DCS915",
+      "reflector_type": "DCS",
+      "ipv4": "72.28.30.93"
+    },
+    {
+      "name": "DCS919",
+      "reflector_type": "DCS",
+      "ipv4": "80.211.232.174"
+    },
+    {
+      "name": "DCS920",
+      "reflector_type": "DCS",
+      "ipv4": "81.150.10.62"
+    },
+    {
+      "name": "DCS921",
+      "reflector_type": "DCS",
+      "ipv4": "44.143.184.83"
+    },
+    {
+      "name": "DCS922",
+      "reflector_type": "DCS",
+      "ipv4": "81.150.10.62"
+    },
+    {
+      "name": "DCS925",
+      "reflector_type": "DCS",
+      "ipv4": "90.255.232.101"
+    },
+    {
+      "name": "DCS929",
+      "reflector_type": "DCS",
+      "ipv4": "158.69.166.132"
+    },
+    {
+      "name": "DCS930",
+      "reflector_type": "DCS",
+      "ipv4": "94.177.160.5"
+    },
+    {
+      "name": "DCS931",
+      "reflector_type": "DCS",
+      "ipv4": "68.131.30.206"
+    },
+    {
+      "name": "DCS933",
+      "reflector_type": "DCS",
+      "ipv4": "164.132.104.167"
+    },
+    {
+      "name": "DCS935",
+      "reflector_type": "DCS",
+      "ipv4": "188.213.166.199"
+    },
+    {
+      "name": "DCS940",
+      "reflector_type": "DCS",
+      "ipv4": "202.218.37.121"
+    },
+    {
+      "name": "DCS944",
+      "reflector_type": "DCS",
+      "ipv4": "202.218.34.210"
+    },
+    {
+      "name": "DCS945",
+      "reflector_type": "DCS",
+      "ipv4": "213.202.229.40"
+    },
+    {
+      "name": "DCS946",
+      "reflector_type": "DCS",
+      "ipv4": "212.227.174.45"
+    },
+    {
+      "name": "DCS950",
+      "reflector_type": "DCS",
+      "ipv4": "158.64.26.134"
+    },
+    {
+      "name": "DCS951",
+      "reflector_type": "DCS",
+      "ipv4": "18.188.166.109"
+    },
+    {
+      "name": "DCS956",
+      "reflector_type": "DCS",
+      "ipv4": "192.99.245.120"
+    },
+    {
+      "name": "DCS959",
+      "reflector_type": "DCS",
+      "ipv4": "203.137.98.121"
+    },
+    {
+      "name": "DCS964",
+      "reflector_type": "DCS",
+      "ipv4": "52.173.142.244"
+    },
+    {
+      "name": "DCS965",
+      "reflector_type": "DCS",
+      "ipv4": "47.23.66.19"
+    },
+    {
+      "name": "DCS966",
+      "reflector_type": "DCS",
+      "ipv4": "203.150.19.24"
+    },
+    {
+      "name": "DCS967",
+      "reflector_type": "DCS",
+      "ipv4": "95.158.165.32"
+    },
+    {
+      "name": "DCS969",
+      "reflector_type": "DCS",
+      "ipv4": "142.93.46.36"
+    },
+    {
+      "name": "DCS970",
+      "reflector_type": "DCS",
+      "ipv4": "157.7.221.186"
+    },
+    {
+      "name": "DCS972",
+      "reflector_type": "DCS",
+      "ipv4": "109.226.48.53"
+    },
+    {
+      "name": "DCS973",
+      "reflector_type": "DCS",
+      "ipv4": "211.14.169.43"
+    },
+    {
+      "name": "DCS974",
+      "reflector_type": "DCS",
+      "ipv4": "94.177.217.52"
+    },
+    {
+      "name": "DCS975",
+      "reflector_type": "DCS",
+      "ipv4": "176.31.161.9"
+    },
+    {
+      "name": "DCS976",
+      "reflector_type": "DCS",
+      "ipv4": "212.237.36.71"
+    },
+    {
+      "name": "DCS979",
+      "reflector_type": "DCS",
+      "ipv4": "217.162.36.91"
+    },
+    {
+      "name": "DCS980",
+      "reflector_type": "DCS",
+      "ipv4": "80.211.84.249"
+    },
+    {
+      "name": "DCS986",
+      "reflector_type": "DCS",
+      "ipv4": "194.59.205.218"
+    },
+    {
+      "name": "DCS987",
+      "reflector_type": "DCS",
+      "ipv4": "185.32.183.148"
+    },
+    {
+      "name": "DCS988",
+      "reflector_type": "DCS",
+      "ipv4": "80.211.236.189"
+    },
+    {
+      "name": "DCS989",
+      "reflector_type": "DCS",
+      "ipv4": "50.27.131.75"
+    },
+    {
+      "name": "DCS990",
+      "reflector_type": "DCS",
+      "ipv4": "35.164.237.63"
+    },
+    {
+      "name": "DCS991",
+      "reflector_type": "DCS",
+      "ipv4": "80.211.19.121"
+    },
+    {
+      "name": "DCS992",
+      "reflector_type": "DCS",
+      "ipv4": "149.28.243.165"
+    },
+    {
+      "name": "DCS993",
+      "reflector_type": "DCS",
+      "ipv4": "97.64.20.63"
+    },
+    {
+      "name": "DCS994",
+      "reflector_type": "DCS",
+      "ipv4": "35.177.233.106"
+    },
+    {
+      "name": "DCS995",
+      "reflector_type": "DCS",
+      "ipv4": "118.27.30.92"
+    },
+    {
+      "name": "DCS996",
+      "reflector_type": "DCS",
+      "ipv4": "47.104.177.248"
+    },
+    {
+      "name": "DCS997",
+      "reflector_type": "DCS",
+      "ipv4": "94.177.187.40"
+    },
+    {
+      "name": "DCS998",
+      "reflector_type": "DCS",
+      "ipv4": "44.140.236.20"
+    },
+    {
+      "name": "DCS999",
+      "reflector_type": "DCS",
+      "ipv4": "94.177.173.53"
+    },
+    {
+      "name": "DCS034",
+      "reflector_type": "DCS",
+      "ipv4": "dcs034.xreflector.net"
+    },
+    {
+      "name": "REF001",
+      "reflector_type": "REF",
+      "ipv4": "ref001.dstargateway.org"
+    },
+    {
+      "name": "REF002",
+      "reflector_type": "REF",
+      "ipv4": "ref002.dstargateway.org"
+    },
+    {
+      "name": "REF003",
+      "reflector_type": "REF",
+      "ipv4": "ref003.dstargateway.org"
+    },
+    {
+      "name": "REF004",
+      "reflector_type": "REF",
+      "ipv4": "ref004.dstargateway.org"
+    },
+    {
+      "name": "REF005",
+      "reflector_type": "REF",
+      "ipv4": "ref005.dstargateway.org"
+    },
+    {
+      "name": "REF006",
+      "reflector_type": "REF",
+      "ipv4": "ref006.dstargateway.org"
+    },
+    {
+      "name": "REF007",
+      "reflector_type": "REF",
+      "ipv4": "ref007.dstargateway.org"
+    },
+    {
+      "name": "REF008",
+      "reflector_type": "REF",
+      "ipv4": "ref008.dstargateway.org"
+    },
+    {
+      "name": "REF009",
+      "reflector_type": "REF",
+      "ipv4": "ref009.dstargateway.org"
+    },
+    {
+      "name": "REF010",
+      "reflector_type": "REF",
+      "ipv4": "ref010.dstargateway.org"
+    },
+    {
+      "name": "REF011",
+      "reflector_type": "REF",
+      "ipv4": "ref011.dstargateway.org"
+    },
+    {
+      "name": "REF012",
+      "reflector_type": "REF",
+      "ipv4": "ref012.dstargateway.org"
+    },
+    {
+      "name": "REF013",
+      "reflector_type": "REF",
+      "ipv4": "ref013.dstargateway.org"
+    },
+    {
+      "name": "REF014",
+      "reflector_type": "REF",
+      "ipv4": "ref014.dstargateway.org"
+    },
+    {
+      "name": "REF015",
+      "reflector_type": "REF",
+      "ipv4": "ref015.dstargateway.org"
+    },
+    {
+      "name": "REF016",
+      "reflector_type": "REF",
+      "ipv4": "ref016.dstargateway.org"
+    },
+    {
+      "name": "REF017",
+      "reflector_type": "REF",
+      "ipv4": "ref017.dstargateway.org"
+    },
+    {
+      "name": "REF018",
+      "reflector_type": "REF",
+      "ipv4": "ref018.dstargateway.org"
+    },
+    {
+      "name": "REF019",
+      "reflector_type": "REF",
+      "ipv4": "ref019.dstargateway.org"
+    },
+    {
+      "name": "REF020",
+      "reflector_type": "REF",
+      "ipv4": "ref020.dstargateway.org"
+    },
+    {
+      "name": "REF021",
+      "reflector_type": "REF",
+      "ipv4": "ref021.dstargateway.org"
+    },
+    {
+      "name": "REF022",
+      "reflector_type": "REF",
+      "ipv4": "ref022.dstargateway.org"
+    },
+    {
+      "name": "REF023",
+      "reflector_type": "REF",
+      "ipv4": "ref023.dstargateway.org"
+    },
+    {
+      "name": "REF024",
+      "reflector_type": "REF",
+      "ipv4": "ref024.dstargateway.org"
+    },
+    {
+      "name": "REF025",
+      "reflector_type": "REF",
+      "ipv4": "ref025.dstargateway.org"
+    },
+    {
+      "name": "REF026",
+      "reflector_type": "REF",
+      "ipv4": "ref026.dstargateway.org"
+    },
+    {
+      "name": "REF027",
+      "reflector_type": "REF",
+      "ipv4": "ref027.dstargateway.org"
+    },
+    {
+      "name": "REF028",
+      "reflector_type": "REF",
+      "ipv4": "ref028.dstargateway.org"
+    },
+    {
+      "name": "REF029",
+      "reflector_type": "REF",
+      "ipv4": "ref029.dstargateway.org"
+    },
+    {
+      "name": "REF030",
+      "reflector_type": "REF",
+      "ipv4": "ref030.dstargateway.org"
+    },
+    {
+      "name": "REF031",
+      "reflector_type": "REF",
+      "ipv4": "ref031.dstargateway.org"
+    },
+    {
+      "name": "REF032",
+      "reflector_type": "REF",
+      "ipv4": "ref032.dstargateway.org"
+    },
+    {
+      "name": "REF033",
+      "reflector_type": "REF",
+      "ipv4": "ref033.dstargateway.org"
+    },
+    {
+      "name": "REF034",
+      "reflector_type": "REF",
+      "ipv4": "ref034.dstargateway.org"
+    },
+    {
+      "name": "REF035",
+      "reflector_type": "REF",
+      "ipv4": "ref035.dstargateway.org"
+    },
+    {
+      "name": "REF036",
+      "reflector_type": "REF",
+      "ipv4": "ref036.dstargateway.org"
+    },
+    {
+      "name": "REF037",
+      "reflector_type": "REF",
+      "ipv4": "ref037.dstargateway.org"
+    },
+    {
+      "name": "REF038",
+      "reflector_type": "REF",
+      "ipv4": "ref038.dstargateway.org"
+    },
+    {
+      "name": "REF039",
+      "reflector_type": "REF",
+      "ipv4": "ref039.dstargateway.org"
+    },
+    {
+      "name": "REF040",
+      "reflector_type": "REF",
+      "ipv4": "ref040.dstargateway.org"
+    },
+    {
+      "name": "REF041",
+      "reflector_type": "REF",
+      "ipv4": "ref041.dstargateway.org"
+    },
+    {
+      "name": "REF042",
+      "reflector_type": "REF",
+      "ipv4": "ref042.dstargateway.org"
+    },
+    {
+      "name": "REF043",
+      "reflector_type": "REF",
+      "ipv4": "ref043.dstargateway.org"
+    },
+    {
+      "name": "REF044",
+      "reflector_type": "REF",
+      "ipv4": "ref044.dstargateway.org"
+    },
+    {
+      "name": "REF045",
+      "reflector_type": "REF",
+      "ipv4": "ref045.dstargateway.org"
+    },
+    {
+      "name": "REF046",
+      "reflector_type": "REF",
+      "ipv4": "ref046.dstargateway.org"
+    },
+    {
+      "name": "REF047",
+      "reflector_type": "REF",
+      "ipv4": "ref047.dstargateway.org"
+    },
+    {
+      "name": "REF048",
+      "reflector_type": "REF",
+      "ipv4": "ref048.dstargateway.org"
+    },
+    {
+      "name": "REF049",
+      "reflector_type": "REF",
+      "ipv4": "ref049.dstargateway.org"
+    },
+    {
+      "name": "REF050",
+      "reflector_type": "REF",
+      "ipv4": "ref050.dstargateway.org"
+    },
+    {
+      "name": "REF051",
+      "reflector_type": "REF",
+      "ipv4": "ref051.dstargateway.org"
+    },
+    {
+      "name": "REF052",
+      "reflector_type": "REF",
+      "ipv4": "ref052.dstargateway.org"
+    },
+    {
+      "name": "REF053",
+      "reflector_type": "REF",
+      "ipv4": "ref053.dstargateway.org"
+    },
+    {
+      "name": "REF054",
+      "reflector_type": "REF",
+      "ipv4": "ref054.dstargateway.org"
+    },
+    {
+      "name": "REF055",
+      "reflector_type": "REF",
+      "ipv4": "ref055.dstargateway.org"
+    },
+    {
+      "name": "REF056",
+      "reflector_type": "REF",
+      "ipv4": "ref056.dstargateway.org"
+    },
+    {
+      "name": "REF057",
+      "reflector_type": "REF",
+      "ipv4": "ref057.dstargateway.org"
+    },
+    {
+      "name": "REF058",
+      "reflector_type": "REF",
+      "ipv4": "ref058.dstargateway.org"
+    },
+    {
+      "name": "REF059",
+      "reflector_type": "REF",
+      "ipv4": "ref059.dstargateway.org"
+    },
+    {
+      "name": "REF060",
+      "reflector_type": "REF",
+      "ipv4": "ref060.dstargateway.org"
+    },
+    {
+      "name": "REF061",
+      "reflector_type": "REF",
+      "ipv4": "ref061.dstargateway.org"
+    },
+    {
+      "name": "REF062",
+      "reflector_type": "REF",
+      "ipv4": "ref062.dstargateway.org"
+    },
+    {
+      "name": "REF063",
+      "reflector_type": "REF",
+      "ipv4": "ref063.dstargateway.org"
+    },
+    {
+      "name": "REF064",
+      "reflector_type": "REF",
+      "ipv4": "ref064.dstargateway.org"
+    },
+    {
+      "name": "REF065",
+      "reflector_type": "REF",
+      "ipv4": "ref065.dstargateway.org"
+    },
+    {
+      "name": "REF066",
+      "reflector_type": "REF",
+      "ipv4": "ref066.dstargateway.org"
+    },
+    {
+      "name": "REF067",
+      "reflector_type": "REF",
+      "ipv4": "ref067.dstargateway.org"
+    },
+    {
+      "name": "REF068",
+      "reflector_type": "REF",
+      "ipv4": "ref068.dstargateway.org"
+    },
+    {
+      "name": "REF069",
+      "reflector_type": "REF",
+      "ipv4": "ref069.dstargateway.org"
+    },
+    {
+      "name": "REF070",
+      "reflector_type": "REF",
+      "ipv4": "ref070.dstargateway.org"
+    },
+    {
+      "name": "REF071",
+      "reflector_type": "REF",
+      "ipv4": "ref071.dstargateway.org"
+    },
+    {
+      "name": "REF072",
+      "reflector_type": "REF",
+      "ipv4": "ref072.dstargateway.org"
+    },
+    {
+      "name": "REF073",
+      "reflector_type": "REF",
+      "ipv4": "ref073.dstargateway.org"
+    },
+    {
+      "name": "REF074",
+      "reflector_type": "REF",
+      "ipv4": "ref074.dstargateway.org"
+    },
+    {
+      "name": "REF075",
+      "reflector_type": "REF",
+      "ipv4": "ref075.dstargateway.org"
+    },
+    {
+      "name": "REF076",
+      "reflector_type": "REF",
+      "ipv4": "ref076.dstargateway.org"
+    },
+    {
+      "name": "REF077",
+      "reflector_type": "REF",
+      "ipv4": "ref077.dstargateway.org"
+    },
+    {
+      "name": "REF078",
+      "reflector_type": "REF",
+      "ipv4": "ref078.dstargateway.org"
+    },
+    {
+      "name": "REF079",
+      "reflector_type": "REF",
+      "ipv4": "ref079.dstargateway.org"
+    },
+    {
+      "name": "REF080",
+      "reflector_type": "REF",
+      "ipv4": "ref080.dstargateway.org"
+    },
+    {
+      "name": "REF081",
+      "reflector_type": "REF",
+      "ipv4": "ref081.dstargateway.org"
+    },
+    {
+      "name": "REF082",
+      "reflector_type": "REF",
+      "ipv4": "ref082.dstargateway.org"
+    },
+    {
+      "name": "REF083",
+      "reflector_type": "REF",
+      "ipv4": "ref083.dstargateway.org"
+    },
+    {
+      "name": "REF084",
+      "reflector_type": "REF",
+      "ipv4": "ref084.dstargateway.org"
+    },
+    {
+      "name": "REF085",
+      "reflector_type": "REF",
+      "ipv4": "ref085.dstargateway.org"
+    },
+    {
+      "name": "REF086",
+      "reflector_type": "REF",
+      "ipv4": "ref086.dstargateway.org"
+    },
+    {
+      "name": "REF087",
+      "reflector_type": "REF",
+      "ipv4": "ref087.dstargateway.org"
+    },
+    {
+      "name": "REF088",
+      "reflector_type": "REF",
+      "ipv4": "ref088.dstargateway.org"
+    },
+    {
+      "name": "REF089",
+      "reflector_type": "REF",
+      "ipv4": "ref089.dstargateway.org"
+    },
+    {
+      "name": "REF367",
+      "reflector_type": "REF",
+      "ipv4": "xrf367.ad6dm.net"
+    },
+    {
+      "name": "REF425",
+      "reflector_type": "REF",
+      "ipv4": "xlx425.xlx.ar-dns.net"
+    },
+    {
+      "name": "REF520",
+      "reflector_type": "REF",
+      "ipv4": "xlx.dtdxa.com"
+    },
+    {
+      "name": "REF555",
+      "reflector_type": "REF",
+      "ipv4": "xlx555.dtdxa.com"
+    },
+    {
+      "name": "REF911",
+      "reflector_type": "REF",
+      "ipv4": "xlx911.patrweb.com"
+    },
+    {
+      "name": "XRF000",
+      "reflector_type": "XRF",
+      "ipv4": "23.111.174.198"
+    },
+    {
+      "name": "XRF001",
+      "reflector_type": "XRF",
+      "ipv4": "77.57.24.143"
+    },
+    {
+      "name": "XRF002",
+      "reflector_type": "XRF",
+      "ipv4": "140.82.62.162"
+    },
+    {
+      "name": "XRF003",
+      "reflector_type": "XRF",
+      "ipv4": "173.199.124.183"
+    },
+    {
+      "name": "XRF004",
+      "reflector_type": "XRF",
+      "ipv4": "44.103.34.3"
+    },
+    {
+      "name": "XRF005",
+      "reflector_type": "XRF",
+      "ipv4": "50.116.62.225"
+    },
+    {
+      "name": "XRF006",
+      "reflector_type": "XRF",
+      "ipv4": "34.213.176.201"
+    },
+    {
+      "name": "XRF007",
+      "reflector_type": "XRF",
+      "ipv4": "82.223.18.138"
+    },
+    {
+      "name": "XRF008",
+      "reflector_type": "XRF",
+      "ipv4": "45.77.153.132"
+    },
+    {
+      "name": "XRF009",
+      "reflector_type": "XRF",
+      "ipv4": "118.150.164.96"
+    },
+    {
+      "name": "XRF010",
+      "reflector_type": "XRF",
+      "ipv4": "85.197.129.86"
+    },
+    {
+      "name": "XRF011",
+      "reflector_type": "XRF",
+      "ipv4": "81.95.126.168"
+    },
+    {
+      "name": "XRF012",
+      "reflector_type": "XRF",
+      "ipv4": "52.26.161.5"
+    },
+    {
+      "name": "XRF013",
+      "reflector_type": "XRF",
+      "ipv4": "34.213.176.201"
+    },
+    {
+      "name": "XRF014",
+      "reflector_type": "XRF",
+      "ipv4": "xrf014.iz0rin.it"
+    },
+    {
+      "name": "XRF015",
+      "reflector_type": "XRF",
+      "ipv4": "194.59.205.228"
+    },
+    {
+      "name": "XRF016",
+      "reflector_type": "XRF",
+      "ipv4": "xrf016.ampr.at"
+    },
+    {
+      "name": "XRF017",
+      "reflector_type": "XRF",
+      "ipv4": "92.177.212.64"
+    },
+    {
+      "name": "XRF018",
+      "reflector_type": "XRF",
+      "ipv4": "flatcap.badweather.net"
+    },
+    {
+      "name": "XRF019",
+      "reflector_type": "XRF",
+      "ipv4": "46.28.108.233"
+    },
+    {
+      "name": "XRF020",
+      "reflector_type": "XRF",
+      "ipv4": "xrf020.k2dls.net"
+    },
+    {
+      "name": "XRF021",
+      "reflector_type": "XRF",
+      "ipv4": "44.103.34.4"
+    },
+    {
+      "name": "XRF022",
+      "reflector_type": "XRF",
+      "ipv4": "83.137.45.98"
+    },
+    {
+      "name": "XRF023",
+      "reflector_type": "XRF",
+      "ipv4": "185.177.59.166"
+    },
+    {
+      "name": "XRF024",
+      "reflector_type": "XRF",
+      "ipv4": "94.199.173.123"
+    },
+    {
+      "name": "XRF025",
+      "reflector_type": "XRF",
+      "ipv4": "89.38.150.252"
+    },
+    {
+      "name": "XRF026",
+      "reflector_type": "XRF",
+      "ipv4": "65.175.188.230"
+    },
+    {
+      "name": "XRF027",
+      "reflector_type": "XRF",
+      "ipv4": "194.116.29.78"
+    },
+    {
+      "name": "XRF028",
+      "reflector_type": "XRF",
+      "ipv4": "172.104.63.79"
+    },
+    {
+      "name": "XRF029",
+      "reflector_type": "XRF",
+      "ipv4": "80.123.238.76"
+    },
+    {
+      "name": "XRF030",
+      "reflector_type": "XRF",
+      "ipv4": "194.59.177.44"
+    },
+    {
+      "name": "XRF031",
+      "reflector_type": "XRF",
+      "ipv4": "83.241.141.245"
+    },
+    {
+      "name": "XRF032",
+      "reflector_type": "XRF",
+      "ipv4": "158.64.26.140"
+    },
+    {
+      "name": "XRF033",
+      "reflector_type": "XRF",
+      "ipv4": "46.226.178.81"
+    },
+    {
+      "name": "XRF034",
+      "reflector_type": "XRF",
+      "ipv4": "xrf034.dynu.net"
+    },
+    {
+      "name": "XRF035",
+      "reflector_type": "XRF",
+      "ipv4": "45.79.94.184"
+    },
+    {
+      "name": "XRF036",
+      "reflector_type": "XRF",
+      "ipv4": "151.12.36.112"
+    },
+    {
+      "name": "XRF037",
+      "reflector_type": "XRF",
+      "ipv4": "185.58.193.163"
+    },
+    {
+      "name": "XRF038",
+      "reflector_type": "XRF",
+      "ipv4": "44.103.34.19"
+    },
+    {
+      "name": "XRF039",
+      "reflector_type": "XRF",
+      "ipv4": "31.14.142.119"
+    },
+    {
+      "name": "XRF040",
+      "reflector_type": "XRF",
+      "ipv4": "109.71.45.29"
+    },
+    {
+      "name": "XRF041",
+      "reflector_type": "XRF",
+      "ipv4": "167.88.37.80"
+    },
+    {
+      "name": "XRF042",
+      "reflector_type": "XRF",
+      "ipv4": "xrf042.luthienstar.fr"
+    },
+    {
+      "name": "XRF043",
+      "reflector_type": "XRF",
+      "ipv4": "xrf043.aotnet.it"
+    },
+    {
+      "name": "XRF044",
+      "reflector_type": "XRF",
+      "ipv4": "82.1.185.173"
+    },
+    {
+      "name": "XRF045",
+      "reflector_type": "XRF",
+      "ipv4": "45.62.233.223"
+    },
+    {
+      "name": "XRF046",
+      "reflector_type": "XRF",
+      "ipv4": "176.10.140.161"
+    },
+    {
+      "name": "XRF047",
+      "reflector_type": "XRF",
+      "ipv4": "202.171.147.58"
+    },
+    {
+      "name": "XRF048",
+      "reflector_type": "XRF",
+      "ipv4": "xrf048.n5uxt.org"
+    },
+    {
+      "name": "XRF049",
+      "reflector_type": "XRF",
+      "ipv4": "212.71.234.224"
+    },
+    {
+      "name": "XRF050",
+      "reflector_type": "XRF",
+      "ipv4": "80.211.155.206"
+    },
+    {
+      "name": "XRF051",
+      "reflector_type": "XRF",
+      "ipv4": "93.186.254.219"
+    },
+    {
+      "name": "XRF052",
+      "reflector_type": "XRF",
+      "ipv4": "121.119.96.205"
+    },
+    {
+      "name": "XRF053",
+      "reflector_type": "XRF",
+      "ipv4": "185.97.120.120"
+    },
+    {
+      "name": "XRF054",
+      "reflector_type": "XRF",
+      "ipv4": "52.86.180.251"
+    },
+    {
+      "name": "XRF055",
+      "reflector_type": "XRF",
+      "ipv4": "52.80.4.154"
+    },
+    {
+      "name": "XRF056",
+      "reflector_type": "XRF",
+      "ipv4": "xrf056.homepc.it"
+    },
+    {
+      "name": "XRF057",
+      "reflector_type": "XRF",
+      "ipv4": "74.193.217.15"
+    },
+    {
+      "name": "XRF058",
+      "reflector_type": "XRF",
+      "ipv4": "133.208.235.3"
+    },
+    {
+      "name": "XRF059",
+      "reflector_type": "XRF",
+      "ipv4": "18.219.32.21"
+    },
+    {
+      "name": "XRF060",
+      "reflector_type": "XRF",
+      "ipv4": "212.237.36.181"
+    },
+    {
+      "name": "XRF061",
+      "reflector_type": "XRF",
+      "ipv4": "68.115.205.110"
+    },
+    {
+      "name": "XRF062",
+      "reflector_type": "XRF",
+      "ipv4": "72.17.20.173"
+    },
+    {
+      "name": "XRF063",
+      "reflector_type": "XRF",
+      "ipv4": "162.248.141.148"
+    },
+    {
+      "name": "XRF064",
+      "reflector_type": "XRF",
+      "ipv4": "122.222.1.50"
+    },
+    {
+      "name": "XRF065",
+      "reflector_type": "XRF",
+      "ipv4": "212.237.53.67"
+    },
+    {
+      "name": "XRF066",
+      "reflector_type": "XRF",
+      "ipv4": "87.7.192.18"
+    },
+    {
+      "name": "XRF067",
+      "reflector_type": "XRF",
+      "ipv4": "95.60.130.176"
+    },
+    {
+      "name": "XRF068",
+      "reflector_type": "XRF",
+      "ipv4": "92.222.145.202"
+    },
+    {
+      "name": "XRF069",
+      "reflector_type": "XRF",
+      "ipv4": "xrf069.sustrai.org"
+    },
+    {
+      "name": "XRF070",
+      "reflector_type": "XRF",
+      "ipv4": "xrf070.iptime.org"
+    },
+    {
+      "name": "XRF071",
+      "reflector_type": "XRF",
+      "ipv4": "211.60.41.185"
+    },
+    {
+      "name": "XRF072",
+      "reflector_type": "XRF",
+      "ipv4": "75.60.237.17"
+    },
+    {
+      "name": "XRF073",
+      "reflector_type": "XRF",
+      "ipv4": "147.102.7.34"
+    },
+    {
+      "name": "XRF074",
+      "reflector_type": "XRF",
+      "ipv4": "212.237.211.82"
+    },
+    {
+      "name": "XRF075",
+      "reflector_type": "XRF",
+      "ipv4": "5.135.162.136"
+    },
+    {
+      "name": "XRF076",
+      "reflector_type": "XRF",
+      "ipv4": "203.137.116.117"
+    },
+    {
+      "name": "XRF077",
+      "reflector_type": "XRF",
+      "ipv4": "216.21.9.156"
+    },
+    {
+      "name": "XRF078",
+      "reflector_type": "XRF",
+      "ipv4": "109.15.57.11"
+    },
+    {
+      "name": "XRF079",
+      "reflector_type": "XRF",
+      "ipv4": "184.23.183.98"
+    },
+    {
+      "name": "XRF080",
+      "reflector_type": "XRF",
+      "ipv4": "121.81.128.207"
+    },
+    {
+      "name": "XRF081",
+      "reflector_type": "XRF",
+      "ipv4": "121.82.151.243"
+    },
+    {
+      "name": "XRF082",
+      "reflector_type": "XRF",
+      "ipv4": "110.232.113.108"
+    },
+    {
+      "name": "XRF083",
+      "reflector_type": "XRF",
+      "ipv4": "185.205.210.217"
+    },
+    {
+      "name": "XRF084",
+      "reflector_type": "XRF",
+      "ipv4": "45.79.93.167"
+    },
+    {
+      "name": "XRF085",
+      "reflector_type": "XRF",
+      "ipv4": "113.150.26.8"
+    },
+    {
+      "name": "XRF086",
+      "reflector_type": "XRF",
+      "ipv4": "52.80.139.252"
+    },
+    {
+      "name": "XRF087",
+      "reflector_type": "XRF",
+      "ipv4": "44.137.36.209"
+    },
+    {
+      "name": "XRF088",
+      "reflector_type": "XRF",
+      "ipv4": "194.109.192.235"
+    },
+    {
+      "name": "XRF089",
+      "reflector_type": "XRF",
+      "ipv4": "194.109.192.236"
+    },
+    {
+      "name": "XRF090",
+      "reflector_type": "XRF",
+      "ipv4": "91.92.136.252"
+    },
+    {
+      "name": "XRF091",
+      "reflector_type": "XRF",
+      "ipv4": "89.36.219.197"
+    },
+    {
+      "name": "XRF092",
+      "reflector_type": "XRF",
+      "ipv4": "104.200.25.53"
+    },
+    {
+      "name": "XRF093",
+      "reflector_type": "XRF",
+      "ipv4": "185.177.59.221"
+    },
+    {
+      "name": "XRF094",
+      "reflector_type": "XRF",
+      "ipv4": "157.7.221.186"
+    },
+    {
+      "name": "XRF095",
+      "reflector_type": "XRF",
+      "ipv4": "203.137.76.53"
+    },
+    {
+      "name": "XRF097",
+      "reflector_type": "XRF",
+      "ipv4": "80.211.154.173"
+    },
+    {
+      "name": "XRF098",
+      "reflector_type": "XRF",
+      "ipv4": "203.136.233.165"
+    },
+    {
+      "name": "XRF099",
+      "reflector_type": "XRF",
+      "ipv4": "80.211.27.75"
+    },
+    {
+      "name": "XRF100",
+      "reflector_type": "XRF",
+      "ipv4": "45.62.233.223"
+    },
+    {
+      "name": "XRF101",
+      "reflector_type": "XRF",
+      "ipv4": "45.62.213.101"
+    },
+    {
+      "name": "XRF102",
+      "reflector_type": "XRF",
+      "ipv4": "23.111.174.196"
+    },
+    {
+      "name": "XRF103",
+      "reflector_type": "XRF",
+      "ipv4": "64.137.224.126"
+    },
+    {
+      "name": "XRF104",
+      "reflector_type": "XRF",
+      "ipv4": "23.111.174.197"
+    },
+    {
+      "name": "XRF105",
+      "reflector_type": "XRF",
+      "ipv4": "51.254.99.78"
+    },
+    {
+      "name": "XRF109",
+      "reflector_type": "XRF",
+      "ipv4": "182.168.128.138"
+    },
+    {
+      "name": "XRF110",
+      "reflector_type": "XRF",
+      "ipv4": "150.7.164.10"
+    },
+    {
+      "name": "XRF111",
+      "reflector_type": "XRF",
+      "ipv4": "61.195.96.160"
+    },
+    {
+      "name": "XRF112",
+      "reflector_type": "XRF",
+      "ipv4": "94.177.235.81"
+    },
+    {
+      "name": "XRF113",
+      "reflector_type": "XRF",
+      "ipv4": "212.227.202.198"
+    },
+    {
+      "name": "XRF114",
+      "reflector_type": "XRF",
+      "ipv4": "5.135.188.16"
+    },
+    {
+      "name": "XRF115",
+      "reflector_type": "XRF",
+      "ipv4": "217.182.128.3"
+    },
+    {
+      "name": "XRF116",
+      "reflector_type": "XRF",
+      "ipv4": "31.185.101.211"
+    },
+    {
+      "name": "XRF118",
+      "reflector_type": "XRF",
+      "ipv4": "5.249.148.252"
+    },
+    {
+      "name": "XRF119",
+      "reflector_type": "XRF",
+      "ipv4": "125.129.207.86"
+    },
+    {
+      "name": "XRF120",
+      "reflector_type": "XRF",
+      "ipv4": "81.150.10.63"
+    },
+    {
+      "name": "XRF121",
+      "reflector_type": "XRF",
+      "ipv4": "174.37.249.156"
+    },
+    {
+      "name": "XRF122",
+      "reflector_type": "XRF",
+      "ipv4": "83.137.45.126"
+    },
+    {
+      "name": "XRF123",
+      "reflector_type": "XRF",
+      "ipv4": "213.126.90.100"
+    },
+    {
+      "name": "XRF124",
+      "reflector_type": "XRF",
+      "ipv4": "211.14.169.234"
+    },
+    {
+      "name": "XRF125",
+      "reflector_type": "XRF",
+      "ipv4": "213.181.208.52"
+    },
+    {
+      "name": "XRF127",
+      "reflector_type": "XRF",
+      "ipv4": "190.112.228.107"
+    },
+    {
+      "name": "XRF128",
+      "reflector_type": "XRF",
+      "ipv4": "153.147.157.213"
+    },
+    {
+      "name": "XRF129",
+      "reflector_type": "XRF",
+      "ipv4": "220.209.106.220"
+    },
+    {
+      "name": "XRF130",
+      "reflector_type": "XRF",
+      "ipv4": "194.59.177.45"
+    },
+    {
+      "name": "XRF131",
+      "reflector_type": "XRF",
+      "ipv4": "80.127.118.226"
+    },
+    {
+      "name": "XRF132",
+      "reflector_type": "XRF",
+      "ipv4": "91.203.55.87"
+    },
+    {
+      "name": "XRF133",
+      "reflector_type": "XRF",
+      "ipv4": "xrf133.gb7de.co.uk"
+    },
+    {
+      "name": "XRF134",
+      "reflector_type": "XRF",
+      "ipv4": "159.89.176.86"
+    },
+    {
+      "name": "XRF135",
+      "reflector_type": "XRF",
+      "ipv4": "74.208.214.69"
+    },
+    {
+      "name": "XRF140",
+      "reflector_type": "XRF",
+      "ipv4": "95.211.211.145"
+    },
+    {
+      "name": "XRF145",
+      "reflector_type": "XRF",
+      "ipv4": "178.59.23.138"
+    },
+    {
+      "name": "XRF146",
+      "reflector_type": "XRF",
+      "ipv4": "213.7.90.5"
+    },
+    {
+      "name": "XRF147",
+      "reflector_type": "XRF",
+      "ipv4": "46.41.1.127"
+    },
+    {
+      "name": "XRF150",
+      "reflector_type": "XRF",
+      "ipv4": "80.211.10.212"
+    },
+    {
+      "name": "XRF153",
+      "reflector_type": "XRF",
+      "ipv4": "210.189.104.236"
+    },
+    {
+      "name": "XRF155",
+      "reflector_type": "XRF",
+      "ipv4": "18.235.96.93"
+    },
+    {
+      "name": "XRF158",
+      "reflector_type": "XRF",
+      "ipv4": "150.66.16.176"
+    },
+    {
+      "name": "XRF160",
+      "reflector_type": "XRF",
+      "ipv4": "61.195.109.179"
+    },
+    {
+      "name": "XRF164",
+      "reflector_type": "XRF",
+      "ipv4": "122.222.1.50"
+    },
+    {
+      "name": "XRF168",
+      "reflector_type": "XRF",
+      "ipv4": "xrf168.duckdns.org"
+    },
+    {
+      "name": "XRF170",
+      "reflector_type": "XRF",
+      "ipv4": "210.178.113.173"
+    },
+    {
+      "name": "XRF171",
+      "reflector_type": "XRF",
+      "ipv4": "210.178.113.123"
+    },
+    {
+      "name": "XRF175",
+      "reflector_type": "XRF",
+      "ipv4": "162.248.92.25"
+    },
+    {
+      "name": "XRF177",
+      "reflector_type": "XRF",
+      "ipv4": "xlx177.webandcloud.net"
+    },
+    {
+      "name": "XRF180",
+      "reflector_type": "XRF",
+      "ipv4": "192.241.240.7"
+    },
+    {
+      "name": "XRF181",
+      "reflector_type": "XRF",
+      "ipv4": "122.19.214.143"
+    },
+    {
+      "name": "XRF185",
+      "reflector_type": "XRF",
+      "ipv4": "89.106.108.151"
+    },
+    {
+      "name": "XRF190",
+      "reflector_type": "XRF",
+      "ipv4": "190.194.12.53"
+    },
+    {
+      "name": "XRF199",
+      "reflector_type": "XRF",
+      "ipv4": "153.126.179.214"
+    },
+    {
+      "name": "XRF200",
+      "reflector_type": "XRF",
+      "ipv4": "185.203.119.158"
+    },
+    {
+      "name": "XRF202",
+      "reflector_type": "XRF",
+      "ipv4": "148.251.122.251"
+    },
+    {
+      "name": "XRF204",
+      "reflector_type": "XRF",
+      "ipv4": "85.214.126.111"
+    },
+    {
+      "name": "XRF206",
+      "reflector_type": "XRF",
+      "ipv4": "193.190.240.227"
+    },
+    {
+      "name": "XRF208",
+      "reflector_type": "XRF",
+      "ipv4": "151.80.155.39"
+    },
+    {
+      "name": "XRF210",
+      "reflector_type": "XRF",
+      "ipv4": "64.137.224.107"
+    },
+    {
+      "name": "XRF212",
+      "reflector_type": "XRF",
+      "ipv4": "52.38.90.188"
+    },
+    {
+      "name": "XRF214",
+      "reflector_type": "XRF",
+      "ipv4": "185.47.129.230"
+    },
+    {
+      "name": "XRF215",
+      "reflector_type": "XRF",
+      "ipv4": "185.87.96.172"
+    },
+    {
+      "name": "XRF216",
+      "reflector_type": "XRF",
+      "ipv4": "74.214.25.135"
+    },
+    {
+      "name": "XRF220",
+      "reflector_type": "XRF",
+      "ipv4": "124.41.83.11"
+    },
+    {
+      "name": "XRF222",
+      "reflector_type": "XRF",
+      "ipv4": "212.43.96.84"
+    },
+    {
+      "name": "XRF223",
+      "reflector_type": "XRF",
+      "ipv4": "208.73.201.157"
+    },
+    {
+      "name": "XRF224",
+      "reflector_type": "XRF",
+      "ipv4": "203.137.99.97"
+    },
+    {
+      "name": "XRF226",
+      "reflector_type": "XRF",
+      "ipv4": "2.226.183.226"
+    },
+    {
+      "name": "XRF227",
+      "reflector_type": "XRF",
+      "ipv4": "89.33.44.100"
+    },
+    {
+      "name": "XRF228",
+      "reflector_type": "XRF",
+      "ipv4": "212.237.33.114"
+    },
+    {
+      "name": "XRF229",
+      "reflector_type": "XRF",
+      "ipv4": "194.191.4.54"
+    },
+    {
+      "name": "XRF230",
+      "reflector_type": "XRF",
+      "ipv4": "80.250.3.114"
+    },
+    {
+      "name": "XRF232",
+      "reflector_type": "XRF",
+      "ipv4": "89.185.97.35"
+    },
+    {
+      "name": "XRF233",
+      "reflector_type": "XRF",
+      "ipv4": "xlx233.f1smf.com"
+    },
+    {
+      "name": "XRF235",
+      "reflector_type": "XRF",
+      "ipv4": "5.150.254.97"
+    },
+    {
+      "name": "XRF238",
+      "reflector_type": "XRF",
+      "ipv4": "172.104.239.219"
+    },
+    {
+      "name": "XRF241",
+      "reflector_type": "XRF",
+      "ipv4": "151.80.158.227"
+    },
+    {
+      "name": "XRF242",
+      "reflector_type": "XRF",
+      "ipv4": "73.14.84.43"
+    },
+    {
+      "name": "XRF246",
+      "reflector_type": "XRF",
+      "ipv4": "172.93.48.159"
+    },
+    {
+      "name": "XRF248",
+      "reflector_type": "XRF",
+      "ipv4": "xrf248.dyndns.org"
+    },
+    {
+      "name": "XRF250",
+      "reflector_type": "XRF",
+      "ipv4": "xrf250.dstar.su"
+    },
+    {
+      "name": "XRF252",
+      "reflector_type": "XRF",
+      "ipv4": "je7zbu.jpn.ph"
+    },
+    {
+      "name": "XRF255",
+      "reflector_type": "XRF",
+      "ipv4": "142.91.158.199"
+    },
+    {
+      "name": "XRF257",
+      "reflector_type": "XRF",
+      "ipv4": "47.157.82.87"
+    },
+    {
+      "name": "XRF258",
+      "reflector_type": "XRF",
+      "ipv4": "75.60.237.19"
+    },
+    {
+      "name": "XRF261",
+      "reflector_type": "XRF",
+      "ipv4": "44.144.0.23"
+    },
+    {
+      "name": "XRF262",
+      "reflector_type": "XRF",
+      "ipv4": "92.201.84.2"
+    },
+    {
+      "name": "XRF263",
+      "reflector_type": "XRF",
+      "ipv4": "85.214.193.146"
+    },
+    {
+      "name": "XRF264",
+      "reflector_type": "XRF",
+      "ipv4": "52.2.131.118"
+    },
+    {
+      "name": "XRF265",
+      "reflector_type": "XRF",
+      "ipv4": "51.255.43.60"
+    },
+    {
+      "name": "XRF266",
+      "reflector_type": "XRF",
+      "ipv4": "212.237.51.82"
+    },
+    {
+      "name": "XRF268",
+      "reflector_type": "XRF",
+      "ipv4": "194.38.140.204"
+    },
+    {
+      "name": "XRF270",
+      "reflector_type": "XRF",
+      "ipv4": "158.64.26.132"
+    },
+    {
+      "name": "XRF272",
+      "reflector_type": "XRF",
+      "ipv4": "200.231.36.188"
+    },
+    {
+      "name": "XRF275",
+      "reflector_type": "XRF",
+      "ipv4": "xrf275.dyndns.org"
+    },
+    {
+      "name": "XRF277",
+      "reflector_type": "XRF",
+      "ipv4": "xlx277.dyndns.org"
+    },
+    {
+      "name": "XRF280",
+      "reflector_type": "XRF",
+      "ipv4": "95.234.119.44"
+    },
+    {
+      "name": "XRF282",
+      "reflector_type": "XRF",
+      "ipv4": "210.188.25.17"
+    },
+    {
+      "name": "XRF284",
+      "reflector_type": "XRF",
+      "ipv4": "95.158.165.32"
+    },
+    {
+      "name": "XRF285",
+      "reflector_type": "XRF",
+      "ipv4": "91.92.93.15"
+    },
+    {
+      "name": "XRF287",
+      "reflector_type": "XRF",
+      "ipv4": "43.245.172.2"
+    },
+    {
+      "name": "XRF288",
+      "reflector_type": "XRF",
+      "ipv4": "99.108.210.100"
+    },
+    {
+      "name": "XRF290",
+      "reflector_type": "XRF",
+      "ipv4": "44.182.7.20"
+    },
+    {
+      "name": "XRF291",
+      "reflector_type": "XRF",
+      "ipv4": "101.143.242.189"
+    },
+    {
+      "name": "XRF295",
+      "reflector_type": "XRF",
+      "ipv4": "45.62.224.93"
+    },
+    {
+      "name": "XRF298",
+      "reflector_type": "XRF",
+      "ipv4": "220.144.59.222"
+    },
+    {
+      "name": "XRF299",
+      "reflector_type": "XRF",
+      "ipv4": "203.86.194.92"
+    },
+    {
+      "name": "XRF300",
+      "reflector_type": "XRF",
+      "ipv4": "45.62.244.43"
+    },
+    {
+      "name": "XRF302",
+      "reflector_type": "XRF",
+      "ipv4": "144.217.241.23"
+    },
+    {
+      "name": "XRF303",
+      "reflector_type": "XRF",
+      "ipv4": "75.70.52.143"
+    },
+    {
+      "name": "XRF305",
+      "reflector_type": "XRF",
+      "ipv4": "145.239.116.57"
+    },
+    {
+      "name": "XRF307",
+      "reflector_type": "XRF",
+      "ipv4": "72.21.76.154"
+    },
+    {
+      "name": "XRF310",
+      "reflector_type": "XRF",
+      "ipv4": "52.11.207.121"
+    },
+    {
+      "name": "XRF311",
+      "reflector_type": "XRF",
+      "ipv4": "46.41.0.214"
+    },
+    {
+      "name": "XRF312",
+      "reflector_type": "XRF",
+      "ipv4": "192.241.160.183"
+    },
+    {
+      "name": "XRF313",
+      "reflector_type": "XRF",
+      "ipv4": "34.213.108.164"
+    },
+    {
+      "name": "XRF314",
+      "reflector_type": "XRF",
+      "ipv4": "162.248.10.154"
+    },
+    {
+      "name": "XRF315",
+      "reflector_type": "XRF",
+      "ipv4": "65.101.7.50"
+    },
+    {
+      "name": "XRF317",
+      "reflector_type": "XRF",
+      "ipv4": "44.48.8.15"
+    },
+    {
+      "name": "XRF318",
+      "reflector_type": "XRF",
+      "ipv4": "xrf318.xrefl.net"
+    },
+    {
+      "name": "XRF321",
+      "reflector_type": "XRF",
+      "ipv4": "31.207.110.45"
+    },
+    {
+      "name": "XRF328",
+      "reflector_type": "XRF",
+      "ipv4": "212.237.33.114"
+    },
+    {
+      "name": "XRF329",
+      "reflector_type": "XRF",
+      "ipv4": "114.181.139.32"
+    },
+    {
+      "name": "XRF330",
+      "reflector_type": "XRF",
+      "ipv4": "18.222.199.205"
+    },
+    {
+      "name": "XRF332",
+      "reflector_type": "XRF",
+      "ipv4": "188.213.168.99"
+    },
+    {
+      "name": "XRF333",
+      "reflector_type": "XRF",
+      "ipv4": "194.116.29.73"
+    },
+    {
+      "name": "XRF334",
+      "reflector_type": "XRF",
+      "ipv4": "96.47.95.121"
+    },
+    {
+      "name": "XRF335",
+      "reflector_type": "XRF",
+      "ipv4": "185.206.145.2"
+    },
+    {
+      "name": "XRF336",
+      "reflector_type": "XRF",
+      "ipv4": "23.226.233.133"
+    },
+    {
+      "name": "XRF338",
+      "reflector_type": "XRF",
+      "ipv4": "122.116.216.47"
+    },
+    {
+      "name": "XRF339",
+      "reflector_type": "XRF",
+      "ipv4": "198.98.53.247"
+    },
+    {
+      "name": "XRF345",
+      "reflector_type": "XRF",
+      "ipv4": "45.62.237.34"
+    },
+    {
+      "name": "XRF350",
+      "reflector_type": "XRF",
+      "ipv4": "350.opendstar.eu"
+    },
+    {
+      "name": "XRF352",
+      "reflector_type": "XRF",
+      "ipv4": "35.230.162.146"
+    },
+    {
+      "name": "XRF353",
+      "reflector_type": "XRF",
+      "ipv4": "94.173.206.53"
+    },
+    {
+      "name": "XRF356",
+      "reflector_type": "XRF",
+      "ipv4": "93.152.167.4"
+    },
+    {
+      "name": "XRF357",
+      "reflector_type": "XRF",
+      "ipv4": "93.152.167.4"
+    },
+    {
+      "name": "XRF358",
+      "reflector_type": "XRF",
+      "ipv4": "93.152.167.4"
+    },
+    {
+      "name": "XRF359",
+      "reflector_type": "XRF",
+      "ipv4": "94.156.172.213"
+    },
+    {
+      "name": "XRF360",
+      "reflector_type": "XRF",
+      "ipv4": "222.229.25.105"
+    },
+    {
+      "name": "XRF364",
+      "reflector_type": "XRF",
+      "ipv4": "159.65.231.53"
+    },
+    {
+      "name": "XRF365",
+      "reflector_type": "XRF",
+      "ipv4": "59.139.141.204"
+    },
+    {
+      "name": "XRF367",
+      "reflector_type": "XRF",
+      "ipv4": "18.216.66.72"
+    },
+    {
+      "name": "XRF370",
+      "reflector_type": "XRF",
+      "ipv4": "188.213.168.24"
+    },
+    {
+      "name": "XRF371",
+      "reflector_type": "XRF",
+      "ipv4": "212.237.8.77"
+    },
+    {
+      "name": "XRF373",
+      "reflector_type": "XRF",
+      "ipv4": "119.229.134.1"
+    },
+    {
+      "name": "XRF374",
+      "reflector_type": "XRF",
+      "ipv4": "61.195.108.146"
+    },
+    {
+      "name": "XRF376",
+      "reflector_type": "XRF",
+      "ipv4": "75.145.119.225"
+    },
+    {
+      "name": "XRF377",
+      "reflector_type": "XRF",
+      "ipv4": "186.159.96.100"
+    },
+    {
+      "name": "XRF379",
+      "reflector_type": "XRF",
+      "ipv4": "104.218.36.162"
+    },
+    {
+      "name": "XRF380",
+      "reflector_type": "XRF",
+      "ipv4": "160.16.65.39"
+    },
+    {
+      "name": "XRF382",
+      "reflector_type": "XRF",
+      "ipv4": "211.131.19.200"
+    },
+    {
+      "name": "XRF387",
+      "reflector_type": "XRF",
+      "ipv4": "195.130.59.77"
+    },
+    {
+      "name": "XRF388",
+      "reflector_type": "XRF",
+      "ipv4": "138.197.67.52"
+    },
+    {
+      "name": "XRF389",
+      "reflector_type": "XRF",
+      "ipv4": "106.70.187.224"
+    },
+    {
+      "name": "XRF390",
+      "reflector_type": "XRF",
+      "ipv4": "149.7.214.253"
+    },
+    {
+      "name": "XRF393",
+      "reflector_type": "XRF",
+      "ipv4": "139.91.200.186"
+    },
+    {
+      "name": "XRF395",
+      "reflector_type": "XRF",
+      "ipv4": "5.249.151.111"
+    },
+    {
+      "name": "XRF398",
+      "reflector_type": "XRF",
+      "ipv4": "104.167.117.71"
+    },
+    {
+      "name": "XRF399",
+      "reflector_type": "XRF",
+      "ipv4": "185.227.110.247"
+    },
+    {
+      "name": "XRF400",
+      "reflector_type": "XRF",
+      "ipv4": "13.58.192.185"
+    },
+    {
+      "name": "XRF404",
+      "reflector_type": "XRF",
+      "ipv4": "91.229.143.187"
+    },
+    {
+      "name": "XRF410",
+      "reflector_type": "XRF",
+      "ipv4": "xlx.n5amd.com"
+    },
+    {
+      "name": "XRF411",
+      "reflector_type": "XRF",
+      "ipv4": "82.171.119.45"
+    },
+    {
+      "name": "XRF412",
+      "reflector_type": "XRF",
+      "ipv4": "61.195.107.113"
+    },
+    {
+      "name": "XRF420",
+      "reflector_type": "XRF",
+      "ipv4": "174.138.113.116"
+    },
+    {
+      "name": "XRF421",
+      "reflector_type": "XRF",
+      "ipv4": "118.189.181.236"
+    },
+    {
+      "name": "XRF423",
+      "reflector_type": "XRF",
+      "ipv4": "4ix.hacktic.de"
+    },
+    {
+      "name": "XRF431",
+      "reflector_type": "XRF",
+      "ipv4": "61.195.98.225"
+    },
+    {
+      "name": "XRF433",
+      "reflector_type": "XRF",
+      "ipv4": "217.160.22.17"
+    },
+    {
+      "name": "XRF434",
+      "reflector_type": "XRF",
+      "ipv4": "51.254.128.134"
+    },
+    {
+      "name": "XRF438",
+      "reflector_type": "XRF",
+      "ipv4": "80.211.189.236"
+    },
+    {
+      "name": "XRF440",
+      "reflector_type": "XRF",
+      "ipv4": "153.133.72.142"
+    },
+    {
+      "name": "XRF441",
+      "reflector_type": "XRF",
+      "ipv4": "203.137.99.110"
+    },
+    {
+      "name": "XRF443",
+      "reflector_type": "XRF",
+      "ipv4": "xrf443.arisondrio.it"
+    },
+    {
+      "name": "XRF444",
+      "reflector_type": "XRF",
+      "ipv4": "188.68.37.51"
+    },
+    {
+      "name": "XRF446",
+      "reflector_type": "XRF",
+      "ipv4": "78.226.112.146"
+    },
+    {
+      "name": "XRF449",
+      "reflector_type": "XRF",
+      "ipv4": "159.89.183.117"
+    },
+    {
+      "name": "XRF450",
+      "reflector_type": "XRF",
+      "ipv4": "64.137.224.233"
+    },
+    {
+      "name": "XRF454",
+      "reflector_type": "XRF",
+      "ipv4": "218.250.250.21"
+    },
+    {
+      "name": "XRF455",
+      "reflector_type": "XRF",
+      "ipv4": "208.71.169.83"
+    },
+    {
+      "name": "XRF456",
+      "reflector_type": "XRF",
+      "ipv4": "54.37.204.187"
+    },
+    {
+      "name": "XRF460",
+      "reflector_type": "XRF",
+      "ipv4": "183.53.66.145"
+    },
+    {
+      "name": "XRF464",
+      "reflector_type": "XRF",
+      "ipv4": "52.192.129.174"
+    },
+    {
+      "name": "XRF470",
+      "reflector_type": "XRF",
+      "ipv4": "104.49.29.243"
+    },
+    {
+      "name": "XRF473",
+      "reflector_type": "XRF",
+      "ipv4": "104.49.29.243"
+    },
+    {
+      "name": "XRF477",
+      "reflector_type": "XRF",
+      "ipv4": "139.162.213.89"
+    },
+    {
+      "name": "XRF479",
+      "reflector_type": "XRF",
+      "ipv4": "198.58.106.10"
+    },
+    {
+      "name": "XRF486",
+      "reflector_type": "XRF",
+      "ipv4": "51.255.172.249"
+    },
+    {
+      "name": "XRF487",
+      "reflector_type": "XRF",
+      "ipv4": "93.66.214.109"
+    },
+    {
+      "name": "XRF490",
+      "reflector_type": "XRF",
+      "ipv4": "xrf490.dyndns.org"
+    },
+    {
+      "name": "XRF499",
+      "reflector_type": "XRF",
+      "ipv4": "203.137.76.22"
+    },
+    {
+      "name": "XRF500",
+      "reflector_type": "XRF",
+      "ipv4": "125.63.57.138"
+    },
+    {
+      "name": "XRF501",
+      "reflector_type": "XRF",
+      "ipv4": "104.130.72.187"
+    },
+    {
+      "name": "XRF502",
+      "reflector_type": "XRF",
+      "ipv4": "74.208.88.137"
+    },
+    {
+      "name": "XRF505",
+      "reflector_type": "XRF",
+      "ipv4": "110.141.219.161"
+    },
+    {
+      "name": "XRF506",
+      "reflector_type": "XRF",
+      "ipv4": "121.200.19.211"
+    },
+    {
+      "name": "XRF508",
+      "reflector_type": "XRF",
+      "ipv4": "185.188.4.15"
+    },
+    {
+      "name": "XRF510",
+      "reflector_type": "XRF",
+      "ipv4": "xrf510.s56g.net"
+    },
+    {
+      "name": "XRF511",
+      "reflector_type": "XRF",
+      "ipv4": "213.172.232.13"
+    },
+    {
+      "name": "XRF515",
+      "reflector_type": "XRF",
+      "ipv4": "203.137.78.35"
+    },
+    {
+      "name": "XRF518",
+      "reflector_type": "XRF",
+      "ipv4": "176.9.1.168"
+    },
+    {
+      "name": "XRF519",
+      "reflector_type": "XRF",
+      "ipv4": "24.55.196.105"
+    },
+    {
+      "name": "XRF520",
+      "reflector_type": "XRF",
+      "ipv4": "xlx.dtdxa.com"
+    },
+    {
+      "name": "XRF521",
+      "reflector_type": "XRF",
+      "ipv4": "150.129.184.54"
+    },
+    {
+      "name": "XRF522",
+      "reflector_type": "XRF",
+      "ipv4": "14.102.146.160"
+    },
+    {
+      "name": "XRF523",
+      "reflector_type": "XRF",
+      "ipv4": "175.142.199.32"
+    },
+    {
+      "name": "XRF525",
+      "reflector_type": "XRF",
+      "ipv4": "80.211.68.38"
+    },
+    {
+      "name": "XRF530",
+      "reflector_type": "XRF",
+      "ipv4": "116.251.193.99"
+    },
+    {
+      "name": "XRF534",
+      "reflector_type": "XRF",
+      "ipv4": "208.71.169.83"
+    },
+    {
+      "name": "XRF538",
+      "reflector_type": "XRF",
+      "ipv4": "124.41.76.58"
+    },
+    {
+      "name": "XRF544",
+      "reflector_type": "XRF",
+      "ipv4": "202.218.152.66"
+    },
+    {
+      "name": "XRF550",
+      "reflector_type": "XRF",
+      "ipv4": "89.36.222.146"
+    },
+    {
+      "name": "XRF551",
+      "reflector_type": "XRF",
+      "ipv4": "140.227.198.45"
+    },
+    {
+      "name": "XRF553",
+      "reflector_type": "XRF",
+      "ipv4": "45.79.92.86"
+    },
+    {
+      "name": "XRF554",
+      "reflector_type": "XRF",
+      "ipv4": "52.35.183.178"
+    },
+    {
+      "name": "XRF555",
+      "reflector_type": "XRF",
+      "ipv4": "xlx555.dtdxa.com"
+    },
+    {
+      "name": "XRF556",
+      "reflector_type": "XRF",
+      "ipv4": "xrf556.w6kd.com"
+    },
+    {
+      "name": "XRF559",
+      "reflector_type": "XRF",
+      "ipv4": "98.239.113.175"
+    },
+    {
+      "name": "XRF567",
+      "reflector_type": "XRF",
+      "ipv4": "212.91.156.69"
+    },
+    {
+      "name": "XRF569",
+      "reflector_type": "XRF",
+      "ipv4": "203.137.111.98"
+    },
+    {
+      "name": "XRF570",
+      "reflector_type": "XRF",
+      "ipv4": "104.128.230.153"
+    },
+    {
+      "name": "XRF573",
+      "reflector_type": "XRF",
+      "ipv4": "216.189.148.204"
+    },
+    {
+      "name": "XRF580",
+      "reflector_type": "XRF",
+      "ipv4": "67.20.31.79"
+    },
+    {
+      "name": "XRF583",
+      "reflector_type": "XRF",
+      "ipv4": "116.70.240.104"
+    },
+    {
+      "name": "XRF587",
+      "reflector_type": "XRF",
+      "ipv4": "68.32.126.21"
+    },
+    {
+      "name": "XRF595",
+      "reflector_type": "XRF",
+      "ipv4": "220.146.23.42"
+    },
+    {
+      "name": "XRF599",
+      "reflector_type": "XRF",
+      "ipv4": "203.137.118.190"
+    },
+    {
+      "name": "XRF600",
+      "reflector_type": "XRF",
+      "ipv4": "13.69.14.204"
+    },
+    {
+      "name": "XRF601",
+      "reflector_type": "XRF",
+      "ipv4": "51.141.52.193"
+    },
+    {
+      "name": "XRF602",
+      "reflector_type": "XRF",
+      "ipv4": "212.56.100.200"
+    },
+    {
+      "name": "XRF603",
+      "reflector_type": "XRF",
+      "ipv4": "216.246.155.99"
+    },
+    {
+      "name": "XRF604",
+      "reflector_type": "XRF",
+      "ipv4": "139.162.241.24"
+    },
+    {
+      "name": "XRF605",
+      "reflector_type": "XRF",
+      "ipv4": "183.76.179.238"
+    },
+    {
+      "name": "XRF608",
+      "reflector_type": "XRF",
+      "ipv4": "219.122.253.83"
+    },
+    {
+      "name": "XRF609",
+      "reflector_type": "XRF",
+      "ipv4": "219.122.253.83"
+    },
+    {
+      "name": "XRF610",
+      "reflector_type": "XRF",
+      "ipv4": "89.186.80.81"
+    },
+    {
+      "name": "XRF613",
+      "reflector_type": "XRF",
+      "ipv4": "198.50.202.39"
+    },
+    {
+      "name": "XRF619",
+      "reflector_type": "XRF",
+      "ipv4": "167.99.168.82"
+    },
+    {
+      "name": "XRF626",
+      "reflector_type": "XRF",
+      "ipv4": "45.77.234.162"
+    },
+    {
+      "name": "XRF627",
+      "reflector_type": "XRF",
+      "ipv4": "121.75.75.200"
+    },
+    {
+      "name": "XRF630",
+      "reflector_type": "XRF",
+      "ipv4": "61.195.125.81"
+    },
+    {
+      "name": "XRF634",
+      "reflector_type": "XRF",
+      "ipv4": "180.46.54.237"
+    },
+    {
+      "name": "XRF647",
+      "reflector_type": "XRF",
+      "ipv4": "217.182.168.54"
+    },
+    {
+      "name": "XRF651",
+      "reflector_type": "XRF",
+      "ipv4": "66.240.165.26"
+    },
+    {
+      "name": "XRF655",
+      "reflector_type": "XRF",
+      "ipv4": "146.64.235.19"
+    },
+    {
+      "name": "XRF666",
+      "reflector_type": "XRF",
+      "ipv4": "86.186.35.158"
+    },
+    {
+      "name": "XRF673",
+      "reflector_type": "XRF",
+      "ipv4": "180.147.243.178"
+    },
+    {
+      "name": "XRF678",
+      "reflector_type": "XRF",
+      "ipv4": "xrf678.ddns.net"
+    },
+    {
+      "name": "XRF684",
+      "reflector_type": "XRF",
+      "ipv4": "212.237.17.83"
+    },
+    {
+      "name": "XRF689",
+      "reflector_type": "XRF",
+      "ipv4": "97.107.128.47"
+    },
+    {
+      "name": "XRF695",
+      "reflector_type": "XRF",
+      "ipv4": "155.254.33.145"
+    },
+    {
+      "name": "XRF698",
+      "reflector_type": "XRF",
+      "ipv4": "203.137.123.89"
+    },
+    {
+      "name": "XRF699",
+      "reflector_type": "XRF",
+      "ipv4": "82.102.5.239"
+    },
+    {
+      "name": "XRF700",
+      "reflector_type": "XRF",
+      "ipv4": "78.47.222.93"
+    },
+    {
+      "name": "XRF701",
+      "reflector_type": "XRF",
+      "ipv4": "61.195.107.77"
+    },
+    {
+      "name": "XRF703",
+      "reflector_type": "XRF",
+      "ipv4": "61.195.98.254"
+    },
+    {
+      "name": "XRF704",
+      "reflector_type": "XRF",
+      "ipv4": "150.66.34.110"
+    },
+    {
+      "name": "XRF706",
+      "reflector_type": "XRF",
+      "ipv4": "93.186.255.126"
+    },
+    {
+      "name": "XRF707",
+      "reflector_type": "XRF",
+      "ipv4": "90.145.156.196"
+    },
+    {
+      "name": "XRF708",
+      "reflector_type": "XRF",
+      "ipv4": "202.218.37.62"
+    },
+    {
+      "name": "XRF709",
+      "reflector_type": "XRF",
+      "ipv4": "212.237.34.32"
+    },
+    {
+      "name": "XRF710",
+      "reflector_type": "XRF",
+      "ipv4": "oe7mfi.ddns.net"
+    },
+    {
+      "name": "XRF711",
+      "reflector_type": "XRF",
+      "ipv4": "212.237.18.27"
+    },
+    {
+      "name": "XRF712",
+      "reflector_type": "XRF",
+      "ipv4": "153.215.181.34"
+    },
+    {
+      "name": "XRF713",
+      "reflector_type": "XRF",
+      "ipv4": "218.251.63.99"
+    },
+    {
+      "name": "XRF714",
+      "reflector_type": "XRF",
+      "ipv4": "85.214.119.76"
+    },
+    {
+      "name": "XRF715",
+      "reflector_type": "XRF",
+      "ipv4": "xlx715.ea3hkb.net"
+    },
+    {
+      "name": "XRF716",
+      "reflector_type": "XRF",
+      "ipv4": "xlx716.duckdns.org"
+    },
+    {
+      "name": "XRF717",
+      "reflector_type": "XRF",
+      "ipv4": "44.137.70.100"
+    },
+    {
+      "name": "XRF719",
+      "reflector_type": "XRF",
+      "ipv4": "199.227.117.121"
+    },
+    {
+      "name": "XRF720",
+      "reflector_type": "XRF",
+      "ipv4": "23.237.16.149"
+    },
+    {
+      "name": "XRF722",
+      "reflector_type": "XRF",
+      "ipv4": "80.211.2.161"
+    },
+    {
+      "name": "XRF723",
+      "reflector_type": "XRF",
+      "ipv4": "45.33.118.112"
+    },
+    {
+      "name": "XRF724",
+      "reflector_type": "XRF",
+      "ipv4": "189.20.209.70"
+    },
+    {
+      "name": "XRF725",
+      "reflector_type": "XRF",
+      "ipv4": "172.245.9.180"
+    },
+    {
+      "name": "XRF727",
+      "reflector_type": "XRF",
+      "ipv4": "108.33.72.83"
+    },
+    {
+      "name": "XRF730",
+      "reflector_type": "XRF",
+      "ipv4": "186.64.123.59"
+    },
+    {
+      "name": "XRF732",
+      "reflector_type": "XRF",
+      "ipv4": "190.159.68.105"
+    },
+    {
+      "name": "XRF733",
+      "reflector_type": "XRF",
+      "ipv4": "45.56.117.158"
+    },
+    {
+      "name": "XRF735",
+      "reflector_type": "XRF",
+      "ipv4": "104.131.81.32"
+    },
+    {
+      "name": "XRF737",
+      "reflector_type": "XRF",
+      "ipv4": "195.130.75.246"
+    },
+    {
+      "name": "XRF738",
+      "reflector_type": "XRF",
+      "ipv4": "210.171.151.238"
+    },
+    {
+      "name": "XRF740",
+      "reflector_type": "XRF",
+      "ipv4": "104.167.114.230"
+    },
+    {
+      "name": "XRF741",
+      "reflector_type": "XRF",
+      "ipv4": "203.137.78.41"
+    },
+    {
+      "name": "XRF746",
+      "reflector_type": "XRF",
+      "ipv4": "178.254.34.44"
+    },
+    {
+      "name": "XRF747",
+      "reflector_type": "XRF",
+      "ipv4": "87.147.142.9"
+    },
+    {
+      "name": "XRF748",
+      "reflector_type": "XRF",
+      "ipv4": "64.137.197.36"
+    },
+    {
+      "name": "XRF749",
+      "reflector_type": "XRF",
+      "ipv4": "45.77.102.203"
+    },
+    {
+      "name": "XRF750",
+      "reflector_type": "XRF",
+      "ipv4": "203.86.206.49"
+    },
+    {
+      "name": "XRF751",
+      "reflector_type": "XRF",
+      "ipv4": "203.118.145.79"
+    },
+    {
+      "name": "XRF752",
+      "reflector_type": "XRF",
+      "ipv4": "66.154.105.195"
+    },
+    {
+      "name": "XRF755",
+      "reflector_type": "XRF",
+      "ipv4": "178.22.148.229"
+    },
+    {
+      "name": "XRF757",
+      "reflector_type": "XRF",
+      "ipv4": "43.229.63.42"
+    },
+    {
+      "name": "XRF762",
+      "reflector_type": "XRF",
+      "ipv4": "129.21.36.65"
+    },
+    {
+      "name": "XRF766",
+      "reflector_type": "XRF",
+      "ipv4": "201.62.48.61"
+    },
+    {
+      "name": "XRF767",
+      "reflector_type": "XRF",
+      "ipv4": "xrf767.de"
+    },
+    {
+      "name": "XRF768",
+      "reflector_type": "XRF",
+      "ipv4": "80.211.199.231"
+    },
+    {
+      "name": "XRF770",
+      "reflector_type": "XRF",
+      "ipv4": "153.126.173.9"
+    },
+    {
+      "name": "XRF773",
+      "reflector_type": "XRF",
+      "ipv4": "94.177.175.230"
+    },
+    {
+      "name": "XRF775",
+      "reflector_type": "XRF",
+      "ipv4": "149.202.61.17"
+    },
+    {
+      "name": "XRF776",
+      "reflector_type": "XRF",
+      "ipv4": "218.221.181.241"
+    },
+    {
+      "name": "XRF777",
+      "reflector_type": "XRF",
+      "ipv4": "112.218.40.91"
+    },
+    {
+      "name": "XRF780",
+      "reflector_type": "XRF",
+      "ipv4": "96.53.97.22"
+    },
+    {
+      "name": "XRF781",
+      "reflector_type": "XRF",
+      "ipv4": "101.143.242.199"
+    },
+    {
+      "name": "XRF782",
+      "reflector_type": "XRF",
+      "ipv4": "122.16.56.210"
+    },
+    {
+      "name": "XRF787",
+      "reflector_type": "XRF",
+      "ipv4": "46.41.1.96"
+    },
+    {
+      "name": "XRF788",
+      "reflector_type": "XRF",
+      "ipv4": "192.168.0.96"
+    },
+    {
+      "name": "XRF789",
+      "reflector_type": "XRF",
+      "ipv4": "45.33.119.142"
+    },
+    {
+      "name": "XRF794",
+      "reflector_type": "XRF",
+      "ipv4": "101.143.242.95"
+    },
+    {
+      "name": "XRF800",
+      "reflector_type": "XRF",
+      "ipv4": "87.252.188.119"
+    },
+    {
+      "name": "XRF801",
+      "reflector_type": "XRF",
+      "ipv4": "213.47.71.17"
+    },
+    {
+      "name": "XRF803",
+      "reflector_type": "XRF",
+      "ipv4": "77.117.21.251"
+    },
+    {
+      "name": "XRF806",
+      "reflector_type": "XRF",
+      "ipv4": "92.107.25.23"
+    },
+    {
+      "name": "XRF807",
+      "reflector_type": "XRF",
+      "ipv4": "122.18.165.164"
+    },
+    {
+      "name": "XRF808",
+      "reflector_type": "XRF",
+      "ipv4": "18.220.252.27"
+    },
+    {
+      "name": "XRF809",
+      "reflector_type": "XRF",
+      "ipv4": "78.46.11.69"
+    },
+    {
+      "name": "XRF810",
+      "reflector_type": "XRF",
+      "ipv4": "64.137.238.189"
+    },
+    {
+      "name": "XRF811",
+      "reflector_type": "XRF",
+      "ipv4": "64.137.238.189"
+    },
+    {
+      "name": "XRF812",
+      "reflector_type": "XRF",
+      "ipv4": "203.145.233.141"
+    },
+    {
+      "name": "XRF813",
+      "reflector_type": "XRF",
+      "ipv4": "97.76.81.165"
+    },
+    {
+      "name": "XRF817",
+      "reflector_type": "XRF",
+      "ipv4": "18.235.96.93"
+    },
+    {
+      "name": "XRF818",
+      "reflector_type": "XRF",
+      "ipv4": "120.79.155.116"
+    },
+    {
+      "name": "XRF825",
+      "reflector_type": "XRF",
+      "ipv4": "51.75.252.197"
+    },
+    {
+      "name": "XRF828",
+      "reflector_type": "XRF",
+      "ipv4": "195.225.116.244"
+    },
+    {
+      "name": "XRF833",
+      "reflector_type": "XRF",
+      "ipv4": "78.226.112.146"
+    },
+    {
+      "name": "XRF844",
+      "reflector_type": "XRF",
+      "ipv4": "137.226.79.122"
+    },
+    {
+      "name": "XRF847",
+      "reflector_type": "XRF",
+      "ipv4": "162.243.4.29"
+    },
+    {
+      "name": "XRF850",
+      "reflector_type": "XRF",
+      "ipv4": "88.198.94.77"
+    },
+    {
+      "name": "XRF851",
+      "reflector_type": "XRF",
+      "ipv4": "xrf851.rsdt.de"
+    },
+    {
+      "name": "XRF852",
+      "reflector_type": "XRF",
+      "ipv4": "42.2.140.44"
+    },
+    {
+      "name": "XRF858",
+      "reflector_type": "XRF",
+      "ipv4": "xrf858.ke0lmx.net"
+    },
+    {
+      "name": "XRF859",
+      "reflector_type": "XRF",
+      "ipv4": "54.227.203.214"
+    },
+    {
+      "name": "XRF860",
+      "reflector_type": "XRF",
+      "ipv4": "24.134.86.93"
+    },
+    {
+      "name": "XRF861",
+      "reflector_type": "XRF",
+      "ipv4": "66.175.218.63"
+    },
+    {
+      "name": "XRF865",
+      "reflector_type": "XRF",
+      "ipv4": "45.32.212.226"
+    },
+    {
+      "name": "XRF866",
+      "reflector_type": "XRF",
+      "ipv4": "93.233.176.219"
+    },
+    {
+      "name": "XRF867",
+      "reflector_type": "XRF",
+      "ipv4": "51.254.115.5"
+    },
+    {
+      "name": "XRF870",
+      "reflector_type": "XRF",
+      "ipv4": "103.3.234.95"
+    },
+    {
+      "name": "XRF871",
+      "reflector_type": "XRF",
+      "ipv4": "222.172.252.56"
+    },
+    {
+      "name": "XRF878",
+      "reflector_type": "XRF",
+      "ipv4": "203.137.123.113"
+    },
+    {
+      "name": "XRF880",
+      "reflector_type": "XRF",
+      "ipv4": "176.10.105.211"
+    },
+    {
+      "name": "XRF883",
+      "reflector_type": "XRF",
+      "ipv4": "153.179.226.85"
+    },
+    {
+      "name": "XRF886",
+      "reflector_type": "XRF",
+      "ipv4": "118.163.103.178"
+    },
+    {
+      "name": "XRF887",
+      "reflector_type": "XRF",
+      "ipv4": "118.163.103.177"
+    },
+    {
+      "name": "XRF888",
+      "reflector_type": "XRF",
+      "ipv4": "46.18.142.169"
+    },
+    {
+      "name": "XRF889",
+      "reflector_type": "XRF",
+      "ipv4": "130.149.36.93"
+    },
+    {
+      "name": "XRF893",
+      "reflector_type": "XRF",
+      "ipv4": "104.223.59.212"
+    },
+    {
+      "name": "XRF897",
+      "reflector_type": "XRF",
+      "ipv4": "92.222.23.124"
+    },
+    {
+      "name": "XRF900",
+      "reflector_type": "XRF",
+      "ipv4": "94.177.237.192"
+    },
+    {
+      "name": "XRF901",
+      "reflector_type": "XRF",
+      "ipv4": "xrf901.dyndns.org"
+    },
+    {
+      "name": "XRF902",
+      "reflector_type": "XRF",
+      "ipv4": "xrf902.dyndns.org"
+    },
+    {
+      "name": "XRF903",
+      "reflector_type": "XRF",
+      "ipv4": "80.211.29.226"
+    },
+    {
+      "name": "XRF904",
+      "reflector_type": "XRF",
+      "ipv4": "211.14.169.215"
+    },
+    {
+      "name": "XRF905",
+      "reflector_type": "XRF",
+      "ipv4": "199.212.121.20"
+    },
+    {
+      "name": "XRF906",
+      "reflector_type": "XRF",
+      "ipv4": "212.237.11.53"
+    },
+    {
+      "name": "XRF907",
+      "reflector_type": "XRF",
+      "ipv4": "88.3.75.162"
+    },
+    {
+      "name": "XRF908",
+      "reflector_type": "XRF",
+      "ipv4": "92.222.23.124"
+    },
+    {
+      "name": "XRF909",
+      "reflector_type": "XRF",
+      "ipv4": "216.86.147.198"
+    },
+    {
+      "name": "XRF910",
+      "reflector_type": "XRF",
+      "ipv4": "92.177.212.64"
+    },
+    {
+      "name": "XRF911",
+      "reflector_type": "XRF",
+      "ipv4": "xlx911.patrweb.com"
+    },
+    {
+      "name": "XRF912",
+      "reflector_type": "XRF",
+      "ipv4": "80.211.1.143"
+    },
+    {
+      "name": "XRF915",
+      "reflector_type": "XRF",
+      "ipv4": "72.28.30.93"
+    },
+    {
+      "name": "XRF919",
+      "reflector_type": "XRF",
+      "ipv4": "80.211.232.174"
+    },
+    {
+      "name": "XRF920",
+      "reflector_type": "XRF",
+      "ipv4": "xrf920.oe7xxr.ampr.at"
+    },
+    {
+      "name": "XRF921",
+      "reflector_type": "XRF",
+      "ipv4": "44.143.184.83"
+    },
+    {
+      "name": "XRF922",
+      "reflector_type": "XRF",
+      "ipv4": "81.150.10.62"
+    },
+    {
+      "name": "XRF925",
+      "reflector_type": "XRF",
+      "ipv4": "90.255.232.101"
+    },
+    {
+      "name": "XRF929",
+      "reflector_type": "XRF",
+      "ipv4": "158.69.166.132"
+    },
+    {
+      "name": "XRF930",
+      "reflector_type": "XRF",
+      "ipv4": "94.177.160.5"
+    },
+    {
+      "name": "XRF931",
+      "reflector_type": "XRF",
+      "ipv4": "68.131.30.206"
+    },
+    {
+      "name": "XRF933",
+      "reflector_type": "XRF",
+      "ipv4": "164.132.104.167"
+    },
+    {
+      "name": "XRF935",
+      "reflector_type": "XRF",
+      "ipv4": "188.213.166.199"
+    },
+    {
+      "name": "XRF940",
+      "reflector_type": "XRF",
+      "ipv4": "202.218.37.121"
+    },
+    {
+      "name": "XRF944",
+      "reflector_type": "XRF",
+      "ipv4": "202.218.34.210"
+    },
+    {
+      "name": "XRF945",
+      "reflector_type": "XRF",
+      "ipv4": "213.202.229.40"
+    },
+    {
+      "name": "XRF946",
+      "reflector_type": "XRF",
+      "ipv4": "212.227.174.45"
+    },
+    {
+      "name": "XRF950",
+      "reflector_type": "XRF",
+      "ipv4": "158.64.26.134"
+    },
+    {
+      "name": "XRF951",
+      "reflector_type": "XRF",
+      "ipv4": "18.188.166.109"
+    },
+    {
+      "name": "XRF956",
+      "reflector_type": "XRF",
+      "ipv4": "192.99.245.120"
+    },
+    {
+      "name": "XRF959",
+      "reflector_type": "XRF",
+      "ipv4": "203.137.98.121"
+    },
+    {
+      "name": "XRF960",
+      "reflector_type": "XRF",
+      "ipv4": "80.211.226.89"
+    },
+    {
+      "name": "XRF964",
+      "reflector_type": "XRF",
+      "ipv4": "52.173.142.244"
+    },
+    {
+      "name": "XRF965",
+      "reflector_type": "XRF",
+      "ipv4": "47.23.66.19"
+    },
+    {
+      "name": "XRF966",
+      "reflector_type": "XRF",
+      "ipv4": "203.150.19.24"
+    },
+    {
+      "name": "XRF967",
+      "reflector_type": "XRF",
+      "ipv4": "95.158.165.32"
+    },
+    {
+      "name": "XRF969",
+      "reflector_type": "XRF",
+      "ipv4": "142.93.46.36"
+    },
+    {
+      "name": "XRF970",
+      "reflector_type": "XRF",
+      "ipv4": "157.7.221.186"
+    },
+    {
+      "name": "XRF972",
+      "reflector_type": "XRF",
+      "ipv4": "46.121.158.50"
+    },
+    {
+      "name": "XRF973",
+      "reflector_type": "XRF",
+      "ipv4": "211.14.169.43"
+    },
+    {
+      "name": "XRF974",
+      "reflector_type": "XRF",
+      "ipv4": "94.177.217.52"
+    },
+    {
+      "name": "XRF975",
+      "reflector_type": "XRF",
+      "ipv4": "176.31.161.9"
+    },
+    {
+      "name": "XRF976",
+      "reflector_type": "XRF",
+      "ipv4": "212.237.36.71"
+    },
+    {
+      "name": "XRF977",
+      "reflector_type": "XRF",
+      "ipv4": "977.opendstar.eu"
+    },
+    {
+      "name": "XRF978",
+      "reflector_type": "XRF",
+      "ipv4": "74.104.179.159"
+    },
+    {
+      "name": "XRF979",
+      "reflector_type": "XRF",
+      "ipv4": "217.162.36.91"
+    },
+    {
+      "name": "XRF981",
+      "reflector_type": "XRF",
+      "ipv4": "153.210.14.45"
+    },
+    {
+      "name": "XRF986",
+      "reflector_type": "XRF",
+      "ipv4": "81.89.102.160"
+    },
+    {
+      "name": "XRF987",
+      "reflector_type": "XRF",
+      "ipv4": "185.32.183.148"
+    },
+    {
+      "name": "XRF988",
+      "reflector_type": "XRF",
+      "ipv4": "80.211.236.189"
+    },
+    {
+      "name": "XRF989",
+      "reflector_type": "XRF",
+      "ipv4": "50.27.131.75"
+    },
+    {
+      "name": "XRF990",
+      "reflector_type": "XRF",
+      "ipv4": "35.164.237.63"
+    },
+    {
+      "name": "XRF991",
+      "reflector_type": "XRF",
+      "ipv4": "91.92.136.118"
+    },
+    {
+      "name": "XRF993",
+      "reflector_type": "XRF",
+      "ipv4": "97.64.20.63"
+    },
+    {
+      "name": "XRF994",
+      "reflector_type": "XRF",
+      "ipv4": "35.177.233.106"
+    },
+    {
+      "name": "XRF995",
+      "reflector_type": "XRF",
+      "ipv4": "118.27.30.92"
+    },
+    {
+      "name": "XRF996",
+      "reflector_type": "XRF",
+      "ipv4": "47.104.177.248"
+    },
+    {
+      "name": "XRF997",
+      "reflector_type": "XRF",
+      "ipv4": "94.177.187.40"
+    },
+    {
+      "name": "XRF998",
+      "reflector_type": "XRF",
+      "ipv4": "44.140.236.20"
+    },
+    {
+      "name": "XRF999",
+      "reflector_type": "XRF",
+      "ipv4": "94.177.173.53"
+    },
+    {
+      "name": "XRFWDX",
+      "reflector_type": "XRF",
+      "ipv4": "47.149.178.211"
+    }
+  ]
+}

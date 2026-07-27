@@ -28,9 +28,11 @@ import (
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/demo"
 	"github.com/KN4OQW/waypoint/internal/dmrhosts"
+	"github.com/KN4OQW/waypoint/internal/dmrids"
 	"github.com/KN4OQW/waypoint/internal/dmrtg"
 	"github.com/KN4OQW/waypoint/internal/dstarhosts"
 	"github.com/KN4OQW/waypoint/internal/events"
+	"github.com/KN4OQW/waypoint/internal/hostsrc"
 	"github.com/KN4OQW/waypoint/internal/hub"
 	"github.com/KN4OQW/waypoint/internal/lcd"
 	"github.com/KN4OQW/waypoint/internal/lcd/hd44780"
@@ -110,6 +112,7 @@ type server struct {
 	m17Hosts   string // cached M17 reflector hostlist (space/tab text)
 	dmrHosts   string // cached DMR master hostlist (DMR_Hosts.txt, space/tab text)
 	dmrTGs     string // cached DMR talkgroup-name list (RFC-0010)
+	dmrIDs     string // cached DMR/NXDN id<->callsign table (DMRIds.dat), shared with every gateway
 
 	// Atomic-update surface (RFC-0014 / issue #13). update holds the manifest URL,
 	// release key, and OS seams; updateArgs is the `-update` invocation the apply
@@ -188,6 +191,66 @@ func (s *server) dmrMasters(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(m)
+}
+
+// hostlistStatus serves the supply state of every reflector, master and talkgroup
+// list (GET /api/hostlists; #138).
+//
+// The pickers used to fail silently: a list that never downloaded and a list that
+// is genuinely empty both rendered as an empty dropdown, with nothing on screen
+// saying which. This is what lets the UI tell an operator that a list is the
+// shipped copy, or that every source failed, and when it last succeeded.
+func (s *server) hostlistStatus(w http.ResponseWriter, _ *http.Request) {
+	// Count from the caches now rather than trusting whatever a picker last
+	// parsed: a status fetched before any picker has opened would otherwise report
+	// zero entries for a perfectly good list, and the UI would call it empty.
+	s.countHostlists()
+	out := hostsrc.All()
+	// has_seed is a property of the build, not of any attempt, so it is attached
+	// here rather than tracked as mutable status: it answers "will this list ever
+	// show anything while offline?".
+	type item struct {
+		hostsrc.Status
+		HasSeed bool `json:"has_seed"`
+		Stale   bool `json:"stale"`
+	}
+	items := make([]item, 0, len(out))
+	for _, st := range out {
+		items = append(items, item{Status: st, HasSeed: hostsrc.HasSeed(st.Name), Stale: st.Stale(48 * time.Hour)})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(items)
+}
+
+// countHostlists reparses each cache and records how many entries it holds.
+// A parse error leaves the count at zero, which is the honest answer: whatever is
+// on disk is not usable, and the status already carries the download error that
+// most likely explains it.
+func (s *server) countHostlists() {
+	if m, err := dmrhosts.Masters(s.dmrHosts); err == nil {
+		hostsrc.SetEntries(hostsrc.DMRHosts, len(m))
+	}
+	if t, err := dmrtg.Talkgroups(s.dmrTGs); err == nil {
+		hostsrc.SetEntries(hostsrc.DMRTalkgroups, len(t))
+	}
+	if r, err := ysfhosts.Reflectors(s.ysfHosts); err == nil {
+		hostsrc.SetEntries(hostsrc.YSFHosts, len(r))
+	}
+	if r, err := p25hosts.Reflectors(s.p25Hosts); err == nil {
+		hostsrc.SetEntries(hostsrc.P25Hosts, len(r))
+	}
+	if r, err := nxdnhosts.Reflectors(s.nxdnHosts); err == nil {
+		hostsrc.SetEntries(hostsrc.NXDNHosts, len(r))
+	}
+	if r, err := m17hosts.Reflectors(s.m17Hosts); err == nil {
+		hostsrc.SetEntries(hostsrc.M17Hosts, len(r))
+	}
+	if r, err := dstarhosts.Reflectors(s.dstarHosts); err == nil {
+		hostsrc.SetEntries(hostsrc.DStarHosts, len(r))
+	}
+	if t, err := dmrids.Load(s.dmrIDs); err == nil {
+		hostsrc.SetEntries(hostsrc.DMRIds, t.Len())
+	}
 }
 
 // dmrTalkgroups serves the cached DMR talkgroup-name list for inline name
@@ -1601,6 +1664,7 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/dstar/reflectors", s.dstarReflectors)
 	mux.HandleFunc("/api/m17/reflectors", s.m17Reflectors)
 	mux.HandleFunc("/api/dmr/masters", s.dmrMasters)
+	mux.HandleFunc("/api/hostlists", s.hostlistStatus)
 	mux.HandleFunc("/api/dmr/talkgroups", s.dmrTalkgroups) // TG name list (RFC-0010)
 	// Host/OS networking domain (docs/config-coverage.md §4).
 	mux.HandleFunc("/api/network/status", s.networkStatus)
@@ -1720,21 +1784,23 @@ func main() {
 	// retired with the per-bridge-daemon model (RFC-0003 bus architecture). No bridge
 	// INI is rendered any more; apply stops any bridge daemon still running instead.
 	ysfHosts := flag.String("ysf-hosts", "/home/pi-star/waypoint/etc/YSFHosts.json", "cached YSF reflector hostlist path")
-	ysfHostsURL := flag.String("ysf-hosts-url", ysfhosts.DefaultURL, "YSF reflector hostlist source URL")
+	ysfHostsURL := flag.String("ysf-hosts-url", ysfhosts.DefaultURL, "YSF reflector hostlist source URL (comma-separated; tried in order)")
 	p25Hosts := flag.String("p25-hosts", "/home/pi-star/waypoint/etc/P25Hosts.json", "cached P25 reflector hostlist path")
-	p25HostsURL := flag.String("p25-hosts-url", p25hosts.DefaultURL, "P25 reflector hostlist source URL")
+	p25HostsURL := flag.String("p25-hosts-url", p25hosts.DefaultURL, "P25 reflector hostlist source URL (comma-separated; tried in order)")
 	nxdnHosts := flag.String("nxdn-hosts", "/home/pi-star/waypoint/etc/NXDNHosts.json", "cached NXDN reflector hostlist path")
-	nxdnHostsURL := flag.String("nxdn-hosts-url", nxdnhosts.DefaultURL, "NXDN reflector hostlist source URL")
+	nxdnHostsURL := flag.String("nxdn-hosts-url", nxdnhosts.DefaultURL, "NXDN reflector hostlist source URL (comma-separated; tried in order)")
 	// The D-Star cache path is the DStar_Hosts.json inside the gateway's HostsFiles
 	// directory — the gateway reads it there directly (no separate copy).
 	dstarHosts := flag.String("dstar-hosts", "/home/pi-star/waypoint/etc/DStar_Hosts.json", "cached D-Star reflector hostlist path")
-	dstarHostsURL := flag.String("dstar-hosts-url", dstarhosts.DefaultURL, "D-Star reflector hostlist source URL")
+	dstarHostsURL := flag.String("dstar-hosts-url", dstarhosts.DefaultURL, "D-Star reflector hostlist source URL (comma-separated; tried in order)")
 	m17Hosts := flag.String("m17-hosts", "/home/pi-star/waypoint/etc/M17Hosts.txt", "cached M17 reflector hostlist path")
-	m17HostsURL := flag.String("m17-hosts-url", m17hosts.DefaultURL, "M17 reflector hostlist source URL")
+	m17HostsURL := flag.String("m17-hosts-url", m17hosts.DefaultURL, "M17 reflector hostlist source URL (comma-separated; tried in order)")
 	dmrHosts := flag.String("dmr-hosts", "/usr/local/etc/DMR_Hosts.txt", "cached DMR master hostlist path (DMR_Hosts.txt)")
-	dmrHostsURL := flag.String("dmr-hosts-url", dmrhosts.DefaultURL, "DMR master hostlist source URL")
+	dmrHostsURL := flag.String("dmr-hosts-url", dmrhosts.DefaultURL, "DMR master hostlist source URL (comma-separated; tried in order)")
 	dmrTGs := flag.String("dmr-talkgroups", "/home/pi-star/waypoint/etc/TGList.txt", "cached DMR talkgroup-name list path (RFC-0010)")
-	dmrTGsURL := flag.String("dmr-talkgroups-url", dmrtg.DefaultURL, "DMR talkgroup-name list source URL")
+	dmrTGsURL := flag.String("dmr-talkgroups-url", dmrtg.DefaultURL, "DMR talkgroup-name list source URL (comma-separated; tried in order)")
+	dmrIDs := flag.String("dmr-ids", dmrids.DefaultPath, "cached DMR/NXDN id<->callsign table (DMRIds.dat); the path every rendered gateway config points at")
+	dmrIDsURL := flag.String("dmr-ids-url", dmrids.DefaultURL, "DMR id<->callsign table source URL (comma-separated; tried in order)")
 	hostfilePubkey := flag.String("hostfile-pubkey", "", "minisign public key (file path) to verify signed hostfile/TG downloads against (RFC-0013; empty = no verification)")
 	requireSignedHostfiles := flag.Bool("require-signed-hostfiles", false, "reject any hostfile/TG download that is not verified (RFC-0013)")
 	verifyFile := flag.String("verify", "", "verify a signed artifact against a minisign key and exit (RFC-0013); use with -verify-pubkey")
@@ -1888,7 +1954,7 @@ func main() {
 			// empty path so the render is emitted verbatim (RFC-0005).
 			OverridesDir: overridesRoot(*overridesDir, *demoMode),
 		},
-		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts, dmrTGs: *dmrTGs,
+		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts, dmrTGs: *dmrTGs, dmrIDs: *dmrIDs,
 		netKeyfileDir: *nmKeyfileDir, netConfirmTimeout: *netConfirmTimeout, netBackend: *netBackend,
 		timesyncdConf: *timesyncdConf,
 	}
@@ -2062,26 +2128,31 @@ func main() {
 			publishDiscovery(s.agg.Snapshot()) // the always-present mode/tx/feed entities now
 			s.agg.OnChange(publishDiscovery)
 		}
-		// Keep the reflector hostlists fresh for the gateways + pickers. The YSF
-		// list honors the "UPPERCASE Hostfiles" toggle, read from the store each
-		// refresh (both YSFGateway and DGIdGateway consume this same file).
-		go ysfhosts.Run(context.Background(), *ysfHostsURL, *ysfHosts, 6*time.Hour, func() bool {
+		// Keep the reflector hostlists fresh for the gateways + pickers. Daily: these
+		// lists change slowly, they are the largest things the node downloads, and
+		// the upstreams ask not to be hammered. The YSF list honors the "UPPERCASE
+		// Hostfiles" toggle, read from the store each refresh (both YSFGateway and
+		// DGIdGateway consume this same file).
+		go ysfhosts.Run(context.Background(), hostsrc.Split(*ysfHostsURL), *ysfHosts, 24*time.Hour, func() bool {
 			var y config.YSFGateway
 			if _, err := s.store.GetInto("ysfgw", &y); err != nil {
 				return false
 			}
 			return y.UpperHostfiles
 		})
-		go p25hosts.Run(context.Background(), *p25HostsURL, *p25Hosts, 6*time.Hour)
-		go nxdnhosts.Run(context.Background(), *nxdnHostsURL, *nxdnHosts, 6*time.Hour)
-		go dstarhosts.Run(context.Background(), *dstarHostsURL, *dstarHosts, 6*time.Hour)
-		go m17hosts.Run(context.Background(), *m17HostsURL, *m17Hosts, 6*time.Hour)
+		go p25hosts.Run(context.Background(), hostsrc.Split(*p25HostsURL), *p25Hosts, 24*time.Hour)
+		go nxdnhosts.Run(context.Background(), hostsrc.Split(*nxdnHostsURL), *nxdnHosts, 24*time.Hour)
+		go dstarhosts.Run(context.Background(), hostsrc.Split(*dstarHostsURL), *dstarHosts, 24*time.Hour)
+		go m17hosts.Run(context.Background(), hostsrc.Split(*m17HostsURL), *m17Hosts, 24*time.Hour)
 		// Verified reference-data downloads (RFC-0013): when a trusted key is
 		// configured, dmrhosts/dmrtg verify each list against its <url>.minisig before
 		// it replaces the cache; a tampered list is rejected and the cache kept.
 		hostVerify := hostfileVerify(*hostfilePubkey, *requireSignedHostfiles)
-		go dmrhosts.Run(context.Background(), *dmrHostsURL, *dmrHosts, 6*time.Hour, hostVerify)
-		go dmrtg.Run(context.Background(), *dmrTGsURL, *dmrTGs, 24*time.Hour, hostVerify)
+		go dmrhosts.Run(context.Background(), hostsrc.Split(*dmrHostsURL), *dmrHosts, 24*time.Hour, hostVerify)
+		go dmrtg.Run(context.Background(), hostsrc.Split(*dmrTGsURL), *dmrTGs, 24*time.Hour, hostVerify)
+		// The id<->callsign table every gateway is configured to read. Nothing used
+		// to download it, so the lookups silently resolved nothing (#138).
+		go dmrids.Run(context.Background(), hostsrc.Split(*dmrIDsURL), *dmrIDs, 24*time.Hour, hostVerify)
 	}
 
 	mode := "live, mqtt " + *broker

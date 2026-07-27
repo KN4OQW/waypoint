@@ -16,13 +16,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KN4OQW/waypoint/internal/hostsrc"
 	"github.com/KN4OQW/waypoint/internal/verifydl"
 )
 
 // DefaultURL is a maintained DMR talkgroup list (the WPSD/w0chp lineage, same host
 // as the DMR master list). Overridable by flag; a deployment can point the cache
 // path straight at an existing TGList file.
-const DefaultURL = "https://hostfiles.w0chp.net/TGList_BM.txt"
+// Ordered sources, tried first to last (#138). The project's aggregated copy
+// leads; Pi-Star's list is the fallback. The previous sole source shared a host
+// with the reflector lists, and that host is refusing connections.
+const DefaultURL = "https://hostfiles.kn4oqw.com/TGList_BM.txt,https://www.pistar.uk/downloads/TGList_BM.txt"
 
 // Talkgroup is one DMR talkgroup: its number and human name.
 type Talkgroup struct {
@@ -35,12 +39,9 @@ type Talkgroup struct {
 // <url>.minisig signature before it replaces the cache — a tampered list is
 // rejected and the previous cache is kept. A failed fetch always leaves any
 // previously-cached file intact, so a brief outage never wipes the names.
-func Fetch(ctx context.Context, url, path string, v verifydl.Verify) error {
+func Fetch(ctx context.Context, urls []string, path string, v verifydl.Verify) error {
 	v.UserAgent = "Waypoint DMR talkgroup list"
-	if v.HasPubKey && v.SigURL == "" {
-		v.SigURL = url + ".minisig"
-	}
-	body, err := verifydl.Download(ctx, url, v)
+	body, _, err := hostsrc.Download(ctx, hostsrc.DMRTalkgroups, urls, v)
 	if err != nil {
 		return err
 	}
@@ -88,6 +89,7 @@ func Talkgroups(path string) ([]Talkgroup, error) {
 		aj, _ := strconv.Atoi(out[j].ID)
 		return ai < aj
 	})
+	hostsrc.SetEntries(hostsrc.DMRTalkgroups, len(out))
 	return out, nil
 }
 
@@ -133,9 +135,15 @@ func Names(path string) (map[string]string, error) {
 // Run fetches the list once at startup and then every interval until ctx is
 // canceled. Fetch failures (including a verification failure, RFC-0013) are
 // logged, not fatal — the cached file keeps working.
-func Run(ctx context.Context, url, path string, interval time.Duration, v verifydl.Verify) {
+func Run(ctx context.Context, urls []string, path string, interval time.Duration, v verifydl.Verify) {
+	hostsrc.Register(hostsrc.DMRTalkgroups, "DMR talkgroup names")
+	if wrote, err := hostsrc.Restore(hostsrc.DMRTalkgroups, path); err != nil {
+		log.Printf("dmrtg: could not write the shipped list: %v", err)
+	} else if wrote {
+		log.Printf("dmrtg: seeded %s from the shipped copy", path)
+	}
 	fetch := func() {
-		if err := Fetch(ctx, url, path, v); err != nil {
+		if err := Fetch(ctx, urls, path, v); err != nil {
 			log.Printf("dmrtg: fetch failed (using cached list if present): %v", err)
 		} else {
 			log.Printf("dmrtg: updated %s", path)

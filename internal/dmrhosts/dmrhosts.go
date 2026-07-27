@@ -15,13 +15,17 @@ import (
 	"time"
 
 	"github.com/KN4OQW/waypoint/internal/hostfile"
+	"github.com/KN4OQW/waypoint/internal/hostsrc"
 	"github.com/KN4OQW/waypoint/internal/verifydl"
 )
 
-// DefaultURL is the WPSD-maintained DMR master hostlist (the same lineage as the
-// box's /usr/local/etc/DMR_Hosts.txt). Overridable by flag; a deployment can
-// instead point the cache path straight at an existing DMR_Hosts.txt.
-const DefaultURL = "https://hostfiles.w0chp.net/DMR_Hosts.txt"
+// DefaultURL is the ordered source list for the DMR master hostlist, tried first
+// to last (#138). The project's own aggregated copy leads; Pi-Star's list is the
+// fallback that keeps a node working while that is unavailable. The previous sole
+// source, hostfiles.w0chp.net, is gone — it and hostfiles.refcheck.radio resolve
+// to one host that refuses connections, which is what made a single third-party
+// server the point of failure for five modes.
+const DefaultURL = "https://hostfiles.kn4oqw.com/DMR_Hosts.txt,https://www.pistar.uk/downloads/DMR_Hosts.txt"
 
 // Master is one DMR master server the operator can pick for a network.
 type Master struct {
@@ -52,12 +56,9 @@ func category(name string) string {
 // configured (RFC-0013) the download is verified against its <url>.minisig before
 // it replaces the cache — a tampered list is rejected and the previous cache kept.
 // A failed fetch always leaves any previously-cached file intact.
-func Fetch(ctx context.Context, url, path string, v verifydl.Verify) error {
+func Fetch(ctx context.Context, urls []string, path string, v verifydl.Verify) error {
 	v.UserAgent = "Waypoint DMR hostlist"
-	if v.HasPubKey && v.SigURL == "" {
-		v.SigURL = url + ".minisig"
-	}
-	body, err := verifydl.Download(ctx, url, v)
+	body, _, err := hostsrc.Download(ctx, hostsrc.DMRHosts, urls, v)
 	if err != nil {
 		return err
 	}
@@ -100,15 +101,24 @@ func Masters(path string) ([]Master, error) {
 		}
 		return out[i].Name < out[j].Name
 	})
+	hostsrc.SetEntries(hostsrc.DMRHosts, len(out))
 	return out, nil
 }
 
 // Run fetches the hostlist once at startup and then every interval until ctx is
 // canceled. Fetch failures are logged, not fatal — a hotspot may be briefly
 // offline, and the cached file keeps working.
-func Run(ctx context.Context, url, path string, interval time.Duration, v verifydl.Verify) {
+func Run(ctx context.Context, urls []string, path string, interval time.Duration, v verifydl.Verify) {
+	hostsrc.Register(hostsrc.DMRHosts, "DMR master list")
+	// Lay the floor before the first download, so a node that has never reached the
+	// internet still has masters to pick from.
+	if wrote, err := hostsrc.Restore(hostsrc.DMRHosts, path); err != nil {
+		log.Printf("dmrhosts: could not write the shipped list: %v", err)
+	} else if wrote {
+		log.Printf("dmrhosts: seeded %s from the shipped copy", path)
+	}
 	fetch := func() {
-		if err := Fetch(ctx, url, path, v); err != nil {
+		if err := Fetch(ctx, urls, path, v); err != nil {
 			log.Printf("dmrhosts: fetch failed (using cached list if present): %v", err)
 		} else {
 			log.Printf("dmrhosts: updated %s", path)

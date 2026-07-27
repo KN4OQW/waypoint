@@ -10,7 +10,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -18,12 +17,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KN4OQW/waypoint/internal/hostsrc"
+	"github.com/KN4OQW/waypoint/internal/verifydl"
+
 	"github.com/KN4OQW/waypoint/internal/hostfile"
 )
 
-// DefaultURL is the g4klx-endorsed source for the M17 hostlist (the same
-// register as YSF/P25/NXDN; M17HostsUpdate.sh downloads exactly this file).
-const DefaultURL = "https://hostfiles.refcheck.radio/M17Hosts.txt"
+// hostfiles.kn4oqw.com leads, then refcheck.radio, then Pi-Star. Unlike the YSF/
+// P25/NXDN lists, M17Gateway parses the classic text format directly, so Pi-Star
+// is a usable last resort here and needs no conversion.
+const DefaultURL = "https://hostfiles.kn4oqw.com/M17Hosts.txt,https://hostfiles.refcheck.radio/M17Hosts.txt,https://www.pistar.uk/downloads/M17_Hosts.txt"
 
 // Reflector is the slice of a hostlist entry the picker needs. Name is the M17
 // reflector the user links to; a module letter (A–Z) is appended at link time.
@@ -34,22 +37,9 @@ type Reflector struct {
 
 // Fetch downloads the hostlist to path atomically (temp + rename). A failed
 // fetch leaves any previously-cached file intact.
-func Fetch(ctx context.Context, url, path string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
+func Fetch(ctx context.Context, urls []string, path string) error {
 	// M17Gateway's own updater sends this UA; the register expects it.
-	req.Header.Set("User-Agent", "M17Gateway - G4KLX")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return &httpError{resp.StatusCode}
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	body, _, err := hostsrc.Download(ctx, hostsrc.M17Hosts, urls, verifydl.Verify{UserAgent: "M17Gateway - G4KLX"})
 	if err != nil {
 		return err
 	}
@@ -88,15 +78,22 @@ func Reflectors(path string) ([]Reflector, error) {
 		return nil, err
 	}
 	sort.SliceStable(refs, func(i, j int) bool { return refs[i].Name < refs[j].Name })
+	hostsrc.SetEntries(hostsrc.M17Hosts, len(refs))
 	return refs, nil
 }
 
 // Run fetches the hostlist once at startup and then every interval until ctx is
 // canceled. Fetch failures are logged, not fatal — a hotspot may be briefly
 // offline, and the cached file keeps working.
-func Run(ctx context.Context, url, path string, interval time.Duration) {
+func Run(ctx context.Context, urls []string, path string, interval time.Duration) {
+	hostsrc.Register(hostsrc.M17Hosts, "M17 reflector list")
+	if wrote, err := hostsrc.Restore(hostsrc.M17Hosts, path); err != nil {
+		log.Printf("m17hosts: could not write the shipped list: %v", err)
+	} else if wrote {
+		log.Printf("m17hosts: seeded %s from the shipped copy", path)
+	}
 	fetch := func() {
-		if err := Fetch(ctx, url, path); err != nil {
+		if err := Fetch(ctx, urls, path); err != nil {
 			log.Printf("m17hosts: fetch failed (using cached list if present): %v", err)
 		} else {
 			log.Printf("m17hosts: updated %s", path)

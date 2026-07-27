@@ -12,19 +12,21 @@ package dstarhosts
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/KN4OQW/waypoint/internal/hostsrc"
+	"github.com/KN4OQW/waypoint/internal/verifydl"
 )
 
 // DefaultURL is the pinned DStarGateway commit's bundled hostlist. Pinning the
 // SHA (not a branch) keeps the downloaded file byte-compatible with the parser
 // in the pinned gateway binary. Bump it in lockstep with the waypoint-stack pin.
-const DefaultURL = "https://raw.githubusercontent.com/g4klx/DStarGateway/612f388727a9bb47aaeaae3a89f5abff3152ed93/Data/DStar_Hosts.json"
+const DefaultURL = "https://raw.githubusercontent.com/g4klx/DStarGateway/612f388727a9bb47aaeaae3a89f5abff3152ed93/Data/DStar_Hosts.json,https://hostfiles.kn4oqw.com/DStar_Hosts.json"
 
 // Reflector is the slice of a hostlist entry the picker needs. Name is the
 // reflector callsign the user links to (e.g. REF001, XRF012, DCS006); Type is
@@ -46,21 +48,8 @@ type hostsDoc struct {
 
 // Fetch downloads the hostlist to path atomically (temp + rename). A failed
 // fetch leaves any previously-cached file intact.
-func Fetch(ctx context.Context, url, path string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", "Waypoint D-Star hostlist")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return &httpError{resp.StatusCode}
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+func Fetch(ctx context.Context, urls []string, path string) error {
+	body, _, err := hostsrc.Download(ctx, hostsrc.DStarHosts, urls, verifydl.Verify{UserAgent: "Waypoint D-Star hostlist"})
 	if err != nil {
 		return err
 	}
@@ -107,15 +96,22 @@ func Reflectors(path string) ([]Reflector, error) {
 		}
 		return out[i].Name < out[j].Name
 	})
+	hostsrc.SetEntries(hostsrc.DStarHosts, len(out))
 	return out, nil
 }
 
 // Run fetches the hostlist once at startup and then every interval until ctx is
 // canceled. Fetch failures are logged, not fatal — a hotspot may be briefly
 // offline, and the cached file keeps working.
-func Run(ctx context.Context, url, path string, interval time.Duration) {
+func Run(ctx context.Context, urls []string, path string, interval time.Duration) {
+	hostsrc.Register(hostsrc.DStarHosts, "D-Star reflector list")
+	if wrote, err := hostsrc.Restore(hostsrc.DStarHosts, path); err != nil {
+		log.Printf("dstarhosts: could not write the shipped list: %v", err)
+	} else if wrote {
+		log.Printf("dstarhosts: seeded %s from the shipped copy", path)
+	}
 	fetch := func() {
-		if err := Fetch(ctx, url, path); err != nil {
+		if err := Fetch(ctx, urls, path); err != nil {
 			log.Printf("dstarhosts: fetch failed (using cached list if present): %v", err)
 		} else {
 			log.Printf("dstarhosts: updated %s", path)
