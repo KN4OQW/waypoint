@@ -12,3 +12,4 @@ image/src/build.log
 image/src/workspace-*/
 image/src/image-*/
 /hostseed
+/.wrangler/
