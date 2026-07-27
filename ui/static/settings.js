@@ -2268,9 +2268,11 @@ function navGroups() {
   return order.map((name) => ({ name, id: "navg-" + name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), items: TABS.filter((t) => groupOf(t) === name) }));
 }
 
-// Group expansion persists across reloads (D2). The default is everything expanded —
-// the flat list is what operators already know, so collapsing is theirs to opt into
-// and only a stored map narrows it.
+// Group expansion persists across reloads (D2). `navOpen` holds only the groups an
+// operator has explicitly opened or closed; anything absent falls back to the
+// default, which is collapsed except for the group holding the active tab. That
+// keeps the sidebar short on arrival — the point of grouping — while the section
+// being edited is never hidden behind a disclosure.
 function loadNavOpen() {
   try {
     const raw = JSON.parse(localStorage.getItem(NAV_OPEN_KEY) || "{}");
@@ -2280,7 +2282,14 @@ function loadNavOpen() {
 function saveNavOpen() {
   try { localStorage.setItem(NAV_OPEN_KEY, JSON.stringify(navOpen)); } catch (e) { /* storage blocked — expansion is per-session */ }
 }
-function groupExpanded(name) { return navOpen[name] !== false; }
+function activeGroup() {
+  const t = TABS.find((x) => x.id === state.tab);
+  return t ? groupOf(t) : groupOf(TABS[0]);
+}
+function groupExpanded(name) {
+  if (Object.prototype.hasOwnProperty.call(navOpen, name)) return !!navOpen[name];
+  return name === activeGroup();
+}
 function toggleGroup(name) {
   navOpen[name] = !groupExpanded(name);
   saveNavOpen();
@@ -2439,10 +2448,12 @@ function selectTab(id, sub) {
   const t = TABS.find((x) => x.id === state.tab);
   const hash = "#" + (state.tab === "modes" ? "modes/" + currentModeSub() : state.tab);
   if (location.hash !== hash) history.replaceState(null, "", hash);
-  // A deep link can land on a tab inside a collapsed group; open it so the active
-  // item is never hidden (D2). Collapsing it again is the operator's call and sticks.
+  // A deep link can land on a tab inside a group the operator explicitly collapsed.
+  // Drop that override rather than force a `true`: the group then falls back to the
+  // default, which opens it precisely because it now holds the active tab (D2), and
+  // collapsing it again still sticks.
   const g = groupOf(t);
-  if (!groupExpanded(g)) { navOpen[g] = true; saveNavOpen(); }
+  if (!groupExpanded(g)) { delete navOpen[g]; saveNavOpen(); }
   setNavView("panel");
   document.getElementById("crumb").textContent = crumbFor(t);
   document.getElementById("title").textContent = t.title;
