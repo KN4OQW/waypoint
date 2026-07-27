@@ -50,6 +50,13 @@ type SetupStatus struct {
 	IP string
 	// PortalURL is where the wizard is served over the access point.
 	PortalURL string
+	// Done reports that setup finished. It outranks everything else: once the
+	// access point is going away, the SSID on the glass is an instruction to join
+	// a network that no longer exists.
+	Done bool
+	// Hostname is what the operator named the node, used to tell them where it
+	// went once the setup network is gone.
+	Hostname string
 }
 
 // SetupFrames renders the status into whole frames, each exactly rows lines of
@@ -65,6 +72,19 @@ func SetupFrames(st SetupStatus, rows, cols int) [][]string {
 	add := func(lines ...string) { frames = append(frames, fitFrame(lines, rows, cols)) }
 
 	switch {
+	case st.Done:
+		// First, because it contradicts everything else the panel could say. The
+		// setup network is going away; anyone still reading the old screen would be
+		// trying to join it.
+		add("Setup complete", "Setup wifi is off")
+		switch {
+		case st.IP != "":
+			add("Now reach me at", st.IP)
+		case st.Hostname != "":
+			add("Now reach me at", st.Hostname+".local")
+		default:
+			add("Connect me to", "your network")
+		}
 	case st.APUp:
 		add("Waypoint setup", "Join wifi:")
 		add("Setup network:", st.SSID)

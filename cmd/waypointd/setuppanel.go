@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net"
+	"os"
 	"time"
 
 	"github.com/KN4OQW/waypoint/internal/captive"
@@ -53,13 +54,30 @@ func (s *server) runSetupPanel(ctx context.Context) {
 // about whether the node has a setup network.
 func (s *server) setupPanelStatus() lcd.SetupStatus {
 	st := lcd.SetupStatus{PortalURL: captive.DefaultAddress.String()}
-	if s.wiz != nil && s.wiz.APStatus != nil {
-		if ap := s.wiz.APStatus(); ap != nil {
-			st.SSID, st.APUp, st.Open, st.Err = ap.SSID, ap.Up, ap.Open, ap.Error
+	if s.wiz != nil {
+		if s.wiz.APStatus != nil {
+			if ap := s.wiz.APStatus(); ap != nil {
+				st.SSID, st.APUp, st.Open, st.Err = ap.SSID, ap.Up, ap.Open, ap.Error
+			}
 		}
+		// Read from the marker rather than tracking a flag here, so the glass and
+		// the wizard cannot disagree about whether setup is finished.
+		st.Done = s.wiz.Provisioned()
+		st.Hostname = hostnameOrEmpty()
 	}
 	// The wired address matters most in the failure case: when there is no setup
 	// network, this is the only way back into the node.
 	st.IP = hostIPv4(net.InterfaceAddrs)
 	return st
+}
+
+// hostnameOrEmpty is the node's hostname for the panel's "where did it go" line.
+// An unreadable hostname is not worth an error path here — the panel falls back
+// to the address, and to generic advice if it has neither.
+func hostnameOrEmpty() string {
+	h, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	return h
 }

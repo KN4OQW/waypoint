@@ -68,6 +68,8 @@
   .admin .sum { color: var(--dim); font-size: .84rem; display: block; }
   code { background: color-mix(in srgb, var(--ink) 10%, transparent);
          padding: .1em .35em; border-radius: .25em; font-size: .9em; }
+  label.chk { display: flex; align-items: center; gap: .5rem; font-weight: 400; }
+  label.chk input { width: auto; margin: 0; }
   .done-msg { text-align: center; padding: 2rem 0; }
   .done-msg a { color: var(--accent); }
 </style>
@@ -93,6 +95,24 @@
 
 var STEPS = { hostname: "Name", user: "Account", key: "SSH key", lock: "Finish", claim: "Claim" };
 var state = null;
+
+// wifiHandled is a UI-side flag, not a server step. Joining a network is not part
+// of the server's ordered sequence — a node on Ethernet never needs it, and one on
+// the setup access point needs it whenever the operator has their Wi-Fi password
+// to hand. So the offer lives here: made once, before the point of no return, and
+// not made again if it was skipped or already used.
+var wifiHandled = false;
+
+// handoverNotice is shown whenever an action is expected to take the setup network
+// away. Both of them — joining Wi-Fi and finishing — hand the radio over or give
+// it up, so the reply may never arrive over the network it just removed. Telling
+// the operator both outcomes up front is the only honest option: waiting on a
+// response that cannot come is what leaves somebody staring at a spinner.
+function handoverNotice(title, body) {
+  el("rail").innerHTML = "";
+  el("subtitle").textContent = "";
+  el("card").innerHTML = '<div class="done-msg"><h2>' + esc(title) + "</h2>" + body + "</div>";
+}
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { var d = document.createElement("div"); d.textContent = s == null ? "" : s; return d.innerHTML; }
@@ -250,6 +270,7 @@ function stepKey() {
 
 async function stepLock() {
   el("subtitle").textContent = "Last step.";
+  var host = state.hostname || "";
   var admins = [];
   try {
     var r = await api("/api/setup/prior-admins");
@@ -294,9 +315,106 @@ async function stepLock() {
             failed.map(function (o) { return o.username + " (" + o.error + ")"; }).join("; "));
         }
       }
-      state = await api("/api/setup/lock", {});
-      render();
+      // Raced against a deadline rather than simply awaited. Finishing setup
+      // gives up the setup access point, and on a node being set up over that
+      // access point the reply travels across the thing being switched off. It
+      // used to hang here forever on a node that had in fact finished perfectly:
+      // provisioned, root locked, waiting at the claim gate, with the only
+      // surface that could say so already gone. The server now holds the radio
+      // up long enough to answer, and this is the belt to that braces.
+      var finished = false;
+      state = await Promise.race([
+        api("/api/setup/lock", {}).then(function (s) { finished = true; return s; }),
+        new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 20000); })
+      ]);
+      if (finished && state) { render(); return; }
+
+      handoverNotice("Setup finished",
+        "<p>Root is locked and <code>" + esc(state && state.recovery_user ? state.recovery_user : "your recovery account") +
+        "</code> is in place.</p>" +
+        "<p>This node stopped answering here because the setup network is being taken down — " +
+        "which is what finishing does. That is expected, and it does not mean anything failed.</p>" +
+        "<p>Rejoin your own network and continue at <code>" +
+        (host ? "https://" + esc(host) + ".local/" : "this node's address") +
+        "</code> to claim the dashboard.</p>");
     } catch (e) { showError(e.message); busy(false); el("card").querySelector("button").textContent = "Lock root and finish"; }
+  });
+}
+
+function stepWifi() {
+  var host = state.hostname || "";
+  var where = host ? "https://" + esc(host) + ".local/" : "this node's address on your network";
+  el("subtitle").textContent = "Put this node on your network.";
+  el("card").innerHTML =
+    "<h2>Connect to Wi-Fi</h2>" +
+    "<p>You reached this node over its temporary setup network. Give it your own " +
+    "Wi-Fi now and it will move there — otherwise it will have no way onto your network " +
+    "once setup finishes.</p>" +
+    '<p class="hint">On Ethernet? Skip this. The node is already on your network, and you ' +
+    "can set up Wi-Fi later from the dashboard.</p>" +
+    '<form id="f">' +
+    '<label for="ssid">Network name (SSID)</label>' +
+    '<input type="text" id="ssid" autocapitalize="none" autocorrect="off" spellcheck="false" required>' +
+    '<label for="psk">Password <span class="hint">Leave empty for an open network.</span></label>' +
+    '<input type="password" id="psk" autocomplete="off">' +
+    '<label for="country">Country code <span class="hint">Two letters, e.g. US. Sets the ' +
+    "radio's regulatory domain.</span></label>" +
+    '<input type="text" id="country" maxlength="2" autocapitalize="characters" autocorrect="off" ' +
+    'spellcheck="false" placeholder="US">' +
+    '<label class="chk"><input type="checkbox" id="hidden"> This network does not broadcast its name</label>' +
+    '<div class="note">This node has one radio, so it cannot run the setup network and join ' +
+    "yours at the same time. When you press Connect the setup network disappears. If the join " +
+    "works it stays gone and the node is on your Wi-Fi; if it fails, the setup network comes " +
+    "back in about a minute and you can try again.</div>" +
+    '<div class="row"><button type="submit">Connect</button>' +
+    '<button type="button" class="ghost" id="skip">Skip — I am using Ethernet</button></div>' +
+    "</form>";
+
+  el("skip").addEventListener("click", function () { wifiHandled = true; render(); });
+
+  el("f").addEventListener("submit", function (ev) {
+    ev.preventDefault(); showError(null); busy(true, "Connecting…");
+    var ssid = el("ssid").value.trim();
+    var body = {
+      ssid: ssid,
+      psk: el("psk").value,
+      hidden: el("hidden").checked,
+      country: el("country").value.trim().toUpperCase()
+    };
+    wifiHandled = true;
+
+    // Fired without awaiting the reply on the success path, deliberately. A
+    // successful join takes the setup network down before the response can be
+    // written to it, so awaiting it would hang exactly when everything worked.
+    // A failure rolls back and re-raises the access point, and that reply does
+    // arrive — so the error path is still reported.
+    api("/api/setup/network", body).then(function (res) {
+      if (res && res.state) { state = res.state; }
+      if (res && res.connected) {
+        handoverNotice("Connected to " + esc(ssid),
+          "<p>This node is now on your network" +
+          (res.ipv4 ? " at <code>" + esc(res.ipv4) + "</code>" : "") +
+          ". The setup network has gone.</p><p>Rejoin your own Wi-Fi and continue at <code>" +
+          where + "</code>.</p>");
+        return;
+      }
+      showError("Could not join " + ssid + ". The setup network should be back — try again.");
+      wifiHandled = false;
+      render();
+    }).catch(function (e) {
+      showError(e.message + " The setup network should be back shortly — try again.");
+      wifiHandled = false;
+      render();
+    });
+
+    // Shown immediately, because on the success path nothing else ever will be.
+    handoverNotice("Joining " + esc(ssid) + "…",
+      "<p>The setup network is going away while this node tries to join <code>" + esc(ssid) +
+      "</code>.</p>" +
+      "<p><strong>If it works</strong> the setup network stays gone. Rejoin your own Wi-Fi and " +
+      "continue at <code>" + where + "</code>.</p>" +
+      "<p><strong>If it fails</strong> the setup network comes back within about a minute. " +
+      "Reconnect to it and this page will pick up where it left off.</p>");
   });
 }
 
@@ -323,7 +441,14 @@ function render() {
     case "hostname": stepHostname(); break;
     case "user":     stepUser();     break;
     case "key":      stepKey();      break;
-    case "lock":     stepLock();     break;
+    // The Wi-Fi offer sits immediately before the last step, and only when the
+    // operator is actually on the setup access point. That placement is the point:
+    // finishing gives the access point up for good, so a Wi-Fi-only node that has
+    // not joined a network by then has no way back onto one. A node reached over
+    // Ethernet already has a network and is not asked.
+    case "lock":
+      if (!wifiHandled && state.ap && state.ap.up) { stepWifi(); } else { stepLock(); }
+      break;
     default:         stepDone();
   }
 }

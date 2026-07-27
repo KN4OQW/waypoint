@@ -32,6 +32,17 @@ const (
 	apRaiseBackoff  = 5 * time.Second
 )
 
+// setupTeardownGrace is how long the setup access point stays up after setup
+// completes, so the reply to the request that finished it can actually reach the
+// browser that sent it. Generous on purpose: the cost of waiting is a few seconds
+// of an access point nobody is using, and the cost of not waiting is an operator
+// looking at a spinner on a node that finished successfully.
+const setupTeardownGrace = 8 * time.Second
+
+// setupPanelLinger keeps the completion screen on a wired LCD after the radio has
+// gone, for somebody standing at the node rather than holding the phone.
+const setupPanelLinger = 90 * time.Second
+
 // raiseWithRetry brings the setup access point up, retrying a cold-boot race.
 //
 // waypointd starts early, and on a fresh boot the pieces a raise depends on may
@@ -181,12 +192,42 @@ func (s *server) initSetupAP(ctx context.Context, opts apOptions) {
 	// configured renderer opens it.
 	panelCtx, stopPanel := context.WithCancel(ctx)
 
-	s.wiz.OnComplete = func(ctx context.Context) {
+	s.wiz.OnComplete = func(context.Context) {
 		lock.Complete()
-		stopPanel()
-		if err := ctrl.Down(ctx, captive.ReasonSetupComplete); err != nil {
-			log.Printf("waypointd: could not take the setup access point down after setup: %v", err)
-		}
+		// The teardown is scheduled, not immediate, and that ordering is the whole
+		// point.
+		//
+		// The reply to the request that finished setup still has to reach the
+		// operator, and on a node set up over the access point it travels over the
+		// access point. Taking the radio down inline cut the connection carrying
+		// that response: the browser sat on "finishing…" forever with nothing to
+		// show, and because setup completion spends the AP it never came back. The
+		// node itself was finished and healthy — provisioned, root locked, waiting
+		// at the claim gate — and the one surface that could have said so was the
+		// one we had just switched off.
+		//
+		// So: return, let the response flush and the operator read where to go
+		// next, and only then give up the radio.
+		go func() {
+			select {
+			case <-time.After(setupTeardownGrace):
+			case <-ctx.Done():
+				return // the daemon is stopping; shutdown takes the AP down anyway
+			}
+			if err := ctrl.Down(context.WithoutCancel(ctx), captive.ReasonSetupComplete); err != nil {
+				log.Printf("waypointd: could not take the setup access point down after setup: %v", err)
+			}
+			// The panel keeps the completion screen up for a while after the radio
+			// goes, because that screen is how somebody standing at the node learns
+			// where it moved to. Releasing the device the instant setup finished
+			// left the last setup frame frozen on the glass, still advertising a
+			// network that no longer existed.
+			select {
+			case <-time.After(setupPanelLinger):
+			case <-ctx.Done():
+			}
+			stopPanel()
+		}()
 	}
 
 	sess := &apSession{ctrl: ctrl, portal: portal, opts: opts}

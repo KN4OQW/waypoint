@@ -84,6 +84,33 @@ func TestAFailedAPSaysSoAndOffersAWayIn(t *testing.T) {
 	}
 }
 
+// Once setup is done the setup network is being taken down, so the panel must
+// stop advertising it. Leaving the old frame up tells somebody standing at the
+// node to join a network that no longer exists — which is what it did.
+func TestCompletionOutranksTheAccessPoint(t *testing.T) {
+	// Done wins even while the AP is still technically up during the teardown
+	// grace, because that is exactly the window somebody would misread.
+	st := lcd.SetupStatus{SSID: "Waypoint-Setup-9E10", APUp: true, Done: true, IP: "172.16.50.13"}
+	frames := lcd.SetupFrames(st, lcd.SetupRows, lcd.SetupCols)
+	if framesContain(frames, "Waypoint-Setup") {
+		t.Error("the panel still advertises the setup SSID after setup completed")
+	}
+	if !framesContain(frames, "complete") {
+		t.Error("the panel does not say setup is complete")
+	}
+	if !framesContain(frames, "172.16.50.13") {
+		t.Error("the panel does not say where the node moved to")
+	}
+}
+
+// With no address yet, the hostname is the next best answer to "where did it go".
+func TestCompletionFallsBackToTheHostname(t *testing.T) {
+	st := lcd.SetupStatus{Done: true, Hostname: "kn4oqw-hs"}
+	if !framesContain(lcd.SetupFrames(st, lcd.SetupRows, lcd.SetupCols), "kn4oqw-hs.local") {
+		t.Error("with no IP, the panel does not offer the .local name")
+	}
+}
+
 // Non-ASCII must not reach the panel: the HD44780 ROM would render it as
 // garbage, and a screen of garbage reads as broken hardware.
 func TestNonASCIIIsReplaced(t *testing.T) {
