@@ -74,7 +74,7 @@ func TestFetchAtomicAndFailureSafe(t *testing.T) {
 		_, _ = w.Write([]byte("3112;Texas Statewide\n"))
 	}))
 	defer srv.Close()
-	if err := Fetch(context.Background(), srv.URL, path, verifydl.Verify{}); err != nil {
+	if err := Fetch(context.Background(), []string{srv.URL}, path, verifydl.Verify{}); err != nil {
 		t.Fatal(err)
 	}
 	if tgs, _ := Talkgroups(path); len(tgs) != 1 || tgs[0].Name != "Texas Statewide" {
@@ -86,7 +86,7 @@ func TestFetchAtomicAndFailureSafe(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer bad.Close()
-	if err := Fetch(context.Background(), bad.URL, path, verifydl.Verify{}); err == nil {
+	if err := Fetch(context.Background(), []string{bad.URL}, path, verifydl.Verify{}); err == nil {
 		t.Error("Fetch from a 500 source should error")
 	}
 	if tgs, _ := Talkgroups(path); len(tgs) != 1 || tgs[0].Name != "Texas Statewide" {

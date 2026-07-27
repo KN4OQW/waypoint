@@ -8,7 +8,6 @@ package ysfhosts
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -16,10 +15,13 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/KN4OQW/waypoint/internal/hostsrc"
+	"github.com/KN4OQW/waypoint/internal/verifydl"
 )
 
 // DefaultURL is the g4klx-endorsed source for the pre-built JSON hostlist.
-const DefaultURL = "https://hostfiles.refcheck.radio/YSFHosts.json"
+const DefaultURL = "https://hostfiles.kn4oqw.com/YSFHosts.json,https://hostfiles.refcheck.radio/YSFHosts.json"
 
 // Reflector is the slice of a hostlist entry the picker needs.
 type Reflector struct {
@@ -63,21 +65,8 @@ func upperNames(body []byte) []byte {
 // Fetch downloads the hostlist to path atomically (temp + rename). A failed
 // fetch leaves any previously-cached file intact. When upper is set the
 // reflector names are uppercased before caching (WPSD "UPPERCASE Hostfiles").
-func Fetch(ctx context.Context, url, path string, upper bool) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", "Waypoint YSF hostlist")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return &httpError{resp.StatusCode}
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+func Fetch(ctx context.Context, urls []string, path string, upper bool) error {
+	body, _, err := hostsrc.Download(ctx, hostsrc.YSFHosts, urls, verifydl.Verify{UserAgent: "Waypoint YSF hostlist"})
 	if err != nil {
 		return err
 	}
@@ -120,6 +109,7 @@ func Reflectors(path string) ([]Reflector, error) {
 		}
 		return doc.Reflectors[i].Name < doc.Reflectors[j].Name
 	})
+	hostsrc.SetEntries(hostsrc.YSFHosts, len(doc.Reflectors))
 	return doc.Reflectors, nil
 }
 
@@ -128,10 +118,10 @@ func Reflectors(path string) ([]Reflector, error) {
 // offline, and the cached file keeps working. upper is read each cycle so
 // toggling "UPPERCASE Hostfiles" takes effect on the next refresh; nil means
 // never uppercase.
-func Run(ctx context.Context, url, path string, interval time.Duration, upper func() bool) {
+func Run(ctx context.Context, urls []string, path string, interval time.Duration, upper func() bool) {
 	fetch := func() {
 		up := upper != nil && upper()
-		if err := Fetch(ctx, url, path, up); err != nil {
+		if err := Fetch(ctx, urls, path, up); err != nil {
 			log.Printf("ysfhosts: fetch failed (using cached list if present): %v", err)
 		} else {
 			log.Printf("ysfhosts: updated %s", path)
