@@ -86,7 +86,7 @@ func probe(bus string, addr uint8) bool {
 	if err != nil {
 		return false
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 	if err := unix.IoctlSetInt(fd, i2cSlave, int(addr)); err != nil {
 		return false
 	}
