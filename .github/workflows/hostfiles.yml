@@ -21,9 +21,10 @@ name: Publish hostfiles
 
 on:
   schedule:
-    # Every six hours, matching the refresh interval nodes use. Offset off the hour
-    # so this is not competing with every other cron on the runner fleet.
-    - cron: "17 */6 * * *"
+    # Once a day, matching the refresh interval nodes use. Offset off the hour
+    # so this is not competing with every other cron on the runner fleet, and because
+    # the upstreams ask not to be hammered.
+    - cron: "17 4 * * *"
   workflow_dispatch:
     inputs:
       dry_run:

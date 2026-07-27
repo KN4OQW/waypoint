@@ -2128,25 +2128,27 @@ func main() {
 			publishDiscovery(s.agg.Snapshot()) // the always-present mode/tx/feed entities now
 			s.agg.OnChange(publishDiscovery)
 		}
-		// Keep the reflector hostlists fresh for the gateways + pickers. The YSF
-		// list honors the "UPPERCASE Hostfiles" toggle, read from the store each
-		// refresh (both YSFGateway and DGIdGateway consume this same file).
-		go ysfhosts.Run(context.Background(), hostsrc.Split(*ysfHostsURL), *ysfHosts, 6*time.Hour, func() bool {
+		// Keep the reflector hostlists fresh for the gateways + pickers. Daily: these
+		// lists change slowly, they are the largest things the node downloads, and
+		// the upstreams ask not to be hammered. The YSF list honors the "UPPERCASE
+		// Hostfiles" toggle, read from the store each refresh (both YSFGateway and
+		// DGIdGateway consume this same file).
+		go ysfhosts.Run(context.Background(), hostsrc.Split(*ysfHostsURL), *ysfHosts, 24*time.Hour, func() bool {
 			var y config.YSFGateway
 			if _, err := s.store.GetInto("ysfgw", &y); err != nil {
 				return false
 			}
 			return y.UpperHostfiles
 		})
-		go p25hosts.Run(context.Background(), hostsrc.Split(*p25HostsURL), *p25Hosts, 6*time.Hour)
-		go nxdnhosts.Run(context.Background(), hostsrc.Split(*nxdnHostsURL), *nxdnHosts, 6*time.Hour)
-		go dstarhosts.Run(context.Background(), hostsrc.Split(*dstarHostsURL), *dstarHosts, 6*time.Hour)
-		go m17hosts.Run(context.Background(), hostsrc.Split(*m17HostsURL), *m17Hosts, 6*time.Hour)
+		go p25hosts.Run(context.Background(), hostsrc.Split(*p25HostsURL), *p25Hosts, 24*time.Hour)
+		go nxdnhosts.Run(context.Background(), hostsrc.Split(*nxdnHostsURL), *nxdnHosts, 24*time.Hour)
+		go dstarhosts.Run(context.Background(), hostsrc.Split(*dstarHostsURL), *dstarHosts, 24*time.Hour)
+		go m17hosts.Run(context.Background(), hostsrc.Split(*m17HostsURL), *m17Hosts, 24*time.Hour)
 		// Verified reference-data downloads (RFC-0013): when a trusted key is
 		// configured, dmrhosts/dmrtg verify each list against its <url>.minisig before
 		// it replaces the cache; a tampered list is rejected and the cache kept.
 		hostVerify := hostfileVerify(*hostfilePubkey, *requireSignedHostfiles)
-		go dmrhosts.Run(context.Background(), hostsrc.Split(*dmrHostsURL), *dmrHosts, 6*time.Hour, hostVerify)
+		go dmrhosts.Run(context.Background(), hostsrc.Split(*dmrHostsURL), *dmrHosts, 24*time.Hour, hostVerify)
 		go dmrtg.Run(context.Background(), hostsrc.Split(*dmrTGsURL), *dmrTGs, 24*time.Hour, hostVerify)
 		// The id<->callsign table every gateway is configured to read. Nothing used
 		// to download it, so the lookups silently resolved nothing (#138).
