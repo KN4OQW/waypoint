@@ -233,6 +233,33 @@
   .card-head .t { font-family: var(--mono); font-size: 11px; letter-spacing: 2px; color: var(--card-t); }
   .row { display: grid; grid-template-columns: 150px 1fr; gap: 14px; align-items: center; padding: 12px 0; border-top: 1px solid var(--row-line); }
   .row label { font-size: 12.5px; color: var(--label); }
+
+  /* Inline help (#135). The trigger sits in the label; the body spans the whole row
+     underneath so it has the full card width to read across. The body is .sr-only
+     when collapsed rather than display:none — aria-describedby cannot reach hidden
+     content, so a screen reader gets the description regardless of whether a
+     sighted operator has opened it. */
+  .help-btn { margin-left: 6px; width: 22px; height: 22px; padding: 0; border-radius: 50%; cursor: pointer; vertical-align: middle;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 11px; line-height: 1; font-weight: 600;
+    color: var(--muted); background: var(--chip-bg); border: 1px solid var(--field-line); }
+  .help-btn:hover { color: var(--ink-head); border-color: var(--accent); }
+  /* Open state is carried by the accent border and tint plus aria-expanded, not by
+     accent-coloured glyph: the light-mode accent is only 2.87:1 on its own tint,
+     well under the 4.5:1 an 11px character needs. */
+  .help-btn[aria-expanded="true"] { color: var(--ink-head); border-color: var(--accent); background: var(--accent-soft); }
+  .row-help { grid-column: 1 / -1; margin: 9px 0 2px; padding: 10px 12px; border-radius: 8px;
+    background: var(--chip-bg); border: 1px solid var(--chip-line); border-left: 2px solid var(--accent);
+    font-size: 12.5px; line-height: 1.55; color: var(--ink-body); }
+  .row-help b { color: var(--ink-head); }
+  /* Not the accent used by .note code: at 2.95:1 on the light-mode help surface it
+     fails, and these are INI keys and device paths worth reading exactly. */
+  .row-help code { font-family: var(--mono); font-size: 11.5px; color: var(--ink-head); background: var(--field); border: 1px solid var(--field-line); padding: 0 4px; border-radius: 3px; }
+  /* .toggle-row is flex, not grid — let the body wrap onto its own full-width line. */
+  .toggle-row.has-help { flex-wrap: wrap; }
+  .toggle-row .row-help { flex: 1 0 100%; }
+  /* An .sr-only body must not keep its box styling, or it would still reserve space. */
+  .row-help.sr-only { padding: 0; margin: 0; border: 0; }
   .row input, .row select { background: var(--field); border: 1px solid var(--field-line); border-radius: 6px; padding: 9px 11px; color: var(--ink); font-size: 13px; width: 100%; }
   .row input[readonly], .row select[disabled] { opacity: .85; }
   .row .accent { color: var(--accent); }

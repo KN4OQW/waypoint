@@ -43,6 +43,150 @@ const MODE_SUBS = [
   { id: "fm",     label: "FM",            crumb: "FM",            panel: () => panelFm() },
 ];
 
+// Inline help for individual settings (#135), keyed by the "section.field" pair
+// every control already carries in data-sec/data-key (or data-toggle). A field
+// with no entry simply renders without a help affordance, so the table can be
+// filled in over time without touching a panel.
+//
+// House style: say what the setting does and when an operator would change it, and
+// name the INI key it renders to where that is the fastest way for an experienced
+// operator to orient. Don't restate the label.
+const HELP = {
+  // --- station identity + radio ---
+  "general.callsign": "Your licensed callsign. It identifies this node on every network it connects to, and is what other operators see in last-heard lists. Changing it re-registers the node with its gateways on Apply.",
+  "general.id": "Your DMR ID (sometimes called a CCS7 ID) — the numeric identity issued with your callsign by <b>radioid.net</b>. This is the node-wide default: DMR, and the YSF, P25, NXDN and M17 gateways, all log in with it unless a mode overrides it.",
+  "general.location": "Free text shown to other operators and on network dashboards, e.g. “Kansas City, MO”. Cosmetic — nothing routes on it.",
+  "general.url": "A link to this node's public dashboard, published to networks that show one. Leave blank if the node is not reachable from the internet.",
+  "general.power": "Transmit power in watts, as reported to the network. This is a <b>declaration, not a control</b> — it tells other operators what you are running, it does not change what the radio actually transmits.",
+  "general.duplex": "<b>Simplex</b> transmits and receives on one frequency, one at a time — the normal hotspot arrangement. <b>Duplex</b> uses separate RX and TX frequencies and needs hardware that supports it. Setting this wrong stops the node passing traffic.",
+
+  // --- modem / RF ---
+  "modem.rx_freq_hz": "The frequency this node <b>listens</b> on — the frequency your radio transmits to. On a simplex hotspot it matches the TX frequency. Check your national band plan before choosing one.",
+  "modem.tx_freq_hz": "The frequency this node <b>transmits</b> on — the frequency your radio listens to. On a simplex hotspot it matches the RX frequency.",
+  "modem.port": "Serial device the MMDVM modem appears as, e.g. <code>/dev/ttyACM0</code> for most USB and GPIO boards. If the node stops seeing the modem after a reboot, the port has usually been renumbered.",
+  "modem.rx_offset": "Correction in Hz applied to the receive frequency, compensating for crystal error in the modem. Leave at 0 until you have measured the error — this is calibration, not tuning.",
+  "modem.tx_offset": "Correction in Hz applied to the transmit frequency, compensating for crystal error in the modem. Leave at 0 until you have measured the error.",
+
+  // --- DMR ---
+  "dmr.color_code": "DMR's equivalent of a CTCSS tone: a number <b>0–15</b> that must match at both ends before traffic is accepted. It keeps neighbouring systems on the same frequency from hearing each other. Most hotspots use 1.",
+  "dmr.id": "<b>Optional override.</b> Leave blank and the node uses the DMR ID from General → Station Identity. Set it only when this node must log in to DMR with a different ID from the one the other gateways use — a separate hotspot ID, for instance.",
+  "dmr.embedded_lc_only": "Sends only the Link Control data embedded in DMR voice bursts, leaving out the separate LC data burst. Some networks and repeaters expect this; leave it off unless yours has told you otherwise. Renders to <code>[DMR] EmbeddedLCOnly</code>.",
+  "dmr.self_only": "<b>Private</b> accepts traffic only from your own DMR ID, so nobody else can key the node. <b>Public</b> accepts any DMR ID. Private is the usual choice for a personal hotspot. Renders to <code>[DMR] SelfOnly</code>.",
+  "dmr.beacons": "Sends the DMR Roaming Beacon, which lets radios that support roaming discover this node and move to it automatically.",
+  "dmr.dump_ta_data": "Logs Talker Alias data — the sending operator's name and callsign carried alongside voice. Diagnostic; it adds noise to the log without changing what is transmitted.",
+  "dmrnet.slot1": "DMR carries two independent timeslots on one frequency. Turning slot 1 on lets it carry traffic. On a simplex hotspot both slots are usually enabled and the network decides which to use.",
+  "dmrnet.slot2": "The second DMR timeslot. Most talkgroup traffic on BrandMeister arrives on slot 2, so leaving this off will make the node look silent.",
+
+  // --- mode enables ---
+  "modes.dmr": "Digital Mobile Radio — the most widely used amateur digital mode, with talkgroups carried over networks like BrandMeister and TGIF.",
+  "modes.dstar": "Icom's D-Star, routing through reflectors and callsign-based gateways.",
+  "modes.ysf": "Yaesu System Fusion (C4FM), connecting to YSF reflectors and FCS rooms.",
+  "modes.p25": "APCO P25 Phase 1, connecting to P25 reflectors by talkgroup.",
+  "modes.nxdn": "NXDN, connecting to NXDN reflectors by talkgroup.",
+  "modes.m17": "M17 — a fully open, patent-free digital voice mode built on Codec2.",
+  "modes.pocsag": "POCSAG paging over DAPNET. Transmits pages rather than voice.",
+  "modes.fm": "Plain analog FM. It has no gateway of its own — the node simply repeats it.",
+
+  // --- D-Star ---
+  "dstar.module": "The single band letter this node identifies as, e.g. <b>B</b> for 70cm or <b>C</b> for 2m. It must match the module your radio calls, and the Band configured in the D-Star gateway.",
+  "dstar.self_only": "Accept traffic only from your own callsign, so nobody else can key the node.",
+  "dstar.remote_gateway": "Hands network control to a gateway running elsewhere. Leave this <b>off</b> when the node runs its own D-Star gateway, which is the normal setup.",
+  "dstargw.reflector": "The reflector this node links to when it starts, e.g. <code>REF001 C</code>. Leave blank to start unlinked.",
+  "dstargw.ircddb_hostname": "The ircDDB server that resolves callsigns to routes, e.g. <code>rr.openquad.net</code>. This is what makes callsign routing work.",
+  "dstargw.ircddb_username": "Your callsign as registered with the ircDDB network. It must be registered there before routing will work.",
+  "dstargw.ircddb_password": "Password issued when you registered with the ircDDB network. Stored on the node and never shown again.",
+  "dstargw.reflector_reconnect": "Whether the node returns to its startup reflector after a period of inactivity, and how long it waits. <b>Never</b> leaves it wherever the last user linked it.",
+  "dstargw.dplus": "Enable the DPlus reflector protocol (the REF reflectors). DPlus requires registration with a US Trust server.",
+  "dstargw.dplus_login": "Callsign used to authenticate to DPlus reflectors — normally your own, and it must be registered with the US Trust system.",
+  "dstargw.dextra": "Enable the DExtra reflector protocol (the XRF reflectors).",
+  "dstargw.dcs": "Enable the DCS reflector protocol (the DCS reflectors).",
+  "dstargw.xlx": "Enable XLX reflectors, which bridge D-Star with other modes.",
+
+  // --- System Fusion ---
+  "ysf.low_deviation": "Use narrow deviation, matching radios set to the narrow C4FM setting. Getting this wrong gives distorted or unreadable audio rather than silence.",
+  "ysf.self_only": "Accept traffic only from your own callsign.",
+  "ysf.remote_gateway": "Hands network control to a gateway running elsewhere. Leave off when the node runs its own YSF gateway.",
+  "ysf.tx_hang": "Seconds the transmitter stays keyed after a transmission ends, so a quick reply does not have to re-open the link.",
+  "ysf.mode_hang": "Seconds the node stays in YSF after traffic stops, before it will switch to another mode. Longer values favour continuing a YSF conversation over letting another mode in.",
+  "ysfgw.startup": "The YSF reflector or FCS room this node links to when it starts. Leave blank to start unlinked.",
+  "ysfgw.ysf_network": "Connect to the YSF reflector network.",
+  "ysfgw.fcs_network": "Connect to the FCS room network. FCS rooms are a separate system from YSF reflectors, and can be enabled alongside them.",
+  "ysfgw.ycs_network": "Connect to YCS servers, which add per-talkgroup routing on top of YSF.",
+  "ysfgw.wiresx_passthrough": "Pass Wires-X commands from the radio through to the network, so you can change reflectors from the radio's own menu instead of this page.",
+  "ysfgw.revert": "Return to the startup reflector after the inactivity timeout below.",
+  "ysfgw.inactivity_timeout": "Minutes of silence before the node reverts to its startup reflector. 0 disables the revert.",
+  "ysfgw.aprs": "Publish position and status to the APRS network.",
+  "ysfgw.suffix": "A short suffix appended to the callsign sent to the network, distinguishing several nodes running on one callsign.",
+  "ysfgw.enable_dgid": "Use DG-ID routing, which maps DG-ID numbers set on the radio to different reflectors.",
+  "ysfgw.upper_hostfiles": "Fetch reflector host lists from the alternate upstream source.",
+
+  // --- P25 / NXDN / M17 ---
+  "p25.nac": "Network Access Code — P25's equivalent of a CTCSS tone, written in <b>hex</b>. It must match at both ends. <code>293</code> is the common default.",
+  "p25.self_only": "Accept traffic only from your own ID.",
+  "p25.override_uid_check": "Skip validation of the source ID on incoming traffic. Leave off unless a radio you trust is being rejected.",
+  "p25.remote_gateway": "Hands network control to a gateway running elsewhere. Leave off when the node runs its own P25 gateway.",
+  "p25gw.static": "Talkgroups the node links to at startup and stays on. Leave blank to start unlinked.",
+  "p25gw.voice": "Play spoken announcements when the node links or unlinks.",
+  "p25gw.rf_hang_time": "Seconds the node stays on a talkgroup after <b>you</b> stop transmitting.",
+  "p25gw.net_hang_time": "Seconds the node stays on a talkgroup after <b>network</b> traffic stops.",
+  "nxdn.ran": "Radio Access Number — NXDN's equivalent of a CTCSS tone, <b>0–63</b>. It must match at both ends. 1 is the common default.",
+  "nxdn.self_only": "Accept traffic only from your own ID.",
+  "nxdn.remote_gateway": "Hands network control to a gateway running elsewhere. Leave off when the node runs its own NXDN gateway.",
+  "nxdngw.static": "Talkgroups the node links to at startup and stays on. Leave blank to start unlinked.",
+  "nxdngw.voice": "Play spoken announcements when the node links or unlinks.",
+  "nxdngw.rf_hang_time": "Seconds the node stays on a talkgroup after you stop transmitting.",
+  "nxdngw.net_hang_time": "Seconds the node stays on a talkgroup after network traffic stops.",
+  "m17.can": "Channel Access Number — M17's equivalent of a CTCSS tone, <b>0–15</b>. It must match at both ends. 0 is the common default.",
+  "m17.self_only": "Accept traffic only from your own callsign.",
+  "m17.allow_encryption": "Pass encrypted M17 frames through the node. <b>Encrypted transmissions are prohibited on amateur bands in most countries</b> — leave this off unless you are certain of your local rules.",
+  "m17gw.startup": "The reflector and module this node links to when it starts, e.g. <code>M17-M17 C</code>. Leave blank to start unlinked.",
+  "m17gw.suffix": "A short suffix distinguishing several M17 nodes running on one callsign.",
+  "m17gw.voice": "Play spoken announcements when the node links or unlinks.",
+  "m17gw.revert": "Return to the startup reflector after the hang time below.",
+  "m17gw.hang_time": "Seconds of silence before the node reverts to its startup reflector.",
+
+  // --- FM ---
+  "fm.ctcss": "The sub-audible access tone in Hz, e.g. <code>88.5</code>. Your radio must send the same tone before the node will repeat you.",
+  "fm.timeout": "Maximum seconds of continuous transmission before the node stops keying — the classic repeater timer that stops a stuck mic holding the channel.",
+  "fm.kerchunk_time": "Seconds you must hold a transmission before the node responds, which stops brief “kerchunks” keying it. 0 turns it off.",
+  "fm.rf_audio_boost": "Gain applied to audio arriving over the air. Raise it if you sound quiet to the network.",
+  "fm.ext_audio_boost": "Gain applied to audio arriving from the network. Raise it if the network sounds quiet on the air.",
+  "fm.access_mode": "How a transmission is allowed to open the repeater — on carrier alone, or only with the correct CTCSS tone. Requiring the tone stops unrelated signals keying the node.",
+
+  // --- POCSAG ---
+  "pocsag.frequency": "The paging transmit frequency in Hz. Amateur paging uses specific national allocations — check yours before transmitting.",
+  "pocsag.server": "DAPNET server this node fetches pages from, e.g. <code>dapnet.afu.rwth-aachen.de</code>.",
+  "pocsag.callsign": "The callsign this node authenticates to DAPNET with. It must be registered with DAPNET separately from your radio licence.",
+  "pocsag.auth_key": "The AuthKey issued by the DAPNET portal for your callsign. Stored on the node and never shown again.",
+  "pocsag.whitelist": "Only transmit pages for these RICs (pager addresses). Leave blank to transmit everything the server sends.",
+  "pocsag.blacklist": "Never transmit pages for these RICs, even when the server sends them.",
+
+  // --- station ID + history ---
+  "station_id.enable": "Keys your callsign in Morse at a fixed interval, so the node identifies itself without you doing anything. <b>Most licences require periodic identification</b> — in the US, every 10 minutes (§97.119).",
+  "station_id.time_mins": "Minutes between identifications. Set this to your licence's requirement or shorter — 10 minutes in the US. Identification is sent between transmissions, never during one.",
+  "station_id.callsign": "Identify with a different callsign from your station callsign. Leave blank to track General → Callsign automatically.",
+  "station_id.tx_level": "Loudness of the Morse identification, as a percentage of full deviation. Raise it if the ID is hard to copy, lower it if it is jarring next to voice traffic.",
+  "history.retention_days": "How many days of last-heard and event history the node keeps on disk. <b>0 keeps it forever.</b> Older events are pruned nightly; a longer window uses more SD-card space.",
+
+  // --- updates ---
+  "update.check_enabled": "Check the signed Waypoint apt repository for new versions. Turning this off means the node never contacts the update server — you will need to check by hand.",
+  "update.auto_apply": "Install updates automatically when they are found. Updates are health-checked after installing, and roll themselves back if the modem does not come back up.",
+  "update.channel": "Which stream of releases this node follows. Stable is the tested one; the others get changes earlier and with more risk.",
+  "update.quiet_window": "A daily window during which updates are not installed, so a restart never lands in the middle of your regular operating time.",
+
+  // --- display / LCD ---
+  "display.port": "Where the display is attached — the modem's own pass-through, or a named serial device. <b>None</b> leaves the node headless, which is the normal Waypoint setup.",
+  "display.hd44780_rows": "Character rows on the panel — 2 and 4 are the common sizes.",
+  "display.hd44780_cols": "Characters per row — usually 16 or 20.",
+  "display.hd44780_i2c_addr": "I2C address of the panel's PCF8574 backpack, in hex. <code>0x27</code> and <code>0x3F</code> cover most modules.",
+  "lcd.enabled": "Drive a physically attached HD44780 character panel. Off by default — the node stays headless and reports status over MQTT instead.",
+  "lcd.activity_interrupt": "Let radio activity take over the panel as it happens, instead of waiting for the page rotation to come round.",
+  "lcd.i2c_bus": "I2C device the panel is wired to. <code>/dev/i2c-1</code> is the header bus on every Pi since the B+.",
+  "lcd.i2c_address": "I2C address of the panel's backpack, in hex — commonly <code>0x27</code> or <code>0x3F</code>.",
+  "lcd.scroll_speed": "How fast text longer than the panel scrolls across it.",
+  "lcd.linger_secs": "Seconds a page stays on the panel before the next one rotates in.",
+};
+
 const THEMES = [
   { key: "phosphor", color: "#35d07f", attr: "" },
   { key: "amber",    color: "#f0a935", attr: "amber" },
@@ -2159,6 +2303,53 @@ function enhanceA11y() {
     if (ph) ctrl.setAttribute("aria-label", ph);
   });
 }
+// --- inline help (#135) ---------------------------------------------------
+// Help is attached after render rather than threaded through row()/input()/
+// toggle(): the panels build controls a dozen different ways — bare selects,
+// datalists, unit wrappers, bespoke rows like nodeLockRow — and every one of them
+// already carries data-sec/data-key or data-toggle. Walking the rendered DOM
+// therefore covers all of them uniformly, and any control added later gets help
+// for free just by appearing in the HELP table.
+//
+// The body is .sr-only when collapsed rather than hidden: aria-describedby cannot
+// reach display:none content, and a screen-reader user should get the description
+// without depending on a sighted interaction having happened. The "?" button
+// governs visual disclosure only, so help is never hover-only.
+let openHelp = new Set();
+function helpId(key) { return "wp-help-" + key.replace(/[^A-Za-z0-9_-]/g, "-"); }
+
+function enhanceHelp(box) {
+  box.querySelectorAll("[data-toggle], [data-sec][data-key]").forEach((ctrl) => {
+    const key = ctrl.dataset.toggle || ctrl.dataset.sec + "." + ctrl.dataset.key;
+    const text = HELP[key];
+    if (!text) return;
+    const rowEl = ctrl.closest(".row, .toggle-row");
+    // One help block per row: a row with several controls (an IPv4 editor, say)
+    // would otherwise get one per field.
+    if (!rowEl || rowEl.querySelector(".row-help")) return;
+    const host = rowEl.querySelector("label, .name");
+    if (!host) return;
+
+    const id = helpId(key);
+    const open = openHelp.has(id);
+    const label = (host.textContent || "").trim();
+
+    const btn = el("button", "help-btn");
+    btn.type = "button";
+    btn.dataset.help = id;
+    btn.setAttribute("aria-expanded", String(open));
+    btn.setAttribute("aria-controls", id);
+    btn.innerHTML = `<span aria-hidden="true">?</span><span class="sr-only">What is “${esc(label)}”?</span>`;
+    host.appendChild(btn);
+
+    const body = el("p", "row-help" + (open ? "" : " sr-only"), text);
+    body.id = id;
+    rowEl.appendChild(body);
+    if (rowEl.classList.contains("toggle-row")) rowEl.classList.add("has-help");
+    ctrl.setAttribute("aria-describedby", id);
+  });
+}
+
 function namedControl(c) {
   if (c.getAttribute("aria-label") || c.getAttribute("aria-labelledby") || c.getAttribute("title")) return true;
   if (c.closest("label")) return true;
@@ -2184,6 +2375,9 @@ function renderPanel() {
     default:             box.innerHTML = "";
   }
   enhanceA11y();
+  // After enhanceA11y, so a help button appended to a <label> cannot be picked up
+  // as that label's control when it assigns for/id pairs.
+  enhanceHelp(box);
 }
 
 // --- apply / reset -------------------------------------------------------
@@ -2988,6 +3182,22 @@ document.getElementById("panels").addEventListener("input", (e) => {
   }
 });
 document.getElementById("panels").addEventListener("click", (e) => {
+  // --- inline help disclosure (#135) ---
+  // Toggled in place rather than via renderPanel: the text is already in the DOM,
+  // so this only flips its visibility, and skipping the re-render keeps the
+  // operator's scroll position and focus exactly where they were. preventDefault
+  // stops a <label> that wraps the button forwarding the click to its control.
+  const hb = e.target.closest("[data-help]");
+  if (hb) {
+    e.preventDefault();
+    const id = hb.dataset.help;
+    const open = !openHelp.has(id);
+    if (open) openHelp.add(id); else openHelp.delete(id);
+    const body = document.getElementById(id);
+    if (body) body.classList.toggle("sr-only", !open);
+    hb.setAttribute("aria-expanded", String(open));
+    return;
+  }
   // --- Modes sub-tab strip (D4) ---
   const ms = e.target.closest("[data-modesub]");
   if (ms) { selectModeSub(ms.dataset.modesub); return; }

@@ -87,6 +87,9 @@ async function analyze(page, label) {
     document.querySelectorAll('.mode-card.off, .pill.off, [aria-pressed="false"]').forEach((b) => {
       if (typeof b.click === "function") b.click();
     });
+    // Expand every inline-help block (#135) so its open state is scanned too, not
+    // just the collapsed one. Done after the toggles above, which re-render rows.
+    document.querySelectorAll('.help-btn[aria-expanded="false"]').forEach((b) => b.click());
   }).catch(() => {});
   await page.waitForTimeout(150);
   const result = await new AxeBuilder({ page }).withTags(TAGS).analyze();
