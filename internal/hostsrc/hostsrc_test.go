@@ -147,13 +147,13 @@ func TestRestoreOnlyWritesWhenThereIsNoCache(t *testing.T) {
 
 // A list with no shipped copy is a normal state, not an error.
 func TestRestoreWithoutASeed(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "YSFHosts.json")
-	wrote, err := Restore(YSFHosts, path)
+	path := filepath.Join(t.TempDir(), "DMRIds.dat")
+	wrote, err := Restore(DMRIds, path)
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 	if wrote {
-		t.Error("YSF ships no copy; nothing should have been written")
+		t.Error("the DMR ID table ships no copy; nothing should have been written")
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Error("no seed should mean no file")
@@ -161,7 +161,9 @@ func TestRestoreWithoutASeed(t *testing.T) {
 }
 
 func TestSeedsAreShippedForTheListsThatClaimThem(t *testing.T) {
-	for _, name := range []string{DMRHosts, DMRTalkgroups, DStarHosts} {
+	// Every picker-backing list now ships a copy: the four that had none are
+	// captured from the classic text lists and converted (internal/hostconv).
+	for _, name := range []string{DMRHosts, DMRTalkgroups, DStarHosts, YSFHosts, P25Hosts, NXDNHosts, M17Hosts} {
 		if !HasSeed(name) {
 			t.Errorf("%s should ship a copy", name)
 		}
@@ -169,10 +171,9 @@ func TestSeedsAreShippedForTheListsThatClaimThem(t *testing.T) {
 			t.Errorf("%s seed looks truncated (%d bytes)", name, len(b))
 		}
 	}
-	for _, name := range []string{YSFHosts, P25Hosts, NXDNHosts, M17Hosts} {
-		if HasSeed(name) {
-			t.Errorf("%s is not expected to ship a copy yet (#138)", name)
-		}
+	// DMRIds.dat is deliberately not shipped: 6.6 MB of continuously-ageing data.
+	if HasSeed(DMRIds) {
+		t.Error("the DMR ID table should not be embedded — it is 6.6 MB and ages continuously")
 	}
 }
 

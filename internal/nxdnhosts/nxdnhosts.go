@@ -20,8 +20,11 @@ import (
 	"github.com/KN4OQW/waypoint/internal/verifydl"
 )
 
-// DefaultURL is the g4klx-endorsed source for the pre-built JSON hostlist (the
-// same register as YSF/P25; NXDNHostsUpdate.sh downloads exactly this file).
+// hostfiles.kn4oqw.com leads, with refcheck.radio kept as a fallback in case it
+// returns — it served this same JSON shape. Pi-Star is deliberately NOT a fallback
+// here: it serves the classic text format, and the pinned gateway parses this file
+// as JSON, so pointing at it would leave the gateway with no reflectors at all.
+// The conversion happens at publish time instead (internal/hostconv, #138).
 const DefaultURL = "https://hostfiles.kn4oqw.com/NXDNHosts.json,https://hostfiles.refcheck.radio/NXDNHosts.json"
 
 // Reflector is the slice of a hostlist entry the picker needs. Designator is the

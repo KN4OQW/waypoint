@@ -29,6 +29,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/KN4OQW/waypoint/internal/hostconv"
 )
 
 // capture is one shipped copy and where it comes from. Keep in step with the
@@ -40,15 +42,43 @@ var captures = []struct {
 	// published but never committed: DMRIds.dat is 6.6 MB, which is a third of the
 	// binary again, and it goes out of date continuously rather than slowly.
 	Shipped bool
+	// CompanionURL is fetched alongside URL when a list needs a second file to be
+	// complete — the P25/NXDN hostlists carry addresses but no names, which live in
+	// the matching TGList. A companion that fails to fetch is not fatal.
+	CompanionURL string
+	// Convert turns the captured bytes into what the gateways actually parse. The
+	// classic text lists are not gateway-readable: YSFGateway, P25Gateway and
+	// NXDNGateway all parse JSON. nil means publish the bytes as captured.
+	Convert func(body, companion []byte) ([]byte, error)
 }{
-	{"DMR_Hosts.txt", "https://www.pistar.uk/downloads/DMR_Hosts.txt", true},
-	{"TGList_BM.txt", "https://www.pistar.uk/downloads/TGList_BM.txt", true},
+	{File: "DMR_Hosts.txt", URL: "https://www.pistar.uk/downloads/DMR_Hosts.txt", Shipped: true},
+	{File: "TGList_BM.txt", URL: "https://www.pistar.uk/downloads/TGList_BM.txt", Shipped: true},
 	// Pinned to the same DStarGateway commit the stack pins the gateway binary to,
 	// so the format matches the parser that reads it. Bump both together.
-	{"DStar_Hosts.json", "https://raw.githubusercontent.com/g4klx/DStarGateway/612f388727a9bb47aaeaae3a89f5abff3152ed93/Data/DStar_Hosts.json", true},
+	{File: "DStar_Hosts.json", URL: "https://raw.githubusercontent.com/g4klx/DStarGateway/612f388727a9bb47aaeaae3a89f5abff3152ed93/Data/DStar_Hosts.json", Shipped: true},
 	// The id<->callsign table every rendered gateway config points at. Published
 	// only — see Shipped above.
-	{"DMRIds.dat", "https://www.pistar.uk/downloads/DMRIds.dat", false},
+	{File: "DMRIds.dat", URL: "https://www.pistar.uk/downloads/DMRIds.dat", Shipped: false},
+
+	// The four that lost their JSON source when hostfiles.refcheck.radio went away
+	// (#138). Pi-Star serves the classic text formats; the gateways parse JSON, so
+	// these are converted here and hostfiles.kn4oqw.com serves the result.
+	{
+		File: "YSFHosts.json", URL: "https://www.pistar.uk/downloads/YSF_Hosts.txt", Shipped: true,
+		Convert: func(b, _ []byte) ([]byte, error) { return hostconv.YSF(b) },
+	},
+	{
+		File: "P25Hosts.json", URL: "https://www.pistar.uk/downloads/P25_Hosts.txt", Shipped: true,
+		CompanionURL: "https://www.pistar.uk/downloads/TGList_P25.txt",
+		Convert:      hostconv.P25,
+	},
+	{
+		File: "NXDNHosts.json", URL: "https://www.pistar.uk/downloads/NXDN_Hosts.txt", Shipped: true,
+		CompanionURL: "https://www.pistar.uk/downloads/TGList_NXDN.txt",
+		Convert:      hostconv.NXDN,
+	},
+	// M17Gateway parses the classic text directly, so this one needs no conversion.
+	{File: "M17Hosts.txt", URL: "https://www.pistar.uk/downloads/M17_Hosts.txt", Shipped: true},
 }
 
 // minSize guards against shipping a truncated list: an error page is small, a
@@ -87,6 +117,24 @@ func main() {
 			fmt.Printf("  !! %-18s %v\n     keeping the existing copy (%d bytes)\n", c.File, err, len(old))
 			failed++
 			continue
+		}
+		var companion []byte
+		if c.CompanionURL != "" {
+			// Names are a nicety; addresses are not. A companion that will not fetch
+			// costs readable labels, not a working list.
+			if companion, err = fetch(client, c.CompanionURL); err != nil {
+				fmt.Printf("  .. %-18s companion %v; continuing without names\n", c.File, err)
+				companion = nil
+			}
+		}
+		if c.Convert != nil {
+			converted, err := c.Convert(body, companion)
+			if err != nil {
+				fmt.Printf("  !! %-18s conversion failed: %v\n     keeping the existing copy (%d bytes)\n", c.File, err, len(old))
+				failed++
+				continue
+			}
+			body = converted
 		}
 		if len(body) < minSize {
 			fmt.Printf("  !! %-18s only %d bytes, refusing to ship it\n", c.File, len(body))

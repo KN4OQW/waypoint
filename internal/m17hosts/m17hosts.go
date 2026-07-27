@@ -23,9 +23,10 @@ import (
 	"github.com/KN4OQW/waypoint/internal/hostfile"
 )
 
-// DefaultURL is the g4klx-endorsed source for the M17 hostlist (the same
-// register as YSF/P25/NXDN; M17HostsUpdate.sh downloads exactly this file).
-const DefaultURL = "https://hostfiles.kn4oqw.com/M17Hosts.txt,https://hostfiles.refcheck.radio/M17Hosts.txt"
+// hostfiles.kn4oqw.com leads, then refcheck.radio, then Pi-Star. Unlike the YSF/
+// P25/NXDN lists, M17Gateway parses the classic text format directly, so Pi-Star
+// is a usable last resort here and needs no conversion.
+const DefaultURL = "https://hostfiles.kn4oqw.com/M17Hosts.txt,https://hostfiles.refcheck.radio/M17Hosts.txt,https://www.pistar.uk/downloads/M17_Hosts.txt"
 
 // Reflector is the slice of a hostlist entry the picker needs. Name is the M17
 // reflector the user links to; a module letter (A–Z) is appended at link time.

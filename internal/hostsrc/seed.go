@@ -20,10 +20,9 @@ import (
 // slowly, so a shipped copy would be large and wrong. A node with no network
 // resolves numeric IDs instead of callsigns.
 //
-// Only lists with a reachable upstream at capture time are shipped. YSF, P25,
-// NXDN and M17 have none right now — every source for them resolved to a host
-// that is refusing connections (#138) — so they have no floor until
-// hostfiles.kn4oqw.com serves them, and their status says so.
+// YSF, P25 and NXDN are captured from the classic text lists and converted to the
+// JSON their gateways parse (internal/hostconv) before being shipped, because the
+// source that served ready-made JSON is gone. M17 needs no conversion.
 
 //go:embed seed/DMR_Hosts.txt
 var seedDMRHosts []byte
@@ -33,6 +32,18 @@ var seedDMRTalkgroups []byte
 
 //go:embed seed/DStar_Hosts.json
 var seedDStarHosts []byte
+
+//go:embed seed/YSFHosts.json
+var seedYSFHosts []byte
+
+//go:embed seed/P25Hosts.json
+var seedP25Hosts []byte
+
+//go:embed seed/NXDNHosts.json
+var seedNXDNHosts []byte
+
+//go:embed seed/M17Hosts.txt
+var seedM17Hosts []byte
 
 // List ids. These are the keys used for registration, status reporting and the
 // seed lookup, so they are declared once here rather than spelled out per caller.
@@ -51,6 +62,10 @@ var seeds = map[string][]byte{
 	DMRHosts:      seedDMRHosts,
 	DMRTalkgroups: seedDMRTalkgroups,
 	DStarHosts:    seedDStarHosts,
+	YSFHosts:      seedYSFHosts,
+	P25Hosts:      seedP25Hosts,
+	NXDNHosts:     seedNXDNHosts,
+	M17Hosts:      seedM17Hosts,
 }
 
 // Seed returns the shipped copy of a list, if it ships with one.
