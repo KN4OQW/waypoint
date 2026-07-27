@@ -180,6 +180,20 @@ func (c *Controller) DownForJoin(ctx context.Context) error {
 // failed is on a phone that just lost this network; the associate window has to
 // start again from the moment the AP comes back, or a node that has been sitting
 // unattended would tear it straight back down.
+// Reraise refuses a spent access point, and that includes netwatch. This is a
+// decision, not an omission.
+//
+// netwatch exists to recover a node whose upstream has gone away, and it is
+// blocked here in exactly one case: the node finished setup, spending the access
+// point, and then ended up with no network. Letting netwatch through would
+// recover that node unattended — at the cost of an open, unauthenticated surface
+// that can reappear by itself on any node whose upstream flaps. Reopening that
+// surface should take deliberate physical action, which is the same bar RFC-0002
+// sets for every other recovery path.
+//
+// A power cycle is that action: `spent` is per-boot, so on the next boot netwatch
+// re-raises after its grace period. The node is recoverable by someone standing
+// at it, and not by anyone else.
 func (c *Controller) Reraise(ctx context.Context, why Reason) error {
 	c.mu.Lock()
 	if c.spent {

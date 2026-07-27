@@ -79,6 +79,10 @@ type server struct {
 	// apSession ties the AP to the listeners that make it useful, so a re-raise
 	// after a failed join or a lost upstream brings the wizard back with it.
 	apSession *apSession
+	// apErr is why the setup access point is not up, surfaced through the wizard
+	// so the failure is visible to whoever is setting the node up.
+	apErrMu sync.Mutex
+	apErr   string
 	// certs owns the device certificate, so it can be reminted for the hostname
 	// the operator chooses rather than the one the node booted with.
 	certs *tlscert.Holder

@@ -191,6 +191,15 @@ func (c *Client) APDown(ctx context.Context, req APDownRequest) (APDownResponse,
 	return out, err
 }
 
+func (c *Client) NetScan(ctx context.Context, req NetScanRequest) (NetScanResponse, error) {
+	var out NetScanResponse
+	if err := req.Validate(); err != nil {
+		return out, err
+	}
+	err := c.call(ctx, MethodNetScan, req, &out)
+	return out, err
+}
+
 func (c *Client) NetJoin(ctx context.Context, req NetJoinRequest) (NetJoinResponse, error) {
 	var out NetJoinResponse
 	if err := req.Validate(); err != nil {

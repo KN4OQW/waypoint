@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Waypoint · Set up this node</title>
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<style>
+  /* Self-contained on purpose. This page is served over the setup access point to
+     a phone with no route to the internet, and often inside a captive-portal
+     sheet — so no CDN font, no external stylesheet, nothing that can fail to
+     load. It borrows the dashboard's phosphor palette so the two read as one app. */
+  :root {
+    --bg: #0b0f0d; --panel: #111917; --line: #1f2f2a; --ink: #d7e8e1;
+    --dim: #8aa39a; --accent: #35e08f; --warn: #e0a935; --bad: #e05c5c;
+    --radius: .5rem;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f4f7f5; --panel: #fff; --line: #d8e3de; --ink: #16241f;
+            --dim: #5c6f68; --accent: #0f7a45; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 34rem; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+  h1 { font-size: 1.35rem; margin: .2rem 0 .1rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 .75rem; }
+  p  { margin: .55rem 0; }
+  .sub { color: var(--dim); font-size: .92rem; margin-top: 0; }
+
+  /* Progress rail */
+  ol.rail { list-style: none; display: flex; gap: .35rem; padding: 0; margin: 1.1rem 0 1.4rem; }
+  ol.rail li { flex: 1; font-size: .72rem; letter-spacing: .04em; text-transform: uppercase;
+               color: var(--dim); border-top: 3px solid var(--line); padding-top: .4rem; }
+  ol.rail li.done { color: var(--accent); border-top-color: var(--accent); }
+  ol.rail li.now  { color: var(--ink); border-top-color: var(--ink); font-weight: 600; }
+
+  .card { background: var(--panel); border: 1px solid var(--line);
+          border-radius: var(--radius); padding: 1.1rem; }
+  label { display: block; font-weight: 600; margin: .9rem 0 .3rem; }
+  .hint { color: var(--dim); font-size: .87rem; margin: .15rem 0 0; font-weight: 400; }
+  input[type=text], input[type=password], textarea {
+    width: 100%; padding: .6rem .7rem; background: var(--bg); color: var(--ink);
+    border: 1px solid var(--line); border-radius: .35rem; font: inherit; }
+  textarea { min-height: 5.5rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+             font-size: .82rem; resize: vertical; }
+  input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  button { font: inherit; font-weight: 600; padding: .65rem 1.1rem; border-radius: .35rem;
+           border: 1px solid var(--accent); background: var(--accent); color: #04150c;
+           cursor: pointer; }
+  button.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+  button[disabled] { opacity: .55; cursor: progress; }
+  .row { display: flex; gap: .6rem; align-items: center; margin-top: 1.2rem; flex-wrap: wrap; }
+
+  .note { border-left: 3px solid var(--warn); padding: .7rem .85rem; border-radius: .3rem;
+          background: color-mix(in srgb, var(--warn) 12%, transparent); font-size: .9rem; }
+  .rec  { border-left: 3px solid var(--accent); padding: .7rem .85rem; border-radius: .3rem;
+          background: color-mix(in srgb, var(--accent) 12%, transparent); font-size: .9rem; }
+  .err  { border-left: 3px solid var(--bad); padding: .7rem .85rem; border-radius: .3rem;
+          background: color-mix(in srgb, var(--bad) 14%, transparent); margin-bottom: 1rem; }
+  .err[hidden] { display: none; }
+
+  .admin { border: 1px solid var(--line); border-radius: .35rem; padding: .6rem .7rem;
+           margin-bottom: .5rem; display: flex; gap: .6rem; align-items: flex-start; }
+  .admin input { margin-top: .28rem; }
+  .admin code { font-size: .9rem; }
+  .admin .sum { color: var(--dim); font-size: .84rem; display: block; }
+  code { background: color-mix(in srgb, var(--ink) 10%, transparent);
+         padding: .1em .35em; border-radius: .25em; font-size: .9em; }
+  label.chk { display: flex; align-items: center; gap: .5rem; font-weight: 400; }
+  label.chk input { width: auto; margin: 0; }
+  select { width: 100%; padding: .6rem .7rem; border-radius: .3rem; font: inherit;
+           background: var(--bg); color: var(--ink); border: 1px solid var(--line); }
+  ul.nets { list-style: none; margin: .3rem 0 .6rem; padding: 0;
+            max-height: 13rem; overflow-y: auto; border: 1px solid var(--line); border-radius: .3rem; }
+  ul.nets li + li { border-top: 1px solid var(--line); }
+  button.net { display: flex; justify-content: space-between; align-items: center; gap: .6rem;
+               width: 100%; background: transparent; color: var(--ink); border: 0;
+               border-radius: 0; padding: .6rem .7rem; text-align: left; font: inherit; }
+  button.net:hover, button.net:focus { background: var(--line); }
+  button.net .ss { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button.net .meta { flex: none; font-size: .85em; opacity: .85; }
+  .dim { opacity: .3; }
+  .warnpill { color: var(--warn); font-weight: 600; }
+  .done-msg { text-align: center; padding: 2rem 0; }
+  .done-msg a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Set up this Waypoint</h1>
+  <p class="sub" id="subtitle">Loading…</p>
+
+  <ol class="rail" id="rail" aria-label="Setup progress"></ol>
+
+  <div class="err" id="err" role="alert" hidden></div>
+
+  <div class="card" id="card">
+    <p>Loading…</p>
+  </div>
+</main>
+
+<script>
+"use strict";
+// Plain DOM and fetch. No framework, no build step: this has to work in whatever
+// cut-down browser a captive-portal sheet provides.
+
+var STEPS = { hostname: "Name", user: "Account", key: "SSH key", lock: "Finish", claim: "Claim" };
+var state = null;
+
+// wifiHandled is a UI-side flag, not a server step. Joining a network is not part
+// of the server's ordered sequence — a node on Ethernet never needs it, and one on
+// the setup access point needs it whenever the operator has their Wi-Fi password
+// to hand. So the offer lives here: made once, before the point of no return, and
+// not made again if it was skipped or already used.
+var wifiHandled = false;
+
+// handoverNotice is shown whenever an action is expected to take the setup network
+// away. Both of them — joining Wi-Fi and finishing — hand the radio over or give
+// it up, so the reply may never arrive over the network it just removed. Telling
+// the operator both outcomes up front is the only honest option: waiting on a
+// response that cannot come is what leaves somebody staring at a spinner.
+function handoverNotice(title, body) {
+  el("rail").innerHTML = "";
+  el("subtitle").textContent = "";
+  el("card").innerHTML = '<div class="done-msg"><h2>' + esc(title) + "</h2>" + body + "</div>";
+}
+
+function el(id) { return document.getElementById(id); }
+function esc(s) { var d = document.createElement("div"); d.textContent = s == null ? "" : s; return d.innerHTML; }
+
+function showError(msg) {
+  var e = el("err");
+  if (!msg) { e.hidden = true; e.textContent = ""; return; }
+  e.textContent = msg;
+  e.hidden = false;
+  e.scrollIntoView({ block: "nearest" });
+}
+
+async function api(path, body) {
+  var opts = { headers: { "Accept": "application/json" } };
+  if (body !== undefined) {
+    opts.method = "POST";
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  var r = await fetch(path, opts);
+  var text = await r.text();
+  var data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (e) { /* non-JSON */ }
+  if (!r.ok) {
+    // The API's error field is written for a person; show it as-is rather than
+    // inventing a friendlier one that says less.
+    var msg = (data && data.error) || ("Request failed (" + r.status + ")");
+    if (data && data.expected_step) msg += "  The next step is “" + STEPS[data.expected_step] + "”.";
+    var err = new Error(msg);
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+function renderRail() {
+  var done = (state.completed || []);
+  el("rail").innerHTML = state.steps.map(function (s) {
+    var cls = done.indexOf(s) >= 0 ? "done" : (s === state.next ? "now" : "");
+    return '<li class="' + cls + '">' + esc(STEPS[s] || s) + "</li>";
+  }).join("");
+}
+
+function busy(on, label) {
+  var b = el("card").querySelector("button[type=submit]");
+  if (b) { b.disabled = on; if (on && label) b.textContent = label; }
+}
+
+// --- steps -----------------------------------------------------------------
+
+function stepHostname() {
+  el("subtitle").textContent = "Give this node a name.";
+  el("card").innerHTML =
+    '<h2>Name this node</h2>' +
+    '<form id="f">' +
+    '<label for="hostname">Hostname' +
+    '<span class="hint">Letters, digits and hyphens. You will reach the dashboard at ' +
+    '<code id="preview">name.local</code> — so pick something you will recognise. ' +
+    'The shipped default is not accepted: two Waypoints keeping it would answer to the same address.</span>' +
+    '</label>' +
+    '<input type="text" id="hostname" name="hostname" autocapitalize="none" autocorrect="off" ' +
+    'spellcheck="false" required placeholder="hs-shack">' +
+    '<div class="row"><button type="submit">Continue</button></div>' +
+    "</form>";
+  var input = el("hostname");
+  input.addEventListener("input", function () {
+    el("preview").textContent = (input.value.trim() || "name") + ".local";
+  });
+  input.focus();
+  el("f").addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    showError(null); busy(true, "Renaming…");
+    try {
+      state = await api("/api/setup/hostname", { hostname: input.value.trim() });
+      render();
+    } catch (e) { showError(e.message); busy(false); el("card").querySelector("button").textContent = "Continue"; }
+  });
+}
+
+function stepUser() {
+  el("subtitle").textContent = "Create the account that can recover this node.";
+  el("card").innerHTML =
+    '<h2>Recovery account</h2>' +
+    '<p>This is the account you use to get back in over SSH if you lose your ' +
+    'Waypoint password. It can become root; the root password is locked at the end of setup.</p>' +
+    '<div class="rec"><strong>An SSH key is the better credential.</strong> A key you ' +
+    'already hold cannot be forgotten, and a public key is not a secret — so sending it ' +
+    'over this network gives nothing away.</div>' +
+    '<form id="f">' +
+    '<label for="username">Username<span class="hint">Lowercase. Not <code>root</code>.</span></label>' +
+    '<input type="text" id="username" autocapitalize="none" autocorrect="off" spellcheck="false" ' +
+    'required placeholder="rescue" value="rescue">' +
+    '<label for="sshkey">SSH public key <span class="hint">Recommended. Paste the contents of ' +
+    '<code>~/.ssh/id_ed25519.pub</code> — one line, starting with <code>ssh-ed25519</code>.</span></label>' +
+    '<textarea id="sshkey" autocapitalize="none" autocorrect="off" spellcheck="false" ' +
+    'placeholder="ssh-ed25519 AAAA… you@laptop"></textarea>' +
+    '<label for="password">Password <span class="hint" id="pwhint">Optional if you gave a key. ' +
+    'At least 8 characters.</span></label>' +
+    '<input type="password" id="password" autocomplete="new-password">' +
+    '<div class="note" id="openwarn" hidden></div>' +
+    '<div class="row"><button type="submit">Create account</button></div>' +
+    "</form>";
+  if (state.ap && state.ap.up && state.ap.open) {
+    var w = el("openwarn");
+    w.hidden = false;
+    w.innerHTML = "You are connected over <strong>" + esc(state.ap.ssid) + "</strong>, which is an " +
+      "open network — anyone in range could be listening. A password you type here travels in the " +
+      "clear; a public key does not. If you set a password, change it once this node is on your own Wi-Fi.";
+  }
+  el("username").focus();
+  el("f").addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    showError(null);
+    var key = el("sshkey").value.trim(), pw = el("password").value;
+    if (!key && !pw) {
+      showError("Give an SSH key or a password — an account with neither could never log in.");
+      return;
+    }
+    busy(true, "Creating…");
+    try {
+      var body = { username: el("username").value.trim() };
+      if (key) body.ssh_key = key;
+      if (pw) body.password = pw;
+      state = await api("/api/setup/user", body);
+      render();
+    } catch (e) { showError(e.message); busy(false); el("card").querySelector("button").textContent = "Create account"; }
+  });
+}
+
+function stepKey() {
+  el("subtitle").textContent = "Add an SSH key.";
+  el("card").innerHTML =
+    '<h2>SSH key for ' + esc(state.recovery_user) + "</h2>" +
+    "<p>Paste a public key to log in without a password.</p>" +
+    '<form id="f">' +
+    '<label for="sshkey">SSH public key</label>' +
+    '<textarea id="sshkey" autocapitalize="none" autocorrect="off" spellcheck="false" ' +
+    'placeholder="ssh-ed25519 AAAA… you@laptop"></textarea>' +
+    '<div class="row"><button type="submit">Add key</button>' +
+    (state.key_skippable ? '<button type="button" class="ghost" id="skip">Skip — I will use the password</button>' : "") +
+    "</div></form>";
+  el("sshkey").focus();
+  el("f").addEventListener("submit", async function (ev) {
+    ev.preventDefault(); showError(null); busy(true, "Installing…");
+    try { state = await api("/api/setup/key", { public_key: el("sshkey").value.trim() }); render(); }
+    catch (e) { showError(e.message); busy(false); el("card").querySelector("button").textContent = "Add key"; }
+  });
+  var skip = el("skip");
+  if (skip) skip.addEventListener("click", async function () {
+    showError(null); skip.disabled = true;
+    try { state = await api("/api/setup/key", { skip: true }); render(); }
+    catch (e) { showError(e.message); skip.disabled = false; }
+  });
+}
+
+async function stepLock() {
+  el("subtitle").textContent = "Last step.";
+  var host = state.hostname || "";
+  var admins = [];
+  try {
+    var r = await api("/api/setup/prior-admins");
+    admins = (r && r.admins) || [];
+    var notice = r && r.notice;
+  } catch (e) { /* enumeration is advisory; never block finishing on it */ }
+
+  var adminHtml = "";
+  if (admins.length) {
+    adminHtml = '<h2 style="margin-top:1.6rem">Existing administrator accounts</h2>' +
+      '<div class="note">' + esc(notice || "") + "</div>" +
+      admins.map(function (a, i) {
+        return '<div class="admin"><input type="checkbox" id="rm' + i + '" value="' + esc(a.username) + '">' +
+          '<label for="rm' + i + '" style="margin:0;font-weight:600"><code>' + esc(a.username) + "</code>" +
+          '<span class="sum">' + esc(a.summary) + "</span></label></div>";
+      }).join("");
+  }
+
+  el("card").innerHTML =
+    "<h2>Lock root and finish</h2>" +
+    "<p>Root's password is locked, and SSH is told to refuse root logins. From here on, " +
+    "<code>" + esc(state.recovery_user) + "</code> is how you get in — it can become root with " +
+    "<code>sudo</code>.</p>" +
+    (state.key_fingerprint
+      ? '<p class="hint">Key installed: <code>' + esc(state.key_fingerprint) + "</code></p>"
+      : "") +
+    adminHtml +
+    '<form id="f"><div class="row"><button type="submit">Lock root and finish</button></div></form>';
+
+  el("f").addEventListener("submit", async function (ev) {
+    ev.preventDefault(); showError(null); busy(true, "Finishing…");
+    var picked = Array.prototype.slice.call(document.querySelectorAll(".admin input:checked"))
+      .map(function (c) { return c.value; });
+    try {
+      if (picked.length) {
+        var out = await api("/api/setup/prior-admins", { usernames: picked });
+        var failed = ((out && out.outcomes) || []).filter(function (o) { return !o.removed; });
+        // Reported, never fatal: a stubborn account must not strand the operator
+        // between "I have an account" and "root is locked".
+        if (failed.length) {
+          showError("Finished, but some accounts were not removed: " +
+            failed.map(function (o) { return o.username + " (" + o.error + ")"; }).join("; "));
+        }
+      }
+      // Raced against a deadline rather than simply awaited. Finishing setup
+      // gives up the setup access point, and on a node being set up over that
+      // access point the reply travels across the thing being switched off. It
+      // used to hang here forever on a node that had in fact finished perfectly:
+      // provisioned, root locked, waiting at the claim gate, with the only
+      // surface that could say so already gone. The server now holds the radio
+      // up long enough to answer, and this is the belt to that braces.
+      var finished = false;
+      state = await Promise.race([
+        api("/api/setup/lock", {}).then(function (s) { finished = true; return s; }),
+        new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 20000); })
+      ]);
+      if (finished && state) { render(); return; }
+
+      handoverNotice("Setup finished",
+        "<p>Root is locked and <code>" + esc(state && state.recovery_user ? state.recovery_user : "your recovery account") +
+        "</code> is in place.</p>" +
+        "<p>This node stopped answering here because the setup network is being taken down — " +
+        "which is what finishing does. That is expected, and it does not mean anything failed.</p>" +
+        "<p>Rejoin your own network and continue at <code>" +
+        (host ? "https://" + esc(host) + ".local/" : "this node's address") +
+        "</code> to claim the dashboard.</p>");
+    } catch (e) { showError(e.message); busy(false); el("card").querySelector("button").textContent = "Lock root and finish"; }
+  });
+}
+
+// COUNTRIES is a select rather than a text field with a placeholder.
+//
+// The placeholder read as a filled-in value: it looked like the country was
+// already set to US, so there was nothing to do. A greyed-out suggestion and a
+// real answer are indistinguishable at a glance on a phone, and this field
+// decides which channels the radio is allowed to use — getting it silently wrong
+// is not a cosmetic failure. A select has no empty-looking state that means
+// something.
+var COUNTRIES = [
+  ["", "Select your country…"],
+  ["US", "United States"], ["CA", "Canada"], ["GB", "United Kingdom"],
+  ["IE", "Ireland"], ["AU", "Australia"], ["NZ", "New Zealand"],
+  ["DE", "Germany"], ["FR", "France"], ["ES", "Spain"], ["IT", "Italy"],
+  ["NL", "Netherlands"], ["BE", "Belgium"], ["SE", "Sweden"], ["NO", "Norway"],
+  ["DK", "Denmark"], ["FI", "Finland"], ["PL", "Poland"], ["PT", "Portugal"],
+  ["CH", "Switzerland"], ["AT", "Austria"], ["CZ", "Czechia"],
+  ["JP", "Japan"], ["BR", "Brazil"], ["MX", "Mexico"], ["ZA", "South Africa"],
+  ["IN", "India"]
+];
+
+function countryOptions() {
+  return COUNTRIES.map(function (c) {
+    return '<option value="' + esc(c[0]) + '">' + esc(c[1]) + "</option>";
+  }).join("");
+}
+
+// bars renders signal strength without an image, since nothing external loads
+// here.
+function bars(signal) {
+  var n = signal >= 75 ? 4 : signal >= 50 ? 3 : signal >= 25 ? 2 : 1;
+  return "▁▃▅▇".slice(0, n) + '<span class="dim">' + "▁▃▅▇".slice(n) + "</span>";
+}
+
+function renderNetworkList(data) {
+  var box = el("netlist");
+  if (!box) return;
+  var nets = (data && data.networks) || [];
+  if (!nets.length) {
+    box.innerHTML = '<p class="hint">' + esc((data && data.note) ||
+      "No networks visible. Enter the name yourself.") + "</p>";
+    return;
+  }
+  box.innerHTML =
+    '<p class="hint">Networks this node can see' +
+    (data.cached ? " (seen before the setup network started)" : "") + ":</p>" +
+    '<ul class="nets">' + nets.map(function (n, i) {
+      return '<li><button type="button" class="net" data-ssid="' + esc(n.ssid) +
+        '" data-open="' + (n.security === "open" ? "1" : "") + '">' +
+        '<span class="ss">' + esc(n.ssid) + "</span>" +
+        '<span class="meta">' + bars(n.signal) + " " +
+        (n.security === "open" ? '<span class="warnpill">open</span>' : esc(n.security)) +
+        "</span></button></li>";
+    }).join("") + "</ul>";
+
+  Array.prototype.slice.call(box.querySelectorAll("button.net")).forEach(function (b) {
+    b.addEventListener("click", function () {
+      el("ssid").value = b.getAttribute("data-ssid");
+      // An open network needs no password, and leaving a stale one in the field
+      // would be sent as a passphrase for a network that has none.
+      if (b.getAttribute("data-open")) { el("psk").value = ""; }
+      el("psk").focus();
+    });
+  });
+}
+
+function stepWifi() {
+  var host = state.hostname || "";
+  var where = host ? "https://" + esc(host) + ".local/" : "this node's address on your network";
+  el("subtitle").textContent = "Put this node on your network.";
+  el("card").innerHTML =
+    "<h2>Connect to Wi-Fi</h2>" +
+    "<p>You reached this node over its temporary setup network. Give it your own " +
+    "Wi-Fi now and it will move there — otherwise it will have no way onto your network " +
+    "once setup finishes.</p>" +
+    '<p class="hint">On Ethernet? Skip this. The node is already on your network, and you ' +
+    "can set up Wi-Fi later from the dashboard.</p>" +
+    '<div id="netlist"><p class="hint">Looking for nearby networks…</p></div>' +
+    '<form id="f">' +
+    '<label for="ssid">Network name (SSID)</label>' +
+    '<input type="text" id="ssid" autocapitalize="none" autocorrect="off" spellcheck="false" required>' +
+    '<label for="psk">Password <span class="hint">Leave empty for an open network.</span></label>' +
+    '<input type="password" id="psk" autocomplete="off">' +
+    '<label for="country">Country <span class="hint">Sets which channels the radio may ' +
+    "use. Required.</span></label>" +
+    '<select id="country" required>' + countryOptions() + "</select>" +
+    '<label class="chk"><input type="checkbox" id="hidden"> This network does not broadcast its name</label>' +
+    '<div class="note">This node has one radio, so it cannot run the setup network and join ' +
+    "yours at the same time. When you press Connect the setup network disappears. If the join " +
+    "works it stays gone and the node is on your Wi-Fi; if it fails, the setup network comes " +
+    "back in about a minute and you can try again.</div>" +
+    '<div class="row"><button type="submit">Connect</button>' +
+    '<button type="button" class="ghost" id="skip">Skip — I am using Ethernet</button></div>' +
+    "</form>";
+
+  el("skip").addEventListener("click", function () { wifiHandled = true; render(); });
+
+  // Fetched once when the step renders, not polled: each scan asks the helper,
+  // and the answer is a cache that does not change while the access point holds
+  // the radio.
+  api("/api/setup/networks").then(renderNetworkList).catch(function () {
+    renderNetworkList({ networks: [], note: "Could not list nearby networks. Enter the name yourself." });
+  });
+
+  el("f").addEventListener("submit", function (ev) {
+    ev.preventDefault(); showError(null); busy(true, "Connecting…");
+    var ssid = el("ssid").value.trim();
+    var body = {
+      ssid: ssid,
+      psk: el("psk").value,
+      hidden: el("hidden").checked,
+      country: el("country").value.trim().toUpperCase()
+    };
+    wifiHandled = true;
+
+    // Fired without awaiting the reply on the success path, deliberately. A
+    // successful join takes the setup network down before the response can be
+    // written to it, so awaiting it would hang exactly when everything worked.
+    // A failure rolls back and re-raises the access point, and that reply does
+    // arrive — so the error path is still reported.
+    api("/api/setup/network", body).then(function (res) {
+      if (res && res.state) { state = res.state; }
+      if (res && res.connected) {
+        handoverNotice("Connected to " + esc(ssid),
+          "<p>This node is now on your network" +
+          (res.ipv4 ? " at <code>" + esc(res.ipv4) + "</code>" : "") +
+          ". The setup network has gone.</p><p>Rejoin your own Wi-Fi and continue at <code>" +
+          where + "</code>.</p>");
+        return;
+      }
+      showError("Could not join " + ssid + ". The setup network should be back — try again.");
+      wifiHandled = false;
+      render();
+    }).catch(function (e) {
+      showError(e.message + " The setup network should be back shortly — try again.");
+      wifiHandled = false;
+      render();
+    });
+
+    // Shown immediately, because on the success path nothing else ever will be.
+    handoverNotice("Joining " + esc(ssid) + "…",
+      "<p>The setup network is going away while this node tries to join <code>" + esc(ssid) +
+      "</code>.</p>" +
+      "<p><strong>If it works</strong> the setup network stays gone. Rejoin your own Wi-Fi and " +
+      "continue at <code>" + where + "</code>.</p>" +
+      "<p><strong>If it fails</strong> the setup network comes back within about a minute. " +
+      "Reconnect to it and this page will pick up where it left off.</p>");
+  });
+}
+
+function stepDone() {
+  var host = state.hostname || "";
+  el("subtitle").textContent = "Setup complete.";
+  el("rail").innerHTML = "";
+  el("card").innerHTML =
+    '<div class="done-msg"><h2>This node is set up</h2>' +
+    "<p>Root is locked and the recovery account is in place.</p>" +
+    "<p>Now claim the dashboard to choose who administers it.</p>" +
+    '<p class="row" style="justify-content:center"><button onclick="location.href=\'/\'">Go to the claim page</button></p>' +
+    (host ? '<p class="hint">If this node has just moved onto your own network, it is at ' +
+      "<code>https://" + esc(host) + ".local/</code> — you will be asked to trust its certificate once.</p>" : "") +
+    "</div>";
+}
+
+// --- driver ----------------------------------------------------------------
+
+function render() {
+  renderRail();
+  if (state.mode !== "setup") { stepDone(); return; }
+  switch (state.next) {
+    case "hostname": stepHostname(); break;
+    case "user":     stepUser();     break;
+    case "key":      stepKey();      break;
+    // The Wi-Fi offer sits immediately before the last step, and only when the
+    // operator is actually on the setup access point. That placement is the point:
+    // finishing gives the access point up for good, so a Wi-Fi-only node that has
+    // not joined a network by then has no way back onto one. A node reached over
+    // Ethernet already has a network and is not asked.
+    case "lock":
+      if (!wifiHandled && state.ap && state.ap.up) { stepWifi(); } else { stepLock(); }
+      break;
+    default:         stepDone();
+  }
+}
+
+(async function () {
+  try {
+    state = await api("/api/setup/state");
+    render();
+  } catch (e) {
+    el("subtitle").textContent = "";
+    el("card").innerHTML = "<h2>Could not reach this node's setup service</h2><p>" +
+      esc(e.message) + "</p><p>Reload to try again.</p>";
+  }
+})();
+</script>
+</body>
+</html>

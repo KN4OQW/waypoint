@@ -6,3 +6,8 @@ dist/
 # Build-time upstream clones (built by waypoint-stack, never vendored here)
 /MMDVMHost/
 /ircDDBGateway/
+
+# CustomPiOS build residue (image/tests/build-local.sh)
+image/src/build.log
+image/src/workspace-*/
+image/src/image-*/

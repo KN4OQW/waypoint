@@ -39,6 +39,24 @@ const (
 	nmDnsmasqSharedAP  = nmDnsmasqSharedDir + "/waypoint-setup-ap.conf"
 
 	defaultJoinTimeout = 45 * time.Second
+
+	// defaultRegDomain is the regulatory domain used when the operator has not
+	// named one.
+	//
+	// A freshly flashed Raspberry Pi OS has its radio rfkill soft-blocked and its
+	// regulatory domain set to 00 (world), which permits no 2.4 GHz channels at
+	// all — so the radio cannot beacon even once unblocked. Something has to be
+	// chosen before the operator can be asked, because the access point is how
+	// they are asked.
+	//
+	// US permits 2.4 GHz channels 1–11, which is the intersection every regulatory
+	// domain allows; the access point is pinned to one of them below. This governs
+	// a short-lived setup network only — the operator's real country reaches the
+	// radio when they set it, and applies to the client join that follows.
+	defaultRegDomain = "US"
+
+	// defaultAPChannel is legal in every 2.4 GHz regulatory domain.
+	defaultAPChannel = 6
 )
 
 // APUp raises the setup access point — the only way a headless node with no Wi-Fi
@@ -61,7 +79,13 @@ func (s *System) APUp(ctx context.Context, req privhelper.APUpRequest) (privhelp
 	if addr == "" {
 		addr = defaultAPAddress
 	}
-	s.setRegulatoryDomain(ctx, req.Country)
+	country := req.Country
+	if country == "" {
+		country = defaultRegDomain
+	}
+	if err := s.ensureWirelessUp(ctx, iface, country); err != nil {
+		return privhelper.APUpResponse{}, err
+	}
 
 	if err := s.writeDnsmasqSharedConf(addr); err != nil {
 		return privhelper.APUpResponse{}, err
@@ -70,6 +94,9 @@ func (s *System) APUp(ctx context.Context, req privhelper.APUpRequest) (privhelp
 		return privhelper.APUpResponse{}, err
 	}
 
+	if req.Channel == 0 {
+		req.Channel = defaultAPChannel
+	}
 	body := renderAPKeyfile(apProfile, iface, addr, req)
 	changed, err := s.writeProfile(ctx, apProfile, body)
 	if err != nil {
@@ -118,6 +145,99 @@ func (s *System) writeDnsmasqSharedConf(addrCIDR string) error {
 		return internalf("write %s: %v", nmDnsmasqSharedAP, err)
 	}
 	return nil
+}
+
+// ensureWirelessUp makes the radio usable before anything tries to use it.
+//
+// This is the state a freshly flashed Raspberry Pi OS is in, and it is fatal to
+// the whole point of the setup access point:
+//
+//	phy0: Wireless LAN
+//	        Soft blocked: yes
+//	regdom: country 00 — no 2.4 GHz channels permitted
+//
+// The radio is rfkill soft-blocked pending a regulatory country, and the world
+// domain permits nothing it could beacon on. NetworkManager reports the device as
+// "unavailable", then falls back to any other device and rejects it — which
+// surfaces as "No suitable device found for this connection (device eth0 not
+// available because profile is not compatible)", a message about Ethernet for a
+// problem with the radio.
+//
+// Observed on a Pi 3B running the v-nova image, where it meant the access point
+// could never come up on a fresh flash: the one path to a node with no other
+// network, unusable on every node that had no other network.
+func (s *System) ensureWirelessUp(ctx context.Context, iface, country string) error {
+	if s.wirelessAvailable(ctx, iface) {
+		// Still set the domain: a node that came up available may have done so on
+		// the world domain, which allows no AP channels.
+		s.setRegulatoryDomain(ctx, country)
+		return nil
+	}
+	s.logf("sysprov: %s is not available; unblocking the radio and setting the regulatory domain to %q", iface, country)
+
+	// Three separate locks hold the radio down on a fresh flash, and lifting two of
+	// them leaves the device exactly as unavailable as lifting none:
+	//
+	//   1. the kernel's rfkill soft block, pending a regulatory country;
+	//   2. the regulatory domain itself — 00 (world) permits no 2.4 GHz channel to
+	//      beacon on, so an unblocked radio still has nothing legal to transmit;
+	//   3. NetworkManager's own Wi-Fi switch, which is separate from rfkill and
+	//      reads "disabled" out of the box. This is the one that is easy to miss:
+	//      `rfkill list` says unblocked and `iw reg get` says US, and the device is
+	//      still unavailable until `nmcli radio wifi on`.
+	//
+	// The domain goes first, so the radio comes back already knowing what it may
+	// transmit on, and is set again afterwards because a driver that reloads on
+	// unblock can drop it.
+	s.setRegulatoryDomain(ctx, country)
+	if _, err := s.run(ctx, nil, "rfkill", "unblock", "wifi"); err != nil {
+		s.logf("sysprov: rfkill unblock failed: %v", err)
+	}
+	if _, err := s.run(ctx, nil, "nmcli", "radio", "wifi", "on"); err != nil {
+		s.logf("sysprov: could not enable NetworkManager's Wi-Fi radio: %v", err)
+	}
+	s.setRegulatoryDomain(ctx, country)
+
+	// NetworkManager notices asynchronously; the device moves unavailable ->
+	// disconnected once the driver reports the radio is up.
+	deadline := time.Now().Add(wirelessWait)
+	for time.Now().Before(deadline) {
+		if s.wirelessAvailable(ctx, iface) {
+			s.logf("sysprov: %s is available", iface)
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return privhelper.Errorf(privhelper.CodeInternal, "%v", ctx.Err())
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	return privhelper.Errorf(privhelper.CodeUnsupported,
+		"the wireless radio on %s is still unavailable after unblocking it and setting the regulatory domain to %q. "+
+			"On Raspberry Pi OS the radio is blocked until a country is set; check `rfkill list`, "+
+			"`iw reg get`, and `nmcli radio wifi`", iface, country)
+}
+
+// wirelessWait bounds the wait for the driver and NetworkManager to agree the
+// radio is up. Unblocking is near-instant; this covers a loaded first boot.
+const wirelessWait = 15 * time.Second
+
+// wirelessAvailable reports whether NetworkManager can use the interface. Any
+// state but "unavailable" (and "unmanaged") means the radio is live.
+func (s *System) wirelessAvailable(ctx context.Context, iface string) bool {
+	out, err := s.run(ctx, nil, "nmcli", "-t", "-f", "DEVICE,STATE", "device")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.SplitN(strings.TrimSpace(line), ":", 2)
+		if len(f) != 2 || f[0] != iface {
+			continue
+		}
+		state := f[1]
+		return !strings.HasPrefix(state, "unavailable") && !strings.HasPrefix(state, "unmanaged")
+	}
+	return false
 }
 
 // checkDHCPPortFree refuses to raise the AP when something else already holds the
@@ -374,6 +494,8 @@ func (s *System) setRegulatoryDomain(ctx context.Context, country string) {
 	if country == "" {
 		return
 	}
+	// wpa_supplicant and the kernel both take the domain from here on Raspberry Pi
+	// OS; iw alone does not survive a driver reload.
 	if _, err := s.run(ctx, nil, "iw", "reg", "set", strings.ToUpper(country)); err != nil {
 		s.logf("sysprov: could not set the regulatory domain to %q: %v", country, err)
 	}

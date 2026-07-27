@@ -11,7 +11,98 @@ import (
 	"github.com/KN4OQW/waypoint/internal/captive"
 	"github.com/KN4OQW/waypoint/internal/netwatch"
 	"github.com/KN4OQW/waypoint/internal/setupap"
+	"github.com/KN4OQW/waypoint/internal/wizard"
 )
+
+// apRaiseTimeout bounds the first attempt to raise the setup access point.
+//
+// Every step of a raise can block: firmware load, rfkill, a regulatory-domain
+// change, and NetworkManager activating the profile. Without a bound, a radio
+// that never answers leaves the node with no access point and no recorded reason
+// — the operator sees the same nothing either way. With one, the attempt fails,
+// says so, and the failure reaches /api/setup/state.
+const apRaiseTimeout = 90 * time.Second
+
+// apRaiseAttempts and apRaiseBackoff bound the cold-boot retry in
+// raiseWithRetry. Four attempts at a backoff that grows 5s, 10s, 15s covers
+// about half a minute of a radio arriving late, which is comfortably longer than
+// brcmfmac takes to load firmware and NetworkManager takes to notice the result.
+const (
+	apRaiseAttempts = 4
+	apRaiseBackoff  = 5 * time.Second
+)
+
+// setupTeardownGrace is how long the setup access point stays up after setup
+// completes, so the reply to the request that finished it can actually reach the
+// browser that sent it. Generous on purpose: the cost of waiting is a few seconds
+// of an access point nobody is using, and the cost of not waiting is an operator
+// looking at a spinner on a node that finished successfully.
+const setupTeardownGrace = 8 * time.Second
+
+// setupPanelLinger keeps the completion screen on a wired LCD after the radio has
+// gone, for somebody standing at the node rather than holding the phone.
+const setupPanelLinger = 90 * time.Second
+
+// raiseWithRetry brings the setup access point up, retrying a cold-boot race.
+//
+// waypointd starts early, and on a fresh boot the pieces a raise depends on may
+// not be there yet: brcmfmac is still loading firmware, wlan0 has not appeared,
+// or NetworkManager is still enumerating devices and has no opinion about the
+// radio. Every one of those resolves within seconds on its own. A single attempt
+// turns a transient into a permanent condition — the node has no setup network
+// for the rest of the boot, over a race it would have won a moment later. That
+// is the difference between the bench, where the board had been up for hours
+// before anything was asked of it, and a node someone has just plugged in.
+//
+// The retries are bounded and the last error is kept: a radio that is genuinely
+// absent or blocked must still end up reported rather than retried forever.
+func (s *server) raiseWithRetry(ctx context.Context, ctrl *captive.Controller, ssid string) error {
+	var err error
+	for attempt := 1; attempt <= apRaiseAttempts; attempt++ {
+		raise, cancel := context.WithTimeout(ctx, apRaiseTimeout)
+		err = ctrl.Up(raise)
+		cancel()
+		if err == nil {
+			bootLogAndPrint("setup access point %q is up (attempt %d); join it and browse to http://%s/",
+				ssid, attempt, captive.DefaultAddress)
+			s.apErrMu.Lock()
+			s.apErr = ""
+			s.apErrMu.Unlock()
+			return nil
+		}
+
+		// Recorded on every attempt, not just the last: an operator refreshing
+		// /api/setup/state during a slow boot should see what is being tried
+		// rather than an empty field.
+		s.apErrMu.Lock()
+		s.apErr = err.Error()
+		s.apErrMu.Unlock()
+		bootLogAndPrint("attempt %d of %d to raise the setup access point (%s) failed: %v",
+			attempt, apRaiseAttempts, ssid, err)
+
+		if attempt == apRaiseAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt) * apRaiseBackoff):
+		}
+	}
+
+	bootLogf("the node has NO setup network. Reach it over Ethernet at https://<address>/ , " +
+		"or write a waypoint.toml to this partition (see docs/provisioning.md) to set it up without one.")
+	return err
+}
+
+// protectionOf names the AP's protection for a human reading a log. An empty
+// passphrase is an open network, which is the default (see internal/setupap).
+func protectionOf(psk string) string {
+	if psk == "" {
+		return "open"
+	}
+	return "WPA2"
+}
 
 // apOptions configures the setup access point and its captive portal.
 type apOptions struct {
@@ -71,6 +162,18 @@ func (s *server) initSetupAP(ctx context.Context, opts apOptions) {
 
 	provisioned := s.wiz.Provisioned()
 
+	// Whatever happens below, the wizard can report the access point — including
+	// the reason it is not up. An operator on Ethernet would otherwise see a
+	// perfectly working node and no hint that the wireless half failed.
+	s.wiz.APStatus = func() *wizard.APState {
+		st := ctrl.Status()
+		out := &wizard.APState{SSID: st.SSID, Up: st.Up, Open: st.Open}
+		s.apErrMu.Lock()
+		out.Error = s.apErr
+		s.apErrMu.Unlock()
+		return out
+	}
+
 	lock := &captive.Lock{Idle: opts.IdleTimeout, Logf: log.Printf}
 	portal := &captive.Portal{
 		Lock:      lock,
@@ -82,11 +185,49 @@ func (s *server) initSetupAP(ctx context.Context, opts apOptions) {
 	// The AP comes down the moment the node is on the operator's network, and the
 	// session lock closes when setup finishes. Both hooks live here rather than in
 	// the wizard so the wizard needs to know nothing about radios.
-	s.wiz.OnComplete = func(ctx context.Context) {
+	// The setup panel runs for the length of setup and no longer. Once the node is
+	// provisioned the operator's own configured pages own the display, and two
+	// writers on one HD44780 would interleave into nonsense — so this context is
+	// canceled the moment setup completes, releasing the device before the
+	// configured renderer opens it.
+	panelCtx, stopPanel := context.WithCancel(ctx)
+
+	s.wiz.OnComplete = func(context.Context) {
 		lock.Complete()
-		if err := ctrl.Down(ctx, captive.ReasonSetupComplete); err != nil {
-			log.Printf("waypointd: could not take the setup access point down after setup: %v", err)
-		}
+		// The teardown is scheduled, not immediate, and that ordering is the whole
+		// point.
+		//
+		// The reply to the request that finished setup still has to reach the
+		// operator, and on a node set up over the access point it travels over the
+		// access point. Taking the radio down inline cut the connection carrying
+		// that response: the browser sat on "finishing…" forever with nothing to
+		// show, and because setup completion spends the AP it never came back. The
+		// node itself was finished and healthy — provisioned, root locked, waiting
+		// at the claim gate — and the one surface that could have said so was the
+		// one we had just switched off.
+		//
+		// So: return, let the response flush and the operator read where to go
+		// next, and only then give up the radio.
+		go func() {
+			select {
+			case <-time.After(setupTeardownGrace):
+			case <-ctx.Done():
+				return // the daemon is stopping; shutdown takes the AP down anyway
+			}
+			if err := ctrl.Down(context.WithoutCancel(ctx), captive.ReasonSetupComplete); err != nil {
+				log.Printf("waypointd: could not take the setup access point down after setup: %v", err)
+			}
+			// The panel keeps the completion screen up for a while after the radio
+			// goes, because that screen is how somebody standing at the node learns
+			// where it moved to. Releasing the device the instant setup finished
+			// left the last setup frame frozen on the glass, still advertising a
+			// network that no longer existed.
+			select {
+			case <-time.After(setupPanelLinger):
+			case <-ctx.Done():
+			}
+			stopPanel()
+		}()
 	}
 
 	sess := &apSession{ctrl: ctrl, portal: portal, opts: opts}
@@ -96,16 +237,29 @@ func (s *server) initSetupAP(ctx context.Context, opts apOptions) {
 	if !provisioned {
 		// A node that has never been set up needs the AP now, and needs the
 		// associate window that takes it down again if nobody comes.
-		if err := ctrl.Up(ctx); err != nil {
-			log.Printf("waypointd: could not raise the setup access point (%s): %v", ssid, err)
-		} else {
+		//
+		// In its own goroutine, deliberately. Raising the AP means loading brcmfmac
+		// firmware, clearing an rfkill block, setting a regulatory domain and
+		// waiting for NetworkManager to activate a profile — tens of seconds on a
+		// cold boot, and unbounded when the radio is wedged. Inline, that ran before
+		// the HTTPS listener was bound and before READY=1: a node reachable over
+		// Ethernet served nothing while it waited, and if the wait outlasted
+		// systemd's start timeout the daemon was killed and restarted into the same
+		// wait, forever. A node whose radio will not come up must still finish
+		// starting and be able to say so — which is what apErr is for, and it is
+		// worth nothing if the surface that reports it never binds.
+		bootLogBanner(Version)
+		bootLogf("raising the setup access point %q (%s) on %s", ssid, protectionOf(psk.PSK), nonEmpty(opts.Interface, "the first wireless interface"))
+		go s.runSetupPanel(panelCtx)
+		go func() {
+			if err := s.raiseWithRetry(ctx, ctrl, ssid); err != nil {
+				return
+			}
 			sess.serve(ctx)
-			go func() {
-				tick := time.NewTicker(time.Minute)
-				defer tick.Stop()
-				ctrl.Run(ctx, tick.C)
-			}()
-		}
+			tick := time.NewTicker(time.Minute)
+			defer tick.Stop()
+			ctrl.Run(ctx, tick.C)
+		}()
 	}
 
 	// netwatch runs in both states, and the provisioned one is the point: a node

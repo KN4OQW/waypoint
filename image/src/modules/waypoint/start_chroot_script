@@ -207,10 +207,54 @@ if [ -f "$CMDLINE_TXT" ]; then
   # Strip any serial console token so the modem UART is not also a login console.
   sed -i -E 's/console=(serial0|ttyAMA0|ttyS0),[0-9]+ ?//g' "$CMDLINE_TXT"
 fi
+
+echo "=== enabling I2C for the character LCD"
+# The header I2C bus, off by default on Raspberry Pi OS. Waypoint uses it for the
+# HD44780-on-PCF8574 panels these hotspots are usually built with, and — more
+# importantly — the first-boot setup screen probes for one. On a headless node
+# whose setup access point fails to come up there is no login, no serial console
+# and no network, so a two-line display is the only thing left that can say why.
+# Leaving the bus disabled means that panel can never be found.
+if [ -f "$CONFIG_TXT" ]; then
+  grep -q '^dtparam=i2c_arm=on' "$CONFIG_TXT" || echo 'dtparam=i2c_arm=on' >> "$CONFIG_TXT"
+fi
+# i2c-dev is what creates /dev/i2c-1; the dtparam alone only binds the controller.
+grep -q '^i2c-dev' /etc/modules 2>/dev/null || echo 'i2c-dev' >> /etc/modules
 systemctl disable hciuart.service 2>/dev/null || true
 systemctl disable serial-getty@ttyAMA0.service 2>/dev/null || true
 systemctl disable serial-getty@ttyS0.service 2>/dev/null || true
 systemctl mask serial-getty@ttyAMA0.service 2>/dev/null || true
+
+########################################################################
+# Raspberry Pi OS's first-boot user dialog
+########################################################################
+# This image ships no account on purpose (BASE_ADD_USER=no, see ../config): the
+# operator's account is created by Waypoint's setup wizard, over the setup access
+# point, with an SSH key or a password they choose. Raspberry Pi OS does not
+# accept that state. userconf-pi's userconfig.service is WantedBy=multi-user.target
+# and, finding no account, runs whiptail in a `while true` loop demanding a
+# username and a password on the console.
+#
+# It is normally suppressed by the userconf.txt that Raspberry Pi Imager writes at
+# flash time. Imager 2.x no longer offers OS customisation for a locally flashed
+# image, so that file is never written and the dialog always runs — which means a
+# node flashed with dd boots to a prompt that a headless hotspot has no keyboard
+# to answer, and stops there. No access point, no dashboard, nothing.
+#
+# That is the same Imager dependency this whole provisioning flow exists to
+# remove, one layer below where the rest of it was fixed. Masking rather than
+# disabling: masking survives anything that would otherwise re-enable the unit.
+#
+# Disable BEFORE mask, in that order. Masking replaces the unit with a symlink to
+# /dev/null, after which systemctl will not act on it — so a disable issued
+# afterwards is silently a no-op and leaves the multi-user.target.wants symlink in
+# place. The mask still wins at boot (systemd refuses to start a masked unit and
+# logs that it ignored the dependency), but the dangling want produces an error
+# line on every first boot, which is exactly the noise a setup image should not
+# have somebody trying to interpret.
+echo "=== masking Raspberry Pi OS's interactive first-boot user dialog"
+systemctl disable userconfig.service 2>/dev/null || true
+systemctl mask userconfig.service 2>/dev/null || true
 
 ########################################################################
 # Enable services + clean up
