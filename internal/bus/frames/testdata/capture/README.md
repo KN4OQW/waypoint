@@ -31,6 +31,14 @@ no padding. Trimmed from a longer (~340-frame) transmission to keep the fixture
 small; the header, a contiguous voice run, and the real closing terminator are
 preserved verbatim.
 
+**It is a PRIVATE call, not a group call.** Byte `[15]` is `0xe1` — bit 6 set —
+because BM Parrot is normally dialled as a private call to 9990. This matters to
+anyone reusing the fixture for routing tests: a DMRGateway `TGRewrite` is a
+*group*-call concept and correctly will not match it (`PassAllPC` catches it
+instead). Retarget the fixture onto a talkgroup and you must clear bit 6 as well,
+or the transmission routes nowhere near the rule you meant to exercise. See
+`test/tier2` for a harness that does this.
+
 ### Sanitization
 
 - **Src ID `3180202` / dst `9990` are left as captured.** The source is KN4OQW's
