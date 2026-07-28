@@ -83,6 +83,39 @@ directory with `WAYPOINT_GW_BIN`.
 - `TestTier2_BackToBackCrossNetwork` / `...SameNetwork` — diagnostics, not
   acceptance. See below.
 
+## Live-reflector tests (opt-in)
+
+`reflector_test.go` is the exception to "no RF, no upstream, no credential": these
+two leave the machine and link to a **real** reflector, because that is the only
+way to check the last thing the loopback cannot — that a gateway configured
+entirely by our renderers reaches a reflector and the reflector answers.
+
+```sh
+WAYPOINT_TIER2_NET=1 LD_LIBRARY_PATH="$PWD/out/lib" go test -tags tier2 -v -run Links ./test/tier2/
+```
+
+They skip unless `WAYPOINT_TIER2_NET=1`, so an ordinary run never touches a third
+party. No audio is ever transmitted: they link, read link state off the MQTT log
+plane (the rendered configs set `DisplayLevel=0`/`MQTTLevel=1`, so link messages
+go to `<name>/log`, not stdout), and stop on SIGTERM so the daemon sends its
+unlink rather than vanishing from the reflector's node list.
+
+- `TestTier2_YSFGatewayLinksReflector` — YSFGateway + the hostlist we ship links
+  a live YSF reflector (`US-UTAHDRN-TEST`, a US test reflector).
+- `TestTier2_DGIdGatewayLinksFCSRoom` — the `[DGId=N]` static startup block
+  `RenderDGIdGateway` emits links a live FCS room (`FCS00290`), which is the
+  other protocol and resolves by name without the hostlist.
+
+The only deviation from the rendered file is the `Hosts=` path: the renderer
+emits the managed absolute path that exists on a device, so the test rewrites it
+to a copy of the **shipped** seed hostlist. The content is what ships.
+
+Two bugs came out of writing these: #145 (YSFGateway asserts and aborts when the
+modem frequencies are unset — hence the explicit frequencies in the model) and
+#146 (the startup-reflector picker stores a bare name, but YSFGateway resolves
+`<COUNTRY>-<NAME>`, so no picked reflector links). The YSF test uses the
+resolvable form.
+
 ## Gotcha: the Parrot fixture is a private call
 
 `dmr_parrot_9990.bin` has flags `0xe1` — bit 6 set, i.e. a **private** call,
