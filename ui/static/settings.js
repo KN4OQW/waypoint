@@ -2958,7 +2958,10 @@ async function applyOffset() {
     const body = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(body.error || "the offset could not be applied");
     banner((body.changed || []).join(", ") || "Offset applied.", "ok");
-    await loadConfig();
+    // Re-read the store: the offsets on the General tab have just changed under
+    // the editor, and an operator who switches tabs should not find the old
+    // numbers still in the fields.
+    await load();
   } catch (err) {
     banner(String(err.message || err), "bad");
   }
