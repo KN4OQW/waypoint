@@ -25,7 +25,18 @@ func memStore(t *testing.T) *store.Store {
 func fixture() *Model {
 	return &Model{
 		General: General{Callsign: "KN4OQW", ID: "3180202", Duplex: true, Timeout: "240", RFModeHang: "300", NetModeHang: "300", Power: "1", Location: "Milton, EM60", URL: "https://waypoint.kn4oqw.com"},
-		Modem:   Modem{Port: "/dev/ttyAMA0", UARTSpeed: "115200", RXFreqHz: "433900000", TXFreqHz: "438900000", RXOffset: "75", TXOffset: "-40", TXInvert: true, RXInvert: false, PTTInvert: false, RXLevel: "50", TXLevel: "50"},
+		Modem: Modem{
+			Port: "/dev/ttyAMA0", UARTSpeed: "115200", RXFreqHz: "433900000", TXFreqHz: "438900000",
+			RXOffset: "75", TXOffset: "-40", TXInvert: true, RXInvert: false, PTTInvert: false,
+			RXLevel: "50", TXLevel: "50",
+			// The calibration surface (#20). Per-mode levels are deliberately
+			// mixed: two set, the rest blank, so the round trip covers both an
+			// override and the "follow tx_level" case that must NOT be rendered
+			// as an empty key.
+			RXDCOffset: "-3", TXDCOffset: "6", RFLevel: "80", DMRDelay: "2",
+			DMRTXLevel: "55", YSFTXLevel: "48",
+			RSSIMappingFile: "/usr/local/etc/RSSI.dat",
+		},
 		// Display fully populated with non-default values so the round-trip cannot be
 		// masked by a rendered default filling an empty field. This node drives an
 		// HD44780 over I2C (address 0x22), 4 rows × 20 cols.

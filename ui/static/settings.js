@@ -69,7 +69,24 @@ const HELP = {
   "modem.tcxo_hz": "The modem's reference oscillator, in Hz — <b>12288000</b> (12.288 MHz) or <b>14745600</b> (14.7456 MHz). Firmware from the 1.5 era onwards reports it, and Detect fills this in from what the modem said. Get it wrong and the radio is detuned rather than broken, which is why nothing here ever guesses one.",
   "modem.uart_speed": "Line speed between the host and the modem. 115200 is the MMDVM_HS family's default and is almost always right; Detect fills in whichever speed the modem actually answered on.",
   "modem.rx_offset": "Correction in Hz applied to the receive frequency, compensating for crystal error in the modem. Leave at 0 until you have measured the error — this is calibration, not tuning.",
-  "modem.tx_offset": "Correction in Hz applied to the transmit frequency, compensating for crystal error in the modem. Leave at 0 until you have measured the error.",
+  "modem.tx_offset": "Correction in Hz applied to the transmit frequency, compensating for crystal error in the modem. Leave at 0 until you have measured the error. On a hotspot one oscillator clocks both paths, so this is normally the same number as the RX offset.",
+  "modem.rx_level": "How hard the modem drives its own receive path, 0–100%. On a hotspot this does nothing — the firmware does not read it. On a repeater board it is set so the received waveform fills the range without clipping.",
+  "modem.tx_level": "Transmit level, 0–100%. On a hotspot this is the <b>deviation</b> of the 4FSK signal it generates; on a repeater board it drives the radio's audio input and is set for 2.75 kHz deviation with a deviation meter.",
+  "modem.rf_level": "RF output power of a hotspot's ADF7021, 0–100%. A hotspot is a milliwatt-class transmitter — this is the difference between reaching the far side of the house and the far side of the room, not a power amplifier control.",
+  "modem.rx_dc_offset": "DC bias on the receive path, −128 to 127, used to centre the waveform on a full-size MMDVM. <b>A hotspot ignores this entirely.</b>",
+  "modem.tx_dc_offset": "DC bias on the transmit path, −128 to 127. <b>A hotspot ignores this entirely.</b>",
+  "modem.rx_invert": "Whether the received signal arrives inverted. A full-size MMDVM can be asked directly — it reports inversion in its calibration replies — which is the one analog setting that does not need test equipment. <b>A hotspot ignores this.</b>",
+  "modem.tx_invert": "Whether the transmit signal is inverted before it reaches the radio. Depends on how the radio's modulator is wired. <b>A hotspot ignores this.</b>",
+  "modem.ptt_invert": "Whether the PTT line is active-low rather than active-high. Wrong, and the repeater either never keys or never stops. <b>A hotspot ignores this.</b>",
+  "modem.dmr_delay": "Fine timing adjustment for DMR slot alignment on a duplex repeater, in bits. Leave at 0 unless a repeater is losing slot sync.",
+  "modem.rssi_mapping_file": "Path to a file mapping the modem's raw RSSI counts to dBm, so received signal strengths are reported in real units. Producing one needs a calibrated signal generator; the default path is where the stack looks for it.",
+  "modem.dstar_tx_level": "Per-mode transmit level override for D-Star. Blank follows TX Level, which is what almost every node should do — these exist for a radio whose deviation differs between modes.",
+  "modem.dmr_tx_level": "Per-mode transmit level override for DMR. Blank follows TX Level.",
+  "modem.ysf_tx_level": "Per-mode transmit level override for System Fusion. Blank follows TX Level.",
+  "modem.p25_tx_level": "Per-mode transmit level override for P25. Blank follows TX Level.",
+  "modem.nxdn_tx_level": "Per-mode transmit level override for NXDN. Blank follows TX Level.",
+  "modem.pocsag_tx_level": "Per-mode transmit level override for POCSAG paging. Blank follows TX Level.",
+  "modem.fm_tx_level": "Per-mode transmit level override for analog FM. Blank follows TX Level.",
 
   // --- DMR ---
   "dmr.color_code": "DMR's equivalent of a CTCSS tone: a number <b>0–15</b> that must match at both ends before traffic is accepted. It keeps neighbouring systems on the same frequency from hearing each other. Most hotspots use 1.",
@@ -252,7 +269,9 @@ function buildEdit(c) {
   const g = c.general || {}, d = c.dmr || {};
   edit = {
     general: { callsign: g.callsign, id: g.dmr_id, duplex: !!g.duplex, power: g.power, location: g.location, url: g.url },
-    modem:   { rx_freq_hz: g.rx_freq_hz, tx_freq_hz: g.tx_freq_hz, port: g.modem_port, rx_offset: g.rx_offset, tx_offset: g.tx_offset },
+    modem:   Object.assign(
+      { rx_freq_hz: g.rx_freq_hz, tx_freq_hz: g.tx_freq_hz, port: g.modem_port, rx_offset: g.rx_offset, tx_offset: g.tx_offset },
+      modemFrom(c.modem || {})),
     display: displayFrom(c.display || {}),
     lcd: lcdFrom(c.lcd || {}),
     dmr:     { color_code: d.color_code, id: d.id, embedded_lc_only: !!d.embedded_lc_only, dump_ta_data: !!d.dump_ta_data, beacons: !!d.beacons, self_only: !!d.self_only },
@@ -625,9 +644,52 @@ function panelGeneral() {
     toggle("general", "duplex", "Duplex", "DUPLEX", "SIMPLEX") +
     note("Don't type the port and board in by hand — the <b>Hardware</b> tab asks the modem what it is and fills all of this in."));
   const cal = card("CALIBRATION",
-    input("modem", "rx_offset", { label: "RX Offset" }) +
-    input("modem", "tx_offset", { label: "TX Offset" }));
-  return `<div class="grid2">${left}<div class="stack">${radio}${cal}</div></div>`;
+    input("modem", "rx_offset", { label: "RX Offset", unit: "Hz" }) +
+    input("modem", "tx_offset", { label: "TX Offset", unit: "Hz" }) +
+    input("modem", "rx_level", { label: "RX Level", unit: "%" }) +
+    input("modem", "tx_level", { label: "TX Level", unit: "%" }) +
+    input("modem", "rf_level", { label: "RF Power", unit: "%" }) +
+    note("Measure these rather than guess them — the <b>Hardware</b> tab sweeps for the offset with your radio and writes the answer here."));
+  // The analog controls a full-size repeater board needs and a hotspot ignores
+  // outright: MMDVM_HS's firmware does not read the invert flags or the DC
+  // offsets at all. Saying so beside the fields is the difference between "this
+  // slider does nothing" and "this slider is not for my board".
+  const analog = card("REPEATER BOARD ONLY",
+    toggle("modem", "rx_invert", "RX Invert", "INVERTED", "NORMAL") +
+    toggle("modem", "tx_invert", "TX Invert", "INVERTED", "NORMAL") +
+    toggle("modem", "ptt_invert", "PTT Invert", "INVERTED", "NORMAL") +
+    input("modem", "rx_dc_offset", { label: "RX DC Offset" }) +
+    input("modem", "tx_dc_offset", { label: "TX DC Offset" }) +
+    input("modem", "dmr_delay", { label: "DMR Delay" }) +
+    input("modem", "rssi_mapping_file", { label: "RSSI Map" }) +
+    note("A hotspot board ignores every setting in this card — its firmware never reads them. They are for full-size MMDVM repeater boards."));
+  const levels = card("PER-MODE TX LEVELS",
+    input("modem", "dstar_tx_level", { label: "D-Star", unit: "%" }) +
+    input("modem", "dmr_tx_level", { label: "DMR", unit: "%" }) +
+    input("modem", "ysf_tx_level", { label: "System Fusion", unit: "%" }) +
+    input("modem", "p25_tx_level", { label: "P25", unit: "%" }) +
+    input("modem", "nxdn_tx_level", { label: "NXDN", unit: "%" }) +
+    input("modem", "pocsag_tx_level", { label: "POCSAG", unit: "%" }) +
+    input("modem", "fm_tx_level", { label: "FM", unit: "%" }) +
+    note("Leave blank to follow <b>TX Level</b>, which is what almost every node wants. M17 has no separate level — MMDVM-Host has no key for one, so it always follows TX Level."));
+  return `<div class="grid2">${left}<div class="stack">${radio}${cal}${levels}${analog}</div></div>`;
+}
+
+// modemFrom projects the calibration keys (#20). They live in the same store
+// section as the frequencies, so they merge into the same edit object; they are
+// listed separately here because they come from a different part of the view.
+function modemFrom(m) {
+  return {
+    rx_level: m.rx_level, tx_level: m.tx_level,
+    rx_dc_offset: m.rx_dc_offset, tx_dc_offset: m.tx_dc_offset,
+    rf_level: m.rf_level, dmr_delay: m.dmr_delay,
+    tx_invert: !!m.tx_invert, rx_invert: !!m.rx_invert, ptt_invert: !!m.ptt_invert,
+    dstar_tx_level: m.dstar_tx_level, dmr_tx_level: m.dmr_tx_level,
+    ysf_tx_level: m.ysf_tx_level, p25_tx_level: m.p25_tx_level,
+    nxdn_tx_level: m.nxdn_tx_level, pocsag_tx_level: m.pocsag_tx_level,
+    fm_tx_level: m.fm_tx_level,
+    rssi_mapping_file: m.rssi_mapping_file,
+  };
 }
 
 // boardRow is WPSD's "Radio/Modem" dropdown. The list comes from the daemon's
