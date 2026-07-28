@@ -186,6 +186,9 @@ func TestHardwareRoutesRejectTheWrongMethod(t *testing.T) {
 		"POST /api/hardware/adopt": func(rec *httptest.ResponseRecorder) {
 			s.hardwareAdopt(rec, httptest.NewRequest("GET", "/api/hardware/adopt", nil))
 		},
+		"POST /api/hardware/uart": func(rec *httptest.ResponseRecorder) {
+			s.hardwareUART(rec, httptest.NewRequest("GET", "/api/hardware/uart", nil))
+		},
 	} {
 		rec := httptest.NewRecorder()
 		call(rec)
@@ -195,6 +198,35 @@ func TestHardwareRoutesRejectTheWrongMethod(t *testing.T) {
 	}
 }
 
-// The three routes are in allRoutes (auth_test.go), so the pre-claim and
+func TestHardwareUARTRefusesWithoutThePrivilegedHelper(t *testing.T) {
+	// Demo mode, or a node whose helper is not running. Reporting the problem
+	// without being able to repair it is still worth doing, so this is a clean
+	// refusal rather than a crash.
+	s := hwTestServer(t, nil)
+	if s.prov != nil {
+		t.Fatal("a bare test server should have no privileged helper")
+	}
+	rec := httptest.NewRecorder()
+	s.hardwareUART(rec, httptest.NewRequest("POST", "/api/hardware/uart", nil))
+	if rec.Code != 503 {
+		t.Fatalf("uart repair with no helper = %d, want 503: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHardwareViewOmitsTheUARTReportWhereItCannotApply(t *testing.T) {
+	// The machine running the tests is not a Raspberry Pi, so there is no GPIO
+	// serial port to diagnose and inventing a problem would be worse than
+	// silence. (On a Pi this field is populated; internal/bootcfg tests the
+	// diagnosis itself against a fixture boot partition.)
+	if uartReport() != nil {
+		t.Skip("this host has a Raspberry Pi boot partition")
+	}
+	if v := getHardware(t, hwTestServer(t, nil)); v.UART != nil {
+		t.Fatalf("a non-Pi host was given a UART diagnosis: %+v", v.UART)
+	}
+}
+
+// The four routes are in allRoutes (auth_test.go), so the pre-claim and
 // post-claim gate matrices assert they default to denied. That matters most for
-// detect, which can stop MMDVM-Host and take the node off the air.
+// detect, which can stop MMDVM-Host and take the node off the air, and for the
+// UART repair, which writes the boot partition.

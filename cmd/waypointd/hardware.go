@@ -9,23 +9,27 @@ import (
 	"sync"
 	"time"
 
+	"github.com/KN4OQW/waypoint/internal/bootcfg"
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/modem"
+	"github.com/KN4OQW/waypoint/internal/privhelper"
 	"github.com/KN4OQW/waypoint/internal/stackupdate"
 )
 
 // The hardware surface (#18): what modem is attached, what it says it is, and
 // what this node has been configured to believe.
 //
-// Three routes, matching the three things an operator does:
+// Four routes, matching the four things an operator does:
 //
 //	GET  /api/hardware        → the last detection, the board table, the
-//	                            configured hardware, and every disagreement
-//	                            between them
+//	                            configured hardware, the GPIO UART's
+//	                            availability, and every disagreement between them
 //	POST /api/hardware/detect → probe now; {"stop_host": true} authorises taking
 //	                            the port from a running MMDVM-Host
 //	POST /api/hardware/adopt  → write the last detection into the config,
 //	                            optionally naming which candidate board it is
+//	POST /api/hardware/uart   → free the GPIO serial port from Bluetooth and the
+//	                            login console, so a fitted hat can be heard at all
 //
 // Detect and adopt are separate on purpose. Probing is a read of the world;
 // writing the config is a change to the node. Fusing them would mean a button
@@ -93,6 +97,12 @@ type hardwareView struct {
 	Boards     []boardView              `json:"boards"`
 	Configured hardwareConfigured       `json:"configured"`
 	Warnings   []config.HardwareWarning `json:"warnings"`
+	// UART is the GPIO serial port's availability on a Raspberry Pi. It is the
+	// answer to the question detection cannot answer for itself: a hat on a
+	// stock Raspberry Pi OS install is electrically fine and completely mute,
+	// because Bluetooth owns the UART and a login console is sitting on it.
+	// Omitted entirely on a host where that cannot be the problem.
+	UART *bootcfg.Report `json:"uart,omitempty"`
 }
 
 // hardwareConfigured is the operator's answer, echoed back so the UI never has
@@ -155,7 +165,75 @@ func (s *server) hardwareSnapshot() (hardwareView, error) {
 		Boards:     boardViews(),
 		Configured: cfg,
 		Warnings:   config.HardwareWarnings(m, st),
+		UART:       uartReport(),
 	}, nil
+}
+
+// uartReport diagnoses the GPIO serial port, or returns nil on a host where that
+// question does not apply.
+//
+// The diagnosis runs on every view rather than being cached, because it is three
+// small file reads and one systemctl call, and because the state it reports is
+// exactly the state an operator changes out from under Waypoint — by editing
+// config.txt themselves, or by rebooting after a repair.
+func uartReport() *bootcfg.Report {
+	r := bootcfg.Inspect(bootcfg.Options{UnitEnabled: unitEnabled})
+	if !r.Applicable {
+		return nil
+	}
+	return &r
+}
+
+// unitEnabled reports whether a systemd unit would start. Anything other than a
+// clean disabled/masked/absent counts, because the states in between (static,
+// indirect, generated) are all ones systemd will happily start a getty from.
+func unitEnabled(unit string) bool {
+	out, err := systemctlRun("is-enabled", unit)
+	if err != nil && len(out) == 0 {
+		return false
+	}
+	switch strings.TrimSpace(string(out)) {
+	case "", "masked", "masked-runtime", "disabled", "not-found":
+		return false
+	}
+	return true
+}
+
+// hardwareUART serves POST /api/hardware/uart: free the GPIO serial port for the
+// modem.
+//
+// It is a separate, explicitly-invoked route rather than something detection does
+// on its own. The repair edits the boot partition and masks a system service, and
+// it needs a reboot to take effect — none of which belongs behind a button that
+// says "look for my modem".
+func (s *server) hardwareUART(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.prov == nil {
+		// Demo mode, or a node whose helper is not running. Reporting the
+		// problem without being able to fix it is still worth doing, so this is
+		// a clean refusal rather than a crash.
+		http.Error(w, "the privileged helper is not available on this node", http.StatusServiceUnavailable)
+		return
+	}
+	before := uartReport()
+	if before == nil {
+		writeJSONStatus(w, http.StatusConflict, map[string]any{
+			"error": "this host has no Raspberry Pi boot partition, so there is no GPIO serial port to free",
+		})
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+	defer cancel()
+
+	resp, err := s.prov.EnableModemUART(ctx, privhelper.EnableModemUARTRequest{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"result": resp, "uart": uartReport()})
 }
 
 // hardwareDetect serves POST /api/hardware/detect.

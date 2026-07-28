@@ -145,6 +145,7 @@ var allRoutes = []route{
 	{"GET", "/api/hardware"},
 	{"POST", "/api/hardware/detect"},
 	{"POST", "/api/hardware/adopt"},
+	{"POST", "/api/hardware/uart"},
 	{"GET", "/api/network/status"},
 	{"GET", "/api/network/wifi/scan"},
 	{"GET", "/api/network/timezones"},

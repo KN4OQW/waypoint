@@ -230,7 +230,7 @@ func TestMethodsAreDistinct(t *testing.T) {
 		}
 		seen[m] = true
 	}
-	if len(seen) != 14 {
+	if len(seen) != 15 {
 		t.Errorf("Methods() has %d entries; update this count deliberately when the protocol grows", len(seen))
 	}
 }

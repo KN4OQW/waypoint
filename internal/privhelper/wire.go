@@ -88,6 +88,7 @@ const (
 	MethodNetCheckpointRollback Method = "net_checkpoint_rollback"
 	MethodListSudoUsers         Method = "list_sudo_users"
 	MethodRemoveUser            Method = "remove_user"
+	MethodEnableModemUART       Method = "enable_modem_uart"
 )
 
 // Methods returns every method in the protocol, in a stable order. A server uses
@@ -109,6 +110,7 @@ func Methods() []Method {
 		MethodNetCheckpointRollback,
 		MethodListSudoUsers,
 		MethodRemoveUser,
+		MethodEnableModemUART,
 	}
 }
 

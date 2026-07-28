@@ -421,6 +421,12 @@ func (s *Server) dispatch() map[Method]handler {
 				return p.RemoveUser(ctx, r)
 			})
 		},
+		MethodEnableModemUART: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			return call(raw, func(r EnableModemUARTRequest) (EnableModemUARTResponse, error) {
+				s.Logf("privhelper: enable_modem_uart")
+				return p.EnableModemUART(ctx, r)
+			})
+		},
 	}
 }
 

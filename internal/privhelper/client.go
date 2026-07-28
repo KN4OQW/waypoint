@@ -253,3 +253,12 @@ func (c *Client) RemoveUser(ctx context.Context, req RemoveUserRequest) (RemoveU
 	err := c.call(ctx, MethodRemoveUser, req, &out)
 	return out, err
 }
+
+func (c *Client) EnableModemUART(ctx context.Context, req EnableModemUARTRequest) (EnableModemUARTResponse, error) {
+	var out EnableModemUARTResponse
+	if err := req.Validate(); err != nil {
+		return out, err
+	}
+	err := c.call(ctx, MethodEnableModemUART, req, &out)
+	return out, err
+}

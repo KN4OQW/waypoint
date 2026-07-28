@@ -694,6 +694,10 @@ func allCalls(ctx context.Context) map[privhelper.Method]func(privhelper.Provisi
 			_, err := p.RemoveUser(ctx, privhelper.RemoveUserRequest{Username: "previous-owner"})
 			return err
 		},
+		privhelper.MethodEnableModemUART: func(p privhelper.Provisioner) error {
+			_, err := p.EnableModemUART(ctx, privhelper.EnableModemUARTRequest{})
+			return err
+		},
 	}
 }
 
