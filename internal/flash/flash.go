@@ -268,7 +268,10 @@ func (e *Engine) Flash(ctx context.Context, req Request, progress func(Progress)
 	if err != nil {
 		return Result{}, err
 	}
-	defer port.Close()
+	// Closed explicitly on the success path, where the error matters because a
+	// port still open is a port MMDVM-Host cannot have back. This is the net for
+	// every other exit; closing twice is a no-op.
+	defer func() { _ = port.Close() }()
 	progress(Progress{Stage: StagePreparing, Detail: fmt.Sprintf(
 		"bootloader %s, part 0x%04X", bl.Info().VersionString(), bl.Info().ProductID)})
 

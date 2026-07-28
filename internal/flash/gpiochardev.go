@@ -109,7 +109,7 @@ var readChipInfo = func(path string) (chardevChip, error) {
 	if err != nil {
 		return chardevChip{}, fmt.Errorf("open %s: %w", path, err)
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 
 	var info gpiochipInfo
 	if err := ioctlPtr(fd, unix.GPIO_GET_CHIPINFO_IOCTL, unsafe.Pointer(&info)); err != nil {
@@ -191,7 +191,7 @@ func openChardevLines(cfg LineConfig) (driver, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", chip.path, err)
 	}
-	defer unix.Close(fd) // the line request gets its own descriptor
+	defer func() { _ = unix.Close(fd) }() // the line request gets its own descriptor
 
 	req := gpioV2LineRequest{NumLines: 2}
 	req.Offsets[0] = uint32(cfg.BOOT0)
