@@ -4,17 +4,9 @@
 172.16.50.13), Raspbian 12 bookworm, kernel 6.12.25+rpt-rpi-v7, armhf —
 the same bench the #19 flashing run used.
 
-> **Status: the hardware run has NOT been made.** Everything below the line
-> marked *Pending* is a procedure, not a result. The harness is built,
-> cross-compiled and deployed to the node at `/tmp/cal.test`, and it stops at
-> the one thing that cannot be automated from here: `/dev/ttyAMA0` is
-> `root:dialout` and the `rescue` account is in neither, so opening the port
-> needs a `sudo` password nobody but the operator has. The keyed part of the
-> acceptance criterion needs a person with a radio regardless.
->
-> This file is written now, with the commands and the expectations, so the run
-> is a matter of pasting three lines and filling in what came back — and so the
-> gap does not get quietly forgotten.
+**The receive-only half of this run is done and passed.** The keyed half — the
+acceptance criterion itself — still needs a person with a radio and is written
+up as a procedure at the end.
 
 ## What is verified without hardware
 
@@ -46,13 +38,98 @@ Two defects were found there that a bench run would have found the hard way:
   which abandons any frequency that takes longer than the dwell to reach the
   frame minimum. At DMR's real rate of one frame per 60 ms, that is all of them.
 
-## Pending — the run to make
+## Run 1 — receive-only checks. **PASS**
 
-MMDVM-Host must be stopped first; the harness will not do it for you, because a
-test binary that quietly takes a node off the air is worse than one that says it
-could not open the port.
+Nothing transmitted; the node was never keyed. MMDVM-Host was not running, so
+no arbitration was exercised (`waypoint-mmdvmhost.service` is not installed on
+this bench — worth knowing, because the sweep's port-ownership path therefore
+has no hardware coverage yet either).
 
-### 1. Receive-only checks (no transmitter, nothing on the air)
+### The firmware these frames were validated against
+
+```
+MMDVM_HS_Dual_Hat-v1.6.1 20230526 14.7456MHz dual ADF7021 FW by CA6JAU GitID #da73668
+UDID 00350016390000074E503543 · protocol 1 · modes known=false (protocol 1 assumes)
+```
+
+**Not the build the #19 run recorded.** That log has GitID `899fc2a`; this board
+now runs `da73668`, which is not on either fork's `master` — it is a branch
+build, committed the same day as this run. That changes nothing about the
+evidence (the `SET_CONFIG` parser is the same v1.6.1-family code), but the
+identity is recorded here rather than assumed, because "we validated the frames
+against the firmware" is only worth writing down if it says *which* firmware.
+
+`modes known=false` is correct and not a fault: protocol-1 firmware reports no
+capability bits, so mode support is MMDVM-Host's documented assumption rather
+than something the modem said.
+
+### What each check proved
+
+```
+TestBenchIdentity                        protocol 1, DMR carried
+TestBenchSetConfigAccepted               the 27-byte SET_CONFIG was ACKed
+TestBenchTuneAcceptsAnOffsetRange        -5000 … +5000 Hz all accepted at 438.8 MHz
+TestBenchListenForFrames                 5 candidates walked, all unheard, ErrNothingHeard in 10.8 s
+TestBenchCalDataIsRefusedFromAReceiveState  the modem refused to key
+```
+
+**The frame layout is right on real firmware.** This was the open risk: the
+calibration frames were transcribed from two firmware parsers, and a wrong byte
+in the middle of a 27-byte frame does not fail loudly — it is either NAKed with
+a bare code or, worse, accepted as something other than what was meant. The real
+Dual Hat ACKed the real sweep configuration.
+
+**±5 kHz of tuning is accepted at 438.8 MHz**, so the default coarse span does
+not run into the board's own frequency limits on 70 cm. (It would on a
+frequency near a band edge or a banned satellite segment; the board enforces
+both itself, with the same bare reason code.)
+
+**The sweep terminates correctly with nobody transmitting.** Five candidates,
+each given its dwell, each marked `heard=false scored=false`, and the run ended
+in `ErrNothingHeard` rather than hanging or reporting a clean 0.00% — which is
+the failure this design worried about most, since silence and perfection are the
+same number.
+
+### The safety property, checked against the board — and a defect it found
+
+`TestBenchCalDataIsRefusedFromAReceiveState` asks the firmware to key from the
+sweep's own state and requires a refusal. It got one:
+
+```
+refused as expected: cal: the modem refused command 0x08:
+                     the command is not known to this firmware
+```
+
+RFC-0021 §2's claim — that the sweep cannot transmit as a property of the board
+rather than a promise of ours — holds on this firmware.
+
+The reason code is the interesting part, and it exposed a **defect in Waypoint's
+own error text**. Reason 2 is conventionally "command not implemented", and that
+is what Waypoint translated it to. It is wrong here: MMDVM_HS initialises its
+per-frame error to `2U` (`SerialPort.cpp`) and its `CAL_DATA` handler only
+clears it inside a branch matching the modem's *current calibration state*, so a
+command the firmware implements perfectly well comes back as reason 2 with
+nothing missing. The sentence above is what the run printed, and an operator
+told "this firmware does not implement it" would go looking for a firmware
+update they do not need. The message now offers both readings, and a test pins
+it.
+
+### Rebuilding and rerunning
+
+```sh
+GOOS=linux GOARCH=arm GOARM=6 go test -tags bench -c -o cal.test ./internal/cal
+scp cal.test rescue@172.16.50.13:/tmp/
+ssh rescue@172.16.50.13 'cd /tmp && sudo WAYPOINT_BENCH_FREQ=438800000 ./cal.test -test.v'
+```
+
+MMDVM-Host must be stopped first if it is running; the harness will not do it
+for you, because a test binary that quietly takes a node off the air is worse
+than one that says it could not open the port.
+
+<details>
+<summary>The original procedure, for reference</summary>
+
+#### Receive-only checks (no transmitter, nothing on the air)
 
 ```sh
 # from the repo, if the binary needs rebuilding:
@@ -79,7 +156,9 @@ That last one is the one to read carefully. The claim that the sweep is
 structurally unable to transmit is a claim about the *board*, not about
 Waypoint, and this is where it is checked against the board.
 
-### 2. The acceptance criterion (a radio is keyed — this transmits)
+</details>
+
+## Run 2 — the acceptance criterion. **NOT YET RUN** (a radio is keyed — this transmits)
 
 > "A misconfigured bench unit (+400 Hz offset injected) is brought to <1% BER by
 > wizard alone."
@@ -101,8 +180,12 @@ Record here afterwards: the curve, the best point's BER and frame count, how
 many PTT presses it took, and anything the panel said that was wrong or
 unhelpful. The last one matters most — the measurement is the easy part.
 
-## Not covered by this run, and known to be
+## Not covered, and known not to be
 
+- **The keyed acceptance run**, above.
+- **Port arbitration.** `waypoint-mmdvmhost.service` is not installed on this
+  bench, so "stop MMDVM-Host, sweep, restart it no matter what" has unit-test
+  coverage and no hardware coverage.
 - **The repeater workflow.** No full-size MMDVM exists on this bench. The
   level/invert path (`/api/cal/listen`, the transmit tests) is written from the
   firmware's parser and is **unverified on hardware**; the API reports

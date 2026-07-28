@@ -260,6 +260,18 @@ func TestNAKErrorExplainsTheReasonCode(t *testing.T) {
 	}
 }
 
+// TestReason2DoesNotClaimTheCommandIsUnknown is a bench finding. The hotspot
+// firmware answers the transmit toggle with reason 2 when it is not in a
+// calibration state — a command it implements, refused for the state it is in —
+// so a message that says "this firmware does not implement it" would send an
+// operator looking for a firmware update they do not need.
+func TestReason2DoesNotClaimTheCommandIsUnknown(t *testing.T) {
+	got := (&NAKError{Command: CmdCalData, Reason: 2}).Error()
+	if !contains(got, "state") {
+		t.Fatalf("reason 2 should offer the wrong-state reading, got %q", got)
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

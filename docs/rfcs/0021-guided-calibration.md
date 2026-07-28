@@ -85,13 +85,24 @@ subprocess is worse than it sounds:
 - **It has to be in the image.** MMDVMCal is currently on waypoint-stack's
   still-to-pin list. Native means it never needs to be.
 
-Against that, the port is bounded and testable. `regenerateDMR` is Golay(24,12) and
-Golay(23,12) with an AMBE whitening table; the Golay tables are **derived at init
-from the generator polynomial** rather than copied, because the code is perfect —
-2048 syndromes and exactly 2048 error patterns of weight ≤ 3 — so the decode table
-is a fact about the code rather than data to trust. The only literal table carried
-across is the 4096-entry AMBE PRNG, attributed to `BERCal.cpp` (GPLv2-or-later into
-this GPLv3 tree). D-Star BER shares all of it and costs almost nothing extra.
+Against that, the port is bounded and testable — and it turns out to carry **no
+tables at all**, only the procedure (`BERCal.cpp` and `Golay24128.cpp`,
+GPLv2-or-later into this GPLv3 tree).
+
+`regenerateDMR` is Golay(24,12) and Golay(23,12) with an AMBE whitening
+sequence. Upstream ships all three as literal blobs, about a thousand lines of
+generated data, and none of it is a fact about anyone's implementation. The
+Golay code is **perfect** — 2048 syndromes and exactly 2048 error patterns of
+weight ≤ 3, in one-to-one correspondence — so its decoder is enumerated at init
+and is then correct by construction rather than correct if the paste was clean.
+The 4096-entry AMBE table is a plain 16-bit linear congruential generator seeded
+from the data word (`pr = 16·data`, then `pr = (173·pr + 13849) mod 65536`,
+taking the top bit 24 times); every published value is reproduced exactly.
+
+Spot values from both blobs are pinned in tests anyway. A derivation that drifts
+produces a plausible bit error rate rather than an obviously broken one, which
+is the failure mode worth a test. D-Star BER shares all of this and costs almost
+nothing extra.
 
 The decisive argument is the one this repo keeps making: BER decoding as a pure
 function over a `[]byte` can be tested against recorded frames on a laptop, and a
@@ -115,6 +126,11 @@ of the transmit calibration states; anything else falls through to a NAK. So dur
 the flow an operator actually runs, the command that keys the radio is **refused by
 the board**. This is not a rule Waypoint enforces on itself, and that is exactly
 why it is the property worth having.
+
+Confirmed on hardware: the bench Dual Hat refuses the transmit toggle from the
+sweep's state with reason 2 — which is the firmware's *initial* error value,
+left untouched because no state branch matched, rather than the "command not
+implemented" that code usually means (docs/bench-calibration-run-log.md).
 
 **Anything that does key is bounded inside the engine.** The transmit tests — DMR
 deviation tone, the 1031 Hz test pattern, carrier — exist for the repeater

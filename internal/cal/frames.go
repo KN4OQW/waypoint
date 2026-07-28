@@ -525,7 +525,16 @@ func nakReason(code byte) string {
 	case 1:
 		return "the modem is busy"
 	case 2:
-		return "the command is not known to this firmware"
+		// Reason 2 is conventionally "unimplemented", and translating it that
+		// way is wrong in the case an operator is most likely to meet it. The
+		// hotspot firmware initialises its per-frame error to 2 and only clears
+		// it inside a branch that matches the modem's CURRENT STATE, so a
+		// command it implements perfectly well — the transmit toggle, asked for
+		// from a receive state — comes back as reason 2 with nothing missing.
+		// Confirmed on the bench: MMDVM_HS SerialPort.cpp sets `uint8_t err =
+		// 2U` and its CAL_DATA handler leaves it untouched when no calibration
+		// state is active.
+		return "the modem would not act on that command — either this firmware does not implement it, or the modem is not in a state where it means anything"
 	case 3:
 		return "the command is wrong for the modem's current state"
 	case 4:
