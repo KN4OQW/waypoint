@@ -89,6 +89,12 @@ type server struct {
 	// certs owns the device certificate, so it can be reminted for the hostname
 	// the operator chooses rather than the one the node booted with.
 	certs *tlscert.Holder
+	// prov is the privileged helper. waypointd is the unprivileged end of it: it
+	// dials the socket and can ask for a fixed set of named operations, and holds
+	// no capability the helper does not hand it one call at a time. Nil in tests
+	// and in demo mode, where every caller degrades to "cannot repair, only
+	// report" rather than to a panic.
+	prov privhelper.Provisioner
 
 	// Host/OS networking domain (docs/config-coverage.md §4). netKeyfileDir is
 	// where the NetworkManager keyfile renderer writes waypoint-*.nmconnection;
@@ -367,6 +373,17 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 	// through SetStationID rather than the generic merge.
 	if section == "station_id" {
 		if err := config.SetStationID(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// The modem section validates on save: a board must be one Waypoint knows and
+	// an oscillator must be a number, so neither reaches a renderer or a profile
+	// fingerprint as nonsense (#18).
+	if section == "modem" {
+		if err := config.SetModem(s.store, body, "api"); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -1666,6 +1683,11 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/dmr/masters", s.dmrMasters)
 	mux.HandleFunc("/api/hostlists", s.hostlistStatus)
 	mux.HandleFunc("/api/dmr/talkgroups", s.dmrTalkgroups) // TG name list (RFC-0010)
+	// Modem hardware: identity, detection, and adoption into the config (#18).
+	mux.HandleFunc("/api/hardware", s.hardware)
+	mux.HandleFunc("/api/hardware/detect", s.hardwareDetect)
+	mux.HandleFunc("/api/hardware/adopt", s.hardwareAdopt)
+	mux.HandleFunc("/api/hardware/uart", s.hardwareUART) // free the GPIO serial port
 	// Host/OS networking domain (docs/config-coverage.md §4).
 	mux.HandleFunc("/api/network/status", s.networkStatus)
 	mux.HandleFunc("/api/network/wifi/scan", s.networkWiFiScan)
@@ -2051,6 +2073,9 @@ func main() {
 		*setupWizard, *setupAP = false, false
 	}
 
+	// The helper client is built whether or not first-boot setup is enabled: the
+	// modem-UART repair (#18) needs it on a node that finished setup long ago.
+	s.prov = privhelper.NewClient(*provisionSocket)
 	s.initSetup(setupOptions{
 		Enabled:   *setupWizard,
 		Socket:    *provisionSocket,

@@ -46,8 +46,8 @@ instead of the app, and reports contrast-free "clean" pages that were never load
 
 - **Dashboard** (`/`) — live status, on-air, last-heard, networks, event log.
 - **Settings / wizard** (`/settings.html`) — every top-level tab (`general`,
-  `setup`, `lcd`, `station`, `modes`, `brandmeister`, `network`, `gateways`,
-  `profiles`, `updates`, `expert`), with the Modes tab expanded into each of its
+  `hardware`, `setup`, `lcd`, `station`, `modes`, `brandmeister`, `network`,
+  `gateways`, `profiles`, `updates`, `expert`), with the Modes tab expanded into each of its
   eight mode sub-tabs (`dstar`, `dmr`, `ysf`, `p25`, `nxdn`, `m17`, `pocsag`, `fm`)
   so every per-mode panel is still walked.
 - **Both nav topologies** — a desktop pass (1280px, grouped collapsible sidebar)

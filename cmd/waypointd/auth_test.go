@@ -140,6 +140,12 @@ var allRoutes = []route{
 	{"GET", "/api/dstar/reflectors"},
 	{"GET", "/api/m17/reflectors"},
 	{"GET", "/api/dmr/masters"},
+	// Modem hardware (#18). Detect can stop MMDVM-Host, which takes the node off
+	// the air, so it matters that these default to denied like everything else.
+	{"GET", "/api/hardware"},
+	{"POST", "/api/hardware/detect"},
+	{"POST", "/api/hardware/adopt"},
+	{"POST", "/api/hardware/uart"},
 	{"GET", "/api/network/status"},
 	{"GET", "/api/network/wifi/scan"},
 	{"GET", "/api/network/timezones"},

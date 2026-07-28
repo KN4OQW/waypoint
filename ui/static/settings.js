@@ -13,6 +13,7 @@
 // "modes" entry below (see MODE_SUBS). Their old ids still resolve as deep links.
 const TABS = [
   { id: "general",      tag: "RF", label: "General",      sub: "Radio & Station",     crumb: "SYSTEM / GENERAL",        title: "General Configuration", desc: "Station identity, operating frequencies and modem hardware for this hotspot node." },
+  { id: "hardware",     tag: "HW", label: "Hardware",     sub: "Modem & Board",       crumb: "SYSTEM / HARDWARE",       title: "Modem Hardware",        desc: "What modem is attached, what it says it is, and whether this node is configured to match. Detection asks the modem directly — it never guesses from the port it was found on." },
   { id: "setup",        tag: "SU", label: "Setup",         sub: "Control & Display",    crumb: "SYSTEM / SETUP",          title: "Control Software & Display", desc: "TRX mode and the MMDVM-Host display driver. Waypoint runs display-free (status is served over MQTT); these fields are here for parity and for nodes driving a physical panel." },
   { id: "lcd",          tag: "LC", label: "LCD",           sub: "HD44780 Panel",        crumb: "SYSTEM / LCD",            title: "LCD Display",           desc: "Drive a physical HD44780 character panel over I2C, with pages of live status that rotate. Disabled by default; the node stays headless until you turn it on." },
   { id: "station",      tag: "ST", label: "Station",      sub: "History & ID",         crumb: "SYSTEM / STATION",        title: "Station Settings",      desc: "Node-wide operating policy: how long the persistent last-heard / event history is kept (pruned nightly), and how this node identifies itself on the air." },
@@ -63,7 +64,10 @@ const HELP = {
   // --- modem / RF ---
   "modem.rx_freq_hz": "The frequency this node <b>listens</b> on — the frequency your radio transmits to. On a simplex hotspot it matches the TX frequency. Check your national band plan before choosing one.",
   "modem.tx_freq_hz": "The frequency this node <b>transmits</b> on — the frequency your radio listens to. On a simplex hotspot it matches the RX frequency.",
-  "modem.port": "Serial device the MMDVM modem appears as, e.g. <code>/dev/ttyACM0</code> for most USB and GPIO boards. If the node stops seeing the modem after a reboot, the port has usually been renumbered.",
+  "modem.port": "Serial device the MMDVM modem appears as — <code>/dev/ttyAMA0</code> for a GPIO hat, <code>/dev/ttyACM0</code> for most USB boards. Use <b>Detect</b> on the Hardware tab rather than typing it: detection asks each candidate port what is on the end of it, so a renumbered USB device is found rather than guessed at.",
+  "modem.board": "Which modem board is fitted. Detection reads the board <i>family</i> off the wire, but several products ship the same firmware — a JumboSpot reports as an <code>MMDVM_HS_Hat</code> — so where the identity string cannot tell them apart, this is where you say which one you have. It changes no generated config; it is what lets Waypoint refuse duplex on a board with one radio, and warn when a saved profile came from a differently-tuned board.",
+  "modem.tcxo_hz": "The modem's reference oscillator, in Hz — <b>12288000</b> (12.288 MHz) or <b>14745600</b> (14.7456 MHz). Firmware from the 1.5 era onwards reports it, and Detect fills this in from what the modem said. Get it wrong and the radio is detuned rather than broken, which is why nothing here ever guesses one.",
+  "modem.uart_speed": "Line speed between the host and the modem. 115200 is the MMDVM_HS family's default and is almost always right; Detect fills in whichever speed the modem actually answered on.",
   "modem.rx_offset": "Correction in Hz applied to the receive frequency, compensating for crystal error in the modem. Leave at 0 until you have measured the error — this is calibration, not tuning.",
   "modem.tx_offset": "Correction in Hz applied to the transmit frequency, compensating for crystal error in the modem. Leave at 0 until you have measured the error.",
 
@@ -207,6 +211,8 @@ let stackStatus = null;     // GET /api/update/stack — installed versions, ava
 let stackBusy = false;      // a check/apply request is in flight (guards double-clicks)
 let stackPoll = null;       // interval while an apply runs, cleared when it settles
 let profiles = null;        // saved connection profiles from /api/profiles (RFC-0006)
+let hardware = null;        // GET /api/hardware — last detection, board table, UART diagnosis (#18)
+let hwBusy = false;         // a detect/adopt/repair is in flight
 let profileBusy = false;    // an activate/save/import is in flight (disables the buttons)
 let importScan = null;      // last /api/import/scan result {report, preview} (RFC-0007)
 let importInput = null;     // remembered scan input to replay on Import: {dir} or {files: FileList}
@@ -610,12 +616,44 @@ function panelGeneral() {
     input("modem", "rx_freq_hz", { label: "RX Frequency", kind: "mhz", unit: "MHz", accent: true }) +
     input("modem", "tx_freq_hz", { label: "TX Frequency", kind: "mhz", unit: "MHz", accent: true }) +
     input("modem", "port", { label: "Modem Port" }) +
+    boardRow() +
+    baudRow() +
     input("general", "power", { label: "RF Power", unit: "" }) +
-    toggle("general", "duplex", "Duplex", "DUPLEX", "SIMPLEX"));
+    toggle("general", "duplex", "Duplex", "DUPLEX", "SIMPLEX") +
+    note("Don't type the port and board in by hand — the <b>Hardware</b> tab asks the modem what it is and fills all of this in."));
   const cal = card("CALIBRATION",
     input("modem", "rx_offset", { label: "RX Offset" }) +
     input("modem", "tx_offset", { label: "TX Offset" }));
   return `<div class="grid2">${left}<div class="stack">${radio}${cal}</div></div>`;
+}
+
+// boardRow is WPSD's "Radio/Modem" dropdown. The list comes from the daemon's
+// board table (loaded with the hardware surface) so there is no second copy of
+// it here; before that arrives, or on a node configured for a board this build
+// does not know, the current value is still offered so selecting it is never
+// lost.
+function boardRow() {
+  const cur = (edit.modem || {}).board || "";
+  const boards = (hardware && hardware.boards) || [];
+  let opts = `<option value=""${cur === "" ? " selected" : ""}>Not set</option>`;
+  let seen = false;
+  opts += boards.map((b) => {
+    if (b.id === cur) seen = true;
+    const suffix = b.tcxo_label ? ` — ${b.tcxo_label}` : "";
+    return `<option value="${esc(b.id)}"${b.id === cur ? " selected" : ""}>${esc(b.name)}${esc(suffix)}</option>`;
+  }).join("");
+  if (cur && !seen) opts += `<option value="${esc(cur)}" selected>${esc(cur)}</option>`;
+  return row("Radio / Modem", `<select data-sec="modem" data-key="board">${opts}</select>`);
+}
+
+// baudRow is WPSD's Baudrate field. 115200 covers the whole launch tier; the
+// others are here for reflashed and full-size boards.
+function baudRow() {
+  const cur = (edit.modem || {}).uart_speed || "115200";
+  const speeds = ["115200", "230400", "460800"];
+  if (!speeds.includes(cur)) speeds.unshift(cur);
+  const opts = speeds.map((v) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(v)}</option>`).join("");
+  return row("Baudrate", `<select data-sec="modem" data-key="uart_speed">${opts}</select>`);
 }
 
 function panelDmr() {
@@ -2323,6 +2361,263 @@ function panelUpdates() {
   return `<div class="grid2">${versions}${available}</div><div class="grid2">${policy}${history}</div>`;
 }
 
+
+// --- Hardware: modem identity, detection, and the GPIO UART (#18) ---------
+//
+// The tab answers three questions in the order an operator asks them:
+//
+//   1. Is there a modem, and what is it? (detection, and what it said)
+//   2. Is this node configured to match?  (the disagreements, if any)
+//   3. If nothing was found, why not?     (the GPIO serial port's availability)
+//
+// Detect and Adopt are separate buttons because they are separate acts: one
+// reads the world, the other changes the node. Adopt is also where the operator
+// answers the question the wire cannot — several products ship the same firmware
+// and report the same identity string, so the picker is narrowed to the ones the
+// modem could actually be, never to a guess.
+function panelHardware() {
+  const hw = hardware || {};
+  const det = hw.detected || {};
+  const id = det.identity;
+  const cfg = hw.configured || {};
+
+  // --- what is attached ---
+  let idInner;
+  if (id) {
+    const proto = id.protocol === 2 ? "2 (reports its own capabilities)" : "1 (capabilities assumed)";
+    idInner =
+      row("Identity", `<span class="accent">${esc(id.description || id.hw_type || "—")}</span>`) +
+      row("Found on", `<span>${esc(id.port)} · ${esc((id.transport || "").toUpperCase())} · ${esc(String(id.baud || ""))} baud</span>`) +
+      (id.firmware ? row("Firmware", `<span>${esc(id.firmware)}${id.built ? " (" + esc(id.built) + ")" : ""}${id.author ? " by " + esc(id.author) : ""}</span>`) : "") +
+      row("Reference oscillator", `<span>${esc(tcxoText(id))}</span>`) +
+      row("Radios", `<span>${id.duplex ? "Two (duplex-capable)" : "One (simplex)"}</span>`) +
+      row("Protocol", `<span>${esc(proto)}</span>`) +
+      (id.udid ? row("Chip ID", `<span class="mono-sm">${esc(id.udid)}</span>`) : "") +
+      row("Modes the firmware carries", `<span>${esc(modeSupportText(id.modes))}</span>`);
+    if (det.checked_at) idInner += note(`Last detected ${esc(fmtWhen(det.checked_at))}.`);
+  } else if (det.checked_at) {
+    idInner = note(`<b>No modem answered.</b> Every candidate port was asked and none replied — the table below shows which, and what each one did. Last looked ${esc(fmtWhen(det.checked_at))}.`);
+  } else {
+    idInner = note("This node has not looked for a modem yet. <b>Detect</b> asks every serial port that could plausibly be a modem what is on the end of it — it sends one three-byte version request and nothing else.");
+  }
+  if (det.bootloader) {
+    idInner += note(`<b>A board is sitting in its bootloader</b> on ${esc(det.bootloader)}. It cannot answer a version request in that state, but it is one firmware flash away from working.`);
+  }
+  idInner += `<div class="row"><label></label><button type="button" id="hw-detect" class="btn primary"${hwBusy ? " disabled" : ""}>${hwBusy ? "DETECTING…" : "DETECT"}</button></div>`;
+  const identity = card("ATTACHED MODEM", idInner);
+
+  // --- adopt into the config ---
+  let adoptInner = "";
+  if (id) {
+    const cands = id.candidates || [];
+    const list = cands.length ? cands : (hw.boards || []).map((b) => b.id);
+    const byID = {};
+    (hw.boards || []).forEach((b) => { byID[b.id] = b; });
+    const chosen = cands.includes(cfg.board) ? cfg.board : (id.board_id || cands[0] || "");
+    const opts = list.map((bid) => {
+      const b = byID[bid] || { id: bid, name: bid };
+      return `<option value="${esc(b.id)}"${b.id === chosen ? " selected" : ""}>${esc(b.name)}</option>`;
+    }).join("");
+    adoptInner += row("This board is a", `<select id="hw-board">${opts}</select>`);
+    if (cands.length > 1) {
+      adoptInner += note(`<b>${cands.length} boards ship this firmware</b>, and nothing the modem says tells them apart. Pick the one you have — the choice changes no generated config, it is what lets Waypoint refuse a setting your board cannot do.`);
+    } else if (!cands.length) {
+      adoptInner += note("This modem answered, but its identity does not match any board Waypoint knows. Its port is still worth adopting; leave the board as-is or pick the closest match.");
+    }
+    adoptInner += `<div class="row"><label></label><button type="button" id="hw-adopt" class="btn accent"${hwBusy ? " disabled" : ""}>USE THIS MODEM</button></div>`;
+    adoptInner += note("Adopting writes the port, line speed, board and reference oscillator into this node's configuration. An oscillator the firmware did not actually report is never written — a reference frequency guessed wrong detunes the radio.");
+  } else {
+    adoptInner = note("Nothing to adopt until a modem has been found.");
+  }
+  // Two cards, not one: what this node currently believes, and the act of
+  // changing that belief. Folding them together would put two controls labelled
+  // "board" in one card — the read-only one and the picker — which is confusing
+  // to read and ambiguous to a screen reader.
+  const configured = card("THIS NODE IS CONFIGURED FOR",
+    row("Port", `<span>${esc(cfg.port || "—")}</span>`) +
+    row("Line speed", `<span>${esc(cfg.uart_speed || "115200 (default)")}</span>`) +
+    row("Board", `<span>${esc(cfg.board_name || cfg.board || "—")}</span>`) +
+    row("Reference oscillator", `<span>${esc(cfg.tcxo_label || cfg.tcxo_hz || "—")}</span>`) +
+    (det.adopted_description ? note(`Taken from a detected modem identifying as <b>${esc(det.adopted_description)}</b>${det.adopted_at ? ", " + esc(fmtWhen(det.adopted_at)) : ""}.`) : ""));
+  const adopt = card("USE THE DETECTED MODEM", adoptInner);
+
+  // --- disagreements ---
+  const warns = hw.warnings || [];
+  let warnCard = "";
+  if (warns.length) {
+    const items = warns.map((w) => {
+      const bad = w.severity === "error";
+      return `<li class="hw-warn ${bad ? "bad" : "warn"}"><span class="hw-warn-k">${esc(bad ? "Will not work" : "Check this")}</span> <span class="hw-warn-f">${esc(w.field)}</span><div>${esc(w.message)}</div></li>`;
+    }).join("");
+    warnCard = card("THIS NODE AND THIS MODEM DISAGREE", `<ul class="hw-warns">${items}</ul>` +
+      note("These are configurations that produce a node which starts, reports itself healthy, and does not work on the air. Nothing here blocks Apply — the modem may be the thing that is wrong."));
+  }
+
+  // --- what was looked at ---
+  let scanCard = "";
+  const scanned = det.scanned || [];
+  if (scanned.length) {
+    const rows = scanned.map((sc) => {
+      const what = sc.known ? esc(sc.known) : (sc.usb_id ? "USB " + esc(sc.usb_id) : esc((sc.transport || "").toUpperCase()));
+      return row(sc.port, `<span>${esc(outcomeText(sc.outcome))} · ${what}${sc.detail ? " · " + esc(sc.detail) : ""}</span>`);
+    }).join("");
+    scanCard = card("PORTS LOOKED AT", rows +
+      note("Ports already claimed for something else — a Nextion display, above all — are left alone rather than probed."));
+  }
+
+  // --- the GPIO serial port ---
+  let uartCard = "";
+  const uart = hw.uart;
+  if (uart) {
+    if (uart.ok) {
+      uartCard = card("GPIO SERIAL PORT", note("The GPIO serial port is free for a modem: the UART is on, Bluetooth is not holding it, and no login console is attached."));
+    } else {
+      const probs = (uart.problems || []).map((p) => `<li>${esc(p.message)}</li>`).join("");
+      uartCard = card("GPIO SERIAL PORT", 
+        note("<b>A hat fitted to this node cannot be heard.</b> On stock Raspberry Pi OS the serial port a GPIO modem needs is switched off, owned by the onboard Bluetooth controller, or occupied by a login console — the board is electrically fine and completely silent.") +
+        `<ul class="hw-warns">${probs}</ul>` +
+        `<div class="row"><label></label><button type="button" id="hw-uart" class="btn primary"${hwBusy ? " disabled" : ""}>FREE THE SERIAL PORT</button></div>` +
+        note("This edits <code>config.txt</code> and <code>cmdline.txt</code> on the boot partition and masks the serial login service. Your own settings in those files are left alone. <b>The node must be rebooted</b> for it to take effect."));
+    }
+  }
+
+  return `<div class="grid2">${identity}<div class="stack">${configured}${adopt}</div></div>${warnCard}${uartCard}${scanCard}`;
+}
+
+// tcxoText says whether the oscillator was reported by the modem or inferred
+// from the board table, because the two are not the same claim.
+function tcxoText(id) {
+  if (!id.tcxo_hz) return "not reported by this firmware";
+  const label = (id.tcxo_hz / 1e6).toString().replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "") + " MHz";
+  return id.tcxo_assumed ? label + " (inferred, not reported)" : label;
+}
+
+// modeSupportText lists what the firmware carries, and says plainly when that
+// list is an assumption rather than an answer — protocol-1 firmware reports no
+// capabilities at all, and a guess must not read as a fact.
+function modeSupportText(m) {
+  if (!m) return "unknown";
+  const names = { dstar: "D-Star", dmr: "DMR", ysf: "System Fusion", p25: "P25", nxdn: "NXDN", m17: "M17", fm: "FM", pocsag: "POCSAG" };
+  const on = Object.keys(names).filter((k) => m[k]).map((k) => names[k]);
+  const list = on.length ? on.join(", ") : "none";
+  return m.known ? list : list + " (assumed — this firmware does not report its capabilities)";
+}
+
+function outcomeText(o) {
+  switch (o) {
+    case "modem": return "answered — this is the modem";
+    case "silent": return "opened, said nothing";
+    case "busy": return "in use by something else";
+    case "bootloader": return "a board in its bootloader";
+    default: return "could not be opened";
+  }
+}
+
+// loadHardware fetches the hardware surface and repaints the tab if it is showing.
+async function loadHardware() {
+  try {
+    hardware = await fetch("/api/hardware").then((r) => r.json());
+  } catch {
+    hardware = null;
+  }
+  if (state.tab === "hardware" || state.tab === "general") renderPanel();
+}
+
+// detectModem probes for a modem. stopHost authorises taking the port away from
+// a running MMDVM-Host, which is a real interruption of service — so the daemon
+// refuses without it, and the operator is asked here rather than in a flag.
+async function detectModem(stopHost) {
+  if (hwBusy) return;
+  hwBusy = true;
+  renderPanel();
+  try {
+    const r = await fetch("/api/hardware/detect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stop_host: !!stopHost }),
+    });
+    if (r.status === 409) {
+      const body = await r.json().catch(() => ({}));
+      hwBusy = false;
+      if (confirm("The modem is in use by MMDVM-Host, so it cannot answer.\n\nStop it, look for the modem, and start it again? This node will be off the air for a few seconds.")) {
+        return detectModem(true);
+      }
+      banner(body.error || "The modem is in use.", "bad");
+      renderPanel();
+      return;
+    }
+    if (!r.ok) throw new Error((await r.text()).trim());
+    hardware = await r.json();
+    banner(hardware.detected && hardware.detected.identity
+      ? "Found " + (hardware.detected.identity.description || hardware.detected.identity.hw_type)
+      : "No modem answered on any port.", hardware.detected && hardware.detected.identity ? "ok" : "bad");
+  } catch (err) {
+    banner(String(err.message || err), "bad");
+  }
+  hwBusy = false;
+  renderPanel();
+}
+
+// adoptBoard writes the detection into the config. It reloads the whole config
+// afterwards because the modem section it just changed is edited on the General
+// tab too, and leaving those two views disagreeing is the bug this tab exists to
+// prevent.
+async function adoptBoard() {
+  if (hwBusy) return;
+  const sel = document.getElementById("hw-board");
+  hwBusy = true;
+  renderPanel();
+  try {
+    const r = await fetch("/api/hardware/adopt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ board_id: sel ? sel.value : "" }),
+    });
+    if (!r.ok) throw new Error((await r.text()).trim());
+    const body = await r.json();
+    hardware = body.hardware;
+    const changed = (body.adopted && body.adopted.changed) || [];
+    banner(changed.length ? "Adopted — " + changed.join(", ") : "Already configured for this modem.", "ok");
+    hwBusy = false;
+    await load();          // the modem section changed underneath the General tab
+    await loadHardware();
+    return;
+  } catch (err) {
+    banner(String(err.message || err), "bad");
+  }
+  hwBusy = false;
+  renderPanel();
+}
+
+// fixUART frees the GPIO serial port. It always ends in a reboot prompt, because
+// config.txt and cmdline.txt are read at boot and the repair changes nothing
+// until then — telling an operator it worked while the symptom persists would be
+// worse than not offering it.
+async function fixUART() {
+  if (hwBusy) return;
+  if (!confirm("Free the GPIO serial port for the modem?\n\nThis edits config.txt and cmdline.txt on the boot partition and masks the serial login service. The node must be rebooted afterwards.")) return;
+  hwBusy = true;
+  renderPanel();
+  try {
+    const r = await fetch("/api/hardware/uart", { method: "POST" });
+    if (!r.ok) throw new Error((await r.text()).trim());
+    const body = await r.json();
+    const res = body.result || {};
+    if (!res.applicable) {
+      banner("This host has no Raspberry Pi boot partition, so there is no GPIO serial port to free.", "bad");
+    } else if (res.reboot_required) {
+      banner("Done: " + (res.changed || []).join("; ") + ". Reboot the node for it to take effect.", "ok");
+    } else {
+      banner("The GPIO serial port was already free.", "ok");
+    }
+  } catch (err) {
+    banner(String(err.message || err), "bad");
+  }
+  hwBusy = false;
+  await loadHardware();
+  renderPanel();
+}
+
 // hasCheck reports whether a real check timestamp is present (the Go zero time
 // serializes as a 0001 date, which is "never checked").
 function hasCheck(st) { return hasStamp(st.last_check); }
@@ -2411,6 +2706,7 @@ function renderPanel() {
   const box = document.getElementById("panels");
   switch (state.tab) {
     case "general":      box.innerHTML = panelGeneral(); break;
+    case "hardware":     box.innerHTML = panelHardware(); break;
     case "setup":        box.innerHTML = panelDisplay(); break;
     case "lcd":          box.innerHTML = panelLCD(); break;
     case "modes":        box.innerHTML = panelModesSection(); break;
@@ -2849,6 +3145,10 @@ async function load() {
     dmrTGs = await fetch("/api/dmr/talkgroups").then((r) => r.json()) || [];
     if (showingMode("dmr")) renderPanel();
   } catch { /* offline — the TG picker still accepts a typed number */ }
+  // Modem hardware is live system state like the network status, not store
+  // config: the last detection, the board table, and the GPIO UART's
+  // availability. The General tab reads it too, for the board picker.
+  loadHardware();
   // Host-network status is live system state, fetched separately from the store
   // config. Refresh whenever the Network tab is showing.
   if (state.tab === "network") loadNetwork();
@@ -3299,6 +3599,10 @@ document.getElementById("panels").addEventListener("click", (e) => {
     return;
   }
   if (e.target.id === "import-apply") { applyImport(); return; }
+  // --- modem hardware (#18) ---
+  if (e.target.id === "hw-detect") { detectModem(false); return; }
+  if (e.target.id === "hw-adopt") { adoptBoard(); return; }
+  if (e.target.id === "hw-uart") { fixUART(); return; }
   // --- software updates (RFC-0014) ---
   if (e.target.id === "stack-check") { stackCheckNow(); return; }
   if (e.target.id === "stack-apply") { stackApplyNow(); return; }

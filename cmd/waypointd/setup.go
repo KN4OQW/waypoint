@@ -43,8 +43,12 @@ func (s *server) initSetup(opts setupOptions, st *store.Store) {
 		marker = provision.DefaultPath
 	}
 
+	prov := s.prov
+	if prov == nil {
+		prov = privhelper.NewClient(opts.Socket)
+	}
 	w := &wizard.Wizard{
-		Prov:         privhelper.NewClient(opts.Socket),
+		Prov:         prov,
 		MarkerPath:   marker,
 		ProgressPath: opts.Progress,
 		Claimed:      s.Claimed,

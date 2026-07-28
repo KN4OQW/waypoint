@@ -96,6 +96,18 @@ type Provisioner interface {
 	// of ListSudoUsers and is deliberately narrow: it refuses root under any
 	// name, refuses an account with running processes, and never forces.
 	RemoveUser(ctx context.Context, req RemoveUserRequest) (RemoveUserResponse, error)
+
+	// EnableModemUART frees the Raspberry Pi's PL011 UART on GPIO 14/15 for an
+	// MMDVM modem: enable_uart=1 and a Bluetooth overlay in config.txt, the
+	// serial console token out of cmdline.txt, and the serial getty masked.
+	//
+	// It is here rather than in waypointd because it writes the boot partition
+	// and masks a system unit, and it is a single named operation with no
+	// arguments precisely so it cannot become "write this file". There is no
+	// reverse: Waypoint knows exactly which lines free the UART, but it cannot
+	// restore a serial console it never saw at a baud rate it was never told,
+	// and a half-working reverse on a headless node is worse than none.
+	EnableModemUART(ctx context.Context, req EnableModemUARTRequest) (EnableModemUARTResponse, error)
 }
 
 // The three NetCheckpoint methods are exactly the shape of netconfig.Checkpoint
@@ -698,3 +710,28 @@ var (
 	_ Validator = ListSudoUsersRequest{}
 	_ Validator = RemoveUserRequest{}
 )
+
+// --- EnableModemUART -----------------------------------------------------
+
+// EnableModemUARTRequest frees the GPIO UART for the modem. It has no fields:
+// there is one way to do this, and the reverse is deliberately not offered.
+type EnableModemUARTRequest struct{}
+
+// Validate checks the request. There is nothing to reject; it exists so every
+// request type answers the same interface and a server can validate uniformly.
+func (r EnableModemUARTRequest) Validate() error { return nil }
+
+// EnableModemUARTResponse reports what the repair changed and whether the node
+// has to reboot for it to take effect — config.txt and cmdline.txt are read by
+// the firmware and the kernel at boot, so an edit to either changes nothing
+// until the next one.
+//
+// Applicable is false on a host with no Raspberry Pi boot partition. That is not
+// an error: a dev box has no UART to free, and reporting it as a failure would
+// turn "this does not apply to you" into "something went wrong".
+type EnableModemUARTResponse struct {
+	Applicable     bool     `json:"applicable"`
+	Changed        []string `json:"changed,omitempty"`
+	RebootRequired bool     `json:"reboot_required"`
+	Remaining      []string `json:"remaining,omitempty"` // problem IDs the repair could not clear
+}

@@ -34,7 +34,7 @@ const PASS = process.env.A11Y_PASS || "a11y-scan-passphrase";
 
 // Every top-level settings tab (mirrors the TABS list in settings.js).
 const TABS = [
-  "general", "setup", "lcd", "station", "modes",
+  "general", "hardware", "setup", "lcd", "station", "modes",
   "brandmeister", "network", "gateways",
   "profiles", "updates", "expert",
 ];

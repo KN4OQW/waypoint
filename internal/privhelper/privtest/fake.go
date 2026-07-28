@@ -113,6 +113,15 @@ type Fake struct {
 	// processes, so a caller's handling of that refusal can be exercised.
 	BusyUsers map[string]bool
 
+	// ModemUARTFree models the GPIO UART's ownership. It starts false — the
+	// state stock Raspberry Pi OS is in, where Bluetooth holds the PL011 and a
+	// hat is electrically fine and completely mute — so a test that forgets to
+	// free it exercises the same failure a real fresh install has.
+	ModemUARTFree bool
+	// NotAPi makes EnableModemUART report that it does not apply, the way a dev
+	// box or a container does.
+	NotAPi bool
+
 	protected   string
 	checkpoints map[string]time.Time
 	nextUID     int
@@ -548,5 +557,30 @@ func (f *Fake) RemoveUser(ctx context.Context, req privhelper.RemoveUserRequest)
 	return privhelper.RemoveUserResponse{
 		Username: req.Username, Removed: true,
 		HomeRemoved: req.RemoveHome, SudoersPruned: u.PasswordLocked,
+	}, nil
+}
+
+// EnableModemUART frees the GPIO UART, idempotently: a second call on a node
+// that is already correct reports nothing changed and no reboot needed.
+func (f *Fake) EnableModemUART(ctx context.Context, req privhelper.EnableModemUARTRequest) (privhelper.EnableModemUARTResponse, error) {
+	if err := f.enter(ctx, privhelper.MethodEnableModemUART, req); err != nil {
+		return privhelper.EnableModemUARTResponse{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.NotAPi {
+		// Not an error: a host with no boot partition has no UART to free, and
+		// reporting that as a failure turns "does not apply to you" into
+		// "something went wrong".
+		return privhelper.EnableModemUARTResponse{Applicable: false}, nil
+	}
+	if f.ModemUARTFree {
+		return privhelper.EnableModemUARTResponse{Applicable: true}, nil
+	}
+	f.ModemUARTFree = true
+	return privhelper.EnableModemUARTResponse{
+		Applicable:     true,
+		Changed:        []string{"config.txt: enable_uart=1", "config.txt: dtoverlay=disable-bt", "cmdline.txt: serial console removed"},
+		RebootRequired: true,
 	}, nil
 }

@@ -63,12 +63,20 @@ var profileSecretFields = map[string]string{
 
 // Fingerprint is the hardware context a profile was captured on (RFC-0001's
 // export-format fingerprint block). It travels with an export so importing onto a
-// differently-tuned board can warn. Board family and TCXO frequency join this
-// when hardware detection (#18) lands — the schema reserves the room.
+// differently-tuned board can warn.
+//
+// Board and TCXOHz are the fields RFC-0001 §"hardware fingerprint block" and
+// RFC-0006 reserved for hardware detection (#18), now filled. They are what make
+// the warning RFC-0006 describes possible at all: "this profile was captured on
+// a 14.7456 MHz board, yours is 12.288 MHz". Note that the fingerprint records
+// the CONFIGURED board, not the detected one — a profile describes the node it
+// was captured from, and that node's answer to "what is attached" is its config.
 type Fingerprint struct {
 	RXFreqHz  string `json:"rx_freq_hz,omitempty"`
 	TXFreqHz  string `json:"tx_freq_hz,omitempty"`
 	ModemPort string `json:"modem_port,omitempty"`
+	Board     string `json:"board,omitempty"`
+	TCXOHz    string `json:"tcxo_hz,omitempty"`
 }
 
 // Profile is a named snapshot of the profile-namespace sections. Sections holds
@@ -111,7 +119,10 @@ func CaptureProfile(s *store.Store, name string) (*Profile, error) {
 	if _, err := s.GetInto("modem", &mo); err != nil {
 		return nil, err
 	}
-	p.Fingerprint = Fingerprint{RXFreqHz: mo.RXFreqHz, TXFreqHz: mo.TXFreqHz, ModemPort: mo.Port}
+	p.Fingerprint = Fingerprint{
+		RXFreqHz: mo.RXFreqHz, TXFreqHz: mo.TXFreqHz, ModemPort: mo.Port,
+		Board: mo.Board, TCXOHz: mo.TCXOHz,
+	}
 	return p, nil
 }
 
