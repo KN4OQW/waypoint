@@ -352,10 +352,19 @@ confirm a deliberately wrong-oscillator variant is refused before any write.
 
 ## Open questions
 
-1. **DFU specifics need bench confirmation.** The alt-setting, the application load
-   address, and the `1EAF` reset sequence are transcribed from upstream's tooling,
-   not from a bootloader datasheet, and the reference bench has no USB board today.
-   The DFU path does not ship until one is on the bench.
+1. **DFU specifics need bench confirmation.** *(Partly closed, 2026-07-28.)* The
+   application load address is no longer an inference: the firmware's own
+   `bootloader.ld` places ROM at **`0x08002000`** with 120K, against `normal.ld`'s
+   `0x08000000` with 128K — the 8K difference being the Maple bootloader, which is
+   exactly the region §1 refuses to write. The alt-setting and the `1EAF` reset
+   sequence are still transcribed from upstream's tooling rather than a datasheet,
+   and the reference bench has no USB board, so the DFU path still does not ship
+   until one is on it.
+
+   Note also that the GPIO hats and the USB sticks are disjoint populations: a hat
+   has no USB connection at all, and a stick does not expose BOOT0 to the host. The
+   DFU path is not a fallback for the hats — it is the only path for a different
+   set of boards.
 2. **Bootloader recovery.** Do we publish an SWD procedure (an ST-Link clone is a
    few pounds) as the documented escape hatch for the 3B+ long-reset upgrade and
    for a board someone bricked elsewhere — or stay silent and let it be a return?

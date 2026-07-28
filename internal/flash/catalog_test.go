@@ -3,6 +3,7 @@ package flash
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -235,5 +236,44 @@ func TestVariantDescribeNamesTheOscillator(t *testing.T) {
 	got := v.Describe()
 	if !strings.Contains(got, "14.7456 MHz") || !strings.Contains(got, "duplex") {
 		t.Errorf("Describe = %q, want the oscillator and the duplex flag", got)
+	}
+}
+
+// TestParseCatalogFile validates a catalog produced elsewhere — in practice the
+// one the firmware repo's build emits. It skips unless pointed at a file, so it
+// costs nothing in normal runs and is a one-command check that a firmware
+// release and this build agree about which boards exist:
+//
+//	WAYPOINT_CATALOG=/path/to/firmware.json go test ./internal/flash -run CatalogFile -v
+func TestParseCatalogFile(t *testing.T) {
+	path := os.Getenv("WAYPOINT_CATALOG")
+	if path == "" {
+		t.Skip("set WAYPOINT_CATALOG to validate a firmware catalog")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat, err := ParseCatalog(b)
+	if err != nil {
+		t.Fatalf("ParseCatalog: %v", err)
+	}
+	t.Logf("catalog %s: %d variants", cat.Version, len(cat.Variants))
+	for _, v := range cat.Variants {
+		t.Logf("  %-38s %-5s 0x%08X  %s", v.ID, v.Transport, uint32(v.LoadAddress), v.Describe())
+	}
+
+	// Every board Waypoint knows should be flashable, or the catalog has a gap
+	// an operator will meet as "no firmware fits your board".
+	covered := map[string]bool{}
+	for _, v := range cat.Variants {
+		for _, id := range v.BoardIDs {
+			covered[id] = true
+		}
+	}
+	for _, id := range modem.BoardIDs() {
+		if !covered[id] {
+			t.Errorf("board %q has no firmware in this catalog", id)
+		}
 	}
 }
