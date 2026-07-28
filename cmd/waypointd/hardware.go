@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/KN4OQW/waypoint/internal/bootcfg"
@@ -72,12 +71,6 @@ func (mmdvmHolder) Start(context.Context) error {
 	}
 	return nil
 }
-
-// hardwareMu serialises detection against itself. Two concurrent probes would
-// fight over the port, and — worse — two concurrent stop/start cycles could
-// interleave so that the second one's restart runs before the first one's stop,
-// leaving MMDVM-Host down with nothing left to bring it back.
-var hardwareMu sync.Mutex
 
 // boardView is one row of the picker.
 type boardView struct {
@@ -248,8 +241,19 @@ func (s *server) hardwareDetect(w http.ResponseWriter, r *http.Request) {
 	// An empty body is a plain "look, but do not disturb anything".
 	_ = decodeJSON(r, &body)
 
-	hardwareMu.Lock()
-	defer hardwareMu.Unlock()
+	// One hardware operation at a time (#19). Detection and a firmware flash want
+	// the same port, and a stack update health-gates on MMDVM-Host being up while
+	// both of the others stop it. Refusing beats queuing: "a firmware flash is
+	// running" is something an operator can act on, where a request that blocks
+	// for four minutes just looks like a hung dashboard.
+	release, busy := s.hwOps.acquire("detection")
+	if busy != "" {
+		writeJSONStatus(w, http.StatusConflict, map[string]any{
+			"error": busy + " is already running; only one hardware operation runs at a time",
+		})
+		return
+	}
+	defer release()
 
 	// The probe's deadline is its own, not the request's. A detection that
 	// stopped MMDVM-Host has to be allowed to finish and restart it even if the

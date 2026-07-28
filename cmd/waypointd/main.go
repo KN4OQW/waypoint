@@ -131,6 +131,14 @@ type server struct {
 	// stack update API (e.g. no apt source configured).
 	stack *stackUpdater
 
+	// Firmware flashing (#19 / RFC-0019). Nil disables the flash API.
+	flash *flasher
+	// hwOps serialises everything that takes the modem or the stack away from the
+	// node: detection, firmware flashing and stack updates. A flash stops
+	// MMDVM-Host for a minute, and a stack update health-gates on MMDVM-Host being
+	// up, so the two running together make a good update look like a broken one.
+	hwOps hwOps
+
 	// Native LCD renderer lifecycle. The renderer captures its config at start, so
 	// a config change (enable, geometry, pages) only reaches the panel when the
 	// renderer is torn down and restarted — reloadLCD does that on apply. Guarded
@@ -1688,6 +1696,12 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/hardware/detect", s.hardwareDetect)
 	mux.HandleFunc("/api/hardware/adopt", s.hardwareAdopt)
 	mux.HandleFunc("/api/hardware/uart", s.hardwareUART) // free the GPIO serial port
+	// Firmware flashing (#19 / RFC-0019). Byte-level progress is its own SSE
+	// stream rather than hub events: the hub is persisted, and a progress bar is
+	// not worth five hundred rows on an SD card.
+	mux.HandleFunc("/api/flash", s.flashRoot)
+	mux.HandleFunc("/api/flash/catalog", s.flashCatalogRefresh)
+	mux.HandleFunc("/api/flash/events", s.flashEvents)
 	// Host/OS networking domain (docs/config-coverage.md §4).
 	mux.HandleFunc("/api/network/status", s.networkStatus)
 	mux.HandleFunc("/api/network/wifi/scan", s.networkWiFiScan)
@@ -1835,6 +1849,8 @@ func main() {
 	updateBootCheck := flag.Bool("update-boot-check", false, "ExecStartPre boot hook: revert an update swapped but never confirmed (power-loss safety) and exit")
 	updateURL := flag.String("update-url", defaultUpdateURL, "signed update-manifest URL (RFC-0014)")
 	releasePubkey := flag.String("release-pubkey", "", "minisign public key (file path) that signs the update manifest and artifacts (RFC-0013); empty = unverified (not recommended)")
+	firmwareURL := flag.String("firmware-url", defaultFirmwareURL, "signed modem-firmware catalog URL (RFC-0019)")
+	firmwareCache := flag.String("firmware-cache", "", "directory for verified firmware images; empty = alongside the store")
 	updateBinary := flag.String("update-binary", "/home/pi-star/waypoint/bin/waypointd", "path to the live waypointd binary the update swaps atomically")
 	updateUnit := flag.String("update-unit", "waypointd.service", "systemd unit the updater restarts")
 	updateMarker := flag.String("update-marker", "/home/pi-star/waypoint/update.marker", "in-flight-update marker path (power-loss recovery)")
@@ -1988,6 +2004,12 @@ func main() {
 	// carrying the same manifest/key/seam flags so the child behaves identically.
 	updCfg := newUpdateConfig(*updateURL, *releasePubkey, *updateBinary, *updateUnit, *updateMarker, *storePath, *addr, *useTLS)
 	s.update = &updCfg
+
+	// Firmware flashing (RFC-0019). It shares the release key with the updater —
+	// the same key signs waypointd and the firmware images — but a separate
+	// catalog URL, so a firmware release ships without a software release.
+	s.flash = newFlasher(s.hub, s.store, *firmwareURL, updCfg.pubKey, updCfg.hasPubKey,
+		firmwareCacheDir(*firmwareCache, *storePath))
 	s.updateArgs = []string{
 		"-update",
 		"-update-url", *updateURL,

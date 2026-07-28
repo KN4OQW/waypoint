@@ -281,7 +281,19 @@ func (s *server) stackApply(w http.ResponseWriter, r *http.Request) {
 		writeJSONStatus(w, http.StatusConflict, map[string]any{"error": "a stack update is already in progress"})
 		return
 	}
+	// A stack update health-gates on MMDVM-Host being up, and both detection and
+	// a firmware flash stop it — so an update running alongside either would see
+	// the host go down, conclude it had broken the node, and roll itself back for
+	// no reason (#19 / RFC-0019 §7).
+	release, busy := s.hwOps.acquire("stack update")
+	if busy != "" {
+		writeJSONStatus(w, http.StatusConflict, map[string]any{
+			"error": busy + " is already running; only one hardware operation runs at a time",
+		})
+		return
+	}
 	go func() {
+		defer release()
 		// Detached from the request; its own timeout bounds the health gate.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
@@ -381,6 +393,16 @@ func (s *server) maybeAutoApply(ctx context.Context, m *config.Model) {
 		log.Printf("stack update: auto-apply stamp: %v", err)
 		return
 	}
+	// The unattended path takes the same token as the operator-driven one: an
+	// auto-apply landing in the middle of a firmware flash is the worst version
+	// of this collision, because nobody is watching it happen.
+	release, busy := s.hwOps.acquire("stack update")
+	if busy != "" {
+		log.Printf("stack update: skipping auto-apply, %s is running", busy)
+		return
+	}
+	defer release()
+
 	log.Printf("stack update: auto-applying in quiet window (%s)", m.Update.QuietWindow)
 	if _, err := s.stack.apply(ctx); err != nil {
 		log.Printf("stack update: auto-apply failed: %v", err)

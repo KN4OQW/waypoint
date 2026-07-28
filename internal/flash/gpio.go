@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/KN4OQW/waypoint/internal/modem"
 )
 
 // The two lines that decide which program an STM32 starts.
@@ -110,7 +112,9 @@ type LineConfig struct {
 	Timings LineTimings
 }
 
-func (c LineConfig) withDefaults() LineConfig {
+// WithDefaults fills in the family defaults, so a caller can log or display the
+// lines that will actually be driven rather than the zeroes it passed in.
+func (c LineConfig) WithDefaults() LineConfig {
 	if c.BOOT0 == 0 {
 		c.BOOT0 = DefaultBOOT0Line
 	}
@@ -128,6 +132,15 @@ func (c LineConfig) withDefaults() LineConfig {
 	}
 	c.Timings = c.Timings.orDefaults()
 	return c
+}
+
+// LinesForBoard reads a board's wiring out of the board table.
+//
+// Every launch-tier hat uses BCM20 and BCM21, so the table records nothing and
+// this returns the family default. A board that wires them elsewhere sets the
+// fields there rather than being special-cased here.
+func LinesForBoard(b modem.Board) LineConfig {
+	return LineConfig{BOOT0: b.BOOT0Line, Reset: b.ResetLine}
 }
 
 // driver is the two lines, however they are reached. Both backends present the
@@ -156,7 +169,7 @@ type Lines struct {
 // — and an operator staring at "cannot open GPIO" needs to know which of those
 // they are looking at.
 func OpenLines(cfg LineConfig) (*Lines, error) {
-	cfg = cfg.withDefaults()
+	cfg = cfg.WithDefaults()
 
 	drv, cdevErr := openChardevLines(cfg)
 	if cdevErr != nil {

@@ -181,7 +181,7 @@ func TestSysfsComputesLineNumbersFromTheChipsBase(t *testing.T) {
 				[]sysfsChip{{dir: "gpiochip" + itoa(tc.base), label: "pinctrl-bcm2711", base: tc.base, lines: 54}},
 				tc.boot0, tc.reset)
 
-			drv, err := openSysfsLines(LineConfig{SysfsRoot: root}.withDefaults())
+			drv, err := openSysfsLines(LineConfig{SysfsRoot: root}.WithDefaults())
 			if err != nil {
 				t.Fatalf("openSysfsLines: %v", err)
 			}
@@ -222,7 +222,7 @@ func TestSysfsPicksTheHeaderChipNotTheExpander(t *testing.T) {
 		{dir: "gpiochip512", label: "pinctrl-bcm2835", base: 512, lines: 54},
 	}, 532, 533)
 
-	drv, err := openSysfsLines(LineConfig{SysfsRoot: root}.withDefaults())
+	drv, err := openSysfsLines(LineConfig{SysfsRoot: root}.WithDefaults())
 	if err != nil {
 		t.Fatalf("openSysfsLines: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestSysfsUnexportsWhatItExported(t *testing.T) {
 		[]sysfsChip{{dir: "gpiochip512", label: "pinctrl-bcm2711", base: 512, lines: 54}},
 		532, 533)
 
-	drv, err := openSysfsLines(LineConfig{SysfsRoot: root}.withDefaults())
+	drv, err := openSysfsLines(LineConfig{SysfsRoot: root}.WithDefaults())
 	if err != nil {
 		t.Fatalf("openSysfsLines: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestSysfsDoesNotUnexportALineItDidNotExport(t *testing.T) {
 		return real(r, file, line)
 	}
 
-	drv, err := openSysfsLines(LineConfig{SysfsRoot: root}.withDefaults())
+	drv, err := openSysfsLines(LineConfig{SysfsRoot: root}.WithDefaults())
 	if err != nil {
 		t.Fatalf("openSysfsLines: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestSysfsReportsNoMatchingChip(t *testing.T) {
 	root := sysfsFixture(t, []sysfsChip{
 		{dir: "gpiochip0", label: "some-other-controller", base: 0, lines: 32},
 	})
-	if _, err := openSysfsLines(LineConfig{SysfsRoot: root}.withDefaults()); err == nil {
+	if _, err := openSysfsLines(LineConfig{SysfsRoot: root}.WithDefaults()); err == nil {
 		t.Fatal("openSysfsLines succeeded with no header controller present")
 	}
 }
