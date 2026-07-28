@@ -44,7 +44,7 @@ Rationale for the split: the g4klx daemons are actively maintained upstream and 
 
 ### Hardware ops
 - Board detection: USB VID/PID table + GPIO serial probe (`MMDVM_HS_*`, full MMDVM, DVMega).
-- Firmware flashing as an API operation with progress streaming: `stm32flash` over GPIO (BOOT0/RESET toggling, sysfs base-512 aware) and USB bootloader paths; `avrdude` for DVMega.
+- Firmware flashing as an API operation with progress streaming ([RFC-0019](rfcs/0019-firmware-flashing.md)): the STM32 ROM bootloader (AN3155) over the GPIO UART with BOOT0/nRST driven from `/dev/gpiochip*` (sysfs fallback reads the chip's base rather than assuming it, so kernel ≥6.6's base-512 move is a non-event), and the Maple DFU bootloader over usbfs for the USB boards — both implemented in Go, no `stm32flash`/`dfu-util` in the image. Firmware comes from a pinned, CI-built, minisign-signed catalog matched against what detection read off the wire, never from a third party's directory layout. DVMega (`avrdude`) is a separate engine (#26).
 - Calibration wizard: drives MMDVMCal over the modem port; guided RX/TX offset sweep with live BER readout for HS boards, full level/invert workflow for repeater boards.
 
 ### API
