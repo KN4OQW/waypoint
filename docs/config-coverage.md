@@ -28,6 +28,7 @@ Status: ✅ done · 🟡 partial · ⬜ pending
 | Station identity | `general` | ✅ | callsign, DMR ID, duplex, location, URL, timeout, mode-hangs |
 | Automatic identification | `station_id` | ✅ | `[CW Id]` Enable/Time/Callsign + `[Modem]` CWIdTXLevel; on by default. Blank callsign inherits `general.callsign`. Excluded from connection profiles. Identification *during* a transmission is host behavior, not config → [#131] |
 | Frequencies + modem port | `modem` | ✅ | RX/TX Hz, UART port/speed |
+| Modem board identity | `modem`, `hardware_state` | ✅ | Board + reference oscillator, detected by asking the modem ([RFC-0020](rfcs/0020-board-identity-and-detection.md) / [#18]). Drives no INI — it gates duplex, cross-checks mode enables against firmware capabilities, and fills the profile fingerprint. `hardware_state` is machine-written and outside the section map, so no operator PUT can assert a modem that is not there |
 | Modem calibration | `modem` | 🟡 | offsets, invert flags, RX/TX level modeled; **per-mode TX levels, DC offsets, RSSI mapping, DMR delay not yet** → [#20] |
 | DMR params + slots | `dmr`, `dmrnet` | ✅ | color code, ID, slots, embedded-LC |
 | Mode enables | `modes` | ✅ | all 8 modes toggle |
@@ -219,6 +220,7 @@ deploy-side (waypoint-stack) and adjacent domains:
 
 [#1]: https://github.com/KN4OQW/waypoint/issues/1
 [#17]: https://github.com/KN4OQW/waypoint/issues/17
+[#18]: https://github.com/KN4OQW/waypoint/issues/18
 [#20]: https://github.com/KN4OQW/waypoint/issues/20
 [#21]: https://github.com/KN4OQW/waypoint/issues/21
 [#22]: https://github.com/KN4OQW/waypoint/issues/22

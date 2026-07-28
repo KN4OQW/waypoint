@@ -111,8 +111,9 @@ WPSD splits classic Pi-Star's single General panel into "General Configuration" 
 | NXDN ID | `[NXDN Network]` id | — | pending | separate NXDN radio ID not modeled. |
 | Radio Frequency (RX) | `[Info] RXFrequency` | `modem.rx_freq_hz` | done | Hz in store, MHz in UI. |
 | Radio Frequency (TX) | `[Info] TXFrequency` | `modem.tx_freq_hz` | done | |
-| Radio/Modem *(board type dropdown)* | `[Modem]` board defaults | `modem.port` | partial | raw UART port only; no board-model dropdown. |
-| Baudrate *(WPSD new)* | `[Modem] UARTSpeed` | `modem.uart_speed` | partial | modeled + rendered (default 115200); not in the UI. |
+| Radio/Modem *(board type dropdown)* | `[Modem]` board defaults | `modem.board` | done | Board dropdown on the General tab, sourced from the daemon's board table. Waypoint goes past parity here: the Hardware tab asks the modem what it is rather than making the operator name it ([RFC-0020](rfcs/0020-board-identity-and-detection.md) / [#18](https://github.com/KN4OQW/waypoint/issues/18)). |
+| Baudrate *(WPSD new)* | `[Modem] UARTSpeed` | `modem.uart_speed` | done | Dropdown on the General tab; detection fills in whichever speed the modem answered on. |
+| *(no Pi-Star/WPSD equivalent)* | — | `modem.tcxo_hz` | done | Reference oscillator, read off the wire. Pi-Star encodes it in the name of the flash script the operator is expected to pick ([#19](https://github.com/KN4OQW/waypoint/issues/19)); Waypoint stores what the modem reported. |
 | Gateway Latitude | `[Info] Latitude` | — | pending | not modeled (DStarGateway renders `0.0`). |
 | Gateway Longitude | `[Info] Longitude` | — | pending | not modeled. |
 | Gateway Town / City-State | `[Info] Location` | `general.location` | partial | single free-text field; not structured town/country. |
