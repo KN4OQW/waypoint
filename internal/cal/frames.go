@@ -268,11 +268,11 @@ func (c Config) Validate() error {
 // "Was OscOffset" — a calibration field that predates all of this and was
 // abandoned. The offsets this package measures go to SET_FREQ instead.
 //
-//	 0 flags     4 rxLevel      8 (dead)         13 txDCOffset  17 pocsag level
-//	 1 modes     5 cwId level   9 dstar level    14 rxDCOffset  18 fm level
-//	 2 txDelay   6 colourCode  10 dmr level      15 nxdn level  19 p25 hang
-//	 3 state     7 dmrDelay    11 ysf level      16 ysf hang    20 nxdn hang
-//	                           12 p25 level                     21 m17 level
+//	0 flags     4 rxLevel      8 (dead)         13 txDCOffset  17 pocsag level
+//	1 modes     5 cwId level   9 dstar level    14 rxDCOffset  18 fm level
+//	2 txDelay   6 colourCode  10 dmr level      15 nxdn level  19 p25 hang
+//	3 state     7 dmrDelay    11 ysf level      16 ysf hang    20 nxdn hang
+//	                          12 p25 level                     21 m17 level
 func (c Config) FrameV1() ([]byte, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
@@ -311,9 +311,9 @@ func (c Config) FrameV1() ([]byte, error) {
 // FrameV2 builds the protocol-2 SET_CONFIG: 40 bytes on the wire, 37 of payload,
 // which is exactly the minimum g4klx/MMDVM's parser accepts.
 //
-//	 0 flags     3 txDelay   6 rxDCOffset   8 cwId level    13 nxdn level   20 ysf hang
-//	 1 modes1    4 state     7 rxLevel      9..12 levels    15 pocsag level 21 p25 hang
-//	 2 modes2    5 txDCOffset                               16 fm level     22 nxdn hang
+//	0 flags     3 txDelay   6 rxDCOffset   8 cwId level    13 nxdn level   20 ysf hang
+//	1 modes1    4 state     7 rxLevel      9..12 levels    15 pocsag level 21 p25 hang
+//	2 modes2    5 txDCOffset                               16 fm level     22 nxdn hang
 func (c Config) FrameV2() ([]byte, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
