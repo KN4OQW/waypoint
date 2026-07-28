@@ -221,16 +221,16 @@ func cleanDescription(b []byte) string {
 // enabling a mode the board cannot do, and a guess must not be allowed to
 // masquerade as a fact.
 type Modes struct {
-	Known  bool
-	DStar  bool
-	DMR    bool
-	YSF    bool
-	P25    bool
-	NXDN   bool
-	M17    bool
-	FM     bool
-	POCSAG bool
-	AX25   bool
+	Known  bool `json:"known"`
+	DStar  bool `json:"dstar"`
+	DMR    bool `json:"dmr"`
+	YSF    bool `json:"ysf"`
+	P25    bool `json:"p25"`
+	NXDN   bool `json:"nxdn"`
+	M17    bool `json:"m17"`
+	FM     bool `json:"fm"`
+	POCSAG bool `json:"pocsag"`
+	AX25   bool `json:"ax25"`
 }
 
 // Modes decodes the capability bits.
