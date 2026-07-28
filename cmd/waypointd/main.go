@@ -373,6 +373,17 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// The modem section validates on save: a board must be one Waypoint knows and
+	// an oscillator must be a number, so neither reaches a renderer or a profile
+	// fingerprint as nonsense (#18).
+	if section == "modem" {
+		if err := config.SetModem(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	// Software-update policy validates on save (channel enum + HH:MM quiet window),
 	// so route it through SetUpdate rather than the generic merge (RFC-0014).
 	if section == "update" {
@@ -1666,6 +1677,10 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/dmr/masters", s.dmrMasters)
 	mux.HandleFunc("/api/hostlists", s.hostlistStatus)
 	mux.HandleFunc("/api/dmr/talkgroups", s.dmrTalkgroups) // TG name list (RFC-0010)
+	// Modem hardware: identity, detection, and adoption into the config (#18).
+	mux.HandleFunc("/api/hardware", s.hardware)
+	mux.HandleFunc("/api/hardware/detect", s.hardwareDetect)
+	mux.HandleFunc("/api/hardware/adopt", s.hardwareAdopt)
 	// Host/OS networking domain (docs/config-coverage.md §4).
 	mux.HandleFunc("/api/network/status", s.networkStatus)
 	mux.HandleFunc("/api/network/wifi/scan", s.networkWiFiScan)

@@ -235,11 +235,16 @@ type ViewGeneral struct {
 	RXFreqHz  string `json:"rx_freq_hz"`
 	TXFreqHz  string `json:"tx_freq_hz"`
 	ModemPort string `json:"modem_port"`
-	Power     string `json:"power"`
-	RXOffset  string `json:"rx_offset"`
-	TXOffset  string `json:"tx_offset"`
-	Location  string `json:"location"`
-	URL       string `json:"url"`
+	// The board the operator says is attached, and its reference oscillator
+	// (#18). Both may be empty on a node that has never been detected or told.
+	ModemBoard  string `json:"modem_board"`
+	ModemTCXOHz string `json:"modem_tcxo_hz"`
+	UARTSpeed   string `json:"uart_speed"`
+	Power       string `json:"power"`
+	RXOffset    string `json:"rx_offset"`
+	TXOffset    string `json:"tx_offset"`
+	Location    string `json:"location"`
+	URL         string `json:"url"`
 }
 
 type ViewDMR struct {
@@ -332,17 +337,20 @@ func (m *Model) View(storePath string) *View {
 		Sources:  Sources{Store: storePath},
 		ReadOnly: false, // store + apply are wired end to end; the page edits
 		General: ViewGeneral{
-			Callsign:  m.General.Callsign,
-			DMRID:     m.General.ID,
-			Duplex:    m.General.Duplex,
-			RXFreqHz:  m.Modem.RXFreqHz,
-			TXFreqHz:  m.Modem.TXFreqHz,
-			ModemPort: m.Modem.Port,
-			Power:     m.General.Power,
-			RXOffset:  m.Modem.RXOffset,
-			TXOffset:  m.Modem.TXOffset,
-			Location:  m.General.Location,
-			URL:       m.General.URL,
+			Callsign:    m.General.Callsign,
+			DMRID:       m.General.ID,
+			Duplex:      m.General.Duplex,
+			RXFreqHz:    m.Modem.RXFreqHz,
+			TXFreqHz:    m.Modem.TXFreqHz,
+			ModemPort:   m.Modem.Port,
+			ModemBoard:  m.Modem.Board,
+			ModemTCXOHz: m.Modem.TCXOHz,
+			UARTSpeed:   m.Modem.UARTSpeed,
+			Power:       m.General.Power,
+			RXOffset:    m.Modem.RXOffset,
+			TXOffset:    m.Modem.TXOffset,
+			Location:    m.General.Location,
+			URL:         m.General.URL,
 		},
 		DMR: ViewDMR{
 			Enable:         m.Modes.DMR,

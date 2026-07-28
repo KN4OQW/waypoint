@@ -498,9 +498,23 @@ type General struct {
 
 // Modem holds RF/modem-hardware settings. Frequencies stay in Hz (the daemons'
 // unit) as strings to avoid float drift.
+//
+// Board and TCXOHz are the operator's answer to "what is attached" (#18). They
+// are kept here, alongside the port, rather than in the machine-written
+// detection record, because they are CONFIGURATION: an operator may name a
+// board Waypoint could not identify, or correct one it identified wrongly, and
+// that answer has to survive the next probe. What the modem said about itself
+// lives separately (hardware_state) and is never edited.
+//
+// Neither field reaches a rendered INI — MMDVM-Host is told a port and a speed
+// and nothing else about the hardware. They earn their place by what they let
+// Waypoint refuse: duplex on a board with one radio, a mode the firmware does
+// not carry, a profile captured on a differently-tuned board.
 type Modem struct {
 	Port      string `json:"port"`
 	UARTSpeed string `json:"uart_speed"`
+	Board     string `json:"board"`   // modem.Board ID, e.g. mmdvm_hs_dual_hat; "" = unknown
+	TCXOHz    string `json:"tcxo_hz"` // reference oscillator in Hz; "" = unknown
 	RXFreqHz  string `json:"rx_freq_hz"`
 	TXFreqHz  string `json:"tx_freq_hz"`
 	RXOffset  string `json:"rx_offset"`
