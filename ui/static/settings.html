@@ -360,6 +360,21 @@
   .note { background: var(--panel); border: 1px dashed var(--panel-line); border-radius: 11px; padding: 22px; color: var(--muted); font-size: 13px; line-height: 1.6; }
   .note b { color: var(--ink-body); }
 
+  /* Modem hardware (#18): the disagreements between a node and its modem, and
+     the reasons a GPIO hat cannot be heard. Severity is carried by the "Will not
+     work" / "Check this" text as well as the colour, so the distinction survives
+     for anyone who cannot see the difference between the two hues. */
+  .hw-warns { list-style: none; margin: 0; padding: 0; }
+  .hw-warn { border-left: 3px solid var(--panel-line); padding: 10px 0 10px 13px; margin-bottom: 11px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+  .hw-warn:last-child { margin-bottom: 0; }
+  .hw-warn.bad { border-left-color: var(--bad); }
+  .hw-warn.warn { border-left-color: var(--warn); }
+  .hw-warn-k { font-family: var(--mono); font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; }
+  .hw-warn.bad .hw-warn-k { color: var(--bad); }
+  .hw-warn.warn .hw-warn-k { color: var(--warn); }
+  .hw-warn-f { font-family: var(--mono); font-size: 10px; color: var(--dim); }
+  .mono-sm { font-family: var(--mono); font-size: 11px; }
+
   /* DMR routing builder */
   .catch-ctl { display: flex; align-items: center; gap: 8px; }
   .route-block { margin-top: 14px; }
