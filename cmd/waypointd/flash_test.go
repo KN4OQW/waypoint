@@ -478,3 +478,70 @@ func TestFlashStillRefusesWithNeitherDetectionNorConfig(t *testing.T) {
 		t.Fatalf("POST /api/flash = %d, want 409", rec.Code)
 	}
 }
+
+// Several products ship the same firmware and report the same identity string,
+// so detection legitimately cannot tell a Dual Hat from a ZUMspot Duplex. The
+// operator settles it by adopting a board — and must not then be asked the same
+// question again by the firmware panel. Found against the real published
+// catalog, where both boards have their own image.
+func TestAnAdoptedBoardResolvesTheFirmwareAmbiguity(t *testing.T) {
+	st := benchDetection() // candidates: dual_hat, zumspot_duplex, lonestar_dual
+	cat := stubCatalog()
+	// A second image that also fits one of the candidates, as the real catalog has.
+	cat.Variants = append(cat.Variants, flash.Variant{
+		ID: "zumspot_duplex-14m7456-gpio", BoardIDs: []string{"zumspot_duplex"},
+		TCXOHz: 14_745_600, Duplex: true, Transport: "gpio",
+		LoadAddress: 0x08000000, URL: "https://example.invalid/zd.bin", SHA256: "ee",
+	})
+
+	m := &config.Model{}
+	m.Modem.Board = "mmdvm_hs_dual_hat" // the operator's answer, via Adopt
+	s := hwTestServer(t, m)
+	s.hub = hub.New()
+	if err := config.SetHardwareState(s.store, st, "test"); err != nil {
+		t.Fatal(err)
+	}
+	src := stubSource{cat: cat, image: []byte("fw")}
+	s.flash = &flasher{
+		source: src, hub: s.hub, store: s.store,
+		subs: map[chan flash.Progress]struct{}{}, keyed: true,
+		eng: &flash.Engine{Source: src},
+	}
+
+	v := getFlash(t, s)
+	if v.Match == nil {
+		t.Fatalf("still ambiguous after the operator adopted a board: %q (choices %v)", v.Reason, v.Choices)
+	}
+	if v.Match.ID != "hs_dual_hat-14m7456" {
+		t.Errorf("matched %s, want the adopted board's image", v.Match.ID)
+	}
+}
+
+// A configured board the modem could not possibly be is a stale answer to a
+// different question, and must not narrow anything.
+func TestAStaleConfiguredBoardDoesNotResolveTheAmbiguity(t *testing.T) {
+	m := &config.Model{}
+	m.Modem.Board = "nano_hotspot" // not among the candidates
+	s := hwTestServer(t, m)
+	s.hub = hub.New()
+	if err := config.SetHardwareState(s.store, benchDetection(), "test"); err != nil {
+		t.Fatal(err)
+	}
+	src := stubSource{cat: stubCatalog(), image: []byte("fw")}
+	s.flash = &flasher{
+		source: src, hub: s.hub, store: s.store,
+		subs: map[chan flash.Progress]struct{}{}, keyed: true,
+		eng: &flash.Engine{Source: src},
+	}
+
+	target, fromConfig, err := s.flashTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromConfig {
+		t.Error("used the config while a live detection exists")
+	}
+	if target.BoardID != "" || len(target.Candidates) != 3 {
+		t.Errorf("stale board narrowed detection to %q / %v", target.BoardID, target.Candidates)
+	}
+}

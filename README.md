@@ -56,6 +56,23 @@ What's built today:
 - **Host / OS networking** ([#32](https://github.com/KN4OQW/waypoint/issues/32)) — Wi-Fi and Ethernet/IPv4, plus hostname, timezone, NTP, and guarded VLAN, all configured from the UI. A network change is **confirm-or-revert**: a NetworkManager-native checkpoint restores the prior state if the new config would strand the box, so a bad setting can't lock you out. Hardware-validated.
 - **Gateway daemons** pinned and reproducibly built for four architectures (amd64, arm64, armhf, armv6hf) in [waypoint-stack](https://github.com/KN4OQW/waypoint-stack): MMDVM-Host (**forked to restore M17**, which upstream removed), DMRGateway, YSFGateway/DGIdGateway, P25Gateway, NXDNGateway, M17Gateway, and DStarGateway.
 
+**Firmware flashing** works today for the **GPIO hat** family — MMDVM_HS_Hat,
+MMDVM_HS_Dual_Hat, JumboSpot, ZUMspot RPi and kin. One button, no SSH, progress
+on screen, and images built and signed by CI in
+[KN4OQW/MMDVM_HS](https://github.com/KN4OQW/MMDVM_HS) rather than scraped from a
+third party's release directory ([RFC-0019](docs/rfcs/0019-firmware-flashing.md),
+validated on hardware: [docs/bench-flash-run-log.md](docs/bench-flash-run-log.md)).
+An interrupted flash on a hat is recoverable by retry — the bootloader is inside
+the STM32 and cannot be erased.
+
+The **USB stick boards** (ZUMspot USB, Nano hotSPOT, NanoDV USB, LoneStar USB)
+are a different population: no BOOT0 exposed to the host, reachable only through
+a DFU bootloader in their own flash, and therefore the only boards a flash can
+brick. The design is written up in [RFC-0020](docs/rfcs/0020-usb-dfu-flashing.md)
+and deliberately not built, because validating a brickable path needs one of
+those boards on a bench and nobody here has one. CI already builds and signs
+their images, so it is host-side work whenever that changes.
+
 Still ahead: the DAPNETGateway (POCSAG) build; the cross-**codec** bus path (only the AMBE+2 reframe envelope ships today, so DMR/YSF-DN/NXDN interoperate but a vocoder-crossing attachment does not yet); and hardening the OS image — a read-only root with **A/B slots and automatic rollback** ([RFC-0017](docs/rfcs/0017-ab-image-slots.md), design). Peering stays LAN-only by design — no WAN/Internet mesh, no owner failover. `v1-initialimg` is an **initial** image — flashable and complete, but early; treat it as a beta while it takes on hardware miles.
 
 Reference bench hardware: MMDVM_HS_Dual_Hat (STM32F103, dual ADF7021) on a Raspberry Pi 3, plus full-size MMDVM (STM32F4/F7) targets.
@@ -70,7 +87,7 @@ g4klx host stack (MMDVM-Host + mode gateways, unmodified)
 waypointd — Go core daemon
   · schema-versioned config store (SQLite); INIs are compiled outputs
   · service supervisor (mode gateways + per-bus hub daemons) with reconnect policies
-  · hardware ops: board detect, firmware flash, guided calibration
+  · hardware ops: board detect, firmware flash (GPIO hats), guided calibration
   · REST + WebSocket API (the dashboard is just the first client)
   ↕ HTTPS
 Web UI — responsive SPA, embedded in the daemon binary

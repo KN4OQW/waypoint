@@ -445,7 +445,29 @@ func (s *server) flashTarget() (id modem.Identity, fromConfig bool, err error) {
 		return modem.Identity{}, false, err
 	}
 	if st.Identity != nil {
-		return *st.Identity, false, nil
+		id := *st.Identity
+		// Detection is often ambiguous by nature: several products ship the same
+		// firmware and report the same identity string, so the wire cannot tell a
+		// Dual Hat from a ZUMspot Duplex. The operator resolves that by ADOPTING a
+		// board, and this is where that answer has to be honoured — otherwise
+		// they answer the question on the hardware tab and are asked it again,
+		// identically, on the firmware one.
+		//
+		// Only a configured board that is actually among the candidates counts. A
+		// config naming something the modem could not possibly be is stale, and
+		// deferring to it would flash on the strength of an old answer to a
+		// different question.
+		if id.BoardID == "" {
+			if m, err := config.Load(s.store); err == nil && m.Modem.Board != "" {
+				for _, c := range id.Candidates {
+					if c == m.Modem.Board {
+						id.BoardID, id.Candidates = c, []string{c}
+						break
+					}
+				}
+			}
+		}
+		return id, false, nil
 	}
 
 	m, err := config.Load(s.store)

@@ -196,68 +196,25 @@ a pin number is a hardware fact about a board and the flash engine should not be
 where hardware facts live. Lines are released before MMDVM-Host is restarted; a
 held line is a modem the host cannot reset.
 
-### 6. The USB path: Maple DFU over usbfs
+### 6. The USB path is a separate decision — see RFC-0020
 
-Three steps, none of them shelled out:
+Waypoint's launch tier is the GPIO hats, and they cannot use DFU at all: a hat
+has no USB connection to the Pi, and its BOOT0 and nRST are on the header, which
+is what makes the ROM bootloader path work and makes an interrupted flash
+unbrickable. The USB stick boards are a *different population* — no BOOT0
+exposed to the host, reachable only through the DFU bootloader in their own
+flash — and supporting them is a coverage decision, not a missing piece of this
+one.
 
-1. **Enter the bootloader — with the 1200-baud touch, not the `1EAF` magic.**
-   A running board is at `1eaf:0004` (its CDC serial interface). The firmware
-   implements *two* ways in, and they are not equally good (`STM32F10X_Lib/usb/
-   usb_serial.cpp` in the firmware fork):
+It is also the only brickable path, and validating it needs hardware nobody on
+this project owns (a ZUMspot USB or Nano hotSPOT is around $150). Shipping an
+unvalidated flash path for the one class of board that *can* be destroyed is the
+wrong way round.
 
-   - **Baud 1200 plus a DTR negative edge.** The CDC control handler watches for
-     a high→low DTR transition while the line coding is 1200 baud, and on seeing
-     one arms the independent watchdog with a reload of 10 and spins — a hardware
-     reset into the bootloader. This is the Arduino "1200bps touch", and the host
-     side is pure termios: set 1200 baud with DTR asserted, then drop DTR. No USB
-     stack is involved in the trigger at all, and Waypoint already has every
-     primitive it needs.
-   - **The four-byte `1EAF` sequence**, which upstream's `upload-reset` uses, and
-     which the firmware's own authors annotate: *"FIXME this is mad buggy; we
-     need a new reset sequence. E.g. NAK after each RX means you can't reset if
-     any bytes are waiting."*
-
-   Waypoint uses the first. An earlier draft of this RFC specified the second,
-   from reading upstream's tooling rather than the firmware it drives.
-
-   Then wait for the device to re-enumerate as `1eaf:0003` — an ID
-   [`modem/ports.go`](../../internal/modem/ports.go) already recognises and
-   already reports as "in its bootloader, one flash from working".
-2. **Write.** DFU class requests over `/dev/bus/usb/BBB/DDD` usbfs ioctls
-   (`USBDEVFS_CLAIMINTERFACE`, `USBDEVFS_SETINTERFACE`, `USBDEVFS_CONTROL`) — no
-   libusb, no `dfu-util`, no cgo, so the static cross-compiled build survives.
-   DFU is control transfers only (`DFU_DNLOAD`, `DFU_GETSTATUS`, `DFU_CLRSTATUS`,
-   `DFU_ABORT`), which is the smallest useful subset of USB there is.
-
-   **Alt setting 2**, which the bootloader maps to `0x08002000` — matching
-   `bootloader.ld` in the firmware, so the two agree by evidence rather than by
-   assumption. Alt 1 is the legacy `0x08005000` layout and alt 0 is a RAM upload
-   the bootloader deliberately refuses; Waypoint offers neither.
-
-   **Verification is an open question on this path.** The bootloader does
-   implement `DFU_UPLOAD`, but `dfuCopyUPLOAD` returns from `userAppAddr +
-   userFirmwareLen + offset` — read-back semantics tied to what was just
-   downloaded rather than free addressing. Whether it can verify an image the way
-   the ROM bootloader's `READ_MEMORY` does has to be established on a board. If it
-   cannot, the fallback is to reset and re-probe, comparing the identity string —
-   weaker than a byte-for-byte readback, and the UI must say which of the two it
-   got rather than reporting both as "verified".
-3. **Leave.** DFU detach and re-enumeration back to `1eaf:0004`, then re-probe.
-
-**The 3B+ quirk, explained rather than worked around.** An STM32F103 hard-pulls
-USB D+ high, so a soft reset does not disconnect it and the host never
-re-enumerates. The STM32duino bootloader forces one by reconfiguring D+ (PA12) as
-GPIO and driving it low briefly. `generic_boot20_pc13_long_rst.bin` holds it low
-*longer* than `generic_boot20_pc13.bin`, and a 3B+'s USB hub does not notice the
-short pulse.
-
-That is a device-side timing property, fixable only by writing a different
-bootloader — which needs SWD and is the one write §1 forbids. `make stlink-bl`
-does exactly that, via st-flash, and it is a bench operation with a wire, not
-something a web page can offer. So the host side gets a longer enumeration
-window, and a board that still does not come back is reported as what it is —
-"this board carries the short-reset bootloader; on a 3B+ it needs the long-reset
-one, which requires SWD" — rather than retried until the operator gives up.
+So the design, the corrected reset mechanism and the open questions move to
+[RFC-0020](0020-usb-dfu-flashing.md), which is design-only and gated on somebody
+having a board. The firmware CI already builds and signs the USB images, so
+adopting it later is host-side work alone.
 
 ### 7. Port ownership, and one exclusion that is not obvious
 
@@ -321,6 +278,8 @@ JavaScript.
 ### 10. What is deliberately not in v1
 
 - **Bootloader writes** (§1). SWD-only, documented as a procedure, never automated.
+- **USB / Maple DFU boards.** Moved to [RFC-0020](0020-usb-dfu-flashing.md), design
+  only. The hats this RFC serves cannot use that path and do not need it.
 - **Full-size MMDVM F4/F7 (#25).** The AN3155 core is the same; only bootloader
   *entry* differs (jumper or DTR rather than a Pi GPIO line), so entry is an
   interface with one implementation today and the fast-follow tier adds a second.
