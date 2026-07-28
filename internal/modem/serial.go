@@ -3,6 +3,7 @@ package modem
 import (
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -39,15 +40,40 @@ var baudBits = map[int]uint32{
 	38400:  unix.B38400,
 }
 
+// Parity is the framing a port uses.
+//
+// It is a parameter rather than a constant because the same physical port
+// carries two protocols with different framing: MMDVM's own protocol is 8N1,
+// and the STM32 ROM bootloader a firmware flash talks to is 8E1 — it uses the
+// parity bit as part of its autobaud detection. One port implementation serves
+// both (internal/flash), which is better than a second copy of this file
+// differing in one termios flag.
+type Parity uint8
+
+const (
+	ParityNone Parity = iota
+	ParityEven
+)
+
 // serialPort is an open, raw-mode serial device.
 type serialPort struct {
 	fd   int
 	path string
 }
 
-// openSerial opens a port in raw mode at baud, with reads that give up after
-// readTimeout of silence.
+// OpenPort opens a serial port in raw mode, with reads that give up after
+// readTimeout of silence. It is the exported form for callers outside this
+// package — the firmware flasher, which needs even parity.
+func OpenPort(path string, baud int, parity Parity, readTimeout time.Duration) (io.ReadWriteCloser, error) {
+	return openSerialParity(path, baud, parity, readTimeout)
+}
+
+// openSerial opens a port for the modem protocol: 8N1.
 func openSerial(path string, baud int, readTimeout time.Duration) (*serialPort, error) {
+	return openSerialParity(path, baud, ParityNone, readTimeout)
+}
+
+func openSerialParity(path string, baud int, parity Parity, readTimeout time.Duration) (*serialPort, error) {
 	bits, ok := baudBits[baud]
 	if !ok {
 		return nil, fmt.Errorf("modem: unsupported baud %d", baud)
@@ -91,6 +117,15 @@ func openSerial(path string, baud int, readTimeout time.Duration) (*serialPort, 
 	// running node off the air for the length of a firmware boot.
 	t.Cflag |= unix.CS8 | unix.CREAD | unix.CLOCAL | bits
 	t.Cflag &^= unix.HUPCL
+
+	// Even parity for the ROM bootloader. PARODD is already cleared above, so
+	// enabling PARENB alone gives 8E1. INPCK stays off deliberately: a parity
+	// error should reach the protocol layer as a wrong byte rather than be
+	// silently dropped or marked by the driver, because both bootloader and modem
+	// protocols carry their own checksums and can say so honestly.
+	if parity == ParityEven {
+		t.Cflag |= unix.PARENB
+	}
 
 	// VMIN 0 / VTIME n: return whatever has arrived after n tenths of a second
 	// of silence, including nothing at all.

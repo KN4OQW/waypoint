@@ -327,3 +327,8 @@ type silentPort struct{}
 
 func (silentPort) Write(p []byte) (int, error) { return len(p), nil }
 func (silentPort) Read([]byte) (int, error)    { return 0, ErrSilent }
+
+// Close satisfies io.ReadWriteCloser so the emulated part can stand in for a
+// serial port in the engine's tests. Closing a port does not power-cycle a
+// board, so it deliberately changes nothing.
+func (m *mcu) Close() error { return nil }
