@@ -235,3 +235,70 @@ func TestModesSupportsUsesConfigSectionKeys(t *testing.T) {
 		t.Error("Supports matched a mode that is not enabled or not real")
 	}
 }
+
+// The exact reply the reference bench board sends (MMDVM_HS_Dual_Hat running
+// the KN4OQW fork, read over the wire on 2026-07-28). It is protocol 1, and it
+// carries the chip's unique ID after a NUL — a shape no reading of the protocol
+// description predicts and which silently corrupted both the description and
+// the GitID until real hardware showed it.
+const benchVersionReply = "MMDVM_HS_Dual_Hat-v1.6.1 20230526 14.7456MHz dual ADF7021 FW by CA6JAU GitID #899fc2a" +
+	"\x00" + "00350016390000074E503543"
+
+func TestParseVersionSplitsTheDescriptionFromTheChipID(t *testing.T) {
+	v, err := ParseVersion(Frame{Type: 0x00, Payload: append([]byte{1}, benchVersionReply...)})
+	if err != nil {
+		t.Fatalf("ParseVersion: %v", err)
+	}
+	wantDesc := "MMDVM_HS_Dual_Hat-v1.6.1 20230526 14.7456MHz dual ADF7021 FW by CA6JAU GitID #899fc2a"
+	if v.Description != wantDesc {
+		t.Errorf("Description = %q, want %q", v.Description, wantDesc)
+	}
+	if v.UDID != "00350016390000074E503543" {
+		t.Errorf("UDID = %q, want the 96-bit chip ID", v.UDID)
+	}
+
+	// The GitID regex accepts up to 40 hex characters, so a description with the
+	// chip ID glued on produced a 31-character "commit hash" that matches
+	// nothing in any repository.
+	d := ParseDescription(v.Description)
+	if d.GitID != "899fc2a" {
+		t.Errorf("GitID = %q, want 899fc2a", d.GitID)
+	}
+}
+
+// MMDVM-Host enables M17 for protocol-1 firmware whose description contains
+// "v1.6." (Modem.cpp). Waypoint mirrors that, or it refuses a mode the modem in
+// front of it can carry.
+func TestProtocol1M17FollowsTheVersionString(t *testing.T) {
+	for _, tc := range []struct {
+		desc string
+		want bool
+	}{
+		{"MMDVM_HS_Dual_Hat-v1.6.1 20230526 14.7456MHz dual ADF7021", true},
+		{"MMDVM_HS_Hat-v1.5.2 20200104 12.288MHz ADF7021", false},
+		{"MMDVM_HS_Hat-v1.4.17 20190529 12.288MHz ADF7021", false},
+	} {
+		got := Version{Protocol: 1, Description: tc.desc}.Modes()
+		if got.M17 != tc.want {
+			t.Errorf("M17 for %q = %v, want %v", tc.desc, got.M17, tc.want)
+		}
+		if got.Known {
+			t.Errorf("protocol-1 capabilities must still read as assumed, not reported")
+		}
+	}
+}
+
+func TestParseVersionWithoutAChipID(t *testing.T) {
+	// Firmware built without ENABLE_UDID sends no NUL and no tail.
+	desc := "MMDVM_HS_Hat-v1.4.17 20190529 12.288MHz ADF7021"
+	v, err := ParseVersion(Frame{Type: 0x00, Payload: append([]byte{1}, desc...)})
+	if err != nil {
+		t.Fatalf("ParseVersion: %v", err)
+	}
+	if v.Description != desc {
+		t.Errorf("Description = %q, want %q", v.Description, desc)
+	}
+	if v.UDID != "" {
+		t.Errorf("UDID = %q, want empty", v.UDID)
+	}
+}

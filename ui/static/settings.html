@@ -370,6 +370,23 @@
   .hw-warn.bad { border-left-color: var(--bad); }
   .hw-warn.warn { border-left-color: var(--warn); }
   .hw-warn-k { font-family: var(--mono); font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; }
+
+  /* Firmware flashing progress (#19). The percentage is written in the label as
+     well as drawn as a bar, because a bar alone tells a screen reader nothing
+     and tells anyone watching a long write very little either — "verifying,
+     62%" is the answer to "is this stuck?". */
+  .fw-prog { margin: 12px 0 4px; }
+  .fw-prog-lab { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  .fw-bar { height: 6px; border-radius: 3px; background: var(--panel-line); overflow: hidden; }
+  .fw-bar > i { display: block; height: 100%; background: var(--accent); transition: width .2s linear; }
+  .fw-bar.indeterminate > i { width: 40%; animation: fw-sweep 1.1s ease-in-out infinite; }
+  @keyframes fw-sweep { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+  /* Anyone who has asked not to see motion gets a static half-width bar rather
+     than a sweeping one; the stage text above it still says what is happening. */
+  @media (prefers-reduced-motion: reduce) {
+    .fw-bar.indeterminate > i { animation: none; margin-left: 30%; }
+    .fw-bar > i { transition: none; }
+  }
   .hw-warn.bad .hw-warn-k { color: var(--bad); }
   .hw-warn.warn .hw-warn-k { color: var(--warn); }
   .hw-warn-f { font-family: var(--mono); font-size: 10px; color: var(--dim); }

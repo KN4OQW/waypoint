@@ -59,6 +59,18 @@ type Board struct {
 	Transport Transport // how it attaches
 	Verified  bool      // confirmed against physical hardware
 	Note      string    // shown next to the name in the picker
+
+	// BOOT0Line and ResetLine are the Pi header lines wired to the board's BOOT0
+	// and nRST pins, which is how firmware flashing gets a board into its ROM
+	// bootloader without anyone touching a jumper (#19). Zero means the
+	// family default — BCM20 and BCM21, which every launch-tier hat uses — and a
+	// board that wires them elsewhere says so here.
+	//
+	// They live in this table because a pin assignment is a hardware fact about a
+	// board, and the alternative is the flashing code growing a second, parallel
+	// table of boards that has to be kept in step with this one.
+	BOOT0Line int
+	ResetLine int
 }
 
 // Boards is the launch tier from issue #18: the STM32F103 + ADF7021 family.

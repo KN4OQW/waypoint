@@ -196,29 +196,25 @@ a pin number is a hardware fact about a board and the flash engine should not be
 where hardware facts live. Lines are released before MMDVM-Host is restarted; a
 held line is a modem the host cannot reset.
 
-### 6. The USB path: Maple DFU over usbfs
+### 6. The USB path is a separate decision — see RFC-0020
 
-Three steps, none of them shelled out:
+Waypoint's launch tier is the GPIO hats, and they cannot use DFU at all: a hat
+has no USB connection to the Pi, and its BOOT0 and nRST are on the header, which
+is what makes the ROM bootloader path work and makes an interrupted flash
+unbrickable. The USB stick boards are a *different population* — no BOOT0
+exposed to the host, reachable only through the DFU bootloader in their own
+flash — and supporting them is a coverage decision, not a missing piece of this
+one.
 
-1. **Enter the bootloader.** A running board is at `1eaf:0004` (its CDC serial
-   interface). Upstream's `upload-reset` puts it into DFU by driving a line-state
-   pattern and writing a four-byte `1EAF` magic on that port; Waypoint performs the
-   same sequence and then waits for the device to re-enumerate as `1eaf:0003` — an
-   ID [`modem/ports.go`](../../internal/modem/ports.go) already recognises and
-   already reports as "in its bootloader, one flash from working".
-2. **Write.** DFU class requests over `/dev/bus/usb/BBB/DDD` usbfs ioctls
-   (`USBDEVFS_CLAIMINTERFACE`, `USBDEVFS_CONTROL`) — no libusb, no `dfu-util`. The
-   application alt-setting only; the load address comes from the catalog entry and
-   the engine refuses any address below it, per §1.
-3. **Leave.** DFU detach and re-enumeration back to `1eaf:0004`, then re-probe.
+It is also the only brickable path, and validating it needs hardware nobody on
+this project owns (a ZUMspot USB or Nano hotSPOT is around $150). Shipping an
+unvalidated flash path for the one class of board that *can* be destroyed is the
+wrong way round.
 
-**The 3B+ quirk** is handled honestly. The host side gets a longer reset hold and a
-longer enumeration window, because a 3B+'s USB hub is slower to bring the device
-back. But the actual defect is a *short-reset bootloader on the board*, and the only
-real fix is a bootloader write this design forbids (§1). So a board that fails to
-re-enumerate on a 3B+ is reported as exactly that — "this board carries the
-short-reset bootloader; on a 3B+ it needs the long-reset bootloader, which requires
-SWD" — rather than retried until the operator gives up.
+So the design, the corrected reset mechanism and the open questions move to
+[RFC-0020](0020-usb-dfu-flashing.md), which is design-only and gated on somebody
+having a board. The firmware CI already builds and signs the USB images, so
+adopting it later is host-side work alone.
 
 ### 7. Port ownership, and one exclusion that is not obvious
 
@@ -282,6 +278,8 @@ JavaScript.
 ### 10. What is deliberately not in v1
 
 - **Bootloader writes** (§1). SWD-only, documented as a procedure, never automated.
+- **USB / Maple DFU boards.** Moved to [RFC-0020](0020-usb-dfu-flashing.md), design
+  only. The hats this RFC serves cannot use that path and do not need it.
 - **Full-size MMDVM F4/F7 (#25).** The AN3155 core is the same; only bootloader
   *entry* differs (jumper or DTR rather than a Pi GPIO line), so entry is an
   interface with one implementation today and the fast-follow tier adds a second.
@@ -352,10 +350,19 @@ confirm a deliberately wrong-oscillator variant is refused before any write.
 
 ## Open questions
 
-1. **DFU specifics need bench confirmation.** The alt-setting, the application load
-   address, and the `1EAF` reset sequence are transcribed from upstream's tooling,
-   not from a bootloader datasheet, and the reference bench has no USB board today.
-   The DFU path does not ship until one is on the bench.
+1. **DFU specifics need bench confirmation.** *(Partly closed, 2026-07-28.)* The
+   application load address is no longer an inference: the firmware's own
+   `bootloader.ld` places ROM at **`0x08002000`** with 120K, against `normal.ld`'s
+   `0x08000000` with 128K — the 8K difference being the Maple bootloader, which is
+   exactly the region §1 refuses to write. The alt-setting and the `1EAF` reset
+   sequence are still transcribed from upstream's tooling rather than a datasheet,
+   and the reference bench has no USB board, so the DFU path still does not ship
+   until one is on it.
+
+   Note also that the GPIO hats and the USB sticks are disjoint populations: a hat
+   has no USB connection at all, and a stick does not expose BOOT0 to the host. The
+   DFU path is not a fallback for the hats — it is the only path for a different
+   set of boards.
 2. **Bootloader recovery.** Do we publish an SWD procedure (an ST-Link clone is a
    few pounds) as the documented escape hatch for the 3B+ long-reset upgrade and
    for a board someone bricked elsewhere — or stay silent and let it be a return?

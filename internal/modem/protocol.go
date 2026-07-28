@@ -179,7 +179,25 @@ func ParseVersion(f Frame) (Version, error) {
 	v := Version{Protocol: f.Payload[0]}
 	switch v.Protocol {
 	case 1:
-		v.Description = cleanDescription(f.Payload[1:])
+		// The description is NUL-TERMINATED, and what follows the NUL is the
+		// chip's unique ID as ASCII hex — MMDVM_HS built with ENABLE_UDID
+		// appends it (SerialPort.cpp getVersion), and protocol 1 has no fixed
+		// offset to find it at.
+		//
+		// Treating the whole payload as description is what a reasonable reading
+		// of "version byte then description" produces, and it is wrong on real
+		// hardware: the bench Dual Hat reports
+		//
+		//	MMDVM_HS_Dual_Hat-v1.6.1 … GitID #899fc2a\x0000350016390000074E503543
+		//
+		// and stripping the NUL glues the chip ID onto the end of the GitID.
+		// MMDVM-Host stops at the NUL (it prints with %.*s and matches with
+		// strstr), so this does too.
+		desc, udid := splitAtNUL(f.Payload[1:])
+		v.Description = cleanDescription(desc)
+		if hex := cleanDescription(udid); isHex(hex) {
+			v.UDID = strings.ToUpper(hex)
+		}
 	case 2:
 		// 0 proto | 1 cap1 | 2 cap2 | 3 cpu | 4..19 UDID | 20.. description
 		const descOffset = 20
@@ -197,6 +215,31 @@ func ParseVersion(f Frame) (Version, error) {
 		return Version{}, fmt.Errorf("modem: unsupported protocol version %d", v.Protocol)
 	}
 	return v, nil
+}
+
+// splitAtNUL divides a payload at the first NUL: the string before it, and
+// whatever follows. A payload with no NUL is all string and no tail.
+func splitAtNUL(b []byte) (head, tail []byte) {
+	for i, c := range b {
+		if c == 0 {
+			return b[:i], b[i+1:]
+		}
+	}
+	return b, nil
+}
+
+// isHex reports a non-empty string of hex digits, so a tail that is not a chip
+// ID is not stored as one.
+func isHex(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // cleanDescription trims the trailing NULs and whitespace firmware pads the
@@ -236,8 +279,18 @@ type Modes struct {
 // Modes decodes the capability bits.
 func (v Version) Modes() Modes {
 	if v.Protocol < 2 {
-		// MMDVM-Host's protocol-1 assumption, byte for byte (Modem.cpp).
-		return Modes{DStar: true, DMR: true, YSF: true, P25: true, NXDN: true, POCSAG: true}
+		// MMDVM-Host's protocol-1 assumption, byte for byte (Modem.cpp) —
+		// INCLUDING the version-string sniff for M17, which is easy to miss and
+		// matters here more than anywhere: the reference bench board runs a
+		// v1.6.1 MMDVM_HS whose M17 support is the reason Waypoint forks the
+		// host at all. Omitting it makes Waypoint refuse to enable a mode the
+		// modem in front of it can carry and MMDVM-Host would happily use.
+		//
+		//	if (::strstr((char*)(m_buffer + 4U), "v1.6.") != nullptr)
+		//		m_capabilities1 |= CAP1_M17;
+		m := Modes{DStar: true, DMR: true, YSF: true, P25: true, NXDN: true, POCSAG: true}
+		m.M17 = strings.Contains(v.Description, "v1.6.")
+		return m
 	}
 	return Modes{
 		Known:  true,

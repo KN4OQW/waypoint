@@ -212,6 +212,9 @@ let stackBusy = false;      // a check/apply request is in flight (guards double
 let stackPoll = null;       // interval while an apply runs, cleared when it settles
 let profiles = null;        // saved connection profiles from /api/profiles (RFC-0006)
 let hardware = null;        // GET /api/hardware — last detection, board table, UART diagnosis (#18)
+let firmware = null;        // GET /api/flash — firmware catalog, the match or the refusal, the job (#19)
+let fwBusy = false;         // a flash was asked for and has not come back yet
+let fwStream = null;        // EventSource on /api/flash/events while a job runs
 let hwBusy = false;         // a detect/adopt/repair is in flight
 let profileBusy = false;    // an activate/save/import is in flight (disables the buttons)
 let importScan = null;      // last /api/import/scan result {report, preview} (RFC-0007)
@@ -2481,7 +2484,230 @@ function panelHardware() {
     }
   }
 
-  return `<div class="grid2">${identity}<div class="stack">${configured}${adopt}</div></div>${warnCard}${uartCard}${scanCard}`;
+  return `<div class="grid2">${identity}<div class="stack">${configured}${adopt}</div></div>${warnCard}${panelFirmware()}${uartCard}${scanCard}`;
+}
+
+// --- Firmware: what is on the modem, and changing it (#19) ----------------
+//
+// Flashing is the operation operators are most afraid of, and the panel is
+// written to defuse that rather than to look impressive. Three things are on
+// screen before the button: which image would be written and why that one, that
+// the node goes off the air while it happens, and — on the GPIO path — that an
+// interrupted flash is recoverable by retry.
+//
+// The button is greyed with the SERVER's reason, never a locally-derived one.
+// Which firmware fits a board depends on the oscillator, the radio count and the
+// transport, and re-implementing that in JavaScript would give an operator two
+// answers that can disagree. When the server refuses because the choice is
+// ambiguous, its list of candidates becomes the picker.
+function panelFirmware() {
+  const fw = firmware || {};
+  const job = fw.job;
+  const running = !!(job && !job.ended);
+  const id = (hardware && hardware.detected && hardware.detected.identity) || null;
+
+  let inner = "";
+
+  if (id) {
+    inner += row("Running now", `<span class="accent">${esc(id.firmware ? "v" + id.firmware : (id.description || "unknown"))}</span>`);
+  }
+  if (fw.catalog_version) {
+    inner += row("Available", `<span>${esc(fw.catalog_version)}</span>`);
+  }
+
+  // What would be written, or why nothing can be. The two refusals read
+  // differently on purpose: one is a dead end, the other is a question. Saying
+  // "nothing can be flashed" above an enabled button and a picker would be
+  // telling the operator the opposite of what the screen is doing.
+  const choices = fw.choices || [];
+  if (fw.match) {
+    inner += row("Would write", `<span>${esc(fw.match.describe)}</span>`);
+  } else if (fw.reason && choices.length) {
+    inner += note(`<b>Waypoint will not choose this for you.</b> ${esc(fw.reason)}`);
+  } else if (fw.reason) {
+    inner += note(`<b>Nothing can be flashed yet.</b> ${esc(fw.reason)}`);
+  }
+
+  // The picker: only when the server said the choice is the operator's. Its
+  // options are the server's candidates, so the operator can never pick an
+  // image the daemon would refuse.
+  if (choices.length) {
+    const byID = {};
+    (fw.variants || []).forEach((v) => { byID[v.id] = v; });
+    const opts = choices.map((cid) => {
+      const v = byID[cid] || { id: cid, describe: cid };
+      return `<option value="${esc(v.id)}">${esc(v.describe || v.id)}</option>`;
+    }).join("");
+    inner += row("Firmware to write", `<select id="fw-variant">${opts}</select>`);
+    inner += note("Pick the image that matches the oscillator fitted to your board. Getting this wrong does not fail loudly — the node comes up and transmits off frequency — which is why Waypoint will not choose for you.");
+  }
+
+  if (running) {
+    inner += fwProgressHTML(job);
+  } else if (job && job.error) {
+    inner += note(`<b>The last flash failed.</b> ${esc(job.error)}<br>The modem was released and MMDVM-Host restarted. On a GPIO board the bootloader is in the chip itself, so a failed write leaves the board reachable exactly as it was — press FLASH again.`);
+  } else if (job && job.after) {
+    inner += note(`<b>Flashed.</b> ${esc(job.before ? "v" + job.before + " → v" + job.after : "v" + job.after)}${job.detail ? " (" + esc(job.detail) + ")" : ""}.`);
+  } else if (job && job.variant) {
+    inner += note(`<b>Flashed ${esc(job.detail || job.variant)}.</b> The modem did not answer a re-probe afterwards, so the new version could not be read back — the write itself was verified.`);
+  }
+
+  const canFlash = !!(fw.available && (fw.match || choices.length) && !running && !fwBusy);
+  inner += `<div class="row"><label></label>` +
+    `<button type="button" id="fw-flash" class="btn primary"${canFlash ? "" : " disabled"}>` +
+    `${running ? "FLASHING…" : "FLASH FIRMWARE"}</button>` +
+    `<button type="button" id="fw-refresh" class="btn"${fwBusy || running ? " disabled" : ""}>CHECK FOR FIRMWARE</button></div>`;
+
+  if (fw.from_config) {
+    inner += note("<b>Nothing answered detection</b>, so this is using the board and port already configured on this node. That is the normal state after an interrupted flash — the modem cannot run its firmware, so it cannot answer — and it is exactly when flashing has to still work. The bootloader is in the chip and answers regardless.");
+  }
+  if (fw.host_running) {
+    inner += note("<b>This node is on the air.</b> Flashing stops MMDVM-Host, writes the modem, and starts it again — about a minute of downtime. You will be asked to confirm.");
+  }
+  inner += note("Firmware is downloaded from a signed release and its signature checked before a byte reaches the modem. On a GPIO board the bootloader lives in the chip and cannot be erased, so an interrupted flash is recoverable by trying again.");
+
+  return card("MODEM FIRMWARE", inner);
+}
+
+// fwProgressHTML draws the running job. The stage and percentage are written out
+// as text as well as drawn, because a bar on its own says nothing to a screen
+// reader and very little to anyone watching a write that takes half a minute.
+function fwProgressHTML(job) {
+  const pct = job.total > 0 ? Math.round((job.done / job.total) * 100) : 0;
+  const known = job.total > 0;
+  const stage = fwStageText(job.stage);
+  const lab = known ? stage + " · " + pct + "%" : stage;
+  return `<div class="fw-prog">
+    <div class="fw-prog-lab"><span>${esc(lab)}</span><span>${esc(job.detail || "")}</span></div>
+    <div class="fw-bar${known ? "" : " indeterminate"}" role="progressbar"
+         aria-label="Firmware flash progress"
+         ${known ? `aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"` : ""}
+         aria-valuetext="${esc(lab)}"><i style="width:${known ? pct : 40}%"></i></div>
+  </div>`;
+}
+
+function fwStageText(st) {
+  switch (st) {
+    case "choosing": return "Choosing the firmware";
+    case "fetching": return "Downloading and verifying";
+    case "preparing": return "Stopping the modem and entering its bootloader";
+    case "erasing": return "Erasing";
+    case "writing": return "Writing";
+    case "verifying": return "Reading back to verify";
+    case "restarting": return "Restarting the modem";
+    case "done": return "Finished";
+    default: return st || "Working";
+  }
+}
+
+// loadFirmware fetches the firmware surface. It is deliberately separate from
+// loadHardware: the catalog is a network fetch that can be slow or fail, and a
+// firmware release being unreachable must not stop the hardware tab rendering
+// what is attached.
+async function loadFirmware() {
+  try {
+    firmware = await fetch("/api/flash").then((r) => r.json());
+  } catch {
+    firmware = null;
+  }
+  if (firmware && firmware.job && !firmware.job.ended) watchFlash();
+  if (state.tab === "hardware") renderPanel();
+}
+
+// watchFlash follows a running job over SSE. Byte-level progress is its own
+// stream rather than the dashboard's event feed, because every event on that
+// feed is written to the SD card and a progress bar is not worth five hundred
+// rows (RFC-0019).
+function watchFlash() {
+  if (fwStream) return;
+  try {
+    fwStream = new EventSource("/api/flash/events");
+  } catch {
+    return;
+  }
+  fwStream.onmessage = (ev) => {
+    let p;
+    try { p = JSON.parse(ev.data); } catch { return; }
+    if (!firmware) firmware = {};
+    firmware.job = Object.assign({}, firmware.job, {
+      stage: p.stage, done: p.done || 0, total: p.total || 0,
+      detail: p.detail || (firmware.job && firmware.job.detail) || "",
+    });
+    if (state.tab === "hardware") renderPanel();
+    if (p.stage === "done") stopWatchingFlash();
+  };
+  // A dropped stream is not a failed flash — the daemon runs the job on its own
+  // deadline, not the browser's — so this re-reads the authoritative state
+  // instead of reporting a failure the node has not had.
+  fwStream.onerror = () => { stopWatchingFlash(); setTimeout(loadFirmware, 1500); };
+}
+
+function stopWatchingFlash() {
+  if (!fwStream) return;
+  fwStream.close();
+  fwStream = null;
+  // The stream carries progress, not outcomes: the job's result (the new version
+  // string, or the error) comes from the panel endpoint.
+  setTimeout(loadFirmware, 400);
+}
+
+// flashFirmware starts a flash. The confirmation is explicit about the two
+// things an operator is actually risking — time off the air, and a modem that
+// stops working if the image is wrong — and about the fact that a GPIO board
+// survives an interrupted write.
+async function flashFirmware() {
+  if (fwBusy) return;
+  const fw = firmware || {};
+  const sel = document.getElementById("fw-variant");
+  const variant = sel ? sel.value : "";
+  const what = variant || (fw.match && fw.match.id) || "the matching firmware";
+
+  let msg = "Write " + what + " to the modem?\n\n";
+  if (fw.host_running) msg += "This node goes off the air for about a minute while it happens.\n\n";
+  msg += "If it is interrupted the board stays reachable and you can flash again.";
+  if (!confirm(msg)) return;
+
+  fwBusy = true;
+  renderPanel();
+  try {
+    const r = await fetch("/api/flash", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ variant_id: variant, stop_host: true }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (r.status === 409) {
+      banner(body.error || "Something else is using the modem.", "bad");
+    } else if (!r.ok) {
+      throw new Error(body.error || "the flash could not be started");
+    } else {
+      firmware = Object.assign({}, firmware, { job: body.job });
+      banner("Flashing — do not power the node off.", "ok");
+      watchFlash();
+    }
+  } catch (err) {
+    banner(String(err.message || err), "bad");
+  }
+  fwBusy = false;
+  renderPanel();
+}
+
+// refreshCatalog fetches the signed catalog now rather than using the cached
+// copy, for an operator who has just been told a new firmware exists.
+async function refreshCatalog() {
+  if (fwBusy) return;
+  fwBusy = true;
+  renderPanel();
+  try {
+    const r = await fetch("/api/flash/catalog", { method: "POST" });
+    const body = await r.json().catch(() => ({}));
+    firmware = body;
+    banner(body.available ? "Firmware catalog " + (body.catalog_version || "") + "." : (body.reason || "The firmware catalog could not be fetched."), body.available ? "ok" : "bad");
+  } catch (err) {
+    banner(String(err.message || err), "bad");
+  }
+  fwBusy = false;
+  renderPanel();
 }
 
 // tcxoText says whether the oscillator was reported by the modem or inferred
@@ -3149,6 +3375,7 @@ async function load() {
   // config: the last detection, the board table, and the GPIO UART's
   // availability. The General tab reads it too, for the board picker.
   loadHardware();
+  loadFirmware();
   // Host-network status is live system state, fetched separately from the store
   // config. Refresh whenever the Network tab is showing.
   if (state.tab === "network") loadNetwork();
@@ -3603,6 +3830,9 @@ document.getElementById("panels").addEventListener("click", (e) => {
   if (e.target.id === "hw-detect") { detectModem(false); return; }
   if (e.target.id === "hw-adopt") { adoptBoard(); return; }
   if (e.target.id === "hw-uart") { fixUART(); return; }
+  // --- modem firmware (#19) ---
+  if (e.target.id === "fw-flash") { flashFirmware(); return; }
+  if (e.target.id === "fw-refresh") { refreshCatalog(); return; }
   // --- software updates (RFC-0014) ---
   if (e.target.id === "stack-check") { stackCheckNow(); return; }
   if (e.target.id === "stack-apply") { stackApplyNow(); return; }
