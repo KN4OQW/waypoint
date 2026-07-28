@@ -2558,6 +2558,9 @@ function panelFirmware() {
     `${running ? "FLASHING…" : "FLASH FIRMWARE"}</button>` +
     `<button type="button" id="fw-refresh" class="btn"${fwBusy || running ? " disabled" : ""}>CHECK FOR FIRMWARE</button></div>`;
 
+  if (fw.from_config) {
+    inner += note("<b>Nothing answered detection</b>, so this is using the board and port already configured on this node. That is the normal state after an interrupted flash — the modem cannot run its firmware, so it cannot answer — and it is exactly when flashing has to still work. The bootloader is in the chip and answers regardless.");
+  }
   if (fw.host_running) {
     inner += note("<b>This node is on the air.</b> Flashing stops MMDVM-Host, writes the modem, and starts it again — about a minute of downtime. You will be asked to confirm.");
   }

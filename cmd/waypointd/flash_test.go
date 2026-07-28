@@ -421,3 +421,60 @@ func waitFor(t *testing.T, cond func() bool) {
 	}
 	t.Fatal("timed out waiting for the condition")
 }
+
+// A flash interrupted mid-write leaves a board that cannot run its firmware and
+// therefore cannot answer detection. The operator's next instinct is to press
+// Detect, which finds nothing and clears the stored identity — so if flashing
+// needed that identity, pressing the obvious button would lock them out of the
+// only thing that fixes the board. This is the recovery path working from the
+// adopted configuration instead. Found on the bench, not in review.
+func TestFlashFallsBackToTheAdoptedConfigWhenTheModemIsMute(t *testing.T) {
+	m := &config.Model{}
+	m.Modem.Port = "/dev/ttyAMA0"
+	m.Modem.Board = "mmdvm_hs_dual_hat"
+	m.Modem.TCXOHz = "14745600"
+
+	s := hwTestServer(t, m)
+	s.hub = hub.New()
+	src := stubSource{cat: stubCatalog(), image: []byte("firmware")}
+	s.flash = &flasher{
+		source: src, hub: s.hub, store: s.store,
+		subs: map[chan flash.Progress]struct{}{}, keyed: true,
+		eng: &flash.Engine{Source: src},
+	}
+	// No detection has ever succeeded, or the last one found nothing.
+	if st, _ := config.GetHardwareState(s.store); st.Identity != nil {
+		t.Fatal("the fixture already has an identity")
+	}
+
+	v := getFlash(t, s)
+	if v.Match == nil {
+		t.Fatalf("no firmware offered for a mute modem: %q", v.Reason)
+	}
+	if v.Match.ID != "hs_dual_hat-14m7456" {
+		t.Errorf("matched %s, want the configured board's image", v.Match.ID)
+	}
+	if !v.FromConfig {
+		t.Error("FromConfig = false; the UI has to be able to say where this came from")
+	}
+
+	// And the flash actually starts, rather than being refused at the door.
+	rec := postFlash(t, s, `{"stop_host":true}`)
+	if rec.Code != 202 {
+		t.Fatalf("POST /api/flash = %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	waitFor(t, func() bool { return !s.flash.running() })
+}
+
+func TestFlashStillRefusesWithNeitherDetectionNorConfig(t *testing.T) {
+	s := flashTestServer(t, config.HardwareState{}, stubSource{cat: stubCatalog()}, true)
+
+	v := getFlash(t, s)
+	if v.Match != nil {
+		t.Error("offered a flash with no idea what or where the modem is")
+	}
+	rec := postFlash(t, s, `{"stop_host":true}`)
+	if rec.Code != 409 {
+		t.Fatalf("POST /api/flash = %d, want 409", rec.Code)
+	}
+}

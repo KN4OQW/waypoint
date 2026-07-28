@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -345,8 +346,12 @@ type flashView struct {
 
 	// HostRunning tells the UI up front that flashing will take the node off the
 	// air, so the confirmation says so instead of the operator finding out.
-	HostRunning bool      `json:"host_running"`
-	Job         *flashJob `json:"job,omitempty"`
+	HostRunning bool `json:"host_running"`
+	// FromConfig reports that nothing answered detection and the adopted
+	// configuration is being used instead — the recovery case, where the modem
+	// is mute precisely because it needs flashing.
+	FromConfig bool      `json:"from_config,omitempty"`
+	Job        *flashJob `json:"job,omitempty"`
 }
 
 func variantView(v flash.Variant) flashVariantView {
@@ -419,6 +424,66 @@ func (s *server) flashCatalogRefresh(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, v)
 }
 
+// flashTarget is the modem a flash would act on.
+//
+// Detection is preferred, but its absence must not be the end of the road, and
+// that is not a nicety — it is the recovery path. A flash interrupted mid-write
+// leaves a board that cannot run its firmware and therefore cannot answer
+// detection. The operator's most natural next action is to press Detect, which
+// finds nothing and clears the stored identity; if flashing depended on that
+// identity, pressing the obvious button would lock them out of the one
+// operation that fixes the board, and they would be back to SSH — which is the
+// whole thing issue #19 exists to abolish.
+//
+// So a node with no live detection falls back to its ADOPTED CONFIGURATION: the
+// port, board and oscillator the operator already confirmed. Those values came
+// from a detection once, and a mute modem does not stop being a Dual Hat on
+// /dev/ttyAMA0.
+func (s *server) flashTarget() (id modem.Identity, fromConfig bool, err error) {
+	st, err := config.GetHardwareState(s.store)
+	if err != nil {
+		return modem.Identity{}, false, err
+	}
+	if st.Identity != nil {
+		return *st.Identity, false, nil
+	}
+
+	m, err := config.Load(s.store)
+	if err != nil {
+		return modem.Identity{}, false, err
+	}
+	if m.Modem.Port == "" || m.Modem.Board == "" {
+		return modem.Identity{}, false, errNoTarget
+	}
+	board, ok := modem.BoardByID(m.Modem.Board)
+	if !ok {
+		return modem.Identity{}, false, errNoTarget
+	}
+	id = modem.Identity{
+		Port:       m.Modem.Port,
+		Transport:  board.Transport.String(),
+		BoardID:    board.ID,
+		Candidates: []string{board.ID},
+		Duplex:     board.Dual,
+	}
+	if hz, convErr := strconv.Atoi(m.Modem.TCXOHz); convErr == nil {
+		id.TCXOHz = hz
+	} else {
+		id.TCXOHz = board.TCXOHz
+	}
+	// The transport recorded for a board sold in both forms tells us nothing;
+	// the port does. This mirrors what detection would have concluded.
+	if board.Transport == modem.TransportAny {
+		id.Transport = modem.TransportGPIO.String()
+		if strings.HasPrefix(m.Modem.Port, "/dev/ttyACM") || strings.HasPrefix(m.Modem.Port, "/dev/ttyUSB") {
+			id.Transport = modem.TransportUSB.String()
+		}
+	}
+	return id, true, nil
+}
+
+var errNoTarget = errors.New("no modem has been detected on this node yet, and none is configured — run detection first")
+
 // flashSnapshot builds the whole panel: catalog, verdict, job.
 func (s *server) flashSnapshot(ctx context.Context, refresh bool) flashView {
 	f := s.flash
@@ -442,12 +507,13 @@ func (s *server) flashSnapshot(ctx context.Context, refresh bool) flashView {
 		v.Variants = append(v.Variants, variantView(variant))
 	}
 
-	st, err := config.GetHardwareState(s.store)
-	if err != nil || st.Identity == nil {
-		v.Reason = "no modem has been detected on this node yet — run detection first"
+	target, fromConfig, err := s.flashTarget()
+	if err != nil {
+		v.Reason = err.Error()
 		return v
 	}
-	match, err := cat.MatchFor(*st.Identity)
+	v.FromConfig = fromConfig
+	match, err := cat.MatchFor(target)
 	if err != nil {
 		var me *flash.MatchError
 		if errors.As(err, &me) {
@@ -478,16 +544,14 @@ func (s *server) flashStart(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = decodeJSON(r, &body)
 
-	st, err := config.GetHardwareState(s.store)
+	target, fromConfig, err := s.flashTarget()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONStatus(w, http.StatusConflict, map[string]any{"error": err.Error()})
 		return
 	}
-	if st.Identity == nil {
-		writeJSONStatus(w, http.StatusConflict, map[string]any{
-			"error": "no modem has been detected on this node yet — run detection first",
-		})
-		return
+	if fromConfig {
+		log.Printf("flash: nothing answered detection; using the adopted configuration (%s, %s)",
+			target.Port, target.BoardID)
 	}
 
 	// One hardware operation at a time. A flash stops MMDVM-Host for a minute,
@@ -502,7 +566,7 @@ func (s *server) flashStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	board, _ := modem.BoardByID(st.Identity.BoardID)
+	board, _ := modem.BoardByID(target.BoardID)
 	s.flash.eng.LineConfig = flash.LinesForBoard(board)
 	s.flash.eng.Reprobe = func(ctx context.Context) (*modem.Identity, error) {
 		// MMDVM-Host is still stopped at this point — the engine restarts it only
@@ -516,7 +580,7 @@ func (s *server) flashStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	job, err := s.flash.start(flash.Request{
-		Identity:  *st.Identity,
+		Identity:  target,
 		VariantID: body.VariantID,
 		StopHost:  body.StopHost,
 	}, release)
