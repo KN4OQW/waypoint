@@ -579,8 +579,13 @@ func (s *server) applyRender(by string) (restarted, stopped []string, err error)
 	//   - disabled buses (an enabled bus is a restart target below);
 	//   - gateways DISPLACED by a YSF/NXDN bus (dropped from targets — nothing else
 	//     stops them, and their port must be free before the bus starts).
+	//   - gateways BLOCKED by an unmet startup requirement (a POCSAG enable with no
+	//     DAPNET AuthKey): also dropped from targets, and a daemon that would exit
+	//     immediately must be stopped rather than left crash-looping from an earlier
+	//     apply that had the value set.
 	stopUnits := append(config.RetiredBridgeUnits(), m.DisabledBusUnits()...)
 	stopUnits = append(stopUnits, m.DisplacedGatewayUnits()...)
+	stopUnits = append(stopUnits, m.BlockedGatewayUnits()...)
 	// A DELETED bus's row cannot be enumerated from the model (DisabledBusUnits only
 	// sees buses that still exist), so its lingering unit — which still holds the
 	// mode's loopback and would make a restored gateway crash-loop — is found via

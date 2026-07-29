@@ -174,7 +174,13 @@ func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 	// configured POCSAG, and (because apply does a blocking `systemctl restart`)
 	// stretched every Apply to ~45s. Gate it like a bridge: POCSAG off ⇒ no target
 	// ⇒ apply neither writes DAPNETGateway.ini nor restarts the unit.
-	if m.Modes.POCSAG {
+	//
+	// The mode enable is necessary but not sufficient: POCSAG on with no DAPNET
+	// AuthKey is the same crash loop by a different route, because the daemon's
+	// AuthKey guard runs before it opens anything. gatewayBlocked covers that —
+	// see gateway_requirements.go for the survey of which daemons have such a
+	// guard (today, only this one).
+	if m.Modes.POCSAG && !m.gatewayBlocked(ModePOCSAG) {
 		targets = append(targets, RenderTarget{Path: paths.DAPNETGateway, Unit: unitDAPNETGateway, Daemon: daemonDAPNETGateway, Render: (*Model).RenderDAPNETGateway})
 	}
 	// The cross-mode transcoding bridges (MMDVM_CM) used to append here when enabled.

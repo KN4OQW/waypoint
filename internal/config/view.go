@@ -46,9 +46,16 @@ type View struct {
 	// ViewMQTT carries HasPassword and never the value itself (D4). Scrubbing
 	// happens here, in the projection, not in the browser: a value the server never
 	// serializes cannot leak through a cached response, a proxy log, or a curl.
-	MQTT     ViewMQTT    `json:"mqtt"`
-	Logging  ViewLogging `json:"logging"`
-	ReadOnly bool        `json:"read_only"`
+	MQTT    ViewMQTT    `json:"mqtt"`
+	Logging ViewLogging `json:"logging"`
+	// BlockedGateways names the enabled modes whose gateway apply deliberately does
+	// NOT start, because the daemon reads a value at startup that is not set and
+	// would exit before opening anything (see gateway_requirements.go). Projected so
+	// the UI can say which control to fill in — otherwise the only evidence is a
+	// daemon that is not running for no visible reason. Carries field NAMES, never
+	// values, so nothing secret is exposed by reporting that a secret is absent.
+	BlockedGateways []GatewayRequirement `json:"blocked_gateways"`
+	ReadOnly        bool                 `json:"read_only"`
 	// The cross-mode transcoding bridges (MMDVM_CM) are no longer projected here.
 	// The per-bridge-daemon model is retired for the RFC-0003 bus architecture, so
 	// the settings page shows a placeholder instead of bridge cards. The bridge store
@@ -553,6 +560,7 @@ func (m *Model) View(src Sources) *View {
 		ExtAudioBoost: m.FM.ExtAudioBoost,
 		AccessMode:    m.FM.AccessMode,
 	}
+	v.BlockedGateways = m.UnmetGatewayRequirements()
 	// The cross-mode transcoding bridges are retired (RFC-0003) and no longer
 	// projected — their store sections stay dormant (see the View doc comment).
 	for _, md := range modeDisplay {
