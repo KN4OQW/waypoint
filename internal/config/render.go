@@ -1372,6 +1372,35 @@ func (m *Model) RenderDAPNETGateway() string {
 	return b.String()
 }
 
+// DMRNetworkOrder returns the network names in the order RenderDMRGateway writes
+// their [DMR Network N] sections, so index i is the network the daemon calls
+// "net<i+1>".
+//
+// That translation is the whole reason this exists. DMRGateway's status query
+// answers positionally — "xlx:n/a net1:conn net2:disc" — with no names in it, so
+// a supervisor reading that reply has to know which network each slot is. Deriving
+// the order anywhere other than here would be a second copy of a rule that already
+// exists, free to drift from the file the daemon actually read; RenderDMRGateway
+// and this function iterate identically and a test renders the INI and compares.
+//
+// Disabled networks are included: they are still written as sections (with
+// Enabled=0) and still consume a slot, so skipping them here would shift every
+// name after them onto the wrong link.
+func (m *Model) DMRNetworkOrder() []string {
+	dmrID := firstNonEmpty(m.DMR.ID, m.General.ID)
+	var out []string
+	for _, bn := range m.dmrBusNetworks(dmrID) {
+		out = append(out, bn.name)
+	}
+	for _, net := range m.Networks {
+		if net.Type == NetXLX {
+			continue // its own [XLX Network] section; reported as "xlx", not "netN"
+		}
+		out = append(out, net.Name)
+	}
+	return out
+}
+
 // RenderDMRGateway renders a complete DMRGateway.ini from the model.
 func (m *Model) RenderDMRGateway() string {
 	var b strings.Builder

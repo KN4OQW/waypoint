@@ -536,3 +536,9 @@ func TestObserveEventIgnoresUnrelated(t *testing.T) {
 		t.Errorf("unrelated events changed the login view: %+v", h.sup.login)
 	}
 }
+
+// hubGatewayStatus builds the hub event the MQTT layer produces for one daemon
+// status message.
+func hubGatewayStatus(network, detail string) hub.Event {
+	return hub.Event{Type: status.TypeGatewayStatus, Network: network, Detail: detail}
+}

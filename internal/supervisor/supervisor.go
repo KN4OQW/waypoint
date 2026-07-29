@@ -57,6 +57,16 @@ type Signals struct {
 	// UnitActive reports a systemd unit's state. TriUnknown when the liveness
 	// probe has not reached it yet, which must not read as a dead daemon.
 	UnitActive func(unit string) Tri
+	// LinkState asks the gateway daemons where their upstream links actually
+	// stand, keyed by network name. Nil, or a name absent from the result, means
+	// nothing was asked or nothing answered — not a failure.
+	//
+	// This is the signal that closes the gap the bench run exposed: a daemon
+	// retrying a lost connection publishes "Opening DMR Network" over and over
+	// and never says the link is down, so the announcements alone leave an
+	// unreachable master looking merely unconfirmed. Asked directly, the same
+	// daemon reports "disc" the whole time.
+	LinkState func() map[string]Tri
 	// Restart performs the remediation. Nil (or Remediate false) means decisions
 	// are observed and logged but never acted on.
 	Restart func(unit string) error
@@ -184,6 +194,12 @@ func (s *Supervisor) Step(ctx context.Context) {
 	if s.Signals.TXActive != nil {
 		tx = s.Signals.TXActive()
 	}
+	// Asked once per cycle rather than once per attachment: one query returns
+	// every link the daemon carries.
+	var polled map[string]Tri
+	if s.Signals.LinkState != nil && wan {
+		polled = s.Signals.LinkState()
+	}
 
 	s.mu.Lock()
 	if s.monitors == nil {
@@ -210,7 +226,7 @@ func (s *Supervisor) Step(ctx context.Context) {
 	requests := map[string][]*Monitor{} // unit → the monitors asking for it
 	reasons := map[string]string{}      // unit → why, from the first to ask
 	for _, a := range attachments {
-		m, d := s.stepOne(ctx, a, now, wan, tx)
+		m, d := s.stepOne(ctx, a, now, wan, tx, polled[a.Name])
 		if d.Action != ActRestart {
 			continue
 		}
@@ -235,7 +251,7 @@ func (s *Supervisor) Step(ctx context.Context) {
 	}
 }
 
-func (s *Supervisor) stepOne(ctx context.Context, a Attachment, now time.Time, wan, tx bool) (*Monitor, Decision) {
+func (s *Supervisor) stepOne(ctx context.Context, a Attachment, now time.Time, wan, tx bool, polled Tri) (*Monitor, Decision) {
 	s.mu.Lock()
 	m := s.monitors[a.Name]
 	if m == nil {
@@ -245,6 +261,14 @@ func (s *Supervisor) stepOne(ctx context.Context, a Attachment, now time.Time, w
 	m.Attachment = a // an edited address must be probed at its new value
 	login := s.login[a.Name]
 	s.mu.Unlock()
+
+	// A direct answer beats a remembered announcement. The daemon's own state
+	// machine is what the poll reads, so when it says anything at all it is more
+	// current than the last message we happened to catch — and it is the only
+	// thing that reports a link down while the daemon quietly retries.
+	if polled != TriUnknown {
+		login = polled
+	}
 
 	unit := TriUnknown
 	if s.Signals.UnitActive != nil {

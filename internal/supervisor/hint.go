@@ -1,6 +1,9 @@
 package supervisor
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // hint.go reads what a gateway daemon says about its own upstream links.
 //
@@ -21,6 +24,46 @@ import "strings"
 // login the instant the master says no, which no external probe can see at all.
 //
 // Verified against the pinned DMRGateway (79edbc4, DMRNetwork.cpp/DMRGateway.cpp).
+
+// ParseDMRGatewayStatusReply reads DMRGateway's answer to the "status" remote
+// command — "xlx:n/a net1:conn net2:disc" — into per-slot login state, keyed by
+// the zero-based index that names map onto (net1 is index 0).
+//
+// This is the better of the two daemon-side signals and the reason [Remote
+// Commands] is enabled in the rendered config. The announcements in the rest of
+// this file only arrive when something changes, so a supervisor that has just
+// started, or that missed a message, holds a stale view indefinitely; this can be
+// asked at any time and answers from CDMRNetwork::isConnected — the login state
+// machine itself, not a recollection of what it last said.
+//
+// "n/a" means the slot is disabled or absent, which is not a failure: unknown.
+// Anything unrecognised is likewise unknown rather than assumed bad.
+func ParseDMRGatewayStatusReply(reply string) map[int]Tri {
+	out := map[int]Tri{}
+	for _, field := range strings.Fields(reply) {
+		name, state, ok := strings.Cut(field, ":")
+		if !ok {
+			continue
+		}
+		idx, ok := strings.CutPrefix(name, "net")
+		if !ok {
+			continue // "xlx" has its own section and no netN slot
+		}
+		n, err := strconv.Atoi(idx)
+		if err != nil || n < 1 {
+			continue
+		}
+		switch state {
+		case "conn":
+			out[n-1] = TriYes
+		case "disc":
+			out[n-1] = TriNo
+		default: // "n/a" — disabled or not configured
+			out[n-1] = TriUnknown
+		}
+	}
+	return out
+}
 
 const (
 	dmrLoggedIn      = "Logged into DMR Network: "

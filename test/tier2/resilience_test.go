@@ -413,6 +413,85 @@ func TestTier2_SupervisorRecoversAWANOutage(t *testing.T) {
 	t.Log("STEP 10: recovered link left alone")
 }
 
+// TestTier2_PollSeesWhatAnnouncementsDoNot is the case the bench WAN pull found
+// and the reason waypointd asks rather than only listening.
+//
+// With its master unreachable, DMRGateway publishes "Opening DMR Network" every
+// ten seconds and never once says the link is down. Those announcements map to
+// "an attempt is in progress", which is not bad news — so a supervisor with only
+// them to go on sees nothing wrong for as long as the outage lasts. Asked the same
+// question directly, the daemon answers "disc" the entire time.
+func TestTier2_PollSeesWhatAnnouncementsDoNot(t *testing.T) {
+	r := startSupervisedRig(t)
+	if !r.master.waitLogin(10 * time.Second) {
+		t.Fatalf("upstream login never completed\n%s", r.log.String())
+	}
+
+	// Collect what the daemon says on its own initiative from here on.
+	var announced []string
+	var amu sync.Mutex
+	r.stopMQTT()
+	r.stopMQTT = watchGatewayTopics(t, config.MQTTNameDMRGateway, func(topic string, payload []byte) {
+		if !strings.HasSuffix(topic, "/json") {
+			return
+		}
+		if e, ok := wpmqtt.TranslateGatewayStatus(payload); ok {
+			amu.Lock()
+			announced = append(announced, e.Detail)
+			amu.Unlock()
+		}
+	})
+
+	r.master.close()
+	time.Sleep(25 * time.Second)
+
+	reply := pollGatewayStatus(t, config.MQTTNameDMRGateway, 5*time.Second)
+	if reply == "" {
+		t.Fatal("the daemon did not answer — [Remote Commands] is not enabled in the rendered config")
+	}
+
+	amu.Lock()
+	said := append([]string(nil), announced...)
+	amu.Unlock()
+
+	// What the announcements alone would have told the supervisor.
+	worst := supervisor.TriUnknown
+	for _, m := range said {
+		if _, login, ok := supervisor.DMRGatewayStatus(m); ok && login == supervisor.TriNo {
+			worst = supervisor.TriNo
+		}
+	}
+	// What asking told it.
+	slots := supervisor.ParseDMRGatewayStatusReply(reply)
+	polled := slots[0]
+
+	t.Logf("announcements in 25s: %d (%v) → verdict %v", len(said), uniq(said), worst)
+	t.Logf("poll answered %q → verdict %v", reply, polled)
+
+	if polled != supervisor.TriNo {
+		t.Errorf("the poll should report the lost link as down, got %v from %q", polled, reply)
+	}
+	if worst == supervisor.TriNo {
+		t.Log("NOTE: the announcements also carried the failure this time, so the poll was not the " +
+			"only signal — it still is when the daemon only ever says \"Opening\", which is what the " +
+			"bench WAN pull produced.")
+	} else {
+		t.Log("CONFIRMED: announcements alone never reported the link down; only asking did.")
+	}
+}
+
+func uniq(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range in {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // TestTier2_DMRGatewayKnowsOnlyWhenNothingAnswers pins down exactly how much the
 // daemon knows about its own link, because that is what decides which signals the
 // supervisor may trust.

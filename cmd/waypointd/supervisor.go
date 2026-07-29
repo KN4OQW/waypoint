@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/KN4OQW/waypoint/internal/config"
+	"github.com/KN4OQW/waypoint/internal/mqtt"
 	"github.com/KN4OQW/waypoint/internal/netwatch"
 	"github.com/KN4OQW/waypoint/internal/supervisor"
 )
@@ -24,6 +25,42 @@ type supervisorOptions struct {
 	Remediate     bool
 	MaxRestarts   int
 	RestartWindow time.Duration
+	// Commander asks the gateway daemons about their own links. Nil leaves the
+	// supervisor on announcements and probes alone — slower to notice a link that
+	// went away quietly, but not wrong.
+	Commander *mqtt.Commander
+}
+
+// dmrLinkState asks DMRGateway which of its masters are still connected, and maps
+// its positional answer onto network names.
+//
+// The daemon replies "xlx:n/a net1:conn net2:disc" with no names in it, so the
+// slots are matched against the order the renderer wrote the sections in
+// (config.DMRNetworkOrder, which is derived beside the renderer for exactly this
+// reason). A reply naming more slots than the model knows about means the running
+// daemon is working from an older config than the store holds — mid-apply, most
+// likely — so the extra slots are ignored rather than guessed at.
+func (s *server) dmrLinkState(cmd *mqtt.Commander) map[string]supervisor.Tri {
+	m, err := config.Load(s.store)
+	if err != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	reply, ok := cmd.Ask(ctx, config.MQTTNameDMRGateway, "status")
+	if !ok {
+		return nil // no answer is no news
+	}
+	slots := supervisor.ParseDMRGatewayStatusReply(reply)
+	names := m.DMRNetworkOrder()
+	out := make(map[string]supervisor.Tri, len(slots))
+	for i, state := range slots {
+		if i < len(names) {
+			out[names[i]] = state
+		}
+	}
+	return out
 }
 
 // runSupervisor starts the supervisor for live mode. Remediate arms restarts; with
@@ -52,6 +89,12 @@ func (s *server) runSupervisor(ctx context.Context, opts supervisorOptions) {
 			},
 			TXActive:   func() bool { return s.agg != nil && s.agg.Snapshot().TX != nil },
 			UnitActive: s.unitLiveness,
+			LinkState: func() map[string]supervisor.Tri {
+				if opts.Commander == nil {
+					return nil
+				}
+				return s.dmrLinkState(opts.Commander)
+			},
 			Restart: func(unit string) error {
 				out, err := systemctlRun("restart", unit)
 				if err != nil {

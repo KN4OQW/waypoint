@@ -2167,11 +2167,19 @@ func main() {
 		// declares, keep the node honest about them, and restart a gateway that has
 		// lost one and cannot get it back on its own. Live mode only — a demo node
 		// has no masters to lose.
+		// The commander is how the supervisor ASKS a gateway where its links stand,
+		// rather than waiting to be told. Its own connection, so a wedged query can
+		// never stall the event consumer or the status publisher.
+		commander := mqtt.NewCommander(mqtt.Options{
+			Broker: *broker, Username: *mqttUser, Password: *mqttPass,
+		}, []string{config.MQTTNameDMRGateway}, 0)
+		defer commander.Close()
 		go s.runSupervisor(context.Background(), supervisorOptions{
 			Interval:      *supervisorInterval,
 			Remediate:     *supervisorRemediate,
 			MaxRestarts:   *supervisorMaxRestarts,
 			RestartWindow: *supervisorRestartWindow,
+			Commander:     commander,
 		})
 		// Update poller (D2 / #15): periodically refresh the stack and waypointd
 		// available-update caches and drive opt-in quiet-window auto-apply. Live mode
