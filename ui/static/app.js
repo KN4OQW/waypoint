@@ -4,11 +4,13 @@
 "use strict";
 
 const $ = (sel) => document.querySelector(sel);
+const t = (key, params) => WPI18n.t(key, params); // message catalogs — see i18n.js
 
 const state = {
   active: null,          // current *_start event, if any
   lastheard: new Map(),  // callsign -> latest end event
   networks: new Map(),   // network name -> state string
+  up: null,              // last known feed state; null until the first answer
 };
 
 // DMR talkgroup number -> name, for resolving "TG 3112" to "TG 3112 · Texas
@@ -21,7 +23,7 @@ async function loadNames() {
     const list = await (await fetch("/api/dmr/talkgroups")).json();
     if (Array.isArray(list)) {
       const idx = {};
-      for (const t of list) idx[t.id] = t.name;
+      for (const tg of list) idx[tg.id] = tg.name;
       tgNames = idx;
       renderOnAir();
       renderLastHeard();
@@ -47,7 +49,7 @@ const THEMES = [
   { key: "ice",      color: "#4db8ff", attr: "ice" },
 ];
 function applyTheme(key) {
-  const th = THEMES.find((t) => t.key === key) || THEMES[0];
+  const th = THEMES.find((x) => x.key === key) || THEMES[0];
   if (th.attr) document.documentElement.setAttribute("data-theme", th.attr);
   else document.documentElement.removeAttribute("data-theme");
 }
@@ -109,7 +111,7 @@ async function loadHealth() {
   try {
     const h = await (await fetch("/api/health")).json();
     $("#st-version").textContent = h.version;
-    $("#foot-version").textContent = "waypointd " + h.version;
+    $("#foot-version").textContent = t("foot.version", { version: h.version });
     $("#st-feed").textContent = h.demo ? "demo" : "live";
     $("#demo-badge").hidden = !h.demo;
     setConn(true);
@@ -128,10 +130,11 @@ async function loadCallsign() {
 }
 
 function setConn(up) {
+  state.up = up; // remembered so a language change can re-render it without a poll
   $("#conn-led").className = "conn-led " + (up ? "up" : "down");
-  $("#conn-txt").textContent = up ? "connected" : "disconnected";
+  $("#conn-txt").textContent = up ? t("status.connected") : t("status.disconnected");
   $("#side-led").className = "led" + (up ? "" : " down");
-  $("#side-online").textContent = up ? "ONLINE" : "OFFLINE";
+  $("#side-online").textContent = up ? t("sidebar.online") : t("sidebar.offline");
 }
 
 function setMode(mode) {
@@ -143,7 +146,7 @@ function renderOnAir() {
   const e = state.active;
   if (!e) {
     box.className = "onair idle";
-    box.innerHTML = '<p class="onair-idle">Listening — no active transmission</p>';
+    box.innerHTML = `<p class="onair-idle">${esc(t("dash.onair.idle"))}</p>`;
     return;
   }
   const dir = e.type === "rf_voice_start" ? "RF" : "NET";
@@ -293,13 +296,43 @@ async function loadStatus() {
   renderGateways(s.gateways);
 }
 
+// The language picker sits under the theme swatches, and is populated from the
+// catalog index rather than a list in here.
+function mountLanguagePicker() { WPI18n.renderPicker($("#lang-pick")); }
+
+// i18n.js re-applies the static data-i18n markup on a language change; what it
+// cannot know is which of those elements JavaScript has since overwritten with
+// live state. #conn-txt and #side-online carry their *placeholder* text as
+// data-i18n, so a language change resets them to "connecting…" — re-assert the
+// state we actually last saw instead of waiting out the 2s poll.
+addEventListener("wp-lang-changed", () => {
+  mountLanguagePicker();
+  if (state.up !== null) setConn(state.up);
+  renderOnAir();
+  loadHealth(); // the footer's "waypointd {version}" is interpolated, not markup
+});
+
+// Theme and mode are pure CSS attributes, and the inline script in the page head
+// already applied them before first paint; this only brings the swatch UI into
+// agreement, so it does not wait on anything.
 applyMode(currentMode());
 applyTheme(localStorage.getItem("wp-theme") || "phosphor");
 renderThemes();
-loadHealth();
-loadCallsign();
-loadNames(); // DMR talkgroup names, for inline resolution (RFC-0010)
-loadHistory().then(connect); // seed persistent history, then attach the live tail
-loadStatus(); // server-computed truth (feed, on-air self-heal, gateways)
-setInterval(loadStatus, 2000); // reflect gateway kill/restart within the #5 window
-setInterval(renderLastHeard, 15000); // keep "ago" fresh
+
+// Everything below renders text, so it waits for the catalogs. Starting it
+// earlier would lose a race twice over: t() would answer with bare keys before
+// the fetch landed, and i18n.js re-applying the static markup afterwards would
+// stamp the placeholder "connecting…" back over a status that had already
+// resolved. WPI18n.ready never rejects — a missing catalog degrades to English
+// inside i18n.js — so this is a delay of one same-origin fetch, not a new way
+// for the dashboard to fail to load.
+WPI18n.ready.then(() => {
+  mountLanguagePicker();
+  loadHealth();
+  loadCallsign();
+  loadNames(); // DMR talkgroup names, for inline resolution (RFC-0010)
+  loadHistory().then(connect); // seed persistent history, then attach the live tail
+  loadStatus(); // server-computed truth (feed, on-air self-heal, gateways)
+  setInterval(loadStatus, 2000); // reflect gateway kill/restart within the #5 window
+  setInterval(renderLastHeard, 15000); // keep "ago" fresh
+});
