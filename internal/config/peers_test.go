@@ -125,7 +125,7 @@ func TestPeerSecretShape(t *testing.T) {
 		ID: "p1", Name: "shack", State: PeerPaired,
 		Fingerprint: "AB:CD:EF:12", Certificate: secretCert, PrivateKey: secretKey,
 	}}}
-	raw, err := json.Marshal(m.View(""))
+	raw, err := json.Marshal(m.View(Sources{}))
 	if err != nil {
 		t.Fatal(err)
 	}

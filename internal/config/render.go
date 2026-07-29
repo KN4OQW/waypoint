@@ -263,7 +263,7 @@ func (m *Model) renderBusConfig(id string, paths Paths) string {
 	bc.Loopbacks = m.busLoopbacksFor(id)
 	// D4: the broker + topic prefix the daemon publishes its events to (RFC-0008
 	// inter-process event plane). Rendered, never hardcoded; absent ⇒ no publishing.
-	bc.MQTT = paths.busMQTT()
+	bc.MQTT = m.busMQTT(paths)
 	// RFC-0016 owner side: add the peering block + one member row per ACTIVE remote
 	// attachment. A bus with no active remote attachment gets no Peering block, so
 	// it renders byte-identically to Phase 1 (dormant/revoked peers render nothing).
@@ -324,7 +324,7 @@ func (m *Model) renderMemberConfig(busID, peerID string, paths Paths) string {
 		KeyPath:         nodeKeyPath(peeringDir),
 		DeadlineMs:      m.Peering.deadline(),
 		JitterBufferMs:  m.Peering.jitter(),
-		MQTT:            paths.busMQTT(),
+		MQTT:            m.busMQTT(paths),
 		HangTimeSeconds: BusConfig{Bus: bus}.HangTimeSeconds,
 	}
 	for _, ra := range m.activeRemoteAttachmentsForBus(busID) {
@@ -469,17 +469,14 @@ func (m *Model) RenderMMDVM() string {
 		kv("Location", m.General.Location),
 		kv("URL", m.General.URL),
 	)
-	sect(&b, "Log",
-		kv("MQTTLevel", "1"),
-		kv("DisplayLevel", "0"),
-	)
-	sect(&b, "MQTT",
-		kv("Host", "127.0.0.1"),
-		kv("Port", "1883"),
-		kv("Auth", "0"),
-		kv("Name", "mmdvm"),
-		kv("Keepalive", "60"),
-	)
+	// [Log] and [MQTT] are store-owned (#29 System tab). Key names are verbatim
+	// from the pinned MMDVM-Host fd4a6a4 Conf.cpp:600-619 — this tree parses
+	// MQTTLevel/DisplayLevel and Host/Port/Keepalive/Name/Auth/Username/Password,
+	// NOT the file-logging [Log] block the published upstream MMDVM.ini still
+	// shows. Name is the topic root waypointd's consumer subscribes to, so the two
+	// come from one place and cannot drift apart.
+	sect(&b, "Log", m.logSectionMQTT(m.Logging.MMDVM)...)
+	sect(&b, "MQTT", m.mqttSection("Host", "Auth", m.MQTT.HostName())...)
 	// [CW Id] is automatic Morse identification. Callsign is emitted only when the
 	// operator set an explicit override: MMDVM-Host seeds m_cwIdCallsign from
 	// [General] Callsign and overrides it only if this key is present, so omitting
@@ -809,17 +806,8 @@ func (m *Model) RenderYSFGateway() string {
 		kv("Power", def(m.General.Power, "1")),
 		kv("Name", def(m.General.Location, "Waypoint")),
 	)
-	sect(&b, "Log",
-		kv("MQTTLevel", "1"),
-		kv("DisplayLevel", "0"),
-	)
-	sect(&b, "MQTT",
-		kv("Address", "127.0.0.1"),
-		kv("Port", "1883"),
-		kv("Keepalive", "60"),
-		kv("Auth", "0"),
-		kv("Name", "ysf-gateway"),
-	)
+	sect(&b, "Log", m.logSectionMQTT(m.Logging.YSFGateway)...)
+	sect(&b, "MQTT", m.mqttSection("Address", "Auth", "ysf-gateway")...)
 	sect(&b, "Network",
 		kv("Startup", m.YSFGW.Startup),
 		// NB: [Network] Reconnect is NOT parsed by this pinned YSFGateway (only
@@ -914,21 +902,12 @@ func (m *Model) RenderDGIdGateway() string {
 		kv("Power", def(m.General.Power, "1")),
 		kv("Description", def(m.General.Location, "Waypoint")),
 	)
-	sect(&b, "Log",
-		kv("MQTTLevel", "1"),
-		kv("DisplayLevel", "0"),
-	)
+	sect(&b, "Log", m.logSectionMQTT(m.Logging.DGIdGateway)...)
 	sect(&b, "APRS",
 		kb("Enable", m.YSFGW.APRS),
 		kv("Suffix", "Y"),
 	)
-	sect(&b, "MQTT",
-		kv("Address", "127.0.0.1"),
-		kv("Port", "1883"),
-		kv("Keepalive", "60"),
-		kv("Auth", "0"),
-		kv("Name", "dgid-gateway"),
-	)
+	sect(&b, "MQTT", m.mqttSection("Address", "Auth", "dgid-gateway")...)
 	// [YSF Network] carries the shared hostlist; [FCS Network] has no room-file
 	// key (DGIdGateway resolves FCS rooms by Name in the DG-ID blocks below).
 	sect(&b, "YSF Network",
@@ -1009,17 +988,8 @@ func (m *Model) RenderP25Gateway() string {
 		kv("Language", "en_GB"),
 		kv("Directory", p25AudioDir),
 	)
-	sect(&b, "Log",
-		kv("MQTTLevel", "1"),
-		kv("DisplayLevel", "0"),
-	)
-	sect(&b, "MQTT",
-		kv("Address", "127.0.0.1"),
-		kv("Port", "1883"),
-		kv("Keepalive", "60"),
-		kv("Auth", "0"),
-		kv("Name", "p25-gateway"),
-	)
+	sect(&b, "Log", m.logSectionMQTT(m.Logging.P25Gateway)...)
+	sect(&b, "MQTT", m.mqttSection("Address", "Auth", "p25-gateway")...)
 	// Parrot (local echo, TG9990-style) runs on 42011; P252DMR is omitted so no
 	// dead cross-mode TG is advertised. Static holds any startup/auto-link TGs.
 	sect(&b, "Network",
@@ -1081,17 +1051,8 @@ func (m *Model) RenderNXDNGateway() string {
 		kv("Language", "en_GB"),
 		kv("Directory", nxdnAudioDir),
 	)
-	sect(&b, "Log",
-		kv("MQTTLevel", "1"),
-		kv("DisplayLevel", "0"),
-	)
-	sect(&b, "MQTT",
-		kv("Address", "127.0.0.1"),
-		kv("Port", "1883"),
-		kv("Keepalive", "60"),
-		kv("Auth", "0"),
-		kv("Name", "nxdn-gateway"),
-	)
+	sect(&b, "Log", m.logSectionMQTT(m.Logging.NXDNGateway)...)
+	sect(&b, "MQTT", m.mqttSection("Address", "Auth", "nxdn-gateway")...)
 	// Parrot (local echo, TG10) runs on 42021; NXDN2DMR is omitted so no dead
 	// cross-mode TG is advertised (Reflectors.cpp only adds TG20 when its port
 	// is set). Static holds any startup/auto-link TGs (empty by default).
@@ -1203,19 +1164,10 @@ func (m *Model) RenderDStarGateway() string {
 	sect(&b, "APRS",
 		kv("Enabled", "0"),
 	)
-	sect(&b, "Log",
-		kv("MQTTLevel", "1"),
-		kv("DisplayLevel", "0"),
-	)
+	sect(&b, "Log", m.logSectionMQTT(m.Logging.DStarGateway)...)
 	// DStarGateway's [MQTT] key is Authenticate (not Auth like the other
 	// gateways); Name is the topic prefix (<name>/json status, <name>/log).
-	sect(&b, "MQTT",
-		kv("Address", "127.0.0.1"),
-		kv("Port", "1883"),
-		kv("Keepalive", "60"),
-		kv("Authenticate", "0"),
-		kv("Name", "dstar-gateway"),
-	)
+	sect(&b, "MQTT", m.mqttSection("Address", "Authenticate", "dstar-gateway")...)
 	sect(&b, "Paths",
 		kv("Data", dstarDataDir),
 	)
@@ -1271,8 +1223,8 @@ func (m *Model) RenderM17Gateway() string {
 	// Pre-MQTT gateway: log to the console at level 1 so the systemd journal
 	// captures startup/link events; no separate log file (FileLevel 0).
 	sect(&b, "Log",
-		kv("DisplayLevel", "1"),
-		kv("FileLevel", "0"),
+		kv("DisplayLevel", m.Logging.M17Gateway.display("1")),
+		kv("FileLevel", m.Logging.M17Gateway.file("0")),
 		kv("FilePath", "/tmp"),
 		kv("FileRoot", "M17Gateway"),
 		kv("FileRotate", "0"),
@@ -1337,17 +1289,8 @@ func (m *Model) RenderDAPNETGateway() string {
 		kv("Daemon", "0"),
 	)
 	sect(&b, "General", general...)
-	sect(&b, "Log",
-		kv("MQTTLevel", "1"),
-		kv("DisplayLevel", "0"),
-	)
-	sect(&b, "MQTT",
-		kv("Address", "127.0.0.1"),
-		kv("Port", "1883"),
-		kv("Keepalive", "60"),
-		kv("Auth", "0"),
-		kv("Name", "dapnet-gateway"),
-	)
+	sect(&b, "Log", m.logSectionMQTT(m.Logging.DAPNETGateway)...)
+	sect(&b, "MQTT", m.mqttSection("Address", "Auth", "dapnet-gateway")...)
 	// DAPNET core server on the fixed transmitter port 43434; AuthKey authenticates
 	// the login (a per-operator secret from the DAPNET web portal).
 	sect(&b, "DAPNET",
@@ -1372,17 +1315,8 @@ func (m *Model) RenderDMRGateway() string {
 		kv("Timeout", "10"),
 		kv("Daemon", "0"),
 	)
-	sect(&b, "Log",
-		kv("MQTTLevel", "1"),
-		kv("DisplayLevel", "0"),
-	)
-	sect(&b, "MQTT",
-		kv("Address", "127.0.0.1"),
-		kv("Port", "1883"),
-		kv("Keepalive", "60"),
-		kv("Auth", "0"),
-		kv("Name", "dmr-gateway"),
-	)
+	sect(&b, "Log", m.logSectionMQTT(m.Logging.DMRGateway)...)
+	sect(&b, "MQTT", m.mqttSection("Address", "Auth", "dmr-gateway")...)
 
 	dmrID := firstNonEmpty(m.DMR.ID, m.General.ID)
 	n := 0

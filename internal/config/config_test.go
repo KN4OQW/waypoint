@@ -914,7 +914,7 @@ func TestSetDAPNETPreservesAuthKey(t *testing.T) {
 // TestViewRedactsDAPNETAuthKey: the DAPNET AuthKey never reaches the view — it
 // reports only has_auth_key. FM (no secret) surfaces its fields plainly.
 func TestViewRedactsDAPNETAuthKey(t *testing.T) {
-	v := fixture().View("/tmp/config.db")
+	v := fixture().View(Sources{Store: "/tmp/config.db"})
 	pv := fmt.Sprintf("%+v", v.POCSAG)
 	if strings.Contains(pv, "dapnet-s3cret") {
 		t.Fatal("DAPNET AuthKey leaked into the view")
@@ -1090,7 +1090,7 @@ func TestDStarIsolation(t *testing.T) {
 }
 
 func TestViewRedactsPasswords(t *testing.T) {
-	v := fixture().View("/tmp/config.db")
+	v := fixture().View(Sources{Store: "/tmp/config.db"})
 	blob := ""
 	for _, n := range v.Networks {
 		blob += n.Name + n.Address + n.Port
@@ -1117,7 +1117,7 @@ func TestViewRedactsPasswords(t *testing.T) {
 // serializes under the "self_only" key the settings page binds to.
 func TestViewSurfacesNodeLock(t *testing.T) {
 	m := fixture() // DMR.SelfOnly = true (Node Lock = Private)
-	v := m.View("/tmp/config.db")
+	v := m.View(Sources{Store: "/tmp/config.db"})
 	if !v.DMR.SelfOnly {
 		t.Fatal("DMR view should surface SelfOnly (Node Lock) from the model")
 	}
@@ -1137,7 +1137,7 @@ func TestViewSurfacesNodeLock(t *testing.T) {
 // settings page binds to.
 func TestViewSurfacesYSFModeParams(t *testing.T) {
 	m := fixture() // YSF{SelfOnly:true, LowDeviation:true, TXHang:"6", ModeHang:"25", RemoteGateway:true}
-	v := m.View("/tmp/config.db")
+	v := m.View(Sources{Store: "/tmp/config.db"})
 	if !v.YSF.SelfOnly || !v.YSF.LowDeviation || !v.YSF.RemoteGateway {
 		t.Fatalf("YSF view should surface the [System Fusion] mode toggles, got %+v", v.YSF)
 	}

@@ -79,6 +79,13 @@ type Model struct {
 	// Update is the operator-set software-update policy (channel, auto-apply,
 	// quiet window). Store-only; drives no INI. See update.go / RFC-0014.
 	Update UpdatePrefs `json:"update"`
+
+	// The System tab (#29): the MQTT data plane every daemon shares and the
+	// per-daemon log levels. Both were command-line flags and render-time constants
+	// before these sections existed. MQTT carries a secret (the broker password),
+	// so it writes through SetMQTT and never appears in the View. See system.go.
+	MQTT    MQTT    `json:"mqtt"`
+	Logging Logging `json:"logging"`
 }
 
 // History is the event-history retention policy (RFC-0004): how long waypointd
@@ -694,6 +701,8 @@ func (m *Model) sections() map[string]any {
 		"history":            &m.History,
 		"station_id":         &m.StationID,
 		"update":             &m.Update,
+		"mqtt":               &m.MQTT,
+		"logging":            &m.Logging,
 	}
 }
 
