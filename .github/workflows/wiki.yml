@@ -1,0 +1,66 @@
+name: wiki
+
+# The operator-facing pages on the GitHub wiki are PUBLISHED FROM THIS REPO, not
+# edited in the browser. Recovery instructions that drift from the software they
+# describe are worse than none — someone locked out of a node follows them
+# exactly and blames themselves when the command has changed — and a wiki nobody
+# can review is where that drift happens.
+#
+# So docs/recovery.md is the single source, versioned and reviewed with the code
+# that implements it, and this job mirrors it onto the wiki whenever it changes.
+# Edits made in the wiki UI are overwritten on the next push; the page says so.
+#
+# ONE MANUAL STEP IS REQUIRED FIRST. GitHub does not create a repository's wiki
+# until a page has been saved through the web UI at least once, and there is no
+# API for it — so until somebody creates any page (content irrelevant), this job
+# has nothing to push to and will say so rather than fail silently.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/recovery.md
+      - .github/workflows/wiki.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish docs/recovery.md to the wiki
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if ! git clone -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" wiki 2>/dev/null; then
+            echo "::warning::This repository's wiki has never been initialised, so there is nothing to push to."
+            echo "::warning::Create any page once at https://github.com/${GITHUB_REPOSITORY}/wiki/_new — this job will publish over it from then on."
+            exit 0
+          fi
+
+          # The wiki page name is its filename. "Regaining-access" renders as
+          # "Regaining access" and gives a URL somebody can be told over the air.
+          {
+            echo "> **This page is generated from [\`docs/recovery.md\`](https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/recovery.md) in the Waypoint repository.**"
+            echo "> Edits made here are overwritten the next time that file changes — send a pull request instead."
+            echo
+            cat docs/recovery.md
+          } > wiki/Regaining-access.md
+
+          cd wiki
+          git config user.name  "waypoint-docs[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- Regaining-access.md; then
+            echo "Wiki already matches docs/recovery.md; nothing to publish."
+            exit 0
+          fi
+          git add Regaining-access.md
+          git commit -q -m "Publish docs/recovery.md (${GITHUB_SHA:0:7})"
+          git push -q origin HEAD
+          echo "Published to https://github.com/${GITHUB_REPOSITORY}/wiki/Regaining-access"
