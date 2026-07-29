@@ -4,14 +4,14 @@ Waypoint updates are **transactional and health-gated**: an update either
 completes, or the device boots the version it was already running. There is no
 state in which a `waypointd` update leaves the box unable to start — the failure
 mode that plagues in-place Pi-Star/WPSD updates (update loops, hangs, and the
-"stuck at initializing → factory reset" class). This is [RFC-0014](rfcs/0014-atomic-updates.md),
+"stuck at initializing → factory reset" class). This is [RFC-0014](https://github.com/KN4OQW/waypoint/discussions/169),
 issue [#13](https://github.com/KN4OQW/waypoint/issues/13).
 
 ## How an update happens
 
 1. **Fetch + verify the manifest.** A signed JSON manifest (`update.json` +
    `update.json.minisig`) describes the latest release. It is verified against the
-   pinned release key ([RFC-0013](rfcs/0013-signed-releases-verified-downloads.md))
+   pinned release key ([RFC-0013](https://github.com/KN4OQW/waypoint/discussions/168))
    before anything is downloaded, so a downgrade or a swapped artifact URL is
    rejected up front.
 2. **Download + verify the binary.** The artifact for this node's architecture is
@@ -50,7 +50,7 @@ has.
 ### Reverting across a schema migration
 
 A release may raise the configuration store's schema version
-([RFC-0001](rfcs/0001-config-store.md)). That puts a twist in the revert path
+([RFC-0001](https://github.com/KN4OQW/waypoint/discussions/155)). That puts a twist in the revert path
 worth stating explicitly, because getting it wrong is the one way this engine can
 leave a node that will not start:
 

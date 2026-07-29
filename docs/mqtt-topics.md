@@ -5,8 +5,8 @@ MQTT topics, and describes them to Home Assistant via MQTT Discovery so entities
 appear with **zero YAML**. This document is the contract third-party consumers can
 build against.
 
-- Status pipeline & topic design: [RFC-0008](rfcs/0008-status-pipeline.md)
-- Home Assistant discovery: [RFC-0011](rfcs/0011-home-assistant-discovery.md)
+- Status pipeline & topic design: [RFC-0008](https://github.com/KN4OQW/waypoint/discussions/163)
+- Home Assistant discovery: [RFC-0011](https://github.com/KN4OQW/waypoint/discussions/166)
 
 All topics below are **retained** (a late-joining subscriber reads current state
 immediately) and are published only in live mode (a `-demo` node has no broker).

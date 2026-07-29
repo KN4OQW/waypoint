@@ -6,7 +6,7 @@ turns the session cookie's `Secure` flag on automatically. A bare `http://…`
 request is redirected to HTTPS. So the claim/login password and the session cookie
 are never sent in cleartext.
 
-Design & rationale: [RFC-0012](rfcs/0012-https-by-default.md).
+Design & rationale: [RFC-0012](https://github.com/KN4OQW/waypoint/discussions/167).
 
 ## The one-time trust prompt (self-signed)
 
