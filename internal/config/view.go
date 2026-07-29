@@ -41,7 +41,14 @@ type View struct {
 	// verbatim.
 	Peers             []PeerView         `json:"peers"`
 	RemoteAttachments []RemoteAttachment `json:"remote_attachments"`
-	ReadOnly          bool               `json:"read_only"`
+	// The System tab (#29): the shared MQTT data plane and the per-daemon log
+	// levels. MQTT is REDACTED — the broker password is a write-only secret, so
+	// ViewMQTT carries HasPassword and never the value itself (D4). Scrubbing
+	// happens here, in the projection, not in the browser: a value the server never
+	// serializes cannot leak through a cached response, a proxy log, or a curl.
+	MQTT     ViewMQTT    `json:"mqtt"`
+	Logging  ViewLogging `json:"logging"`
+	ReadOnly bool        `json:"read_only"`
 	// The cross-mode transcoding bridges (MMDVM_CM) are no longer projected here.
 	// The per-bridge-daemon model is retired for the RFC-0003 bus architecture, so
 	// the settings page shows a placeholder instead of bridge cards. The bridge store
@@ -229,8 +236,47 @@ type ViewDisplay struct {
 	HD44780I2CAddr string `json:"hd44780_i2c_addr"`
 }
 
+// Sources names the deployment-owned locations the settings page displays but
+// does not edit: they come from the packaged systemd unit's flags, not the store.
+//
+// Listen is the waypointd HTTPS listen address, shown read-only on the System tab.
+// It is deliberately NOT store-owned (#29 scope amendment): making it live-editable
+// would let an operator move the UI out from under the browser doing the edit — the
+// worst failure this product has — and the confirm-or-revert machinery that makes
+// host networking safe is not worth duplicating for a value nobody changes twice.
 type Sources struct {
-	Store string `json:"store"`
+	Store  string `json:"store"`
+	Listen string `json:"listen"`
+}
+
+// ViewMQTT is the System tab's read model for the shared data plane. The broker
+// password is a write-only secret: it is never serialized, and HasPassword reports
+// only whether one is stored (the same rule the DMR network passwords, the ircDDB
+// password and the DAPNET AuthKey follow).
+type ViewMQTT struct {
+	Host         string `json:"host"`
+	Port         string `json:"port"`
+	Auth         bool   `json:"auth"`
+	Username     string `json:"username"`
+	HasPassword  bool   `json:"has_password"`
+	Name         string `json:"name"`
+	StatusPrefix string `json:"status_prefix"`
+	BusPrefix    string `json:"bus_prefix"`
+}
+
+// ViewLogging is the System tab's read model for the per-daemon log levels. No
+// secret; it projects verbatim. m17gateway is the pre-MQTT shape (display + file),
+// matching what the pinned M17Gateway actually parses.
+type ViewLogging struct {
+	MMDVM         LogLevels     `json:"mmdvm"`
+	DMRGateway    LogLevels     `json:"dmrgateway"`
+	YSFGateway    LogLevels     `json:"ysfgateway"`
+	DGIdGateway   LogLevels     `json:"dgidgateway"`
+	P25Gateway    LogLevels     `json:"p25gateway"`
+	NXDNGateway   LogLevels     `json:"nxdngateway"`
+	DStarGateway  LogLevels     `json:"dstargateway"`
+	DAPNETGateway LogLevels     `json:"dapnetgateway"`
+	M17Gateway    FileLogLevels `json:"m17gateway"`
 }
 
 type ViewGeneral struct {
@@ -362,9 +408,9 @@ var modeDisplay = []struct {
 }
 
 // View projects the Model onto the redacted API shape.
-func (m *Model) View(storePath string) *View {
+func (m *Model) View(src Sources) *View {
 	v := &View{
-		Sources:  Sources{Store: storePath},
+		Sources:  src,
 		ReadOnly: false, // store + apply are wired end to end; the page edits
 		General: ViewGeneral{
 			Callsign:    m.General.Callsign,
@@ -579,5 +625,30 @@ func (m *Model) View(storePath string) *View {
 		})
 	}
 	v.RemoteAttachments = append([]RemoteAttachment(nil), m.RemoteAttachments...)
+	// System tab (#29). Both project their EFFECTIVE values — the defaults resolved
+	// — rather than the raw row, so the page shows what the node will actually do
+	// instead of a blank box on a store that has never been written. The password is
+	// the one field that does not project at all (D4): only whether one is set.
+	v.MQTT = ViewMQTT{
+		Host:         m.MQTT.host(),
+		Port:         m.MQTT.port(),
+		Auth:         m.MQTT.Auth,
+		Username:     m.MQTT.Username,
+		HasPassword:  m.MQTT.Password != "",
+		Name:         m.MQTT.HostName(),
+		StatusPrefix: m.MQTT.StatusTopicPrefix(),
+		BusPrefix:    m.MQTT.BusTopicPrefix(),
+	}
+	v.Logging = ViewLogging{
+		MMDVM:         LogLevels{Display: m.Logging.MMDVM.display("0"), MQTT: m.Logging.MMDVM.mqtt("1")},
+		DMRGateway:    LogLevels{Display: m.Logging.DMRGateway.display("0"), MQTT: m.Logging.DMRGateway.mqtt("1")},
+		YSFGateway:    LogLevels{Display: m.Logging.YSFGateway.display("0"), MQTT: m.Logging.YSFGateway.mqtt("1")},
+		DGIdGateway:   LogLevels{Display: m.Logging.DGIdGateway.display("0"), MQTT: m.Logging.DGIdGateway.mqtt("1")},
+		P25Gateway:    LogLevels{Display: m.Logging.P25Gateway.display("0"), MQTT: m.Logging.P25Gateway.mqtt("1")},
+		NXDNGateway:   LogLevels{Display: m.Logging.NXDNGateway.display("0"), MQTT: m.Logging.NXDNGateway.mqtt("1")},
+		DStarGateway:  LogLevels{Display: m.Logging.DStarGateway.display("0"), MQTT: m.Logging.DStarGateway.mqtt("1")},
+		DAPNETGateway: LogLevels{Display: m.Logging.DAPNETGateway.display("0"), MQTT: m.Logging.DAPNETGateway.mqtt("1")},
+		M17Gateway:    FileLogLevels{Display: m.Logging.M17Gateway.display("1"), File: m.Logging.M17Gateway.file("0")},
+	}
 	return v
 }

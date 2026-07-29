@@ -10,7 +10,25 @@ build against.
 
 All topics below are **retained** (a late-joining subscriber reads current state
 immediately) and are published only in live mode (a `-demo` node has no broker).
-The status prefix defaults to `waypoint/status` (`-status-topic-prefix`).
+The status prefix defaults to `waypoint/status`.
+
+## Where the prefixes are set
+
+The three topic roots on this page — the modem's `Name`, the status prefix, and
+the bus prefix — plus the broker address and credentials are **store-owned**
+(issue #29). Edit them in the settings UI under **Admin → System**; Apply rewrites
+every affected config, restarts the daemons whose file changed, and moves
+waypointd's own consumer and status republisher onto the new topics in the same
+pass, so nothing is left subscribed to the old root.
+
+The matching command-line flags (`-mqtt-broker`, `-mqtt-name`,
+`-status-topic-prefix`, `-bus-topic-prefix`, `-mqtt-user`, `-mqtt-pass`) still
+exist as an **override layer**, following RFC-0005 precedence: a flag set
+explicitly on the command line wins over the store and logs which store key it is
+shadowing; a flag left alone takes the stored value; an absent store row takes the
+compiled default. So a packaged unit that pins `-mqtt-broker` keeps working
+unchanged, and an operator whose System-tab edit appears not to take effect finds
+the reason in the journal rather than in a bug report.
 
 ## State topics (`waypoint/status/#`)
 
@@ -19,7 +37,7 @@ The status prefix defaults to `waypoint/status` (`-status-topic-prefix`).
 | `waypoint/status/mode` | string, e.g. `DMR` | Current active mode, or `IDLE`. |
 | `waypoint/status/tx` | JSON `{mode,slot,source,dest,network,direction,started_at}` or empty | The transmission on the air; empty payload when idle. |
 | `waypoint/status/feed` | JSON `{connected,detail,since}` | Health of the MMDVM-Host MQTT feed everything derives from. |
-| `waypoint/status/network/<name>` | JSON `{up,detail,since}` | Per network/reflector link state. `<name>` is topic-sanitized. |
+| `waypoint/status/network/<name>` | JSON `{up,detail,since}` | Per network/reflector link state. `<name>` is topic-sanitized. `up` moves in **both** directions — see below. |
 | `waypoint/status/gateway/<name>` | JSON `{up,detail,since}` | Per gateway-daemon liveness (from the supervisor probe). |
 | `waypoint/status/availability` | `online` / `offline` | Device availability. `offline` is the connection's MQTT Last-Will, so it flips the moment the node drops. |
 
@@ -29,6 +47,39 @@ safe topic levels.
 Status is **self-healing** (RFC-0008): a stranded transmission clears on a
 watchdog and a killed gateway shows down within the supervisor probe interval, so
 these topics reflect truth rather than a latched last value — no log scraping.
+
+### Network links go down as well as up
+
+`network/<name>` reports `up: false` when a link is lost, not just `up: true`
+when one is made. A link stops being claimed on any of three signals:
+
+- an explicit **`link_down`** event naming the network (its `detail` says why);
+- **loss of the MMDVM-Host feed** — nothing can re-assert a link with the feed
+  gone, and `detail` reads `unconfirmed — MMDVM-Host feed down`;
+- the **confirmation watchdog**: a link that *was* being re-confirmed and stops
+  being reports `unconfirmed for <window>` (`-link-ttl`, default 3 minutes).
+
+The watchdog applies **only to links something is actively re-checking**. The
+supervisor asks DMRGateway every cycle, so its masters are subject to it; a link
+with no confirmation source — DAPNET, whose daemon isn't packaged yet — has no
+deadline and keeps its last known state, because decaying it to "down" on a timer
+would report a failure the timer knows nothing about. That is what lets the
+watchdog default to on.
+
+Confirming is not an observable change: `since` is when the link entered its
+*current* state, so a re-confirmation neither moves `since` nor republishes the
+topic. Only the *absence* of confirmation is ever visible.
+
+A network the operator deletes or disables is **retired** rather than left at its
+last verdict: `link_removed` drops it from `networks` and its retained
+`network/<name>` topic is cleared with an empty payload, so a deleted network stops
+being described instead of trading "still linked" for "still exists". (A Home
+Assistant *discovery* config for a retired entity is a separate retained topic and
+is not yet cleared — tracked with the RFC-0011 follow-up.)
+
+The event stream carries `link_up`/`link_down`/`link_removed` for this; the original
+`link` spelling still means "up" and is still accepted, because `events.db` holds
+rows written before the pair existed and `GET /api/history` replays them.
 
 ## Home Assistant discovery (`homeassistant/#`)
 
@@ -64,8 +115,49 @@ introduces them.
 - `-node-id=<id>` — pin the device id (keep it stable across reflashes so HA
   keeps the same device).
 
-Discovery is published only to the broker the node already talks to
-(`-mqtt-broker`); Waypoint never reaches out to a new host.
+Discovery is published only to the broker the node already talks to (the store's
+broker setting, or `-mqtt-broker` when that flag overrides it); Waypoint never
+reaches out to a new host. Changing the status prefix republishes the discovery
+configs under the new state topics, so HA follows without manual intervention.
+
+## Topics Waypoint consumes
+
+Everything above is published. Waypoint also **subscribes** to the daemons' own
+planes — it is where live status comes from, and there is no log reader anywhere
+in the path.
+
+| Topic | Publisher | Used for |
+|---|---|---|
+| `mmdvm/json` | MMDVM-Host | Per-mode voice traffic → the event stream, last-heard, on-air. |
+| `dmr-gateway/json` | DMRGateway | Its own status plane: `{"status":{"message":"Logged into DMR Network: X"}}` and the failed-login/closing counterparts, published the moment a master accepts or refuses. |
+| `waypoint/bus/#` | Mode-bus daemons | Bus events, mapped 1:1 (below). |
+
+### Supervisor events
+
+Two event types come from the resilience supervisor and appear in the event log
+and the `/api/history` record like any other:
+
+| Type | Meaning |
+|---|---|
+| `link_up` / `link_down` | The supervisor's verdict about one upstream attachment, with the reason in `detail`. This is what drives `waypoint/status/network/<name>`. |
+| `link_removed` | The network is no longer configured. Retires its row and clears its retained topic. |
+| `supervisor_action` | Something it did, or declined to do, about a lost link — `restarted waypoint-dmrgateway.service — BM_3102: the endpoint is unreachable`. `source` is the unit. |
+
+Actions are events rather than log lines because unattended recovery has to be
+legible after the fact: an operator who was asleep when the ISP dropped should be
+able to read what happened. Declining is recorded too — a supervisor that hits its
+restart cap and goes quiet is otherwise indistinguishable from one that fixed the
+problem.
+
+A DMRGateway status message becomes a `gateway_status` hub event naming the
+network, so it persists and shows in the event log. It is **not** folded into link
+state on its own: the resilience supervisor
+([#22](https://github.com/KN4OQW/waypoint/issues/22)) weighs it against the
+systemd unit state and Waypoint's own endpoint probe, and publishes the resulting
+`link_up`/`link_down` verdict. The message is English prose assembled upstream
+with string concatenation, so a wording change would silently stop matching —
+which is exactly why it is one signal of three and never the authority. Losing it
+costs the supervisor its fastest detection path, not its correctness.
 
 ## Mode-bus event topics (`waypoint/bus/#`)
 
@@ -75,7 +167,8 @@ onto the local broker and waypointd's consumer ingests them as ordinary hub
 events — RFC-0004 persistence, RFC-0008 status, and the dashboard bus badges then
 work with no further plumbing. Third-party consumers get bus events for free.
 
-The prefix defaults to `waypoint/bus` (`-bus-topic-prefix`). Each message is one
+The prefix defaults to `waypoint/bus` and is edited under **Admin → System** (see
+[Where the prefixes are set](#where-the-prefixes-are-set)). Each message is one
 `hub.Event` as JSON — the **same schema** the SSE/UI layer already speaks, mapped
 1:1 with no translation layer.
 

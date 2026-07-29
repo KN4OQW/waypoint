@@ -57,3 +57,55 @@ func keys(m map[string]string) []string {
 	}
 	return out
 }
+
+// A retained topic must be CLEARED when its network goes away. Republish alone
+// only publishes what exists, so a deleted network's last payload would sit on the
+// broker forever and Home Assistant would keep an entity for a network the node no
+// longer has.
+func TestRepublisherClearsVanishedTopics(t *testing.T) {
+	var pubs []string
+	got := map[string]string{}
+	publish := func(topic string, payload []byte) {
+		pubs = append(pubs, topic)
+		got[topic] = string(payload)
+	}
+
+	rp := &Republisher{}
+	rp.Publish(Status{
+		Mode:     "DMR",
+		Networks: map[string]Link{"BM 3103": {Up: true}, "TGIF": {Up: true}},
+		Gateways: map[string]Link{"dmrgateway": {Up: true}},
+	}, "waypoint/status", publish)
+	if got["waypoint/status/network/TGIF"] == "" {
+		t.Fatal("TGIF was never published in the first place")
+	}
+
+	// TGIF is deleted; BM stays.
+	pubs, got = nil, map[string]string{}
+	rp.Publish(Status{
+		Mode:     "DMR",
+		Networks: map[string]Link{"BM 3103": {Up: true}},
+		Gateways: map[string]Link{"dmrgateway": {Up: true}},
+	}, "waypoint/status", publish)
+
+	v, ok := got["waypoint/status/network/TGIF"]
+	if !ok {
+		t.Error("a deleted network's retained topic was never cleared")
+	} else if v != "" {
+		t.Errorf("the clear should be an empty retained payload, got %q", v)
+	}
+	if got["waypoint/status/network/BM_3103"] == "" {
+		t.Error("a surviving network stopped being published")
+	}
+
+	// Nothing left to clear on the next pass — no repeated empty publishes.
+	pubs, got = nil, map[string]string{}
+	rp.Publish(Status{Mode: "DMR", Networks: map[string]Link{"BM 3103": {Up: true}}}, "waypoint/status", publish)
+	if _, ok := got["waypoint/status/network/TGIF"]; ok {
+		t.Error("cleared the same topic twice")
+	}
+	// The gateway that vanished with it is cleared too.
+	if v, ok := got["waypoint/status/gateway/dmrgateway"]; !ok || v != "" {
+		t.Errorf("a vanished gateway topic was not cleared: %q ok=%v", v, ok)
+	}
+}

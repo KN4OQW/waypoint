@@ -67,6 +67,19 @@ const (
 	unitM17Gateway    = "waypoint-m17gateway.service"
 	unitDAPNETGateway = "waypoint-dapnetgateway.service"
 
+	// The public spelling of the two units the resilience supervisor (#22) has to
+	// name: an upstream attachment derived from this model has to say which unit
+	// carries it, and the supervisor lives outside this package. Aliases rather than
+	// renames so RenderTargets and the apply path keep reading in lower case.
+	UnitDMRGateway    = unitDMRGateway
+	UnitDAPNETGateway = unitDAPNETGateway
+
+	// MQTTNameDMRGateway is the [MQTT] Name rendered into DMRGateway.ini, and so
+	// the topic root it publishes its own status on (<name>/json). The supervisor
+	// subscribes there for the daemon's link reports, and must use the same string
+	// this file writes or it would listen to a topic nothing publishes to.
+	MQTTNameDMRGateway = "dmr-gateway"
+
 	// Cross-mode transcoding bridge units (MMDVM_CM). The per-bridge-daemon model is
 	// retired for the RFC-0003 bus architecture, so RenderTargets no longer restarts
 	// them. They remain named here only so apply can STOP any that a node was still
@@ -263,7 +276,7 @@ func (m *Model) renderBusConfig(id string, paths Paths) string {
 	bc.Loopbacks = m.busLoopbacksFor(id)
 	// D4: the broker + topic prefix the daemon publishes its events to (RFC-0008
 	// inter-process event plane). Rendered, never hardcoded; absent ⇒ no publishing.
-	bc.MQTT = paths.busMQTT()
+	bc.MQTT = m.busMQTT(paths)
 	// RFC-0016 owner side: add the peering block + one member row per ACTIVE remote
 	// attachment. A bus with no active remote attachment gets no Peering block, so
 	// it renders byte-identically to Phase 1 (dormant/revoked peers render nothing).
@@ -324,7 +337,7 @@ func (m *Model) renderMemberConfig(busID, peerID string, paths Paths) string {
 		KeyPath:         nodeKeyPath(peeringDir),
 		DeadlineMs:      m.Peering.deadline(),
 		JitterBufferMs:  m.Peering.jitter(),
-		MQTT:            paths.busMQTT(),
+		MQTT:            m.busMQTT(paths),
 		HangTimeSeconds: BusConfig{Bus: bus}.HangTimeSeconds,
 	}
 	for _, ra := range m.activeRemoteAttachmentsForBus(busID) {
@@ -469,17 +482,14 @@ func (m *Model) RenderMMDVM() string {
 		kv("Location", m.General.Location),
 		kv("URL", m.General.URL),
 	)
-	sect(&b, "Log",
-		kv("MQTTLevel", "1"),
-		kv("DisplayLevel", "0"),
-	)
-	sect(&b, "MQTT",
-		kv("Host", "127.0.0.1"),
-		kv("Port", "1883"),
-		kv("Auth", "0"),
-		kv("Name", "mmdvm"),
-		kv("Keepalive", "60"),
-	)
+	// [Log] and [MQTT] are store-owned (#29 System tab). Key names are verbatim
+	// from the pinned MMDVM-Host fd4a6a4 Conf.cpp:600-619 — this tree parses
+	// MQTTLevel/DisplayLevel and Host/Port/Keepalive/Name/Auth/Username/Password,
+	// NOT the file-logging [Log] block the published upstream MMDVM.ini still
+	// shows. Name is the topic root waypointd's consumer subscribes to, so the two
+	// come from one place and cannot drift apart.
+	sect(&b, "Log", m.logSectionMQTT(m.Logging.MMDVM)...)
+	sect(&b, "MQTT", m.mqttSection("Host", "Auth", m.MQTT.HostName())...)
 	// [CW Id] is automatic Morse identification. Callsign is emitted only when the
 	// operator set an explicit override: MMDVM-Host seeds m_cwIdCallsign from
 	// [General] Callsign and overrides it only if this key is present, so omitting
@@ -809,17 +819,8 @@ func (m *Model) RenderYSFGateway() string {
 		kv("Power", def(m.General.Power, "1")),
 		kv("Name", def(m.General.Location, "Waypoint")),
 	)
-	sect(&b, "Log",
-		kv("MQTTLevel", "1"),
-		kv("DisplayLevel", "0"),
-	)
-	sect(&b, "MQTT",
-		kv("Address", "127.0.0.1"),
-		kv("Port", "1883"),
-		kv("Keepalive", "60"),
-		kv("Auth", "0"),
-		kv("Name", "ysf-gateway"),
-	)
+	sect(&b, "Log", m.logSectionMQTT(m.Logging.YSFGateway)...)
+	sect(&b, "MQTT", m.mqttSection("Address", "Auth", "ysf-gateway")...)
 	sect(&b, "Network",
 		kv("Startup", m.YSFGW.Startup),
 		// NB: [Network] Reconnect is NOT parsed by this pinned YSFGateway (only
@@ -914,21 +915,12 @@ func (m *Model) RenderDGIdGateway() string {
 		kv("Power", def(m.General.Power, "1")),
 		kv("Description", def(m.General.Location, "Waypoint")),
 	)
-	sect(&b, "Log",
-		kv("MQTTLevel", "1"),
-		kv("DisplayLevel", "0"),
-	)
+	sect(&b, "Log", m.logSectionMQTT(m.Logging.DGIdGateway)...)
 	sect(&b, "APRS",
 		kb("Enable", m.YSFGW.APRS),
 		kv("Suffix", "Y"),
 	)
-	sect(&b, "MQTT",
-		kv("Address", "127.0.0.1"),
-		kv("Port", "1883"),
-		kv("Keepalive", "60"),
-		kv("Auth", "0"),
-		kv("Name", "dgid-gateway"),
-	)
+	sect(&b, "MQTT", m.mqttSection("Address", "Auth", "dgid-gateway")...)
 	// [YSF Network] carries the shared hostlist; [FCS Network] has no room-file
 	// key (DGIdGateway resolves FCS rooms by Name in the DG-ID blocks below).
 	sect(&b, "YSF Network",
@@ -1009,17 +1001,8 @@ func (m *Model) RenderP25Gateway() string {
 		kv("Language", "en_GB"),
 		kv("Directory", p25AudioDir),
 	)
-	sect(&b, "Log",
-		kv("MQTTLevel", "1"),
-		kv("DisplayLevel", "0"),
-	)
-	sect(&b, "MQTT",
-		kv("Address", "127.0.0.1"),
-		kv("Port", "1883"),
-		kv("Keepalive", "60"),
-		kv("Auth", "0"),
-		kv("Name", "p25-gateway"),
-	)
+	sect(&b, "Log", m.logSectionMQTT(m.Logging.P25Gateway)...)
+	sect(&b, "MQTT", m.mqttSection("Address", "Auth", "p25-gateway")...)
 	// Parrot (local echo, TG9990-style) runs on 42011; P252DMR is omitted so no
 	// dead cross-mode TG is advertised. Static holds any startup/auto-link TGs.
 	sect(&b, "Network",
@@ -1081,17 +1064,8 @@ func (m *Model) RenderNXDNGateway() string {
 		kv("Language", "en_GB"),
 		kv("Directory", nxdnAudioDir),
 	)
-	sect(&b, "Log",
-		kv("MQTTLevel", "1"),
-		kv("DisplayLevel", "0"),
-	)
-	sect(&b, "MQTT",
-		kv("Address", "127.0.0.1"),
-		kv("Port", "1883"),
-		kv("Keepalive", "60"),
-		kv("Auth", "0"),
-		kv("Name", "nxdn-gateway"),
-	)
+	sect(&b, "Log", m.logSectionMQTT(m.Logging.NXDNGateway)...)
+	sect(&b, "MQTT", m.mqttSection("Address", "Auth", "nxdn-gateway")...)
 	// Parrot (local echo, TG10) runs on 42021; NXDN2DMR is omitted so no dead
 	// cross-mode TG is advertised (Reflectors.cpp only adds TG20 when its port
 	// is set). Static holds any startup/auto-link TGs (empty by default).
@@ -1203,19 +1177,10 @@ func (m *Model) RenderDStarGateway() string {
 	sect(&b, "APRS",
 		kv("Enabled", "0"),
 	)
-	sect(&b, "Log",
-		kv("MQTTLevel", "1"),
-		kv("DisplayLevel", "0"),
-	)
+	sect(&b, "Log", m.logSectionMQTT(m.Logging.DStarGateway)...)
 	// DStarGateway's [MQTT] key is Authenticate (not Auth like the other
 	// gateways); Name is the topic prefix (<name>/json status, <name>/log).
-	sect(&b, "MQTT",
-		kv("Address", "127.0.0.1"),
-		kv("Port", "1883"),
-		kv("Keepalive", "60"),
-		kv("Authenticate", "0"),
-		kv("Name", "dstar-gateway"),
-	)
+	sect(&b, "MQTT", m.mqttSection("Address", "Authenticate", "dstar-gateway")...)
 	sect(&b, "Paths",
 		kv("Data", dstarDataDir),
 	)
@@ -1271,8 +1236,8 @@ func (m *Model) RenderM17Gateway() string {
 	// Pre-MQTT gateway: log to the console at level 1 so the systemd journal
 	// captures startup/link events; no separate log file (FileLevel 0).
 	sect(&b, "Log",
-		kv("DisplayLevel", "1"),
-		kv("FileLevel", "0"),
+		kv("DisplayLevel", m.Logging.M17Gateway.display("1")),
+		kv("FileLevel", m.Logging.M17Gateway.file("0")),
 		kv("FilePath", "/tmp"),
 		kv("FileRoot", "M17Gateway"),
 		kv("FileRotate", "0"),
@@ -1337,17 +1302,8 @@ func (m *Model) RenderDAPNETGateway() string {
 		kv("Daemon", "0"),
 	)
 	sect(&b, "General", general...)
-	sect(&b, "Log",
-		kv("MQTTLevel", "1"),
-		kv("DisplayLevel", "0"),
-	)
-	sect(&b, "MQTT",
-		kv("Address", "127.0.0.1"),
-		kv("Port", "1883"),
-		kv("Keepalive", "60"),
-		kv("Auth", "0"),
-		kv("Name", "dapnet-gateway"),
-	)
+	sect(&b, "Log", m.logSectionMQTT(m.Logging.DAPNETGateway)...)
+	sect(&b, "MQTT", m.mqttSection("Address", "Auth", "dapnet-gateway")...)
 	// DAPNET core server on the fixed transmitter port 43434; AuthKey authenticates
 	// the login (a per-operator secret from the DAPNET web portal).
 	sect(&b, "DAPNET",
@@ -1357,6 +1313,35 @@ func (m *Model) RenderDAPNETGateway() string {
 		kv("Debug", "0"),
 	)
 	return b.String()
+}
+
+// DMRNetworkOrder returns the network names in the order RenderDMRGateway writes
+// their [DMR Network N] sections, so index i is the network the daemon calls
+// "net<i+1>".
+//
+// That translation is the whole reason this exists. DMRGateway's status query
+// answers positionally — "xlx:n/a net1:conn net2:disc" — with no names in it, so
+// a supervisor reading that reply has to know which network each slot is. Deriving
+// the order anywhere other than here would be a second copy of a rule that already
+// exists, free to drift from the file the daemon actually read; RenderDMRGateway
+// and this function iterate identically and a test renders the INI and compares.
+//
+// Disabled networks are included: they are still written as sections (with
+// Enabled=0) and still consume a slot, so skipping them here would shift every
+// name after them onto the wrong link.
+func (m *Model) DMRNetworkOrder() []string {
+	dmrID := firstNonEmpty(m.DMR.ID, m.General.ID)
+	var out []string
+	for _, bn := range m.dmrBusNetworks(dmrID) {
+		out = append(out, bn.name)
+	}
+	for _, net := range m.Networks {
+		if net.Type == NetXLX {
+			continue // its own [XLX Network] section; reported as "xlx", not "netN"
+		}
+		out = append(out, net.Name)
+	}
+	return out
 }
 
 // RenderDMRGateway renders a complete DMRGateway.ini from the model.
@@ -1372,16 +1357,24 @@ func (m *Model) RenderDMRGateway() string {
 		kv("Timeout", "10"),
 		kv("Daemon", "0"),
 	)
-	sect(&b, "Log",
-		kv("MQTTLevel", "1"),
-		kv("DisplayLevel", "0"),
-	)
-	sect(&b, "MQTT",
-		kv("Address", "127.0.0.1"),
-		kv("Port", "1883"),
-		kv("Keepalive", "60"),
-		kv("Auth", "0"),
-		kv("Name", "dmr-gateway"),
+	sect(&b, "Log", m.logSectionMQTT(m.Logging.DMRGateway)...)
+	sect(&b, "MQTT", m.mqttSection("Address", "Auth", MQTTNameDMRGateway)...)
+	// [Remote Commands] is what lets waypointd ASK this daemon whether each of its
+	// masters is still connected, by publishing "status" to <name>/command and
+	// reading net1:conn/net2:disc off <name>/response (RemoteControl.cpp →
+	// buildNetworkStatusString → CDMRNetwork::isConnected, which is the login state
+	// machine itself).
+	//
+	// Without it the daemon is unaskable, and that is not a small loss. DMRGateway
+	// announces a link change when one happens and then says nothing — so when a
+	// master goes away and the daemon fails to recover, it emits no status, no log,
+	// and no answer: measured on the bench harness, 200 seconds of complete silence
+	// (see test/tier2/resilience_test.go). A supervisor with only the announcements
+	// to go on would hold the last thing it heard, which was "Logged in", and never
+	// notice. Polling turns link state into something re-confirmed on Waypoint's
+	// schedule rather than on the daemon's.
+	sect(&b, "Remote Commands",
+		kb("Enable", true),
 	)
 
 	dmrID := firstNonEmpty(m.DMR.ID, m.General.ID)

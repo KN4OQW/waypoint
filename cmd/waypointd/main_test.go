@@ -672,7 +672,7 @@ func TestStatusAndLivenessProbe(t *testing.T) {
 	}
 	dir := t.TempDir()
 	s := &server{
-		hub: hub.New(), store: st, agg: status.New(status.DefaultTxTTL),
+		hub: hub.New(), store: st, agg: status.New(status.DefaultTxTTL, status.LinkTTLOff),
 		paths: config.Paths{
 			MMDVM: dir + "/MMDVM-Host.ini", DMRGateway: dir + "/DMRGateway.ini",
 			YSFGateway: dir + "/YSFGateway.ini", P25Gateway: dir + "/P25Gateway.ini",

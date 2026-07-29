@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // This file is the render half of RFC-0016 (bus LAN peering): it extends the
@@ -204,18 +205,35 @@ type BusMQTT struct {
 // docs/mqtt-topics.md alongside the RFC-0008 status tree).
 const DefaultBusTopicPrefix = "waypoint/bus"
 
-// busMQTT renders the broker+prefix block from the deployment Paths, or nil when no
-// broker is configured (tests/demo) so a bus config without MQTT parses cleanly and
-// the daemon simply does not publish.
-func (p Paths) busMQTT() *BusMQTT {
+// busMQTT renders the broker+prefix block for a bus or member config, or nil when
+// this node publishes no bus events at all (demo mode and renderer tests leave
+// Paths.MQTTBroker empty) so the config parses cleanly and the daemon simply does
+// not publish.
+//
+// Precedence follows #29 / D5: a POPULATED store field wins, because the data
+// plane is store-owned and editing the bus prefix in the System tab has to
+// re-render every bus config on the next Apply. An empty store field falls back to
+// the deployment Paths — which is what a node whose store predates the mqtt
+// section has, and what renderer tests that set only Paths rely on — and finally to
+// the compiled default. (waypointd overlays an EXPLICITLY-SET command-line flag
+// onto the model before rendering, so a flag still shadows the store; see
+// resolveMQTT in cmd/waypointd.)
+func (m *Model) busMQTT(p Paths) *BusMQTT {
 	if p.MQTTBroker == "" {
 		return nil
 	}
+	broker := p.MQTTBroker
+	if strings.TrimSpace(m.MQTT.Host) != "" || strings.TrimSpace(m.MQTT.Port) != "" {
+		broker = m.MQTT.Broker()
+	}
 	prefix := p.BusTopicPrefix
+	if strings.TrimSpace(m.MQTT.BusPrefix) != "" {
+		prefix = strings.TrimSpace(m.MQTT.BusPrefix)
+	}
 	if prefix == "" {
 		prefix = DefaultBusTopicPrefix
 	}
-	return &BusMQTT{Broker: p.MQTTBroker, Prefix: prefix}
+	return &BusMQTT{Broker: broker, Prefix: prefix}
 }
 
 // busLoopbackFor returns the fixed loopback pair for a reframe-tier mode, the same
