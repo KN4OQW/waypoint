@@ -128,16 +128,22 @@ WPSD splits classic Pi-Star's single General panel into "General Configuration" 
 | Update Notifier *(WPSD new)* | updates lifecycle | — | pending | |
 | GPS daemon support / GPSd *(WPSD Location panel)* | `gpsd` (host) | — | pending | replaces Pi-Star Mobile GPS. |
 
-**Modem / calibration** (WPSD Expert → MMDVMHost → Modem). Core offsets are on the
-General tab; the rest is modeled but not surfaced.
+**Modem / calibration** (WPSD Expert → MMDVMHost → Modem). Everything in
+`[Modem]` is modeled, rendered and on the General tab — and the offsets are
+*measured* rather than typed: the guided sweep ([RFC-0021](rfcs/0021-guided-calibration.md) / [#20])
+drives the modem, scores each frequency by bit error rate against the operator's
+own radio, and writes the winner. No incumbent automates this.
 
 | WPSD field label | INI key | store `section.key` | status | notes |
 |---|---|---|---|---|
 | RX Offset | `[Modem] RXOffset` | `modem.rx_offset` | done | on the General tab. |
 | TX Offset | `[Modem] TXOffset` | `modem.tx_offset` | done | |
-| TX / RX / PTT Invert | `[Modem] TXInvert`/`RXInvert`/`PTTInvert` | `modem.tx_invert`/`rx_invert`/`ptt_invert` | partial | modeled + rendered; not in the UI. |
-| RX Level / TX Level | `[Modem] RXLevel` / `TXLevel` | `modem.rx_level` / `tx_level` | partial | modeled + rendered (default 50); not in the UI. |
-| Per-mode TX levels, DC offsets, RSSI mapping, DMR delay | `[Modem]` (various) | — | pending | full calibration — config-coverage [#20]. |
+| TX / RX / PTT Invert | `[Modem] TXInvert`/`RXInvert`/`PTTInvert` | `modem.tx_invert`/`rx_invert`/`ptt_invert` | done | on the General tab, in a card labelled for what they are: a hotspot's firmware never reads them. |
+| RX Level / TX Level | `[Modem] RXLevel` / `TXLevel` | `modem.rx_level` / `tx_level` | done | |
+| RF Level | `[Modem] RFLevel` | `modem.rf_level` | done | hotspot RF power. |
+| Per-mode TX levels | `[Modem] D-StarTXLevel` … `FMTXLevel` | `modem.dstar_tx_level` … `fm_tx_level` | done | blank follows TXLevel and is omitted from the file. No M17 key — this host fork has none. |
+| DC offsets, DMR delay, RSSI mapping | `[Modem] RXDCOffset`/`TXDCOffset`/`DMRDelay`/`RSSIMappingFile` | `modem.rx_dc_offset`/`tx_dc_offset`/`dmr_delay`/`rssi_mapping_file` | done | |
+| **Guided calibration** *(no incumbent)* | writes `RXOffset`/`TXOffset` | `calibration_state` | done | BER sweep driven by the node itself ([#20]); repeater level/invert workflow ships **unverified on hardware**. |
 
 ---
 

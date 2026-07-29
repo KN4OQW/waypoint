@@ -69,7 +69,24 @@ const HELP = {
   "modem.tcxo_hz": "The modem's reference oscillator, in Hz — <b>12288000</b> (12.288 MHz) or <b>14745600</b> (14.7456 MHz). Firmware from the 1.5 era onwards reports it, and Detect fills this in from what the modem said. Get it wrong and the radio is detuned rather than broken, which is why nothing here ever guesses one.",
   "modem.uart_speed": "Line speed between the host and the modem. 115200 is the MMDVM_HS family's default and is almost always right; Detect fills in whichever speed the modem actually answered on.",
   "modem.rx_offset": "Correction in Hz applied to the receive frequency, compensating for crystal error in the modem. Leave at 0 until you have measured the error — this is calibration, not tuning.",
-  "modem.tx_offset": "Correction in Hz applied to the transmit frequency, compensating for crystal error in the modem. Leave at 0 until you have measured the error.",
+  "modem.tx_offset": "Correction in Hz applied to the transmit frequency, compensating for crystal error in the modem. Leave at 0 until you have measured the error. On a hotspot one oscillator clocks both paths, so this is normally the same number as the RX offset.",
+  "modem.rx_level": "How hard the modem drives its own receive path, 0–100%. On a hotspot this does nothing — the firmware does not read it. On a repeater board it is set so the received waveform fills the range without clipping.",
+  "modem.tx_level": "Transmit level, 0–100%. On a hotspot this is the <b>deviation</b> of the 4FSK signal it generates; on a repeater board it drives the radio's audio input and is set for 2.75 kHz deviation with a deviation meter.",
+  "modem.rf_level": "RF output power of a hotspot's ADF7021, 0–100%. A hotspot is a milliwatt-class transmitter — this is the difference between reaching the far side of the house and the far side of the room, not a power amplifier control.",
+  "modem.rx_dc_offset": "DC bias on the receive path, −128 to 127, used to centre the waveform on a full-size MMDVM. <b>A hotspot ignores this entirely.</b>",
+  "modem.tx_dc_offset": "DC bias on the transmit path, −128 to 127. <b>A hotspot ignores this entirely.</b>",
+  "modem.rx_invert": "Whether the received signal arrives inverted. A full-size MMDVM can be asked directly — it reports inversion in its calibration replies — which is the one analog setting that does not need test equipment. <b>A hotspot ignores this.</b>",
+  "modem.tx_invert": "Whether the transmit signal is inverted before it reaches the radio. Depends on how the radio's modulator is wired. <b>A hotspot ignores this.</b>",
+  "modem.ptt_invert": "Whether the PTT line is active-low rather than active-high. Wrong, and the repeater either never keys or never stops. <b>A hotspot ignores this.</b>",
+  "modem.dmr_delay": "Fine timing adjustment for DMR slot alignment on a duplex repeater, in bits. Leave at 0 unless a repeater is losing slot sync.",
+  "modem.rssi_mapping_file": "Path to a file mapping the modem's raw RSSI counts to dBm, so received signal strengths are reported in real units. Producing one needs a calibrated signal generator; the default path is where the stack looks for it.",
+  "modem.dstar_tx_level": "Per-mode transmit level override for D-Star. Blank follows TX Level, which is what almost every node should do — these exist for a radio whose deviation differs between modes.",
+  "modem.dmr_tx_level": "Per-mode transmit level override for DMR. Blank follows TX Level.",
+  "modem.ysf_tx_level": "Per-mode transmit level override for System Fusion. Blank follows TX Level.",
+  "modem.p25_tx_level": "Per-mode transmit level override for P25. Blank follows TX Level.",
+  "modem.nxdn_tx_level": "Per-mode transmit level override for NXDN. Blank follows TX Level.",
+  "modem.pocsag_tx_level": "Per-mode transmit level override for POCSAG paging. Blank follows TX Level.",
+  "modem.fm_tx_level": "Per-mode transmit level override for analog FM. Blank follows TX Level.",
 
   // --- DMR ---
   "dmr.color_code": "DMR's equivalent of a CTCSS tone: a number <b>0–15</b> that must match at both ends before traffic is accepted. It keeps neighbouring systems on the same frequency from hearing each other. Most hotspots use 1.",
@@ -215,6 +232,10 @@ let hardware = null;        // GET /api/hardware — last detection, board table
 let firmware = null;        // GET /api/flash — firmware catalog, the match or the refusal, the job (#19)
 let fwBusy = false;         // a flash was asked for and has not come back yet
 let fwStream = null;        // EventSource on /api/flash/events while a job runs
+let calib = null;           // GET /api/cal — what can be swept, and the last sweep (#20)
+let calBusy = false;
+let calStream = null;       // EventSource on /api/cal/events while a sweep runs
+let calLive = null;         // the newest progress frame, for the live readout
 let hwBusy = false;         // a detect/adopt/repair is in flight
 let profileBusy = false;    // an activate/save/import is in flight (disables the buttons)
 let importScan = null;      // last /api/import/scan result {report, preview} (RFC-0007)
@@ -252,7 +273,9 @@ function buildEdit(c) {
   const g = c.general || {}, d = c.dmr || {};
   edit = {
     general: { callsign: g.callsign, id: g.dmr_id, duplex: !!g.duplex, power: g.power, location: g.location, url: g.url },
-    modem:   { rx_freq_hz: g.rx_freq_hz, tx_freq_hz: g.tx_freq_hz, port: g.modem_port, rx_offset: g.rx_offset, tx_offset: g.tx_offset },
+    modem:   Object.assign(
+      { rx_freq_hz: g.rx_freq_hz, tx_freq_hz: g.tx_freq_hz, port: g.modem_port, rx_offset: g.rx_offset, tx_offset: g.tx_offset },
+      modemFrom(c.modem || {})),
     display: displayFrom(c.display || {}),
     lcd: lcdFrom(c.lcd || {}),
     dmr:     { color_code: d.color_code, id: d.id, embedded_lc_only: !!d.embedded_lc_only, dump_ta_data: !!d.dump_ta_data, beacons: !!d.beacons, self_only: !!d.self_only },
@@ -625,9 +648,52 @@ function panelGeneral() {
     toggle("general", "duplex", "Duplex", "DUPLEX", "SIMPLEX") +
     note("Don't type the port and board in by hand — the <b>Hardware</b> tab asks the modem what it is and fills all of this in."));
   const cal = card("CALIBRATION",
-    input("modem", "rx_offset", { label: "RX Offset" }) +
-    input("modem", "tx_offset", { label: "TX Offset" }));
-  return `<div class="grid2">${left}<div class="stack">${radio}${cal}</div></div>`;
+    input("modem", "rx_offset", { label: "RX Offset", unit: "Hz" }) +
+    input("modem", "tx_offset", { label: "TX Offset", unit: "Hz" }) +
+    input("modem", "rx_level", { label: "RX Level", unit: "%" }) +
+    input("modem", "tx_level", { label: "TX Level", unit: "%" }) +
+    input("modem", "rf_level", { label: "RF Power", unit: "%" }) +
+    note("Measure these rather than guess them — the <b>Hardware</b> tab sweeps for the offset with your radio and writes the answer here."));
+  // The analog controls a full-size repeater board needs and a hotspot ignores
+  // outright: MMDVM_HS's firmware does not read the invert flags or the DC
+  // offsets at all. Saying so beside the fields is the difference between "this
+  // slider does nothing" and "this slider is not for my board".
+  const analog = card("REPEATER BOARD ONLY",
+    toggle("modem", "rx_invert", "RX Invert", "INVERTED", "NORMAL") +
+    toggle("modem", "tx_invert", "TX Invert", "INVERTED", "NORMAL") +
+    toggle("modem", "ptt_invert", "PTT Invert", "INVERTED", "NORMAL") +
+    input("modem", "rx_dc_offset", { label: "RX DC Offset" }) +
+    input("modem", "tx_dc_offset", { label: "TX DC Offset" }) +
+    input("modem", "dmr_delay", { label: "DMR Delay" }) +
+    input("modem", "rssi_mapping_file", { label: "RSSI Map" }) +
+    note("A hotspot board ignores every setting in this card — its firmware never reads them. They are for full-size MMDVM repeater boards."));
+  const levels = card("PER-MODE TX LEVELS",
+    input("modem", "dstar_tx_level", { label: "D-Star", unit: "%" }) +
+    input("modem", "dmr_tx_level", { label: "DMR", unit: "%" }) +
+    input("modem", "ysf_tx_level", { label: "System Fusion", unit: "%" }) +
+    input("modem", "p25_tx_level", { label: "P25", unit: "%" }) +
+    input("modem", "nxdn_tx_level", { label: "NXDN", unit: "%" }) +
+    input("modem", "pocsag_tx_level", { label: "POCSAG", unit: "%" }) +
+    input("modem", "fm_tx_level", { label: "FM", unit: "%" }) +
+    note("Leave blank to follow <b>TX Level</b>, which is what almost every node wants. M17 has no separate level — MMDVM-Host has no key for one, so it always follows TX Level."));
+  return `<div class="grid2">${left}<div class="stack">${radio}${cal}${levels}${analog}</div></div>`;
+}
+
+// modemFrom projects the calibration keys (#20). They live in the same store
+// section as the frequencies, so they merge into the same edit object; they are
+// listed separately here because they come from a different part of the view.
+function modemFrom(m) {
+  return {
+    rx_level: m.rx_level, tx_level: m.tx_level,
+    rx_dc_offset: m.rx_dc_offset, tx_dc_offset: m.tx_dc_offset,
+    rf_level: m.rf_level, dmr_delay: m.dmr_delay,
+    tx_invert: !!m.tx_invert, rx_invert: !!m.rx_invert, ptt_invert: !!m.ptt_invert,
+    dstar_tx_level: m.dstar_tx_level, dmr_tx_level: m.dmr_tx_level,
+    ysf_tx_level: m.ysf_tx_level, p25_tx_level: m.p25_tx_level,
+    nxdn_tx_level: m.nxdn_tx_level, pocsag_tx_level: m.pocsag_tx_level,
+    fm_tx_level: m.fm_tx_level,
+    rssi_mapping_file: m.rssi_mapping_file,
+  };
 }
 
 // boardRow is WPSD's "Radio/Modem" dropdown. The list comes from the daemon's
@@ -2484,7 +2550,138 @@ function panelHardware() {
     }
   }
 
-  return `<div class="grid2">${identity}<div class="stack">${configured}${adopt}</div></div>${warnCard}${panelFirmware()}${uartCard}${scanCard}`;
+  return `<div class="grid2">${identity}<div class="stack">${configured}${adopt}</div></div>${warnCard}${panelFirmware()}${panelCalibration()}${uartCard}${scanCard}`;
+}
+
+// --- Calibration: measuring the oscillator error (#20 / RFC-0021) ---------
+//
+// The panel is built around one idea: the operator is being shown a
+// MEASUREMENT, and they decide whether to believe it. So the curve is on screen
+// before any button writes anything, a candidate nothing was heard on is drawn
+// differently from one that measured clean, and the offset the node is running
+// now is always visible next to the one being offered.
+//
+// Everything that gates the sweep comes from the server's own reason string
+// rather than being re-derived here. There are three preconditions (a modem, a
+// frequency, and nothing else using the modem) and two answers to "why is this
+// greyed out" would be one too many.
+function panelCalibration() {
+  const c = calib || {};
+  const job = c.job;
+  const running = !!(job && !job.ended);
+  const last = c.last || {};
+  const result = (job && job.result) || last.result || null;
+
+  let inner = "";
+
+  if (c.rx_freq_hz) {
+    inner += row("Listening on", `<span class="accent">${esc(mhz(c.rx_freq_hz))} MHz</span>${c.band ? ` <span>· ${esc(c.band)}</span>` : ""}`);
+  }
+  inner += row("Offset in use now", `<span>${esc(offsetText(c.current_rx_offset))} RX · ${esc(offsetText(c.current_tx_offset))} TX</span>`);
+  if (last.ran_at && !running) {
+    inner += row("Last swept", `<span>${esc(fmtWhen(last.ran_at))}${last.board_id ? " · " + esc(last.board_id) : ""}</span>`);
+  }
+
+  if (!c.available && c.reason) {
+    inner += note(`<b>Calibration cannot run yet.</b> ${esc(c.reason)}`);
+  }
+
+  // What the operator has to do, said before the button rather than after it.
+  // A sweep with nobody transmitting measures nothing, and that is the single
+  // most likely way a first attempt fails.
+  if (c.available && !running) {
+    inner += note("<b>You need your radio for this.</b> Set it to <b>DMR</b> on " +
+      `<b>${esc(mhz(c.rx_freq_hz))} MHz</b>, colour code <b>${esc(String(c.color_code || 1))}</b>, then start the sweep and hold PTT when it asks. ` +
+      "It steps the modem's own frequency across a few kHz and scores each step by the bit error rate of what it hears. Let go whenever you like — it pauses and picks up where it left off.");
+    if (c.host_running) {
+      inner += note("This node goes <b>off the air</b> while the sweep runs, and comes back on its own afterwards.");
+    }
+  }
+
+  if (running) inner += calProgress(job);
+  if (job && job.error && !running) {
+    inner += note(`<b>The sweep did not finish.</b> ${esc(job.error)}`);
+  }
+
+  if (result) inner += calCurve(result, c);
+
+  const btn = running
+    ? `<button type="button" id="cal-cancel" class="btn">STOP</button>`
+    : `<button type="button" id="cal-sweep" class="btn primary"${c.available && !calBusy ? "" : " disabled"}>${calBusy ? "STARTING…" : "START SWEEP"}</button>`;
+  let actions = `<div class="row"><label></label>${btn}`;
+  if (!running && result && result.best) {
+    actions += ` <button type="button" id="cal-apply" class="btn accent"${calBusy ? " disabled" : ""}>USE ${offsetText(String(result.best.offset_hz))}</button>`;
+  }
+  actions += `</div>`;
+  inner += actions;
+
+  if (!running && result && result.best) {
+    inner += note("Applying writes the same number to <b>both</b> RX and TX offset. A hotspot has one reference oscillator clocking both paths, so an error measured on receive is the same error transmitting — and the sweep can only measure the receive side without test equipment.");
+  }
+  return card("CALIBRATION", inner);
+}
+
+// calProgress is the live readout. It is not a percentage bar: a sweep that is
+// waiting for the operator to key up has no meaningful percentage, and showing
+// one stalled at 40% would read as a hang rather than as "your turn".
+function calProgress(job) {
+  const p = calLive || job;
+  const waiting = p.phase === "waiting";
+  const step = p.steps ? `${p.step} of ${p.steps}` : "";
+  const berText = p.frames ? `${Number(p.ber_percent || 0).toFixed(3)}% over ${p.frames} frames` : "listening…";
+  return `<div class="fw-prog">
+    <div class="fw-prog-lab"><span>${esc(waiting ? "WAITING FOR YOUR RADIO" : "MEASURING " + offsetText(String(p.offset_hz || 0)))}</span><span>${esc(step)}</span></div>
+    <div class="cal-live">${esc(waiting ? (p.detail || "key your radio and hold it") : berText)}</div>
+  </div>`;
+}
+
+// calCurve draws the measurement. Points nothing was heard on are drawn as gaps
+// rather than as zeroes, because 0.00% BER and "never decoded anything here" are
+// the same number and opposite meanings — conflating them is exactly how a sweep
+// would recommend a frequency the radio was never audible on.
+function calCurve(res, c) {
+  const pts = (res.points || []).filter((p) => p.heard);
+  const silent = (res.points || []).filter((p) => !p.heard).length;
+  if (!pts.length) {
+    return note("<b>Nothing was decoded at any frequency.</b> The radio was not transmitting, was not in DMR, or is outside the range the sweep covered.");
+  }
+  const worst = Math.max(...pts.map((p) => p.ber_percent), 0.001);
+  const bestOff = res.best ? res.best.offset_hz : null;
+  const bars = (res.points || []).map((p) => {
+    const h = p.heard ? Math.max(3, Math.round((p.ber_percent / worst) * 100)) : 0;
+    const cls = !p.heard ? "silent" : (p.offset_hz === bestOff ? "best" : (p.scored ? "" : "partial"));
+    const label = p.heard
+      ? `${offsetText(String(p.offset_hz))}: ${p.ber_percent.toFixed(3)}% over ${p.frames} frames`
+      : `${offsetText(String(p.offset_hz))}: nothing heard`;
+    // title only, no per-bar aria-label: the bars live inside a role="img", so
+    // their children are presentational to a screen reader anyway, and the
+    // container's label below is what actually gets read out.
+    return `<div class="cal-bar ${cls}" title="${esc(label)}"><i style="height:${h}%"></i></div>`;
+  }).join("");
+
+  // The chart's alternative text is the CONCLUSION, not a description of the
+  // picture. Someone who cannot see the bars needs the same thing the bars are
+  // there to convey: where the minimum is and how deep it is.
+  const alt = res.best
+    ? `Bit error rate against frequency offset. Best ${offsetText(String(res.best.offset_hz))} at ${res.best.ber_percent.toFixed(3)} percent, measured on ${res.best.frames} frames. ${pts.length} of ${res.points.length} frequencies decoded a signal.`
+    : `Bit error rate against frequency offset. ${pts.length} of ${res.points.length} frequencies decoded a signal; none was measured on enough frames to choose.`;
+  let out = `<div class="cal-chart" role="img" aria-label="${esc(alt)}">${bars}</div>`;
+  out += `<div class="cal-axis"><span>${esc(offsetText(String((res.points[0] || {}).offset_hz || 0)))}</span><span>lower is better</span><span>${esc(offsetText(String((res.points[res.points.length - 1] || {}).offset_hz || 0)))}</span></div>`;
+  if (res.best) {
+    out += row("Best", `<span class="accent">${esc(offsetText(String(res.best.offset_hz)))} at ${res.best.ber_percent.toFixed(3)}% BER</span>`);
+  }
+  if (silent) {
+    out += note(`${silent} of ${res.points.length} frequencies decoded nothing at all — that is normal at the edges of the sweep, where the signal is too far off frequency for the modem to hear.`);
+  }
+  if (res.aborted) {
+    out += note("<b>This curve is incomplete</b> — the sweep ran out of time or was stopped. What is drawn was measured; what is missing was not.");
+  }
+  return out;
+}
+
+function offsetText(v) {
+  const n = Number(v || 0);
+  return (n > 0 ? "+" : "") + n + " Hz";
 }
 
 // --- Firmware: what is on the modem, and changing it (#19) ----------------
@@ -2649,6 +2846,127 @@ function stopWatchingFlash() {
   // The stream carries progress, not outcomes: the job's result (the new version
   // string, or the error) comes from the panel endpoint.
   setTimeout(loadFirmware, 400);
+}
+
+// loadCalibration fetches the calibration surface. Like the firmware panel it is
+// its own fetch: a node with no modem still renders everything else.
+async function loadCalibration() {
+  try {
+    calib = await fetch("/api/cal").then((r) => r.json());
+  } catch {
+    calib = null;
+  }
+  if (calib && calib.job && !calib.job.ended) watchCal();
+  if (state.tab === "hardware") renderPanel();
+}
+
+// watchCal follows a running sweep over SSE. Per-frame BER is its own stream and
+// is never written to the event store — a sweep is several hundred updates, and
+// an SD card is not the place to animate a chart (RFC-0019 §8).
+function watchCal() {
+  if (calStream) return;
+  try {
+    calStream = new EventSource("/api/cal/events");
+  } catch {
+    return;
+  }
+  calStream.onmessage = (ev) => {
+    let p;
+    try { p = JSON.parse(ev.data); } catch { return; }
+    calLive = p;
+    if (state.tab === "hardware") renderPanel();
+    if (p.phase === "done") stopWatchingCal();
+  };
+  // A dropped stream is not a failed sweep: the daemon runs it on its own
+  // deadline, holding the modem port, whatever the browser is doing.
+  calStream.onerror = () => { stopWatchingCal(); setTimeout(loadCalibration, 1500); };
+}
+
+function stopWatchingCal() {
+  if (!calStream) return;
+  calStream.close();
+  calStream = null;
+  calLive = null;
+  setTimeout(loadCalibration, 400);
+}
+
+// startSweep begins a measurement. The confirmation names the two things that
+// are actually about to happen — the node leaves the air, and the operator has
+// to transmit — because a sweep nobody keys up for measures nothing and looks
+// like a broken feature.
+async function startSweep() {
+  if (calBusy) return;
+  const c = calib || {};
+  let msg = "Start the calibration sweep?\n\n";
+  msg += "Set your radio to DMR on " + mhz(c.rx_freq_hz) + " MHz, colour code " + (c.color_code || 1) + ".\n";
+  msg += "You will need to hold PTT when it asks — it measures what your radio sends.\n\n";
+  if (c.host_running) msg += "This node goes off the air while it runs, and comes back afterwards.";
+  if (!confirm(msg)) return;
+
+  calBusy = true;
+  renderPanel();
+  try {
+    const r = await fetch("/api/cal/sweep", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stop_host: true }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (r.status === 409) {
+      banner(body.error || "Something else is using the modem.", "bad");
+    } else if (!r.ok) {
+      throw new Error(body.error || "the sweep could not be started");
+    } else {
+      calib = Object.assign({}, calib, { job: body.job });
+      banner("Sweeping — key your radio when it asks.", "ok");
+      watchCal();
+    }
+  } catch (err) {
+    banner(String(err.message || err), "bad");
+  }
+  calBusy = false;
+  renderPanel();
+}
+
+async function cancelSweep() {
+  try {
+    await fetch("/api/cal/cancel", { method: "POST" });
+    banner("Stopping the sweep — the node comes back on the air by itself.", "ok");
+  } catch (err) {
+    banner(String(err.message || err), "bad");
+  }
+  setTimeout(loadCalibration, 600);
+}
+
+// applyOffset writes the measured offset. It is a separate button from the
+// sweep on purpose (RFC-0021 §7): measuring and changing the node are different
+// acts, and the curve is on screen for the operator to disagree with first.
+async function applyOffset() {
+  if (calBusy) return;
+  const res = (calib && ((calib.job && calib.job.result) || (calib.last && calib.last.result))) || null;
+  if (!res || !res.best) return;
+  if (!confirm("Write " + offsetText(String(res.best.offset_hz)) + " to this node's RX and TX offsets?\n\nApply the configuration afterwards for MMDVM-Host to pick it up.")) return;
+
+  calBusy = true;
+  renderPanel();
+  try {
+    const r = await fetch("/api/cal/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || "the offset could not be applied");
+    banner((body.changed || []).join(", ") || "Offset applied.", "ok");
+    // Re-read the store: the offsets on the General tab have just changed under
+    // the editor, and an operator who switches tabs should not find the old
+    // numbers still in the fields.
+    await load();
+  } catch (err) {
+    banner(String(err.message || err), "bad");
+  }
+  calBusy = false;
+  await loadCalibration();
 }
 
 // flashFirmware starts a flash. The confirmation is explicit about the two
@@ -3376,6 +3694,7 @@ async function load() {
   // availability. The General tab reads it too, for the board picker.
   loadHardware();
   loadFirmware();
+  loadCalibration();
   // Host-network status is live system state, fetched separately from the store
   // config. Refresh whenever the Network tab is showing.
   if (state.tab === "network") loadNetwork();
@@ -3833,6 +4152,10 @@ document.getElementById("panels").addEventListener("click", (e) => {
   // --- modem firmware (#19) ---
   if (e.target.id === "fw-flash") { flashFirmware(); return; }
   if (e.target.id === "fw-refresh") { refreshCatalog(); return; }
+  // --- modem calibration (#20) ---
+  if (e.target.id === "cal-sweep") { startSweep(); return; }
+  if (e.target.id === "cal-cancel") { cancelSweep(); return; }
+  if (e.target.id === "cal-apply") { applyOffset(); return; }
   // --- software updates (RFC-0014) ---
   if (e.target.id === "stack-check") { stackCheckNow(); return; }
   if (e.target.id === "stack-apply") { stackApplyNow(); return; }

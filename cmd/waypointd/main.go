@@ -133,6 +133,10 @@ type server struct {
 
 	// Firmware flashing (#19 / RFC-0019). Nil disables the flash API.
 	flash *flasher
+	// cal is the calibration engine's controller (#20 / RFC-0021): the running
+	// sweep, its progress fan-out, and the transmit tests. It shares hwOps with
+	// flashing and detection — all three take the modem away from the node.
+	cal *calibrator
 	// hwOps serialises everything that takes the modem or the stack away from the
 	// node: detection, firmware flashing and stack updates. A flash stops
 	// MMDVM-Host for a minute, and a stack update health-gates on MMDVM-Host being
@@ -1699,6 +1703,13 @@ func (s *server) newMux() *http.ServeMux {
 	// Firmware flashing (#19 / RFC-0019). Byte-level progress is its own SSE
 	// stream rather than hub events: the hub is persisted, and a progress bar is
 	// not worth five hundred rows on an SD card.
+	mux.HandleFunc("/api/cal", s.calStatus)
+	mux.HandleFunc("/api/cal/sweep", s.calSweep)
+	mux.HandleFunc("/api/cal/cancel", s.calCancel)
+	mux.HandleFunc("/api/cal/events", s.calEvents)
+	mux.HandleFunc("/api/cal/apply", s.calApply)
+	mux.HandleFunc("/api/cal/transmit", s.calTransmit)
+	mux.HandleFunc("/api/cal/listen", s.calListen)
 	mux.HandleFunc("/api/flash", s.flashRoot)
 	mux.HandleFunc("/api/flash/catalog", s.flashCatalogRefresh)
 	mux.HandleFunc("/api/flash/events", s.flashEvents)
@@ -2010,6 +2021,11 @@ func main() {
 	// catalog URL, so a firmware release ships without a software release.
 	s.flash = newFlasher(s.hub, s.store, *firmwareURL, updCfg.pubKey, updCfg.hasPubKey,
 		firmwareCacheDir(*firmwareCache, *storePath))
+
+	// Guided calibration (RFC-0021). It needs nothing configured to exist —
+	// every precondition it has is reported through GET /api/cal rather than
+	// deciding whether the surface is there at all.
+	s.cal = newCalibrator(s.hub, s.store)
 	s.updateArgs = []string{
 		"-update",
 		"-update-url", *updateURL,

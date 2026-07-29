@@ -69,6 +69,23 @@ func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg, dpg *INI) *Model {
 			PTTInvert: mm.Bool("Modem", "PTTInvert"),
 			RXLevel:   orDefault(mm.Get("Modem", "RXLevel"), "50"),
 			TXLevel:   orDefault(mm.Get("Modem", "TXLevel"), "50"),
+
+			// The calibration keys (#20). These carry no defaults on import: a
+			// value invented here would be indistinguishable from one the
+			// operator's old node was actually running, and the per-mode levels
+			// in particular mean "follow TXLevel" when absent.
+			RXDCOffset:      orDefault(mm.Get("Modem", "RXDCOffset"), "0"),
+			TXDCOffset:      orDefault(mm.Get("Modem", "TXDCOffset"), "0"),
+			RFLevel:         orDefault(mm.Get("Modem", "RFLevel"), "100"),
+			DMRDelay:        orDefault(mm.Get("Modem", "DMRDelay"), "0"),
+			DStarTXLevel:    mm.Get("Modem", "D-StarTXLevel"),
+			DMRTXLevel:      mm.Get("Modem", "DMRTXLevel"),
+			YSFTXLevel:      mm.Get("Modem", "YSFTXLevel"),
+			P25TXLevel:      mm.Get("Modem", "P25TXLevel"),
+			NXDNTXLevel:     mm.Get("Modem", "NXDNTXLevel"),
+			POCSAGTXLevel:   mm.Get("Modem", "POCSAGTXLevel"),
+			FMTXLevel:       mm.Get("Modem", "FMTXLevel"),
+			RSSIMappingFile: orDefault(mm.Get("Modem", "RSSIMappingFile"), "/usr/local/etc/RSSI.dat"),
 		},
 		Display: displayFromINI(mm),
 		DMR: DMR{

@@ -498,7 +498,11 @@ func (m *Model) RenderMMDVM() string {
 		kv("File", "/usr/local/etc/DMRIds.dat"),
 		kv("Time", "24"),
 	)
-	sect(&b, "Modem",
+	// [Modem] is order-sensitive, and not in a way the file format hints at.
+	// MMDVM-Host's parser assigns TXLevel to EVERY per-mode level as it reads
+	// that key (Conf.cpp), so a per-mode override placed above TXLevel is
+	// silently overwritten by it. Every per-mode key therefore comes after.
+	modemLines := []string{
 		kv("Protocol", "uart"),
 		kv("UARTPort", def(m.Modem.Port, "/dev/ttyAMA0")),
 		kv("UARTSpeed", def(m.Modem.UARTSpeed, "115200")),
@@ -507,13 +511,34 @@ func (m *Model) RenderMMDVM() string {
 		kb("PTTInvert", m.Modem.PTTInvert),
 		kv("RXOffset", def(m.Modem.RXOffset, "0")),
 		kv("TXOffset", def(m.Modem.TXOffset, "0")),
+		kv("RXDCOffset", def(m.Modem.RXDCOffset, "0")),
+		kv("TXDCOffset", def(m.Modem.TXDCOffset, "0")),
+		kv("RFLevel", def(m.Modem.RFLevel, "100")),
+		kv("DMRDelay", def(m.Modem.DMRDelay, "0")),
 		kv("RXLevel", def(m.Modem.RXLevel, "50")),
 		kv("TXLevel", def(m.Modem.TXLevel, "50")),
 		// CW tone level lives in [Modem] but belongs to the station-ID feature, so
 		// the store keeps it on StationID (General/[Info] sets the same precedent).
 		kv("CWIdTXLevel", def(m.StationID.TXLevel, "50")),
-		kv("RSSIMappingFile", "/usr/local/etc/RSSI.dat"),
-	)
+	}
+	// A blank per-mode level is omitted, never written empty. The host parses
+	// values with atof, so "DMRTXLevel=" is not "unset" — it is zero deviation,
+	// a node that transmits nothing anyone can hear.
+	for _, lvl := range []struct{ key, val string }{
+		{"D-StarTXLevel", m.Modem.DStarTXLevel},
+		{"DMRTXLevel", m.Modem.DMRTXLevel},
+		{"YSFTXLevel", m.Modem.YSFTXLevel},
+		{"P25TXLevel", m.Modem.P25TXLevel},
+		{"NXDNTXLevel", m.Modem.NXDNTXLevel},
+		{"POCSAGTXLevel", m.Modem.POCSAGTXLevel},
+		{"FMTXLevel", m.Modem.FMTXLevel},
+	} {
+		if strings.TrimSpace(lvl.val) != "" {
+			modemLines = append(modemLines, kv(lvl.key, lvl.val))
+		}
+	}
+	modemLines = append(modemLines, kv("RSSIMappingFile", def(m.Modem.RSSIMappingFile, "/usr/local/etc/RSSI.dat")))
+	sect(&b, "Modem", modemLines...)
 
 	// [D-Star] Module is the band letter appended to the D-Star callsign; it must
 	// match the gateway repeater Band. Ack/error replies use MMDVM-Host's own
