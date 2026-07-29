@@ -1396,6 +1396,23 @@ func (m *Model) RenderDMRGateway() string {
 		kv("Auth", "0"),
 		kv("Name", MQTTNameDMRGateway),
 	)
+	// [Remote Commands] is what lets waypointd ASK this daemon whether each of its
+	// masters is still connected, by publishing "status" to <name>/command and
+	// reading net1:conn/net2:disc off <name>/response (RemoteControl.cpp →
+	// buildNetworkStatusString → CDMRNetwork::isConnected, which is the login state
+	// machine itself).
+	//
+	// Without it the daemon is unaskable, and that is not a small loss. DMRGateway
+	// announces a link change when one happens and then says nothing — so when a
+	// master goes away and the daemon fails to recover, it emits no status, no log,
+	// and no answer: measured on the bench harness, 200 seconds of complete silence
+	// (see test/tier2/resilience_test.go). A supervisor with only the announcements
+	// to go on would hold the last thing it heard, which was "Logged in", and never
+	// notice. Polling turns link state into something re-confirmed on Waypoint's
+	// schedule rather than on the daemon's.
+	sect(&b, "Remote Commands",
+		kb("Enable", true),
+	)
 
 	dmrID := firstNonEmpty(m.DMR.ID, m.General.ID)
 	n := 0

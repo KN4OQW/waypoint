@@ -131,6 +131,17 @@ func (s *Supervisor) ObserveEvent(e hub.Event) {
 	if s.login == nil {
 		s.login = map[string]Tri{}
 	}
+	// "Opening DMR Network: X" reports TriUnknown — an attempt in progress. It
+	// voids a previous success, because a link being re-established is not a link
+	// that is up. It must NOT erase a previous failure, though, and that
+	// distinction is load-bearing: a daemon stuck in a reconnect loop alternates
+	// "Failed connection" and "Opening" forever, and treating each "Opening" as
+	// no-news-so-presumably-fine resets the health clock every few seconds, so the
+	// grace period never elapses and the supervisor watches it fail indefinitely
+	// without ever acting. Found by the tier-2 harness against the real daemon.
+	if login == TriUnknown && s.login[e.Network] == TriNo {
+		return
+	}
 	s.login[e.Network] = login
 }
 

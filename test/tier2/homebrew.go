@@ -37,11 +37,20 @@ type stubMaster struct {
 	// swapping src/dst — a stand-in for the BrandMeister Parrot.
 	echo bool
 
-	done chan struct{}
+	done     chan struct{}
+	closeOne sync.Once
 }
 
 func newStubMaster(name string, echo bool) (*stubMaster, error) {
-	c, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	return newStubMasterOnPort(name, 0, echo)
+}
+
+// newStubMasterOnPort binds a chosen port (0 picks one). The resilience tests need
+// a master that can go away and come back at the same address — DMRGateway is
+// configured once and never re-reads where its master lives, so "the same master
+// returned" and "a different one appeared" are only distinguishable by address.
+func newStubMasterOnPort(name string, port int, echo bool) (*stubMaster, error) {
+	c, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port})
 	if err != nil {
 		return nil, err
 	}
@@ -50,9 +59,26 @@ func newStubMaster(name string, echo bool) (*stubMaster, error) {
 	return s, nil
 }
 
+// logout forgets the login without closing the socket, so a master that comes
+// back can be observed completing a fresh handshake rather than being assumed to
+// have done so.
+func (s *stubMaster) logout() {
+	s.mu.Lock()
+	s.loggedIn = false
+	s.mu.Unlock()
+}
+
 func (s *stubMaster) port() int { return s.conn.LocalAddr().(*net.UDPAddr).Port }
 
-func (s *stubMaster) close() { close(s.done); s.conn.Close() }
+// close is idempotent: the resilience tests take a master away mid-scenario and
+// the rig's cleanup closes whatever it still holds, so the same master is
+// routinely closed twice.
+func (s *stubMaster) close() {
+	s.closeOne.Do(func() {
+		close(s.done)
+		s.conn.Close()
+	})
+}
 
 func (s *stubMaster) serve() {
 	buf := make([]byte, 1024)

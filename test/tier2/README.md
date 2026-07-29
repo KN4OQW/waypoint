@@ -82,6 +82,52 @@ directory with `WAYPOINT_GW_BIN`.
   `internal/bus/frames` and addressed with `Params.DGId`.
 - `TestTier2_BackToBackCrossNetwork` / `...SameNetwork` — diagnostics, not
   acceptance. See below.
+- `TestTier2_SupervisorRecoversAWANOutage` — issue #22's acceptance against the
+  real daemon: a node loses its network, DMRGateway does not come back on its own,
+  and the supervisor recovers it unattended with the story in the event log. Ten
+  asserted steps, including the two negatives that matter — nothing is restarted
+  while the node is offline, and nothing is restarted once it has recovered.
+- `TestTier2_DMRGatewayKnowsOnlyWhenNothingAnswers` — characterizes how much the
+  daemon knows about its own link (below), so a pinned-version bump that changes
+  it fails loudly.
+
+## What the harness established about DMRGateway's reconnect
+
+These are measurements, not readings of the source, and they are why the
+supervisor is built the way it is.
+
+**It does not reconnect.** Take its master away and give it back at the same
+address: 200 seconds later it has not logged back in. This is the lived version of
+MMDVM-Host #682, and it is the whole reason an external supervisor exists.
+
+**It usually does not say so.** Through that window it publishes no status message
+and no log line. A supervisor that only listened would hold the last thing it
+heard — "Logged into DMR Network: BM" — indefinitely.
+
+**Whether it even knows is a race.** Asked directly (the `[Remote Commands]`
+`status` query, which reports `net1:conn`/`net1:disc` straight from the login state
+machine) the answer depends on whether anything is listening at the master's
+address. Nothing listening means ICMP port-unreachable, which errors the socket
+read and knocks it out of `RUNNING` — it reports `disc`, correctly. A port that
+answers produces no error, the connection timeout that should catch this never
+fires, and it reports `conn` while thoroughly disconnected. Which of those happens
+depends on the timing of somebody else's outage.
+
+So the daemon's own view is worth polling and often right, and is exactly the wrong
+thing to depend on. What is dependable is the thing it has no access to: whether
+the node itself had a route out. The supervisor treats a daemon report as one
+signal of three and drives recovery from the node's own connectivity.
+
+Waypoint's rendered `DMRGateway.ini` enables `[Remote Commands]` for the `status`
+query above. Without it the daemon does not subscribe to its own command topic and
+cannot be asked anything.
+
+One bug came out of writing these: the daemon in a failed-reconnect loop alternates
+`Failed connection into DMR Network` and `Opening DMR Network` every few seconds,
+and the supervisor was treating each `Opening` as no-news-so-presumably-fine. That
+reset the grace period on every retry, so a permanently broken link never
+accumulated enough unhealthy time to be acted on. An attempt now voids a previous
+success without erasing a previous failure.
 
 ## Live-reflector tests (opt-in)
 

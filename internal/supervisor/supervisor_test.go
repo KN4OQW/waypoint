@@ -489,6 +489,43 @@ func TestRunnerAnnouncesObserveOnly(t *testing.T) {
 	}
 }
 
+// A daemon stuck in a reconnect loop alternates "Failed connection" and "Opening"
+// forever. Each "Opening" is an attempt, not news of health — if it were allowed
+// to clear the failure, the grace period would reset every few seconds and the
+// supervisor would watch a broken link indefinitely without ever acting. Found by
+// the tier-2 harness against the real DMRGateway.
+func TestReconnectLoopStillAccumulatesGrace(t *testing.T) {
+	h := newHarness(t, testAttachment())
+	h.sup.Prober = &Prober{Resolve: func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("192.0.2.10")}}, nil // resolves fine; the link is what is broken
+	}}
+
+	for i := 0; i < 12; i++ {
+		// The daemon's real cadence: a failure, then a retry, over and over.
+		h.sup.ObserveEvent(hub.Event{Type: status.TypeGatewayStatus, Network: "BM_3102", Detail: "Failed connection into DMR Network: BM_3102"})
+		h.step(15 * time.Second)
+		h.sup.ObserveEvent(hub.Event{Type: status.TypeGatewayStatus, Network: "BM_3102", Detail: "Opening DMR Network: BM_3102"})
+		h.step(15 * time.Second)
+	}
+	if len(h.restarts) == 0 {
+		t.Fatal("a daemon looping on failed reconnects was never remediated — the retry attempts kept resetting the grace period")
+	}
+
+	// A real success still clears it.
+	h.sup.ObserveEvent(hub.Event{Type: status.TypeGatewayStatus, Network: "BM_3102", Detail: "Logged into DMR Network: BM_3102"})
+	h.step(30 * time.Second)
+	if e := h.lastClaim(t); e.Type != status.TypeLinkUp {
+		t.Errorf("a logged-in link should be claimed up, got %s", e.Type)
+	}
+	before := len(h.restarts)
+	for i := 0; i < 10; i++ {
+		h.step(30 * time.Second)
+	}
+	if len(h.restarts) != before {
+		t.Errorf("kept restarting after a successful login: %d → %d", before, len(h.restarts))
+	}
+}
+
 // Events that are not gateway status must not disturb the supervisor's view.
 func TestObserveEventIgnoresUnrelated(t *testing.T) {
 	h := newHarness(t, testAttachment())
