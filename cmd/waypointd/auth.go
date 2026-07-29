@@ -1,10 +1,13 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/KN4OQW/waypoint/internal/auth"
 	"github.com/KN4OQW/waypoint/internal/provision"
@@ -83,7 +86,7 @@ func runResetClaim(args []string) int {
 
 	st, err := store.Open(*storePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "reset-claim: open store %s: %v\n", *storePath, err)
+		fmt.Fprintf(os.Stderr, "reset-claim: open store %s: %v\n", *storePath, explainStoreError(err, *storePath))
 		return 1
 	}
 	defer st.Close()
@@ -101,7 +104,7 @@ func runResetClaim(args []string) int {
 		res, err = resetClaim(as)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "reset-claim: %v\n", err)
+		fmt.Fprintf(os.Stderr, "reset-claim: %v\n", explainStoreError(err, *storePath))
 		return 1
 	}
 
@@ -116,7 +119,39 @@ func runResetClaim(args []string) int {
 		return 0
 	}
 	fmt.Println(res.describe(*storePath))
+	// The running daemon is a DIFFERENT PROCESS holding this same file, and it
+	// caches the claim state. It re-reads it within a few seconds, but an
+	// operator who reloads the page instantly and still sees a login form needs
+	// to know that is expected rather than a failed reset. Older builds cached
+	// it forever, where this line was the difference between a working command
+	// and one that looked broken.
+	fmt.Println("The dashboard returns to its claim screen within a few seconds. " +
+		"If it does not, restart the daemon: sudo systemctl restart waypointd")
 	return 0
+}
+
+// explainStoreError turns SQLite's account of a permissions problem into the
+// instruction that fixes it.
+//
+// "attempt to write a readonly database (8)" is what an operator gets for
+// running this without sudo on a store owned by root, and it reads like a
+// corrupted database rather than a missing word at the front of the command.
+// Nothing else in the message says which file, who owns it, or what to do.
+func explainStoreError(err error, storePath string) error {
+	msg := strings.ToLower(err.Error())
+	readonly := strings.Contains(msg, "readonly") || strings.Contains(msg, "read-only") ||
+		strings.Contains(msg, "permission denied") || errors.Is(err, fs.ErrPermission)
+	if !readonly {
+		return err
+	}
+	hint := fmt.Sprintf("%v\n\nThe configuration store %s cannot be written.", err, storePath)
+	if os.Geteuid() != 0 {
+		hint += "\nIt is normally owned by root, and this command is not running as root — try:\n" +
+			"    sudo waypointd reset-claim"
+	} else {
+		hint += "\nCheck its ownership and that the filesystem is not mounted read-only."
+	}
+	return errors.New(hint)
 }
 
 // buildAuth attaches the auth subsystem to the store and applies the boot-marker
