@@ -86,10 +86,19 @@ const WPI18n = (function () {
   }
 
   // applyTranslations rewrites static markup in place:
-  //   data-i18n="key"                          -> textContent
+  //   data-i18n="key"                           -> textContent
+  //   data-i18n-html="key"                      -> innerHTML
   //   data-i18n-attr="title:key;aria-label:key" -> attributes
   // Dynamically rendered markup (the settings.js template-literal pattern) calls
   // t() directly instead; this walk only covers what is in the HTML.
+  //
+  // data-i18n-html exists for the handful of sentences that wrap an element
+  // mid-phrase — "arrives over <code>/api/events</code>" — where splitting the
+  // sentence into fragments around the tag would hand translators a phrase they
+  // cannot reorder. Catalog values are shipped source, reviewed in the same diff
+  // as any other file, and the settings page already renders catalog-supplied
+  // markup through note(); it is not a channel for untrusted input. Prefer
+  // data-i18n unless the markup is genuinely inside the sentence.
   function applyTranslations(root) {
     const scope = root || document;
     const each = (sel, fn) => {
@@ -97,6 +106,7 @@ const WPI18n = (function () {
       scope.querySelectorAll(sel).forEach(fn);
     };
     each("[data-i18n]", (el) => { el.textContent = t(el.getAttribute("data-i18n")); });
+    each("[data-i18n-html]", (el) => { el.innerHTML = t(el.getAttribute("data-i18n-html")); });
     each("[data-i18n-attr]", (el) => {
       for (const pair of el.getAttribute("data-i18n-attr").split(";")) {
         const sep = pair.indexOf(":");

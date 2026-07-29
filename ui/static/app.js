@@ -73,10 +73,10 @@ function renderThemes() {
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "swatch mode-toggle" + (mode === "light" ? " light" : "");
-  toggle.title = mode === "light" ? "Switch to dark" : "Switch to light";
-  toggle.setAttribute("aria-label", "Toggle light mode");
+  toggle.title = mode === "light" ? t("theme.switchToDark") : t("theme.switchToLight");
+  toggle.setAttribute("aria-label", t("theme.toggleLight"));
   toggle.setAttribute("aria-pressed", String(mode === "light"));
-  toggle.textContent = mode === "light" ? "☀ Light" : "☾ Dark";
+  toggle.textContent = mode === "light" ? t("theme.light") : t("theme.dark");
   toggle.onclick = () => {
     const next = currentMode() === "light" ? "dark" : "light";
     localStorage.setItem("wp-mode", next);
@@ -88,8 +88,9 @@ function renderThemes() {
     const s = document.createElement("button");
     s.type = "button";
     s.className = "swatch" + (th.key === cur ? " on" : "");
-    s.title = th.key;
-    s.setAttribute("aria-label", th.key + " theme");
+    const themeName = t("theme." + th.key);
+    s.title = themeName;
+    s.setAttribute("aria-label", t("theme.swatchLabel", { theme: themeName }));
     s.setAttribute("aria-pressed", String(th.key === cur));
     s.innerHTML = `<span class="dot" style="background:${th.color}" aria-hidden="true"></span>`;
     s.onclick = () => { applyTheme(th.key); localStorage.setItem("wp-theme", th.key); renderThemes(); };
@@ -98,13 +99,13 @@ function renderThemes() {
 }
 
 function fmtTime(iso) {
-  return new Date(iso).toLocaleTimeString([], { hour12: false });
+  return new Date(iso).toLocaleTimeString(WPI18n.currentLanguage(), { hour12: false });
 }
 function ago(iso) {
   const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
-  if (s < 60) return `${s.toFixed(0)}s ago`;
-  if (s < 3600) return `${(s / 60).toFixed(0)}m ago`;
-  return `${(s / 3600).toFixed(1)}h ago`;
+  if (s < 60) return t("time.secondsAgo", { n: s.toFixed(0) });
+  if (s < 3600) return t("time.minutesAgo", { n: (s / 60).toFixed(0) });
+  return t("time.hoursAgo", { n: (s / 3600).toFixed(1) });
 }
 
 async function loadHealth() {
@@ -112,7 +113,7 @@ async function loadHealth() {
     const h = await (await fetch("/api/health")).json();
     $("#st-version").textContent = h.version;
     $("#foot-version").textContent = t("foot.version", { version: h.version });
-    $("#st-feed").textContent = h.demo ? "demo" : "live";
+    $("#st-feed").textContent = h.demo ? t("status.feedDemo") : t("status.feedLive");
     $("#demo-badge").hidden = !h.demo;
     setConn(true);
   } catch {
@@ -150,12 +151,14 @@ function renderOnAir() {
     return;
   }
   const dir = e.type === "rf_voice_start" ? "RF" : "NET";
-  const dirWord = dir === "RF" ? "RF transmission" : "Network transmission";
+  const dirWord = dir === "RF" ? t("dash.onair.rf") : t("dash.onair.net");
+  const meta = [esc(e.mode)];
+  if (e.slot) meta.push(esc(t("dash.onair.slot", { slot: e.slot })));
   box.className = "onair active";
   box.innerHTML =
-    `<span class="dir"><span aria-hidden="true">${dir}</span><span class="sr-only">${dirWord}</span></span><div>` +
-    `<span class="who">${esc(e.source)}<span class="arrow" aria-hidden="true">→</span><span class="sr-only"> to </span>${esc(tgLabel(e.mode, e.dest))}</span>` +
-    `<span class="meta">${esc(e.mode)}${e.slot ? " slot " + e.slot : ""}${e.network ? " · " + esc(e.network) : ""}</span>` +
+    `<span class="dir"><span aria-hidden="true">${dir}</span><span class="sr-only">${esc(dirWord)}</span></span><div>` +
+    `<span class="who">${esc(e.source)}<span class="arrow" aria-hidden="true">→</span><span class="sr-only">${esc(t("dash.onair.to"))}</span>${esc(tgLabel(e.mode, e.dest))}</span>` +
+    `<span class="meta">${meta.join(" ")}${e.network ? " · " + esc(e.network) : ""}</span>` +
     `</div>`;
 }
 
@@ -166,9 +169,9 @@ function renderLastHeard() {
   $("#lastheard-empty").hidden = rows.length > 0;
   $("#lastheard tbody").innerHTML = rows.map((e) =>
     `<tr><td><span class="call">${esc(e.source)}</span></td><td>${esc(tgLabel(e.mode, e.dest))}</td>` +
-    `<td>${esc(e.mode)}${e.slot ? "·S" + e.slot : ""}</td>` +
-    `<td class="num">${e.seconds ? e.seconds.toFixed(1) + "s" : "—"}</td>` +
-    `<td class="num">${e.ber != null && e.type === "rf_voice_end" ? e.ber.toFixed(1) + "%" : "—"}</td>` +
+    `<td>${esc(e.mode)}${e.slot ? esc(t("dash.lastheard.slot", { slot: e.slot })) : ""}</td>` +
+    `<td class="num">${e.seconds ? esc(t("dash.lastheard.seconds", { n: e.seconds.toFixed(1) })) : "—"}</td>` +
+    `<td class="num">${e.ber != null && e.type === "rf_voice_end" ? esc(t("dash.lastheard.berValue", { n: e.ber.toFixed(1) })) : "—"}</td>` +
     `<td class="num">${ago(e.time)}</td></tr>`
   ).join("");
 }
@@ -186,13 +189,14 @@ function logEvent(e) {
   const cls = e.type.startsWith("rf") ? "ev-rf" : e.type.startsWith("net") ? "ev-net" : "";
   const dest = tgLabel(e.mode, e.dest); // resolve DMR TG numbers to names inline
   let text;
+  const slot = e.slot ? t("log.slot", { slot: e.slot }) : "";
   switch (e.type) {
-    case "rf_voice_start": text = `${e.source} keyed up → ${dest} (${e.mode}${e.slot ? " S" + e.slot : ""})`; break;
-    case "rf_voice_end":   text = `${e.source} → ${dest}, ${e.seconds}s, BER ${e.ber}%, RSSI ${e.rssi} dBm`; break;
-    case "net_voice_start":text = `${e.source} → ${dest} from ${e.network}`; break;
-    case "net_voice_end":  text = `${e.source} → ${dest}, ${e.seconds}s (network)`; break;
-    case "link":           text = `${e.network}: ${e.detail}`; break;
-    case "mode":           text = `mode ${e.mode}${e.detail ? " — " + e.detail : ""}`; break;
+    case "rf_voice_start": text = t("log.rfStart", { source: e.source, dest, mode: e.mode, slot }); break;
+    case "rf_voice_end":   text = t("log.rfEnd", { source: e.source, dest, seconds: e.seconds, ber: e.ber, rssi: e.rssi }); break;
+    case "net_voice_start":text = t("log.netStart", { source: e.source, dest, network: e.network }); break;
+    case "net_voice_end":  text = t("log.netEnd", { source: e.source, dest, seconds: e.seconds }); break;
+    case "link":           text = t("log.link", { network: e.network, detail: e.detail }); break;
+    case "mode":           text = e.detail ? t("log.modeDetail", { mode: e.mode, detail: e.detail }) : t("log.mode", { mode: e.mode }); break;
     default:               text = e.detail || e.type;
   }
   const row = document.createElement("tr");
@@ -212,7 +216,7 @@ function handle(e) {
       state.lastheard.set(e.source, e);
       break;
     case "link":
-      state.networks.set(e.network, e.detail || "linked"); break;
+      state.networks.set(e.network, e.detail || t("dash.networks.linked")); break;
     case "mode":
       setMode(e.mode); break;
   }
@@ -269,7 +273,7 @@ function renderGateways(gws) {
   $("#gateways-empty").hidden = items.length > 0;
   $("#gateways").innerHTML = items.map(([name, g]) =>
     `<li class="${g.up ? "" : "down"}"><span class="dot" aria-hidden="true"></span>${esc(name)}` +
-    `<span class="state">${g.up ? "running ✓" : "not running ✗"}</span></li>`
+    `<span class="state">${esc(g.up ? t("dash.gateways.running") : t("dash.gateways.stopped"))}</span></li>`
   ).join("");
 }
 
@@ -307,17 +311,17 @@ function mountLanguagePicker() { WPI18n.renderPicker($("#lang-pick")); }
 // state we actually last saw instead of waiting out the 2s poll.
 addEventListener("wp-lang-changed", () => {
   mountLanguagePicker();
+  renderThemes(); // the swatches carry titles and aria-labels
   if (state.up !== null) setConn(state.up);
   renderOnAir();
   loadHealth(); // the footer's "waypointd {version}" is interpolated, not markup
 });
 
 // Theme and mode are pure CSS attributes, and the inline script in the page head
-// already applied them before first paint; this only brings the swatch UI into
-// agreement, so it does not wait on anything.
+// already applied them before first paint, so they do not wait on anything. The
+// swatch UI itself does: it carries labels.
 applyMode(currentMode());
 applyTheme(localStorage.getItem("wp-theme") || "phosphor");
-renderThemes();
 
 // Everything below renders text, so it waits for the catalogs. Starting it
 // earlier would lose a race twice over: t() would answer with bare keys before
@@ -327,6 +331,7 @@ renderThemes();
 // inside i18n.js — so this is a delay of one same-origin fetch, not a new way
 // for the dashboard to fail to load.
 WPI18n.ready.then(() => {
+  renderThemes();
   mountLanguagePicker();
   loadHealth();
   loadCallsign();
