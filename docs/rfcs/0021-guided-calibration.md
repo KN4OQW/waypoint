@@ -325,6 +325,11 @@ firmware reports the frequency error directly.)*
 
 # Amendment 1 — the sweep is the wrong primary measurement
 
+- Discussion: [#153](https://github.com/KN4OQW/waypoint/discussions/153) — open for
+  views on whether a bad oscillator is common enough to justify any of this, on
+  ADF7021 AFC readback scaling, and on whether the simplex-channel requirement is
+  the barrier this assumes.
+
 **2026-07-29.** The engine was taken to the bench with a real radio. It works,
 and working revealed that the *procedure around it* costs more than the problem
 it solves for most of the people it was built for. This amendment records what
