@@ -1295,7 +1295,7 @@ function panelProfiles() {
   else if (!profiles.length) listHTML = note("No profiles yet. Configure your modes and networks, then <b>Save current setup</b> to capture this configuration as a profile you can switch back to.");
   else listHTML = `<div class="stack">${profiles.map(profileCard).join("")}</div>`;
 
-  const hint = note("Activating a profile writes its saved modes & networks and restarts the stack — the same as an Apply. Exported files have <b>passwords removed</b>; on import you re-enter any that are needed (or the target node keeps its own). Identity and calibration are never in a profile (<a href='https://github.com/KN4OQW/waypoint/blob/main/docs/rfcs/0006-connection-profiles.md'>RFC-0006</a>).");
+  const hint = note("Activating a profile writes its saved modes & networks and restarts the stack — the same as an Apply. Exported files have <b>passwords removed</b>; on import you re-enter any that are needed (or the target node keeps its own). Identity and calibration are never in a profile (<a href='https://github.com/KN4OQW/waypoint/discussions/161'>RFC-0006</a>).");
   return `<div class="grid2">${save}${hint}</div>${listHTML}`;
 }
 
