@@ -195,19 +195,20 @@ func TestFeedDownUnconfirmsNetworks(t *testing.T) {
 	}
 }
 
-// The link watchdog: an armed confirmation window lowers a link nothing has
-// re-asserted, and leaves a re-asserted one alone. Same "truth is a function of
-// time" rule as the TX watchdog, applied to link state.
+// The link watchdog: a link something has been re-confirming stops being claimed
+// when those confirmations stop. Same "truth is a function of time" rule as the TX
+// watchdog, applied to link state.
 func TestLinkWatchdog(t *testing.T) {
 	a := New(DefaultTxTTL, 30*time.Second)
 	a.Apply(hub.Event{Type: TypeLinkUp, Network: "BM_3103", Detail: "logged in", Time: t0})
+	a.ConfirmLink("BM_3103", t0)
 
 	a.Expire(t0.Add(29 * time.Second))
 	if !a.Snapshot().Networks["BM_3103"].Up {
 		t.Fatal("link expired inside its confirmation window")
 	}
 	// Re-confirmed in time: the deadline moves out.
-	a.Apply(hub.Event{Type: TypeLinkUp, Network: "BM_3103", Detail: "logged in", Time: t0.Add(29 * time.Second)})
+	a.ConfirmLink("BM_3103", t0.Add(29*time.Second))
 	a.Expire(t0.Add(45 * time.Second)) // past the ORIGINAL deadline, inside the refreshed one
 	if !a.Snapshot().Networks["BM_3103"].Up {
 		t.Fatal("re-confirmation did not extend the watchdog")
@@ -230,14 +231,73 @@ func TestLinkWatchdog(t *testing.T) {
 	}
 }
 
-// With the watchdog disabled (today's default, because nothing re-confirms links
-// yet) a link is never lowered by the clock alone — only by an explicit down.
-func TestLinkWatchdogOffNeverExpires(t *testing.T) {
+// A link nothing re-checks is NOT perishable, even with the watchdog armed. This
+// is the property that lets the watchdog default to on: DAPNET has no confirmation
+// source (its daemon is not packaged yet), and decaying it to "down" on a timer
+// would report a failure the timer knows nothing about.
+func TestUnconfirmableLinkNeverExpires(t *testing.T) {
+	a := New(DefaultTxTTL, 30*time.Second)
+	a.Apply(hub.Event{Type: TypeLinkUp, Network: "dapnet", Detail: "logged in", Time: t0})
+	a.Expire(t0.Add(24 * time.Hour))
+	if !a.Snapshot().Networks["dapnet"].Up {
+		t.Error("a link with no confirmation source was expired by the clock alone")
+	}
+}
+
+// Confirming is not an observable change, so it runs every cycle without waking a
+// listener or republishing a topic.
+func TestConfirmDoesNotChurn(t *testing.T) {
+	a := New(DefaultTxTTL, 30*time.Second)
+	a.Apply(hub.Event{Type: TypeLinkUp, Network: "BM_3103", Detail: "logged in", Time: t0})
+	var notifications int
+	a.OnChange(func(Status) { notifications++ })
+	for i := 0; i < 20; i++ {
+		a.ConfirmLink("BM_3103", t0.Add(time.Duration(i)*time.Second))
+	}
+	if notifications != 0 {
+		t.Errorf("confirmations churned the status %d times", notifications)
+	}
+	if since := a.Snapshot().Networks["BM_3103"].Since; !since.Equal(t0) {
+		t.Errorf("confirming moved Since: %v", since)
+	}
+}
+
+// Confirming something that is down, or absent, does nothing — a confirmation is
+// evidence about a live link, not a way to raise one.
+func TestConfirmOnlyKeepsUpLinksAlive(t *testing.T) {
+	a := New(DefaultTxTTL, 30*time.Second)
+	a.ConfirmLink("ghost", t0)
+	if _, ok := a.Snapshot().Networks["ghost"]; ok {
+		t.Error("confirming an unknown network invented a row")
+	}
+	a.Apply(hub.Event{Type: TypeLinkDown, Network: "BM_3103", Detail: "not logged in", Time: t0})
+	a.ConfirmLink("BM_3103", t0)
+	if a.Snapshot().Networks["BM_3103"].Up {
+		t.Error("confirming raised a link that was reported down")
+	}
+}
+
+// A network the operator removes leaves the model entirely. Keeping the row would
+// just move the lie from "still linked" to "still exists".
+func TestLinkRemovedRetiresTheRow(t *testing.T) {
 	a := New(DefaultTxTTL, LinkTTLOff)
 	a.Apply(hub.Event{Type: TypeLinkUp, Network: "BM_3103", Detail: "logged in", Time: t0})
-	a.Expire(t0.Add(24 * time.Hour))
-	if !a.Snapshot().Networks["BM_3103"].Up {
-		t.Error("link expired with the watchdog disabled")
+	a.Apply(hub.Event{Type: TypeGWUp, Network: "dmrgateway", Time: t0})
+
+	a.Apply(hub.Event{Type: TypeLinkRemoved, Network: "BM_3103", Detail: "no longer configured", Time: t0.Add(time.Minute)})
+	s := a.Snapshot()
+	if _, ok := s.Networks["BM_3103"]; ok {
+		t.Errorf("a removed network kept its row: %+v", s.Networks)
+	}
+	if !s.Gateways["dmrgateway"].Up {
+		t.Error("removing a network disturbed gateway liveness")
+	}
+	// Retiring something already gone is a no-op, not a churn.
+	var notifications int
+	a.OnChange(func(Status) { notifications++ })
+	a.Apply(hub.Event{Type: TypeLinkRemoved, Network: "BM_3103", Time: t0.Add(2 * time.Minute)})
+	if notifications != 0 {
+		t.Errorf("retiring an absent network notified %d times", notifications)
 	}
 }
 

@@ -114,12 +114,17 @@ func (dp *dataPlane) start(ctx context.Context, cfg dataPlaneConfig) {
 	// Home Assistant and other consumers (RFC-0008). Best-effort: a publish with no
 	// live publisher is dropped, not an error, so a broker that is down never
 	// blocks the aggregator.
+	// A Republisher rather than the bare function: retained topics need to be
+	// CLEARED when a network goes away, or a deleted one's last payload outlives it
+	// on the broker and Home Assistant keeps an entity for a network the node no
+	// longer has.
+	rp := &status.Republisher{}
 	dp.agg.OnChange(func(st status.Status) {
 		prefix, pub := dp.publisher()
 		if pub == nil {
 			return
 		}
-		status.Republish(st, prefix, pub.Publish)
+		rp.Publish(st, prefix, pub.Publish)
 	})
 	if !dp.haDiscovery {
 		return

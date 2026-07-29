@@ -3,6 +3,7 @@ package status
 import (
 	"encoding/json"
 	"strings"
+	"sync"
 )
 
 // Republish maps a Status onto the normalized waypoint/status/# topics (RFC-0008)
@@ -36,6 +37,47 @@ func Republish(s Status, prefix string, publish func(topic string, payload []byt
 	for name, link := range s.Gateways {
 		publish(prefix+"/gateway/"+topicSafe(name), mustJSON(link))
 	}
+}
+
+// Republisher is Republish with a memory, which is what a *retained* topic scheme
+// needs. Republish alone publishes what currently exists; a network the operator
+// has deleted simply stops being published, and its last retained payload stays on
+// the broker for every future subscriber — so Home Assistant keeps an entity for a
+// network the node no longer has, and the topic outlives the thing it described.
+//
+// Tracking what was published lets a vanished name be cleared explicitly, with the
+// same empty retained payload the idle tx topic uses.
+type Republisher struct {
+	mu       sync.Mutex
+	networks map[string]bool
+	gateways map[string]bool
+}
+
+// Publish emits the current status and clears the topics of anything that has gone
+// since the last call.
+func (r *Republisher) Publish(s Status, prefix string, publish func(topic string, payload []byte)) {
+	Republish(s, prefix, publish)
+
+	prefix = strings.TrimRight(prefix, "/")
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.networks = clearGone(r.networks, s.Networks, prefix+"/network/", publish)
+	r.gateways = clearGone(r.gateways, s.Gateways, prefix+"/gateway/", publish)
+}
+
+// clearGone publishes an empty retained payload for every name that was present
+// last time and is not now, and returns the new set.
+func clearGone(was map[string]bool, now map[string]Link, prefix string, publish func(string, []byte)) map[string]bool {
+	for name := range was {
+		if _, still := now[name]; !still {
+			publish(prefix+topicSafe(name), []byte(""))
+		}
+	}
+	next := make(map[string]bool, len(now))
+	for name := range now {
+		next[name] = true
+	}
+	return next
 }
 
 func mustJSON(v any) []byte {

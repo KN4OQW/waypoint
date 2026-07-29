@@ -56,18 +56,30 @@ when one is made. A link stops being claimed on any of three signals:
 - an explicit **`link_down`** event naming the network (its `detail` says why);
 - **loss of the MMDVM-Host feed** — nothing can re-assert a link with the feed
   gone, and `detail` reads `unconfirmed — MMDVM-Host feed down`;
-- the **confirmation watchdog**, when armed: a link nothing has re-confirmed
-  within `-link-ttl` reports `unconfirmed for <window>`.
+- the **confirmation watchdog**: a link that *was* being re-confirmed and stops
+  being reports `unconfirmed for <window>` (`-link-ttl`, default 3 minutes).
 
-The watchdog is **off by default** (`-link-ttl=0`) because nothing re-confirms a
-link yet; the resilience supervisor ([#22](https://github.com/KN4OQW/waypoint/issues/22))
-is what arms it. `since` is when the link entered its *current* state, so a
-re-confirmation of an already-up link neither moves `since` nor republishes the
-topic.
+The watchdog applies **only to links something is actively re-checking**. The
+supervisor asks DMRGateway every cycle, so its masters are subject to it; a link
+with no confirmation source — DAPNET, whose daemon isn't packaged yet — has no
+deadline and keeps its last known state, because decaying it to "down" on a timer
+would report a failure the timer knows nothing about. That is what lets the
+watchdog default to on.
 
-The event stream carries `link_up`/`link_down` for this; the original `link`
-spelling still means "up" and is still accepted, because `events.db` holds rows
-written before the pair existed and `GET /api/history` replays them.
+Confirming is not an observable change: `since` is when the link entered its
+*current* state, so a re-confirmation neither moves `since` nor republishes the
+topic. Only the *absence* of confirmation is ever visible.
+
+A network the operator deletes or disables is **retired** rather than left at its
+last verdict: `link_removed` drops it from `networks` and its retained
+`network/<name>` topic is cleared with an empty payload, so a deleted network stops
+being described instead of trading "still linked" for "still exists". (A Home
+Assistant *discovery* config for a retired entity is a separate retained topic and
+is not yet cleared — tracked with the RFC-0011 follow-up.)
+
+The event stream carries `link_up`/`link_down`/`link_removed` for this; the original
+`link` spelling still means "up" and is still accepted, because `events.db` holds
+rows written before the pair existed and `GET /api/history` replays them.
 
 ## Home Assistant discovery (`homeassistant/#`)
 
@@ -128,6 +140,7 @@ and the `/api/history` record like any other:
 | Type | Meaning |
 |---|---|
 | `link_up` / `link_down` | The supervisor's verdict about one upstream attachment, with the reason in `detail`. This is what drives `waypoint/status/network/<name>`. |
+| `link_removed` | The network is no longer configured. Retires its row and clears its retained topic. |
 | `supervisor_action` | Something it did, or declined to do, about a lost link — `restarted waypoint-dmrgateway.service — BM_3102: the endpoint is unreachable`. `source` is the unit. |
 
 Actions are events rather than log lines because unattended recovery has to be

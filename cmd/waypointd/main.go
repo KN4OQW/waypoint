@@ -1869,7 +1869,7 @@ func main() {
 	nodeID := flag.String("node-id", defaultNodeID(), "device id + MQTT node segment for HA discovery (stable across restarts)")
 	statusTick := flag.Duration("status-watchdog-tick", time.Second, "how often the status aggregator runs its stranded-transmission watchdog")
 	probeInterval := flag.Duration("gateway-probe-interval", time.Second, "how often the supervisor probes gateway liveness (RFC-0008; keep < 2s for the #5 acceptance)")
-	linkTTL := flag.Duration("link-ttl", status.LinkTTLOff, "how long a network link stays claimed without re-confirmation; 0 disables (nothing re-confirms links until the resilience supervisor, #22)")
+	linkTTL := flag.Duration("link-ttl", status.DefaultLinkTTL, "how long a CONFIRMED network link stays claimed without a fresh confirmation; 0 disables. Only links something re-checks are subject to it (#22)")
 	supervisorInterval := flag.Duration("supervisor-interval", supervisor.DefaultInterval, "how often the resilience supervisor evaluates each upstream attachment (#22)")
 	supervisorRemediate := flag.Bool("supervisor-remediate", true, "let the resilience supervisor restart a gateway that has lost its upstream link; false observes and reports only (#22)")
 	supervisorMaxRestarts := flag.Int("supervisor-max-restarts", supervisor.DefaultMaxRestarts, "global backstop: most gateway restarts the supervisor may perform inside -supervisor-restart-window")

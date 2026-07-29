@@ -542,3 +542,91 @@ func TestObserveEventIgnoresUnrelated(t *testing.T) {
 func hubGatewayStatus(network, detail string) hub.Event {
 	return hub.Event{Type: status.TypeGatewayStatus, Network: network, Detail: detail}
 }
+
+// Removing a network must retire it, not merely forget it internally: the status
+// model holds a row and the retained topic holds a payload, both of which would
+// otherwise describe a network the operator has deleted.
+func TestRunnerRetiresRemovedAttachments(t *testing.T) {
+	attachments := []Attachment{testAttachment()}
+	h := newHarness(t)
+	h.sup.Signals.Attachments = func() []Attachment { return attachments }
+
+	h.step(0)
+	h.drain()
+
+	attachments = nil
+	h.step(time.Minute)
+
+	var retired []hub.Event
+	for _, e := range h.drain() {
+		if e.Type == status.TypeLinkRemoved {
+			retired = append(retired, e)
+		}
+	}
+	if len(retired) != 1 {
+		t.Fatalf("expected one link_removed, got %d", len(retired))
+	}
+	if retired[0].Network != "BM_3102" {
+		t.Errorf("retired the wrong network: %q", retired[0].Network)
+	}
+
+	// Retiring happens once, not on every subsequent cycle.
+	for i := 0; i < 4; i++ {
+		h.step(time.Minute)
+	}
+	for _, e := range h.drain() {
+		if e.Type == status.TypeLinkRemoved {
+			t.Error("re-retired a network that was already gone")
+		}
+	}
+}
+
+// A link is confirmed only on positive evidence. A claim that is up merely because
+// nothing has reported a problem is not evidence, and confirming on that basis
+// would defeat the watchdog it feeds.
+func TestRunnerConfirmsOnlyOnEvidence(t *testing.T) {
+	h := newHarness(t, testAttachment())
+	var confirmed []string
+	h.sup.Signals.Confirm = func(network string, _ time.Time) {
+		confirmed = append(confirmed, network)
+	}
+
+	// Nothing known yet: the claim is up ("running") but unverified.
+	h.step(0)
+	if len(confirmed) != 0 {
+		t.Errorf("confirmed an unverified link: %v", confirmed)
+	}
+
+	// The daemon vouches for it.
+	h.sup.Signals.LinkState = func() map[string]Tri { return map[string]Tri{"BM_3102": TriYes} }
+	h.step(30 * time.Second)
+	if len(confirmed) != 1 || confirmed[0] != "BM_3102" {
+		t.Fatalf("a verified link was not confirmed: %v", confirmed)
+	}
+
+	// It goes down: confirmations stop.
+	confirmed = nil
+	h.sup.Signals.LinkState = func() map[string]Tri { return map[string]Tri{"BM_3102": TriNo} }
+	h.step(30 * time.Second)
+	if len(confirmed) != 0 {
+		t.Errorf("confirmed a link the daemon reports as down: %v", confirmed)
+	}
+}
+
+// Nothing is confirmed while the node has no route out — the supervisor cannot
+// verify anything, which is precisely when the watchdog should be allowed to run
+// down rather than be held open by an assumption.
+func TestRunnerDoesNotConfirmWhileOffline(t *testing.T) {
+	h := newHarness(t, testAttachment())
+	var confirmed int
+	h.sup.Signals.Confirm = func(string, time.Time) { confirmed++ }
+	h.sup.Signals.LinkState = func() map[string]Tri { return map[string]Tri{"BM_3102": TriYes} }
+
+	h.wan = false
+	for i := 0; i < 5; i++ {
+		h.step(30 * time.Second)
+	}
+	if confirmed != 0 {
+		t.Errorf("confirmed %d links while the node had no route out", confirmed)
+	}
+}

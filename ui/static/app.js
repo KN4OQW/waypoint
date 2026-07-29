@@ -201,6 +201,7 @@ function logEvent(e) {
     case "link":
     case "link_up":        text = `${e.network} linked${e.detail ? " — " + e.detail : ""}`; break;
     case "link_down":      text = `${e.network} link lost${e.detail ? " — " + e.detail : ""}`; break;
+    case "link_removed":   text = `${e.network} removed${e.detail ? " — " + e.detail : ""}`; break;
     case "gateway_status": text = `${e.network}: ${e.detail}`; break;
     case "supervisor_action": text = `supervisor: ${e.detail}`; break;
     case "mode":           text = `mode ${e.mode}${e.detail ? " — " + e.detail : ""}`; break;

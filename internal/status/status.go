@@ -50,11 +50,12 @@ type Link struct {
 	Since  time.Time `json:"since"`
 
 	// expiresAt is the confirmation deadline for a network link — the point past
-	// which nothing has re-asserted that it is up and the aggregator stops
-	// claiming so. Zero means the assertion does not perish (a gateway's systemd
-	// liveness, or a network link folded while the link watchdog is disabled).
-	// Not serialized, and deliberately excluded from statusEqual: pushing a
-	// deadline out is not an observable change and must not churn the topics.
+	// which nothing has re-asserted that it is up and the aggregator stops claiming
+	// so. Set only by ConfirmLink, so zero means nothing is re-checking this link
+	// and the claim does not perish: a gateway's systemd liveness, or a network
+	// whose daemon Waypoint cannot query. Not serialized, and deliberately excluded
+	// from statusEqual: pushing a deadline out is not an observable change and must
+	// not churn the topics.
 	expiresAt time.Time
 }
 
@@ -81,10 +82,16 @@ const (
 	TypeLink     = "link"
 	TypeLinkUp   = "link_up"
 	TypeLinkDown = "link_down"
-	TypeFeedUp   = "feed_up"
-	TypeFeedDown = "feed_down"
-	TypeGWUp     = "gateway_up"
-	TypeGWDown   = "gateway_down"
+	// TypeLinkRemoved retires a network entirely: the operator deleted or disabled
+	// it, so there is nothing left to report. Distinct from link_down, which says a
+	// network that still exists is not currently connected. Without it a removed
+	// network keeps its last verdict in Networks forever, which moves the lie from
+	// "still linked" to "still exists" rather than fixing it.
+	TypeLinkRemoved = "link_removed"
+	TypeFeedUp      = "feed_up"
+	TypeFeedDown    = "feed_down"
+	TypeGWUp        = "gateway_up"
+	TypeGWDown      = "gateway_down"
 	// TypeGatewayStatus is a gateway daemon's own report about one of its upstream
 	// links, verbatim from its MQTT status plane. The fold deliberately ignores it:
 	// it is raw daemon chatter, one input the supervisor weighs against the unit
@@ -109,14 +116,19 @@ const (
 // daemon died without a closing event) and truth is that the node is idle.
 const DefaultTxTTL = 200 * time.Second
 
-// LinkTTLOff disables the network-link confirmation watchdog. It is the current
-// default because nothing re-confirms a link yet: a link is asserted up by the
-// event that raised it and lowered by an explicit link_down or a feed loss. The
-// resilience supervisor (#22) is what periodically re-confirms each attachment,
-// and it arms this watchdog so a link whose confirmation stops arriving stops
-// being claimed — the same "truth is a function of time" rule the TX watchdog
-// enforces. Arming it without a re-confirmer would take every link down once.
+// LinkTTLOff disables the network-link confirmation watchdog entirely.
 const LinkTTLOff time.Duration = 0
+
+// DefaultLinkTTL is how long a *confirmed* link stays claimed without a fresh
+// confirmation. Only links something is actively re-checking are subject to it
+// (see ConfirmLink), so this can be on by default without penalising a link that
+// has no confirmation source.
+//
+// Three minutes against a supervisor that re-confirms every thirty seconds: five
+// missed cycles of slack, so a broker hiccup or a daemon mid-restart does not
+// lower a working link, while a supervisor that has genuinely stopped checking
+// stops being believed inside a few minutes.
+const DefaultLinkTTL = 3 * time.Minute
 
 // Aggregator holds the single authoritative Status and notifies listeners on every
 // change. The mutable copy lives behind mu; readers get a deep value copy, so the
@@ -171,7 +183,7 @@ func (a *Aggregator) OnChange(fn func(Status)) func() {
 
 // Apply folds one event into the status, emitting on change.
 func (a *Aggregator) Apply(e hub.Event) {
-	a.commit(func(s Status) Status { return applyEvent(s, e, a.txTTL, a.linkTTL) })
+	a.commit(func(s Status) Status { return applyEvent(s, e, a.txTTL) })
 }
 
 // Expire runs the stranded-TX and unconfirmed-link watchdogs against now, emitting
@@ -179,6 +191,35 @@ func (a *Aggregator) Apply(e hub.Event) {
 // tests.
 func (a *Aggregator) Expire(now time.Time) {
 	a.commit(func(s Status) Status { return expire(s, now, a.linkTTL) })
+}
+
+// ConfirmLink records that something has just re-checked this network and found it
+// up, pushing its confirmation deadline out.
+//
+// This is what makes a link claim perishable, and it is deliberately the ONLY way
+// one becomes so. A link the supervisor can re-check (it asks DMRGateway every
+// cycle) stops being claimed if those confirmations stop arriving; a link nothing
+// can re-check — DAPNET, whose daemon Waypoint does not package yet — has no
+// deadline and keeps its last known state. Arming the watchdog for both would take
+// the second kind down on a timer that says nothing whatsoever about the link.
+//
+// Confirming is not an observable change (statusEqual ignores the deadline), so
+// this neither wakes a listener nor republishes a topic; it runs every cycle
+// without churn, and only the absence of it is ever visible.
+func (a *Aggregator) ConfirmLink(name string, at time.Time) {
+	if name == "" || a.linkTTL <= 0 {
+		return
+	}
+	a.commit(func(s Status) Status {
+		l, ok := s.Networks[name]
+		if !ok || !l.Up {
+			return s // nothing to keep alive
+		}
+		l.expiresAt = at.Add(a.linkTTL)
+		s.Networks = cloneLinks(s.Networks)
+		s.Networks[name] = l
+		return s
+	})
 }
 
 func (a *Aggregator) commit(f func(Status) Status) {
@@ -242,7 +283,7 @@ func (a *Aggregator) Run(ctx context.Context, h *hub.Hub, tick time.Duration) {
 // applyEvent is the pure fold: (status, event) -> status. It never mutates the
 // input's maps (it clones a map before writing), so the caller can compare old vs
 // new to detect a change.
-func applyEvent(s Status, e hub.Event, txTTL, linkTTL time.Duration) Status {
+func applyEvent(s Status, e hub.Event, txTTL time.Duration) Status {
 	switch e.Type {
 	case TypeRFStart, TypeNetStart:
 		dir := "rf"
@@ -263,14 +304,18 @@ func applyEvent(s Status, e hub.Event, txTTL, linkTTL time.Duration) Status {
 		}
 	case TypeLink, TypeLinkUp, TypeLinkDown:
 		if e.Network != "" {
-			up := e.Type != TypeLinkDown
-			// Only an up assertion perishes. A link already reported down needs no
-			// deadline — there is nothing left to stop claiming.
-			var deadline time.Time
-			if up && linkTTL > 0 {
-				deadline = e.Time.Add(linkTTL)
+			// No deadline here. A claim becomes perishable only when something is
+			// actually re-confirming it — see ConfirmLink — because a link nobody can
+			// re-check must keep its last known state rather than decay to "down" on a
+			// timer that says nothing about the link.
+			s.Networks = setLink(s.Networks, e.Network, e.Type != TypeLinkDown, e.Detail, e.Time, time.Time{})
+		}
+	case TypeLinkRemoved:
+		if e.Network != "" {
+			if _, ok := s.Networks[e.Network]; ok {
+				s.Networks = cloneLinks(s.Networks)
+				delete(s.Networks, e.Network)
 			}
-			s.Networks = setLink(s.Networks, e.Network, up, e.Detail, e.Time, deadline)
 		}
 	case TypeGWUp, TypeGWDown:
 		name := firstNonEmpty(e.Network, e.Mode)

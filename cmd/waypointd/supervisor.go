@@ -100,6 +100,11 @@ func (s *server) runSupervisor(ctx context.Context, opts supervisorOptions) {
 				}
 				return s.dmrLinkState(cmd)
 			},
+			Confirm: func(network string, at time.Time) {
+				if s.agg != nil {
+					s.agg.ConfirmLink(network, at)
+				}
+			},
 			Restart: func(unit string) error {
 				out, err := systemctlRun("restart", unit)
 				if err != nil {

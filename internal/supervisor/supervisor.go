@@ -67,6 +67,12 @@ type Signals struct {
 	// unreachable master looking merely unconfirmed. Asked directly, the same
 	// daemon reports "disc" the whole time.
 	LinkState func() map[string]Tri
+	// Confirm records that a link has just been re-checked and found up, which is
+	// what keeps the status pipeline's confirmation watchdog satisfied. Called only
+	// when there is positive evidence — never merely because the supervisor is
+	// still claiming the link — so a link that stops being verifiable stops being
+	// claimed rather than coasting on the last good answer.
+	Confirm func(network string, at time.Time)
 	// Restart performs the remediation. Nil (or Remediate false) means decisions
 	// are observed and logged but never acted on.
 	Restart func(unit string) error
@@ -211,13 +217,23 @@ func (s *Supervisor) Step(ctx context.Context) {
 	for _, a := range attachments {
 		live[a.Name] = true
 	}
+	var retired []string
 	for name := range s.monitors {
 		if !live[name] {
 			delete(s.monitors, name)
 			delete(s.claimed, name)
+			retired = append(retired, name)
 		}
 	}
 	s.mu.Unlock()
+
+	// Forgetting an attachment internally is not enough: the status pipeline holds
+	// a row for it, and the retained topic holds a payload, both of which would
+	// outlive the network the operator deleted. Retire it explicitly.
+	sort.Strings(retired)
+	for _, name := range retired {
+		s.retire(name, now)
+	}
 
 	// Two passes. The first asks every attachment what it wants; the second decides
 	// what the node actually does about it. They are separate because a restart is
@@ -289,6 +305,13 @@ func (s *Supervisor) stepOne(ctx context.Context, a Attachment, now time.Time, w
 		Now: now, WANUp: wan, TXActive: tx,
 		Unit: unit, Endpoint: endpoint, Login: login,
 	})
+
+	// Only a link the daemon actually vouched for is confirmed. A claim that is up
+	// merely because nothing has reported a problem is not evidence, and treating it
+	// as such would defeat the watchdog it feeds.
+	if d.Claim.Up && login == TriYes && s.Signals.Confirm != nil {
+		s.Signals.Confirm(a.Name, now)
+	}
 
 	s.publishClaim(a, d, now)
 	return m, d
@@ -416,6 +439,22 @@ func (s *Supervisor) allowGloballyLocked(now time.Time) bool {
 	}
 	s.recent = kept
 	return len(s.recent) < s.maxRestarts()
+}
+
+// retire announces that a network is gone, so the status model drops its row and
+// the retained topic is cleared rather than describing something that no longer
+// exists.
+func (s *Supervisor) retire(name string, now time.Time) {
+	if s.Hub == nil {
+		return
+	}
+	s.logf("supervisor: %s is no longer configured; retiring its link state", name)
+	s.Hub.Publish(hub.Event{
+		Time:    now.UTC(),
+		Type:    status.TypeLinkRemoved,
+		Network: name,
+		Detail:  "no longer configured",
+	})
 }
 
 // publishClaim emits a link event when the verdict about an attachment changes.
