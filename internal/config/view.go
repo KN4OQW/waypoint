@@ -4,8 +4,13 @@ package config
 // secrets removed. Passwords never appear — a network reports only whether one
 // is set. This is what GET /api/config returns.
 type View struct {
-	Sources  Sources       `json:"sources"`
-	General  ViewGeneral   `json:"general"`
+	Sources Sources     `json:"sources"`
+	General ViewGeneral `json:"general"`
+	// Modem is the calibration surface (#20) — everything in [Modem] that is not
+	// already on the General tab. It is its own projection rather than more
+	// fields on ViewGeneral because it is a different kind of thing: General is
+	// what the station IS, and this is what the hardware was MEASURED to need.
+	Modem    ViewModem     `json:"modem"`
 	Display  ViewDisplay   `json:"display"`
 	DMR      ViewDMR       `json:"dmr"`
 	Modes    []ViewMode    `json:"modes"`
@@ -247,6 +252,31 @@ type ViewGeneral struct {
 	URL         string `json:"url"`
 }
 
+// ViewModem projects the calibration keys. Nothing here is a secret, so it is a
+// verbatim projection; it exists to keep the editor from having to fetch the
+// whole model to render one card.
+type ViewModem struct {
+	RXLevel    string `json:"rx_level"`
+	TXLevel    string `json:"tx_level"`
+	RXDCOffset string `json:"rx_dc_offset"`
+	TXDCOffset string `json:"tx_dc_offset"`
+	RFLevel    string `json:"rf_level"`
+	DMRDelay   string `json:"dmr_delay"`
+	TXInvert   bool   `json:"tx_invert"`
+	RXInvert   bool   `json:"rx_invert"`
+	PTTInvert  bool   `json:"ptt_invert"`
+
+	DStarTXLevel  string `json:"dstar_tx_level"`
+	DMRTXLevel    string `json:"dmr_tx_level"`
+	YSFTXLevel    string `json:"ysf_tx_level"`
+	P25TXLevel    string `json:"p25_tx_level"`
+	NXDNTXLevel   string `json:"nxdn_tx_level"`
+	POCSAGTXLevel string `json:"pocsag_tx_level"`
+	FMTXLevel     string `json:"fm_tx_level"`
+
+	RSSIMappingFile string `json:"rssi_mapping_file"`
+}
+
 type ViewDMR struct {
 	Enable         bool   `json:"enable"`
 	ColorCode      string `json:"color_code"`
@@ -351,6 +381,25 @@ func (m *Model) View(storePath string) *View {
 			TXOffset:    m.Modem.TXOffset,
 			Location:    m.General.Location,
 			URL:         m.General.URL,
+		},
+		Modem: ViewModem{
+			RXLevel:         m.Modem.RXLevel,
+			TXLevel:         m.Modem.TXLevel,
+			RXDCOffset:      m.Modem.RXDCOffset,
+			TXDCOffset:      m.Modem.TXDCOffset,
+			RFLevel:         m.Modem.RFLevel,
+			DMRDelay:        m.Modem.DMRDelay,
+			TXInvert:        m.Modem.TXInvert,
+			RXInvert:        m.Modem.RXInvert,
+			PTTInvert:       m.Modem.PTTInvert,
+			DStarTXLevel:    m.Modem.DStarTXLevel,
+			DMRTXLevel:      m.Modem.DMRTXLevel,
+			YSFTXLevel:      m.Modem.YSFTXLevel,
+			P25TXLevel:      m.Modem.P25TXLevel,
+			NXDNTXLevel:     m.Modem.NXDNTXLevel,
+			POCSAGTXLevel:   m.Modem.POCSAGTXLevel,
+			FMTXLevel:       m.Modem.FMTXLevel,
+			RSSIMappingFile: m.Modem.RSSIMappingFile,
 		},
 		DMR: ViewDMR{
 			Enable:         m.Modes.DMR,

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/KN4OQW/waypoint/internal/modem"
 	"github.com/KN4OQW/waypoint/internal/store"
@@ -164,6 +165,63 @@ func ValidateModem(m Modem) error {
 		if _, err := strconv.Atoi(m.TCXOHz); err != nil {
 			return fmt.Errorf("modem tcxo_hz must be a whole number of Hz, got %q", m.TCXOHz)
 		}
+	}
+
+	// The calibration fields (#20). These are refused rather than warned about,
+	// because every one of them reaches the modem as a number that changes what
+	// the radio does: a level outside 0-100 or a DC offset outside a signed byte
+	// is NAKed by the firmware, and a node whose config the modem rejects comes
+	// up mute with nothing on screen explaining why.
+	for _, lvl := range []struct{ field, val string }{
+		{"rx_level", m.RXLevel}, {"tx_level", m.TXLevel}, {"rf_level", m.RFLevel},
+		{"dstar_tx_level", m.DStarTXLevel}, {"dmr_tx_level", m.DMRTXLevel},
+		{"ysf_tx_level", m.YSFTXLevel}, {"p25_tx_level", m.P25TXLevel},
+		{"nxdn_tx_level", m.NXDNTXLevel}, {"pocsag_tx_level", m.POCSAGTXLevel},
+		{"fm_tx_level", m.FMTXLevel},
+	} {
+		if err := validPercent("modem."+lvl.field, lvl.val); err != nil {
+			return err
+		}
+	}
+	for _, off := range []struct{ field, val string }{
+		{"rx_dc_offset", m.RXDCOffset}, {"tx_dc_offset", m.TXDCOffset},
+	} {
+		if off.val == "" {
+			continue
+		}
+		n, err := strconv.Atoi(off.val)
+		if err != nil {
+			return fmt.Errorf("modem %s must be a whole number, got %q", off.field, off.val)
+		}
+		if n < -128 || n > 127 {
+			return fmt.Errorf("modem %s must be between -128 and 127, got %d", off.field, n)
+		}
+	}
+	if m.DMRDelay != "" {
+		n, err := strconv.Atoi(m.DMRDelay)
+		if err != nil || n < 0 {
+			return fmt.Errorf("modem dmr_delay must be a whole number of bits, got %q", m.DMRDelay)
+		}
+	}
+	if f := strings.TrimSpace(m.RSSIMappingFile); f != "" && !strings.HasPrefix(f, "/") {
+		return fmt.Errorf("modem rssi_mapping_file must be an absolute path, got %q", f)
+	}
+	return nil
+}
+
+// validPercent accepts a blank value or a percentage the modem can carry. Blank
+// is always allowed: for the per-mode levels it means "follow tx_level", which
+// is the setting almost every node should have.
+func validPercent(field, v string) error {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return fmt.Errorf("%s must be a percentage, got %q", field, v)
+	}
+	if f < 0 || f > 100 {
+		return fmt.Errorf("%s must be between 0 and 100, got %s", field, v)
 	}
 	return nil
 }

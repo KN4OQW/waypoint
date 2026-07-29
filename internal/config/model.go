@@ -524,6 +524,42 @@ type Modem struct {
 	PTTInvert bool   `json:"ptt_invert"`
 	RXLevel   string `json:"rx_level"`
 	TXLevel   string `json:"tx_level"`
+
+	// The rest of [Modem] (#20). These are the settings a calibration produces,
+	// and until #20 they were the gap that sent an operator to a text editor.
+	//
+	// DC offsets and RF level are analog controls a hotspot ignores entirely —
+	// MMDVM_HS's SET_CONFIG parser does not read them — so they matter on a
+	// full-size repeater board and are inert on a hat. They are modeled anyway,
+	// because a node's configuration should describe the node, not the subset of
+	// it the attached board happens to implement.
+	RXDCOffset string `json:"rx_dc_offset"` // -128..127
+	TXDCOffset string `json:"tx_dc_offset"` // -128..127
+	RFLevel    string `json:"rf_level"`     // 0..100%, hotspot RF power
+	DMRDelay   string `json:"dmr_delay"`
+
+	// Per-mode transmit levels. EMPTY MEANS "use tx_level", and that is not a
+	// cosmetic default: MMDVM-Host's parser assigns TXLevel to every per-mode
+	// level as it reads it, so a per-mode key is an override that must appear
+	// after TXLevel — and an EMPTY key is not "unset" to that parser, it is
+	// atof("") = zero deviation. So these are omitted from the rendered INI
+	// when blank rather than written empty (render.go).
+	//
+	// There is no M17 level here on purpose: this stack's MMDVM-Host fork has no
+	// M17TXLevel key at all, so M17 rides on TXLevel, and offering a field the
+	// host silently ignores would be worse than not offering one.
+	DStarTXLevel  string `json:"dstar_tx_level"`
+	DMRTXLevel    string `json:"dmr_tx_level"`
+	YSFTXLevel    string `json:"ysf_tx_level"`
+	P25TXLevel    string `json:"p25_tx_level"`
+	NXDNTXLevel   string `json:"nxdn_tx_level"`
+	POCSAGTXLevel string `json:"pocsag_tx_level"`
+	FMTXLevel     string `json:"fm_tx_level"`
+
+	// RSSIMappingFile maps the modem's raw RSSI counts to dBm. Producing one
+	// needs a calibrated signal generator, so Waypoint ships the path and not
+	// the measurement (RFC-0021 §8).
+	RSSIMappingFile string `json:"rssi_mapping_file"`
 }
 
 // DMR holds DMR parameters; its enable flag lives in Modes so all modes toggle

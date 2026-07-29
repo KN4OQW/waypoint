@@ -387,6 +387,22 @@
     .fw-bar.indeterminate > i { animation: none; margin-left: 30%; }
     .fw-bar > i { transition: none; }
   }
+  /* The calibration curve (#20). It is a chart rather than a number because the
+     SHAPE is the evidence: a clean V is a measurement, a flat line with one dip
+     is luck, and an operator who can see which one they got can decide whether
+     to believe it. Bars are bit error rate — taller is worse — and a frequency
+     nothing was decoded on is drawn as a gap, never as a zero, because 0.00%
+     and "never heard anything here" are the same number and opposite meanings. */
+  .cal-live { font-family: var(--mono); font-size: 12px; color: var(--fg); }
+  .cal-chart { display: flex; align-items: flex-end; gap: 2px; height: 88px; margin: 12px 0 4px; padding: 0 2px; border-bottom: 1px solid var(--panel-line); }
+  .cal-bar { flex: 1 1 0; height: 100%; display: flex; align-items: flex-end; min-width: 4px; }
+  .cal-bar > i { display: block; width: 100%; background: var(--accent); border-radius: 1px 1px 0 0; }
+  .cal-bar.best > i { background: var(--ok, var(--accent)); box-shadow: 0 0 0 1px var(--ok, var(--accent)); }
+  .cal-bar.partial > i { opacity: .45; }
+  /* A silent frequency: a hatch on the baseline, so it reads as "no data" and
+     not as "perfect". */
+  .cal-bar.silent { border-bottom: 3px solid var(--panel-line); }
+  .cal-axis { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
   .hw-warn.bad .hw-warn-k { color: var(--bad); }
   .hw-warn.warn .hw-warn-k { color: var(--warn); }
   .hw-warn-f { font-family: var(--mono); font-size: 10px; color: var(--dim); }
