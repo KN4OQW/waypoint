@@ -31,6 +31,13 @@ Pick **arm64** on a Pi 3/4, **armhf** for a Pi Zero 2 W / 2 / 3 (32-bit). Pi Zer
 W and Pi 1 are not supported. Full flashing, verification, and first-boot walk-through:
 **[docs/image.md](docs/image.md)**.
 
+**Locked out?** A Waypoint password cannot be recovered — it is stored only as a
+hash — but you can take a node back with a shell on it (`sudo waypointd
+reset-claim`) or with its SD card in a reader. Both routes, and what each one
+costs you, are in **[docs/recovery.md](docs/recovery.md)**. The same instructions
+are on the node's own login screen, which is where you will be when you need
+them.
+
 ## Status
 
 **Active development — the config core, the full mode stack, cross-mode buses, LAN peering, and host networking are in place, with per-mode and two-node runs validated on the bench.** The first flashable SD-card image ships as **`v1-initialimg`** — an initial image built end-to-end by public CI (base Raspberry Pi OS Lite + the signed stack from the [waypoint-stack](https://github.com/KN4OQW/waypoint-stack) apt repo + the signed `waypointd`) for both arm64 and armhf. The [requirements register](https://github.com/KN4OQW/waypoint/issues?q=is%3Aissue+label%3Atype%3Arequirement) is imported (every item carries provenance back to the community complaint or upstream issue that motivated it), the architecture is documented in [docs/architecture.md](docs/architecture.md), and both the stack and the image build in public CI. Everything is public from the first commit.
