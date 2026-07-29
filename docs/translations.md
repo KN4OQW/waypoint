@@ -1,104 +1,99 @@
-# Translations
+# Translating Waypoint
 
 Waypoint's web UI reads its text from flat JSON message catalogs, one file per
 language, in [`ui/static/locales/`](../ui/static/locales/). There is no build
 step and no extraction toolchain: the browser fetches a catalog and the page
 renders from it.
 
-## How catalogs work
+**Adding a language is a pull request that touches one new file.** No code
+review is involved — a catalog-only change is reviewed as a catalog diff, with
+the mechanical checks done by CI.
 
-Each catalog is a flat object of dot-namespaced key → string, plus a reserved
-`_meta`:
+## How to add or fix a language
 
-```json
-{
-  "_meta": { "name": "Deutsch", "tag": "de-DE", "reviewed": false },
-  "status.connected": "verbunden"
-}
+You need a GitHub account and a text editor. You do not need Go, Node, or a
+running hotspot.
+
+1. **Copy the base catalog.** `ui/static/locales/en-US.json` →
+   `ui/static/locales/<tag>.json`, where `<tag>` is a BCP-47 tag such as
+   `pt-BR`, `de-DE`, `it-IT`. If your language is already there, edit that file
+   instead.
+
+2. **Set `_meta`** at the top of the file:
+
+   ```json
+   "_meta": { "name": "Português (Brasil)", "tag": "pt-BR", "reviewed": false }
+   ```
+
+   - `name` is **your language's name for itself** — "Deutsch", not "German".
+     It is what the language picker shows.
+   - `tag` **must match the filename exactly**. A catalog is fetched by its
+     filename, so a mismatch would list a language the browser then fails to
+     load. CI rejects it.
+   - `reviewed` is `false` until a native speaker has been through the whole
+     file. The picker marks unreviewed catalogs so operators know what they are
+     getting. Set it `true` only when you have genuinely read every string.
+
+3. **Translate the values.** Leave the keys alone.
+
+4. **Refresh the index** — `go generate ./...` from the repository root, which
+   rewrites `ui/static/locales/index.json`. If you have no Go toolchain, say so
+   in the pull request and a maintainer will run it; CI will tell you if it is
+   stale.
+
+5. **Open a pull request.** Title it `i18n: add <Language>` or
+   `i18n: correct <Language>`.
+
+**You do not have to translate everything.** Lookup falls back to English *key
+by key*, so a partial catalog renders translated where it has a string and
+English everywhere else — never a blank. Twenty strings is a useful
+contribution. Come back for more later.
+
+## The rules that matter
+
+### Placeholders must survive exactly
+
+A `{placeholder}` is substituted at render time. The set of placeholders in your
+string must match the English one — same spelling, none added, none dropped.
+
+```
+en-US   "log.netStart": "{source} → {dest} from {network}"
+de-DE   "log.netStart": "{source} → {dest} über {network}"
 ```
 
-- **`_meta.name` is the language's own name for itself.** It is what the picker
-  shows, so a German speaker looks for *Deutsch*, not *German*.
-- **`_meta.tag` must equal the filename** (`de-DE.json` → `de-DE`). A catalog is
-  fetched by its filename; a mismatch would index a language the browser then
-  fails to load, so the generator rejects it.
-- **`_meta.reviewed`** is false until a native speaker has been through the
-  catalog. The picker marks unreviewed languages so an operator knows what they
-  are getting.
+You may **reorder them freely** — that is why they are named rather than
+numbered. Put them where your language's grammar wants them.
 
-**`en-US.json` is the base.** Every key originates there. Other catalogs may be
-partial: lookup falls back to en-US *key by key*, so a half-finished translation
-renders translated where it has a string and English everywhere else — never a
-blank. A key missing from both renders as the key itself, which is visible on
-the page and greppable in the source.
+A placeholder with no matching value is printed literally rather than blanked,
+so a typo shows up on screen instead of silently eating text. CI treats a
+placeholder mismatch as a hard error, because it is the most common way a
+translation breaks the UI.
 
-**`index.json` is generated, never hand-edited.** `tools/genlocaleindex` builds
-it from the catalogs' `_meta` blocks; run `go generate ./...` after adding or
-renaming a catalog. CI regenerates and fails on any diff.
+### Amateur-radio terms follow the community, not the dictionary
 
-## Placeholders
+Waypoint's users are licensed operators reading this screen with a radio manual
+open beside them. Where a string contains a domain term — *talkgroup*,
+*reflector*, *hotspot*, *simplex*, *duplex*, *color code*, *callsign*, *master*
+— use the word your country's amateur community actually uses. If Pi-Star, WPSD
+or the BrandMeister wiki already render it in your language, follow them.
 
-A `{placeholder}` is substituted at render time. **The set of placeholders in a
-translated string must match the English one exactly** — same names, no
-additions, none dropped. They may be reordered freely; that is the point of
-naming them.
+A literal translation that no operator would recognise is worse than leaving the
+English.
+
+### Screen space is tight
+
+The sidebar and the status bar are narrow, and the dashboard is expected to work
+on a phone. Where a string is an ALL-CAPS label or a button, prefer the shorter
+of two correct options. German and Finnish translators will feel this first.
+
+### Inline markup stays
+
+A few strings carry `<b>` or `<code>` because the emphasis or the literal falls
+mid-sentence. Keep the tags and translate around them:
 
 ```
-"log.netStart": "{source} → {dest} from {network}"
+"Renders to <code>[DMR] SelfOnly</code>."
 ```
-
-A placeholder with no matching value is left on the page verbatim rather than
-blanked, so a mistake is visible rather than silent.
-
-Some strings carry inline markup (`<b>`, `<code>`) because the emphasis falls
-inside the sentence. Keep the tags and translate around them.
-
-## Translating on Weblate (the normal path)
-
-The project lives at **<https://hosted.weblate.org/projects/waypoint/>**. No
-GitHub account is needed, and nothing you do there touches source code.
-
-1. Sign in to Weblate and open the **Web UI** component.
-2. Pick your language, or use *Start new translation* if it is not listed.
-3. Translate. The platform enforces the placeholder rule below as you type, and
-   flags strings that are unchanged from English.
-4. Weblate commits to the `weblate` branch of the repository and a pull request
-   is opened from it. The maintainer reviews the catalog diff — that is the
-   whole review.
-
-Commits carry a `Signed-off-by` line built from your Weblate account, which
-satisfies the project's DCO requirement. The contributor agreement shown before
-you translate spells that out; if you would rather your name were not recorded
-that way, use the pull-request path below instead.
-
-`_meta.tag` and `_meta.reviewed` are filtered out of the Weblate view — they are
-bookkeeping, not copy. `_meta.name` is translatable, because it is your
-language's name for itself.
-
-### Amateur-radio terminology
-
-Waypoint's users are licensed operators reading the screen with a radio manual
-open beside it. Where a string contains a domain term — *talkgroup*,
-*reflector*, *hotspot*, *simplex*, *duplex*, *color code*, *callsign* — use the
-word your country's amateur community actually uses, not a literal translation.
-If Pi-Star, WPSD or the BrandMeister wiki already render it in your language,
-follow them.
-
-Screen space is tight: the sidebar and status bar are narrow, so where a string
-is an ALL-CAPS label, prefer the shorter of two correct options.
-
-## Adding a language by pull request
-
-The offline fallback, for anyone who would rather work in a text editor:
-
-1. Copy `ui/static/locales/en-US.json` to `<tag>.json` (BCP-47, e.g. `pt-BR`).
-2. Set `_meta` — native name, matching tag, `"reviewed": false`.
-3. Translate the values. Leave `_meta` keys and placeholders alone.
-4. `go generate ./...` to refresh `index.json`.
-5. Open a PR. A catalog-only PR is reviewed as a catalog diff.
-
-You do not need to translate everything. Anything you leave out falls back to
-English, so a partial catalog is a useful contribution.
 
 ## What is not translated
 
@@ -106,33 +101,57 @@ Deliberately, and by policy:
 
 - **Protocol and domain tokens** — mode names (DMR, D-Star, System Fusion, P25,
   NXDN, M17, POCSAG, FM), callsigns, talkgroup and DMR ID numbers, reflector
-  names, INI section and key names, LCD template tokens like `{callsign}`, file
-  paths and device names. These are the same words in every language, and an
-  operator matching them against a radio's menu or another project's docs needs
-  them unchanged.
-- **The raw INI editors** on the Expert tab. Their content is configuration, not
-  copy.
+  names, INI section and key names, LCD template tokens like `{callsign}`,
+  device paths (`/dev/ttyAMA0`) and hardware model names. These are the same
+  words in every language, and an operator matching them against a radio's menu
+  or another project's documentation needs them unchanged.
+- **The raw INI editors** on the Expert tab. Their content is configuration.
 - **Text the daemon supplies over the API** — network link state ("logged in"),
-  gateway detail lines, error strings from `/api/*`. These come from the server
-  and from MMDVM-Host's own output; translating them needs a server-side
-  catalog, which is a separate design.
+  gateway detail, error strings from `/api/*`. These come from the server and
+  from MMDVM-Host's own output; translating them needs a server-side catalog,
+  which is a separate design.
 - **Log lines**, which are developer-facing.
 - **The LCD panel.** The HD44780 character ROM is not UTF-8 — `sanitizeASCII`
-  exists precisely because of it — so accented text would render as `?`. Out of
-  scope unless a per-charset ROM story appears.
+  exists precisely because of it — so accented text renders as `?`. Out of scope
+  unless a per-charset ROM story appears.
 - **Pre-auth screens** (the claim/login gate and the first-boot wizard). These
-  are Go-generated pages that need a server-side catalog read; tracked
-  separately.
+  are Go-generated pages needing a server-side catalog read, tracked separately.
 
-## Reviewing a translation PR
+## Trying it before you send it
 
-A catalog-only change is reviewed as a catalog diff. The mechanical checks —
-JSON validity, `_meta` correctness, placeholder parity, index freshness — belong
-in CI rather than in a reviewer's head.
+You do not need hardware. From a clone of the repository:
 
-## Guard against regressions
+```sh
+go build -o waypointd ./cmd/waypointd
+./waypointd -demo -addr 127.0.0.1:8073 -tls=false \
+            -store /tmp/wp.db -tls-dir /tmp/wp-tls
+```
 
-`tools/ci/hardcoded-strings.sh` looks at the lines a branch *adds* to the scoped
-frontend files and warns about ones that look like user-visible English going in
-without a catalog key. It is a heuristic and a warning, not a gate; see the
-script's header for what it cannot see.
+Open <http://127.0.0.1:8073>, claim the node with any username and password, and
+pick your language from the selector under the theme swatches in the sidebar.
+Walk the dashboard and every settings tab. Shrink the window to phone width and
+walk them again — that is where a long label breaks a row.
+
+The catalogs are embedded in the binary at build time, so rebuild after editing.
+
+## How a translation PR is reviewed
+
+The review bar is deliberately low, and mechanical:
+
+1. CI validates the catalog — JSON parses, no duplicate keys, `_meta` correct,
+   no keys that do not exist in `en-US`, placeholders match, index not stale.
+2. A maintainer reads the diff.
+
+That is all. There is no code to review, because a catalog is not code. This is
+what makes a new language cheap enough to actually accept.
+
+## For maintainers: keeping the source honest
+
+`tools/ci/hardcoded-strings.sh` looks at the lines a branch *adds* to
+`ui/static/*.html` and `ui/static/*.js` and warns about ones that look like
+user-visible English going in without a catalog key. It is a heuristic and a
+warning, not a gate; the script header says what it cannot see.
+
+The completeness check that *does* work is the bracket walk: generate a catalog
+whose every value is its own key in brackets, point the UI at it, and read the
+pages. Anything still legible in English never made it out of the source.
