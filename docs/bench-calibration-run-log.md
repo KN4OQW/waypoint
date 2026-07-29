@@ -169,9 +169,16 @@ Injecting the error is what makes it a real test: set the node's RX/TX offset to
 
 1. Settings → General → Calibration: set RX Offset and TX Offset to `400`, Apply.
 2. Hardware tab → Calibration → **START SWEEP**.
-3. Set the HT to DMR on the node's RX frequency, colour code 1, and hold PTT
-   when the panel asks. Talk, or just hold it — DMR sends voice frames either
-   way. Let go whenever; the sweep pauses and resumes.
+3. Set the HT to **DMR simplex** (Direct Mode / DMO) on the node's RX frequency —
+   transmit and receive both there — at the node's colour code, and hold PTT when
+   the panel asks. Talk, or just hold it; DMR sends voice frames either way. Let
+   go whenever, the sweep pauses and resumes.
+
+   **A duplex/repeater channel does not work**, and fails in a way that looks
+   like a broken sweep: the radio waits for a downlink that a receive-only sweep
+   never sends, reports "connecting" and gives up, and the sweep records every
+   candidate as unheard. This was found here on 2026-07-29 — 17 candidates, all
+   silent, with the HT refusing to key.
 4. Expect the curve's minimum at **−400 Hz** relative to the injected value —
    that is, back at the node's true zero — at well under 1% BER.
 5. Press **USE −400 Hz**, then Apply the configuration.

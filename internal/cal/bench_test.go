@@ -23,10 +23,13 @@ package cal
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/KN4OQW/waypoint/internal/modem"
 )
 
 func benchPort() string {
@@ -45,6 +48,31 @@ func benchFreq() uint32 {
 	return 438_800_000
 }
 
+// benchEnvInt reads a plan knob from the environment so a bench run can be
+// re-shaped without a rebuild — the operator holding the PTT is the scarce
+// resource here, not the compiler.
+func benchEnvInt(name string, def int) int {
+	if v := os.Getenv(name); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func benchPlan() Plan {
+	return Plan{
+		CoarseSpanHz: benchEnvInt("WAYPOINT_BENCH_SPAN", 1000),
+		CoarseStepHz: benchEnvInt("WAYPOINT_BENCH_STEP", 500),
+		FineSpanHz:   benchEnvInt("WAYPOINT_BENCH_FINE_SPAN", 200),
+		FineStepHz:   benchEnvInt("WAYPOINT_BENCH_FINE_STEP", 100),
+		MinFrames:    benchEnvInt("WAYPOINT_BENCH_FRAMES", 5),
+		Dwell:        time.Duration(benchEnvInt("WAYPOINT_BENCH_DWELL_MS", 2000)) * time.Millisecond,
+		IdleGap:      time.Duration(benchEnvInt("WAYPOINT_BENCH_IDLE_MS", 3000)) * time.Millisecond,
+		Timeout:      time.Duration(benchEnvInt("WAYPOINT_BENCH_TIMEOUT_S", 60)) * time.Second,
+	}
+}
+
 func benchOpen(t *testing.T) *Session {
 	t.Helper()
 	freq := benchFreq()
@@ -52,7 +80,7 @@ func benchOpen(t *testing.T) *Session {
 		Port:      benchPort(),
 		RXFreqHz:  freq,
 		TXFreqHz:  freq,
-		ColorCode: 1,
+		ColorCode: uint8(benchEnvInt("WAYPOINT_BENCH_CC", 1)),
 		TXLevel:   50,
 		RFLevel:   100,
 	})
@@ -127,17 +155,12 @@ func TestBenchTuneAcceptsAnOffsetRange(t *testing.T) {
 // thing, and the log is the measurement.
 func TestBenchListenForFrames(t *testing.T) {
 	s := benchOpen(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	plan := benchPlan()
+	ctx, cancel := context.WithTimeout(context.Background(), plan.Timeout+30*time.Second)
 	defer cancel()
 
-	plan := Plan{
-		CoarseSpanHz: 1000, CoarseStepHz: 500,
-		FineSpanHz: 200, FineStepHz: 100,
-		MinFrames: 5,
-		Dwell:     2 * time.Second,
-		IdleGap:   3 * time.Second,
-		Timeout:   60 * time.Second,
-	}
+	t.Logf("sweeping %d Hz ±%d in %d Hz steps, %d frames per point, %s budget",
+		benchFreq(), plan.CoarseSpanHz, plan.CoarseStepHz, plan.MinFrames, plan.Timeout)
 	res, err := s.Sweep(ctx, plan, func(p Progress) {
 		t.Logf("[%s] %+d Hz  frames=%d ber=%.3f%%  %s", p.Phase, p.OffsetHz, p.Frames, p.BER, p.Detail)
 	})
@@ -178,4 +201,93 @@ func TestBenchCalDataIsRefusedFromAReceiveState(t *testing.T) {
 		t.Fatal("the modem ACCEPTED a transmit command from a receive state — the sweep is not inherently receive-only on this firmware")
 	}
 	t.Logf("refused as expected: %v", err)
+}
+
+// TestBenchRawListen is the diagnostic for "the sweep heard nothing".
+//
+// The sweep only counts DMR VOICE frames, so a run that reports nothing heard
+// has three quite different causes it cannot tell apart: no RF at all, RF the
+// modem cannot sync to, or frames arriving that the scorer rejects. This sits on
+// one frequency and prints every frame the modem sends, whatever it is — voice,
+// data, lost-sync, RSSI, debug — so the next question is obvious.
+//
+//	WAYPOINT_BENCH_FREQ=433900000 WAYPOINT_BENCH_LISTEN_S=40 ./cal.test \
+//	  -test.v -test.run TestBenchRawListen
+func TestBenchRawListen(t *testing.T) {
+	s := benchOpen(t)
+	secs := benchEnvInt("WAYPOINT_BENCH_LISTEN_S", 30)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(secs+15)*time.Second)
+	defer cancel()
+
+	freq := benchFreq()
+	cfg := SweepConfig(uint8(benchEnvInt("WAYPOINT_BENCH_CC", 1)), 50)
+	if err := s.tune(ctx, freq, freq, cfg); err != nil {
+		t.Fatalf("tune to %d: %v", freq, err)
+	}
+	t.Logf("listening on %d Hz for %ds — key your radio NOW and hold it", freq, secs)
+
+	deadline := time.Now().Add(time.Duration(secs) * time.Second)
+	counts := map[byte]int{}
+	var total, scored int
+	for time.Now().Before(deadline) {
+		f, err := modem.ReadFrame(s.port)
+		if err != nil {
+			continue // silence, or a partial frame
+		}
+		total++
+		counts[f.Type]++
+		if total <= 40 { // the first few in full, then just the tally
+			ctrl := "-"
+			if len(f.Payload) > 0 {
+				ctrl = fmt.Sprintf("0x%02X", f.Payload[0])
+			}
+			t.Logf("  frame type=0x%02X (%s) len=%d ctrl=%s", f.Type, frameName(f.Type), len(f.Payload), ctrl)
+		}
+		if _, _, ok := scoreFrame(f); ok {
+			scored++
+		}
+	}
+
+	t.Logf("RESULT: %d frames, %d scoreable as DMR/D-Star voice", total, scored)
+	for typ, n := range counts {
+		t.Logf("  0x%02X %-16s ×%d", typ, frameName(typ), n)
+	}
+	switch {
+	case total == 0:
+		t.Log("NOTHING AT ALL: the modem sent no frames. Either no RF reached it, or it could not sync to what did.")
+	case scored == 0:
+		t.Log("FRAMES BUT NONE SCOREABLE: the modem is hearing something and forwarding it, but not as DMR voice.")
+	default:
+		t.Log("The sweep should work: scoreable voice frames are arriving.")
+	}
+}
+
+func frameName(t byte) string {
+	switch t {
+	case CmdDMRData1:
+		return "DMR slot 1"
+	case CmdDMRData2:
+		return "DMR slot 2"
+	case CmdDMRLost1:
+		return "DMR lost 1"
+	case CmdDMRLost2:
+		return "DMR lost 2"
+	case CmdDStarHeader:
+		return "D-Star header"
+	case CmdDStarData:
+		return "D-Star data"
+	case CmdDStarLost:
+		return "D-Star lost"
+	case CmdRSSIData:
+		return "RSSI"
+	case CmdGetStatus:
+		return "status"
+	case CmdACK:
+		return "ACK"
+	case CmdNAK:
+		return "NAK"
+	case 0xF1, 0xF2, 0xF3, 0xF4, 0xF5:
+		return "debug"
+	}
+	return "?"
 }

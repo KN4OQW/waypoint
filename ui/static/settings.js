@@ -2590,9 +2590,19 @@ function panelCalibration() {
   // A sweep with nobody transmitting measures nothing, and that is the single
   // most likely way a first attempt fails.
   if (c.available && !running) {
-    inner += note("<b>You need your radio for this.</b> Set it to <b>DMR</b> on " +
-      `<b>${esc(mhz(c.rx_freq_hz))} MHz</b>, colour code <b>${esc(String(c.color_code || 1))}</b>, then start the sweep and hold PTT when it asks. ` +
-      "It steps the modem's own frequency across a few kHz and scores each step by the bit error rate of what it hears. Let go whenever you like — it pauses and picks up where it left off.");
+    inner += note("<b>You need your radio for this, on a simplex channel.</b> Set it to <b>DMR simplex</b> — " +
+      "also called <b>Direct Mode</b> or <b>DMO</b>, transmit and receive both on " +
+      `<b>${esc(mhz(c.rx_freq_hz))} MHz</b> — colour code <b>${esc(String(c.color_code || 1))}</b>. ` +
+      "Then start the sweep and hold PTT when it asks. It steps the modem's own frequency across a few kHz " +
+      "and scores each step by the bit error rate of what it hears. Let go whenever you like — it pauses and picks up where it left off.");
+    // The duplex trap, said plainly because working it out costs a whole bench
+    // session. A radio on a repeater channel will not transmit until it hears a
+    // downlink, and a sweep deliberately never transmits — so the radio sits
+    // "connecting", gives up, and the sweep reports hearing nothing. Both ends
+    // are behaving correctly and nothing on screen says why.
+    inner += note("<b>A repeater or duplex channel will not work.</b> On one of those your radio waits to hear this " +
+      "node transmitting before it will key up — and a sweep never transmits, so it never will. The radio gives up " +
+      "\u201ctrying to connect\u201d and the sweep hears nothing. Use a simplex channel to calibrate, then switch back.");
     if (c.host_running) {
       inner += note("This node goes <b>off the air</b> while the sweep runs, and comes back on its own afterwards.");
     }

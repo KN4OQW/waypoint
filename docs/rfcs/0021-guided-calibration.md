@@ -177,6 +177,15 @@ node's oscillator. A duplex board cannot usefully hear itself. So the stimulus i
 handheld keyed on the node's receive frequency, and the wizard's job is to make
 that a guided step rather than a footnote.
 
+**And it must be a SIMPLEX channel.** This is the one constraint the sweep's
+safety model forces on the operator, and it is not obvious from either end. A
+radio on a repeater or duplex channel will not transmit until it has heard the
+repeater's downlink and acquired TDMA timing — and a sweep, by design, never
+transmits. So the radio sits "connecting" and gives up, the sweep reports that it
+heard nothing, and both ends are behaving exactly as specified. Found on the
+bench, where it cost a session; the panel now says it before the button rather
+than after the failure.
+
 ### 4. The sweep advances on frames, not on seconds
 
 The naive sweep is a `for` loop with a `time.Sleep` per candidate, and it is wrong
