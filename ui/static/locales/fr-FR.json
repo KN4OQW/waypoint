@@ -333,7 +333,7 @@
   "hardware.nothingAdoptUntilModem": "Rien à adopter tant qu'aucun modem n'a été trouvé.",
   "hardware.port": "Port",
   "hardware.portsAlreadyClaimedSomething": "Les ports déjà réservés à un autre usage — un écran Nextion, par exemple — ne sont pas sondés.",
-  "hardware.portsLookedAt": "PORTS EXAMINÉS",
+  "hardware.portsLooked": "PORTS EXAMINÉS",
   "hardware.protocol": "Protocole",
   "hardware.radios": "Radios",
   "hardware.referenceOscillator": "Oscillateur de référence",

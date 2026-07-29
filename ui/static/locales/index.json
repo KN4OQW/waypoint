@@ -3,7 +3,7 @@
   "languages": [
     {
       "tag": "de-DE",
-      "name": "Deutsch",
+      "name": "Deutsch (DE)",
       "reviewed": false
     },
     {
@@ -13,18 +13,18 @@
     },
     {
       "tag": "es-ES",
-      "name": "Español",
+      "name": "Español (ES)",
       "reviewed": false
     },
     {
       "tag": "fr-FR",
-      "name": "Français",
-      "reviewed": false
+      "name": "Français (French)",
+      "reviewed": true
     },
     {
       "tag": "ja-JP",
       "name": "日本語",
-      "reviewed": false
+      "reviewed": true
     }
   ]
 }

@@ -333,7 +333,7 @@
   "hardware.nothingAdoptUntilModem": "モデムが見つかるまで適用できる情報はありません。",
   "hardware.port": "ポート",
   "hardware.portsAlreadyClaimedSomething": "他の用途（Nextionディスプレイなど）ですでに使用されているポートは、検索から除外されます。",
-  "hardware.portsLookedAt": "検索されたポート",
+  "hardware.portsLooked": "検索されたポート",
   "hardware.protocol": "プロトコル",
   "hardware.radios": "無線機",
   "hardware.referenceOscillator": "基準発振器",
