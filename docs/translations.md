@@ -136,14 +136,34 @@ The catalogs are embedded in the binary at build time, so rebuild after editing.
 
 ## How a translation PR is reviewed
 
-The review bar is deliberately low, and mechanical:
+The review bar is deliberately low, and mechanical. **A green `localecheck` run
+plus a maintainer reading the catalog diff is the entire review** — there is no
+code review, because a catalog is not code. That is issue #23's acceptance
+criterion, and it is what makes a new language cheap enough to actually accept.
 
-1. CI validates the catalog — JSON parses, no duplicate keys, `_meta` correct,
-   no keys that do not exist in `en-US`, placeholders match, index not stale.
-2. A maintainer reads the diff.
+`tools/localecheck` runs in CI on every pull request and checks:
 
-That is all. There is no code to review, because a catalog is not code. This is
-what makes a new language cheap enough to actually accept.
+| rule | if it fails |
+| --- | --- |
+| valid JSON, no duplicate keys | **error** — a repeated key silently discards the earlier translation |
+| `_meta` present, `tag` matches filename, `name` non-empty | **error** — the catalog would not load, or the picker would show nothing |
+| every value outside `_meta` is a string | **error** — catalogs are flat; a nested object renders nothing |
+| no key absent from `en-US` | **error** — a typo'd key is never read, so the work is lost |
+| placeholders match `en-US` per string | **error** — the most direct way a translation breaks the page |
+| `_meta.reviewed: true` implies complete | **error** — "reviewed" is a claim that someone read every string |
+| untranslated keys | **warning** — they fall back to English, which is fine |
+
+Run it yourself before opening the PR:
+
+```sh
+go run ./tools/localecheck -dir ui/static/locales
+```
+
+The untranslated-key count is a warning on purpose. An earlier draft of this
+gate failed any catalog missing more than 20% of its keys, "to keep seeds
+honest"; that punishes exactly the contribution we want most — someone
+translating the twenty strings they care about. The honesty check that matters is
+the `reviewed` flag, and that one *is* enforced.
 
 ## For maintainers: keeping the source honest
 
