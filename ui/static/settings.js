@@ -4,26 +4,31 @@
 // INIs and restarts them. Values are never hard-coded and never patched into
 // INIs — the store is authoritative (RFC-0001).
 
-// Every tab's `crumb` carries its taxonomy: the segment before the "/" is the nav
-// group, the segment after it is the section. renderNav derives the sidebar groups
-// straight from that prefix, so a tab is filed simply by giving it the right crumb
-// — there is no second list to keep in step.
+// A tab is an id and a two-letter glyph; every word an operator reads — label,
+// sidebar subtitle, breadcrumb, page title, description — is in the catalog under
+// "tab.<id>.*". Adding a tab is an entry here plus five catalog keys.
+//
+// The breadcrumb still carries the taxonomy: its prefix ("SYSTEM / GENERAL" ->
+// SYSTEM) is the nav group, so renderNav files a tab straight from tabCrumbKey's
+// English base. That lookup deliberately reads the base catalog rather than the
+// active one — a translated group name would not match NAV_GROUPS, and the
+// grouping is structure, not copy.
 //
 // The eight per-mode panels are not top-level tabs: they are sub-tabs of the single
 // "modes" entry below (see MODE_SUBS). Their old ids still resolve as deep links.
 const TABS = [
-  { id: "general",      tag: "RF", label: "General",      sub: "Radio & Station",     crumb: "SYSTEM / GENERAL",        title: "General Configuration", desc: "Station identity, operating frequencies and modem hardware for this hotspot node." },
-  { id: "hardware",     tag: "HW", label: "Hardware",     sub: "Modem & Board",       crumb: "SYSTEM / HARDWARE",       title: "Modem Hardware",        desc: "What modem is attached, what it says it is, and whether this node is configured to match. Detection asks the modem directly — it never guesses from the port it was found on." },
-  { id: "setup",        tag: "SU", label: "Setup",         sub: "Control & Display",    crumb: "SYSTEM / SETUP",          title: "Control Software & Display", desc: "TRX mode and the MMDVM-Host display driver. Waypoint runs display-free (status is served over MQTT); these fields are here for parity and for nodes driving a physical panel." },
-  { id: "lcd",          tag: "LC", label: "LCD",           sub: "HD44780 Panel",        crumb: "SYSTEM / LCD",            title: "LCD Display",           desc: "Drive a physical HD44780 character panel over I2C, with pages of live status that rotate. Disabled by default; the node stays headless until you turn it on." },
-  { id: "station",      tag: "ST", label: "Station",      sub: "History & ID",         crumb: "SYSTEM / STATION",        title: "Station Settings",      desc: "Node-wide operating policy: how long the persistent last-heard / event history is kept (pruned nightly), and how this node identifies itself on the air." },
-  { id: "modes",        tag: "MD", label: "Modes",        sub: "Enable & Configure",   crumb: "MODES / ALL MODES",       title: "Modes",                 desc: "Which digital voice / data modes MMDVM-Host handles, and the per-mode settings behind each one. Toggling a mode restarts the stack on Apply." },
-  { id: "brandmeister", tag: "BM", label: "BrandMeister", sub: "Network & Security",   crumb: "NETWORKS / BRANDMEISTER", title: "DMR Networks",          desc: "Master servers this node bridges DMR traffic to. Passwords are stored on the node and never shown." },
-  { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "NETWORKS / HOST",         title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
-  { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Routing",   crumb: "NETWORKS / GATEWAYS",     title: "Cross-Mode Gateways",   desc: "Cross-mode routing is being redesigned as a bus system (RFC-0003)." },
-  { id: "profiles",     tag: "PF", label: "Profiles",     sub: "Saved Setups",         crumb: "ADMIN / PROFILES",        title: "Connection Profiles",   desc: "Named snapshots of your mode & network setup — save the current one, switch to another in a click, or carry a setup between nodes as a file. Callsign, frequencies and calibration are never part of a profile, so switching can't change your identity or detune the radio." },
-  { id: "updates",      tag: "UP", label: "Updates",       sub: "Version & Channel",    crumb: "ADMIN / UPDATES",         title: "Software Updates",      desc: "Installed versions, available updates from the signed Waypoint apt repo, and the update policy. Updates are applied on the node, health-checked, and rolled back automatically if the modem does not come back up." },
-  { id: "expert",       tag: "SY", label: "Expert",       sub: "System & Config",      crumb: "ADMIN / EXPERT",          title: "Expert & System",       desc: "Firmware versions and low-level configuration." },
+  { id: "general",      tag: "RF" },
+  { id: "hardware",     tag: "HW" },
+  { id: "setup",        tag: "SU" },
+  { id: "lcd",          tag: "LC" },
+  { id: "station",      tag: "ST" },
+  { id: "modes",        tag: "MD" },
+  { id: "brandmeister", tag: "BM" },
+  { id: "network",      tag: "NW" },
+  { id: "gateways",     tag: "GW" },
+  { id: "profiles",     tag: "PF" },
+  { id: "updates",      tag: "UP" },
+  { id: "expert",       tag: "SY" },
 ];
 
 // Sidebar group order. Anything whose crumb prefix is not listed here still renders,
@@ -44,169 +49,161 @@ const MODE_SUBS = [
   { id: "fm",     label: "FM",            crumb: "FM",            panel: () => panelFm() },
 ];
 
-// Inline help for individual settings (#135), keyed by the "section.field" pair
-// every control already carries in data-sec/data-key (or data-toggle). A field
-// with no entry simply renders without a help affordance, so the table can be
-// filled in over time without touching a panel.
+// Which settings have inline help (#135), keyed by the "section.field" pair every
+// control already carries in data-sec/data-key (or data-toggle). A field not
+// listed here simply renders without a help affordance, so the set can be filled
+// in over time without touching a panel.
+//
+// The help text itself is in the catalog under "help.<section>.<field>" — adding
+// help is a key here and a string there.
 //
 // House style: say what the setting does and when an operator would change it, and
 // name the INI key it renders to where that is the fastest way for an experienced
 // operator to orient. Don't restate the label.
-const HELP = {
+const HELP = new Set([
   // --- station identity + radio ---
-  "general.callsign": "Your licensed callsign. It identifies this node on every network it connects to, and is what other operators see in last-heard lists. Changing it re-registers the node with its gateways on Apply.",
-  "general.id": "Your DMR ID (sometimes called a CCS7 ID) — the numeric identity issued with your callsign by <b>radioid.net</b>. This is the node-wide default: DMR, and the YSF, P25, NXDN and M17 gateways, all log in with it unless a mode overrides it.",
-  "general.location": "Free text shown to other operators and on network dashboards, e.g. “Kansas City, MO”. Cosmetic — nothing routes on it.",
-  "general.url": "A link to this node's public dashboard, published to networks that show one. Leave blank if the node is not reachable from the internet.",
-  "general.power": "Transmit power in watts, as reported to the network. This is a <b>declaration, not a control</b> — it tells other operators what you are running, it does not change what the radio actually transmits.",
-  "general.duplex": "<b>Simplex</b> transmits and receives on one frequency, one at a time — the normal hotspot arrangement. <b>Duplex</b> uses separate RX and TX frequencies and needs hardware that supports it. Setting this wrong stops the node passing traffic.",
-
+  "general.callsign",
+  "general.id",
+  "general.location",
+  "general.url",
+  "general.power",
+  "general.duplex",
   // --- modem / RF ---
-  "modem.rx_freq_hz": "The frequency this node <b>listens</b> on — the frequency your radio transmits to. On a simplex hotspot it matches the TX frequency. Check your national band plan before choosing one.",
-  "modem.tx_freq_hz": "The frequency this node <b>transmits</b> on — the frequency your radio listens to. On a simplex hotspot it matches the RX frequency.",
-  "modem.port": "Serial device the MMDVM modem appears as — <code>/dev/ttyAMA0</code> for a GPIO hat, <code>/dev/ttyACM0</code> for most USB boards. Use <b>Detect</b> on the Hardware tab rather than typing it: detection asks each candidate port what is on the end of it, so a renumbered USB device is found rather than guessed at.",
-  "modem.board": "Which modem board is fitted. Detection reads the board <i>family</i> off the wire, but several products ship the same firmware — a JumboSpot reports as an <code>MMDVM_HS_Hat</code> — so where the identity string cannot tell them apart, this is where you say which one you have. It changes no generated config; it is what lets Waypoint refuse duplex on a board with one radio, and warn when a saved profile came from a differently-tuned board.",
-  "modem.tcxo_hz": "The modem's reference oscillator, in Hz — <b>12288000</b> (12.288 MHz) or <b>14745600</b> (14.7456 MHz). Firmware from the 1.5 era onwards reports it, and Detect fills this in from what the modem said. Get it wrong and the radio is detuned rather than broken, which is why nothing here ever guesses one.",
-  "modem.uart_speed": "Line speed between the host and the modem. 115200 is the MMDVM_HS family's default and is almost always right; Detect fills in whichever speed the modem actually answered on.",
-  "modem.rx_offset": "Correction in Hz applied to the receive frequency, compensating for crystal error in the modem. Leave at 0 until you have measured the error — this is calibration, not tuning.",
-  "modem.tx_offset": "Correction in Hz applied to the transmit frequency, compensating for crystal error in the modem. Leave at 0 until you have measured the error. On a hotspot one oscillator clocks both paths, so this is normally the same number as the RX offset.",
-  "modem.rx_level": "How hard the modem drives its own receive path, 0–100%. On a hotspot this does nothing — the firmware does not read it. On a repeater board it is set so the received waveform fills the range without clipping.",
-  "modem.tx_level": "Transmit level, 0–100%. On a hotspot this is the <b>deviation</b> of the 4FSK signal it generates; on a repeater board it drives the radio's audio input and is set for 2.75 kHz deviation with a deviation meter.",
-  "modem.rf_level": "RF output power of a hotspot's ADF7021, 0–100%. A hotspot is a milliwatt-class transmitter — this is the difference between reaching the far side of the house and the far side of the room, not a power amplifier control.",
-  "modem.rx_dc_offset": "DC bias on the receive path, −128 to 127, used to centre the waveform on a full-size MMDVM. <b>A hotspot ignores this entirely.</b>",
-  "modem.tx_dc_offset": "DC bias on the transmit path, −128 to 127. <b>A hotspot ignores this entirely.</b>",
-  "modem.rx_invert": "Whether the received signal arrives inverted. A full-size MMDVM can be asked directly — it reports inversion in its calibration replies — which is the one analog setting that does not need test equipment. <b>A hotspot ignores this.</b>",
-  "modem.tx_invert": "Whether the transmit signal is inverted before it reaches the radio. Depends on how the radio's modulator is wired. <b>A hotspot ignores this.</b>",
-  "modem.ptt_invert": "Whether the PTT line is active-low rather than active-high. Wrong, and the repeater either never keys or never stops. <b>A hotspot ignores this.</b>",
-  "modem.dmr_delay": "Fine timing adjustment for DMR slot alignment on a duplex repeater, in bits. Leave at 0 unless a repeater is losing slot sync.",
-  "modem.rssi_mapping_file": "Path to a file mapping the modem's raw RSSI counts to dBm, so received signal strengths are reported in real units. Producing one needs a calibrated signal generator; the default path is where the stack looks for it.",
-  "modem.dstar_tx_level": "Per-mode transmit level override for D-Star. Blank follows TX Level, which is what almost every node should do — these exist for a radio whose deviation differs between modes.",
-  "modem.dmr_tx_level": "Per-mode transmit level override for DMR. Blank follows TX Level.",
-  "modem.ysf_tx_level": "Per-mode transmit level override for System Fusion. Blank follows TX Level.",
-  "modem.p25_tx_level": "Per-mode transmit level override for P25. Blank follows TX Level.",
-  "modem.nxdn_tx_level": "Per-mode transmit level override for NXDN. Blank follows TX Level.",
-  "modem.pocsag_tx_level": "Per-mode transmit level override for POCSAG paging. Blank follows TX Level.",
-  "modem.fm_tx_level": "Per-mode transmit level override for analog FM. Blank follows TX Level.",
-
+  "modem.rx_freq_hz",
+  "modem.tx_freq_hz",
+  "modem.port",
+  "modem.board",
+  "modem.tcxo_hz",
+  "modem.uart_speed",
+  "modem.rx_offset",
+  "modem.tx_offset",
+  "modem.rx_level",
+  "modem.tx_level",
+  "modem.rf_level",
+  "modem.rx_dc_offset",
+  "modem.tx_dc_offset",
+  "modem.rx_invert",
+  "modem.tx_invert",
+  "modem.ptt_invert",
+  "modem.dmr_delay",
+  "modem.rssi_mapping_file",
+  "modem.dstar_tx_level",
+  "modem.dmr_tx_level",
+  "modem.ysf_tx_level",
+  "modem.p25_tx_level",
+  "modem.nxdn_tx_level",
+  "modem.pocsag_tx_level",
+  "modem.fm_tx_level",
   // --- DMR ---
-  "dmr.color_code": "DMR's equivalent of a CTCSS tone: a number <b>0–15</b> that must match at both ends before traffic is accepted. It keeps neighbouring systems on the same frequency from hearing each other. Most hotspots use 1.",
-  "dmr.id": "<b>Optional override.</b> Leave blank and the node uses the DMR ID from General → Station Identity. Set it only when this node must log in to DMR with a different ID from the one the other gateways use — a separate hotspot ID, for instance.",
-  "dmr.embedded_lc_only": "Sends only the Link Control data embedded in DMR voice bursts, leaving out the separate LC data burst. Some networks and repeaters expect this; leave it off unless yours has told you otherwise. Renders to <code>[DMR] EmbeddedLCOnly</code>.",
-  "dmr.self_only": "<b>Private</b> accepts traffic only from your own DMR ID, so nobody else can key the node. <b>Public</b> accepts any DMR ID. Private is the usual choice for a personal hotspot. Renders to <code>[DMR] SelfOnly</code>.",
-  "dmr.beacons": "Sends the DMR Roaming Beacon, which lets radios that support roaming discover this node and move to it automatically.",
-  "dmr.dump_ta_data": "Logs Talker Alias data — the sending operator's name and callsign carried alongside voice. Diagnostic; it adds noise to the log without changing what is transmitted.",
-  "dmrnet.slot1": "DMR carries two independent timeslots on one frequency. Turning slot 1 on lets it carry traffic. On a simplex hotspot both slots are usually enabled and the network decides which to use.",
-  "dmrnet.slot2": "The second DMR timeslot. Most talkgroup traffic on BrandMeister arrives on slot 2, so leaving this off will make the node look silent.",
-
+  "dmr.color_code",
+  "dmr.id",
+  "dmr.embedded_lc_only",
+  "dmr.self_only",
+  "dmr.beacons",
+  "dmr.dump_ta_data",
+  "dmrnet.slot1",
+  "dmrnet.slot2",
   // --- mode enables ---
-  "modes.dmr": "Digital Mobile Radio — the most widely used amateur digital mode, with talkgroups carried over networks like BrandMeister and TGIF.",
-  "modes.dstar": "Icom's D-Star, routing through reflectors and callsign-based gateways.",
-  "modes.ysf": "Yaesu System Fusion (C4FM), connecting to YSF reflectors and FCS rooms.",
-  "modes.p25": "APCO P25 Phase 1, connecting to P25 reflectors by talkgroup.",
-  "modes.nxdn": "NXDN, connecting to NXDN reflectors by talkgroup.",
-  "modes.m17": "M17 — a fully open, patent-free digital voice mode built on Codec2.",
-  "modes.pocsag": "POCSAG paging over DAPNET. Transmits pages rather than voice.",
-  "modes.fm": "Plain analog FM. It has no gateway of its own — the node simply repeats it.",
-
+  "modes.dmr",
+  "modes.dstar",
+  "modes.ysf",
+  "modes.p25",
+  "modes.nxdn",
+  "modes.m17",
+  "modes.pocsag",
+  "modes.fm",
   // --- D-Star ---
-  "dstar.module": "The single band letter this node identifies as, e.g. <b>B</b> for 70cm or <b>C</b> for 2m. It must match the module your radio calls, and the Band configured in the D-Star gateway.",
-  "dstar.self_only": "Accept traffic only from your own callsign, so nobody else can key the node.",
-  "dstar.remote_gateway": "Hands network control to a gateway running elsewhere. Leave this <b>off</b> when the node runs its own D-Star gateway, which is the normal setup.",
-  "dstargw.reflector": "The reflector this node links to when it starts, e.g. <code>REF001 C</code>. Leave blank to start unlinked.",
-  "dstargw.ircddb_hostname": "The ircDDB server that resolves callsigns to routes, e.g. <code>rr.openquad.net</code>. This is what makes callsign routing work.",
-  "dstargw.ircddb_username": "Your callsign as registered with the ircDDB network. It must be registered there before routing will work.",
-  "dstargw.ircddb_password": "Password issued when you registered with the ircDDB network. Stored on the node and never shown again.",
-  "dstargw.reflector_reconnect": "Whether the node returns to its startup reflector after a period of inactivity, and how long it waits. <b>Never</b> leaves it wherever the last user linked it.",
-  "dstargw.dplus": "Enable the DPlus reflector protocol (the REF reflectors). DPlus requires registration with a US Trust server.",
-  "dstargw.dplus_login": "Callsign used to authenticate to DPlus reflectors — normally your own, and it must be registered with the US Trust system.",
-  "dstargw.dextra": "Enable the DExtra reflector protocol (the XRF reflectors).",
-  "dstargw.dcs": "Enable the DCS reflector protocol (the DCS reflectors).",
-  "dstargw.xlx": "Enable XLX reflectors, which bridge D-Star with other modes.",
-
+  "dstar.module",
+  "dstar.self_only",
+  "dstar.remote_gateway",
+  "dstargw.reflector",
+  "dstargw.ircddb_hostname",
+  "dstargw.ircddb_username",
+  "dstargw.ircddb_password",
+  "dstargw.reflector_reconnect",
+  "dstargw.dplus",
+  "dstargw.dplus_login",
+  "dstargw.dextra",
+  "dstargw.dcs",
+  "dstargw.xlx",
   // --- System Fusion ---
-  "ysf.low_deviation": "Use narrow deviation, matching radios set to the narrow C4FM setting. Getting this wrong gives distorted or unreadable audio rather than silence.",
-  "ysf.self_only": "Accept traffic only from your own callsign.",
-  "ysf.remote_gateway": "Hands network control to a gateway running elsewhere. Leave off when the node runs its own YSF gateway.",
-  "ysf.tx_hang": "Seconds the transmitter stays keyed after a transmission ends, so a quick reply does not have to re-open the link.",
-  "ysf.mode_hang": "Seconds the node stays in YSF after traffic stops, before it will switch to another mode. Longer values favour continuing a YSF conversation over letting another mode in.",
-  "ysfgw.startup": "The YSF reflector or FCS room this node links to when it starts. Leave blank to start unlinked.",
-  "ysfgw.ysf_network": "Connect to the YSF reflector network.",
-  "ysfgw.fcs_network": "Connect to the FCS room network. FCS rooms are a separate system from YSF reflectors, and can be enabled alongside them.",
-  "ysfgw.ycs_network": "Connect to YCS servers, which add per-talkgroup routing on top of YSF.",
-  "ysfgw.wiresx_passthrough": "Pass Wires-X commands from the radio through to the network, so you can change reflectors from the radio's own menu instead of this page.",
-  "ysfgw.revert": "Return to the startup reflector after the inactivity timeout below.",
-  "ysfgw.inactivity_timeout": "Minutes of silence before the node reverts to its startup reflector. 0 disables the revert.",
-  "ysfgw.aprs": "Publish position and status to the APRS network.",
-  "ysfgw.suffix": "A short suffix appended to the callsign sent to the network, distinguishing several nodes running on one callsign.",
-  "ysfgw.enable_dgid": "Use DG-ID routing, which maps DG-ID numbers set on the radio to different reflectors.",
-  "ysfgw.upper_hostfiles": "Fetch reflector host lists from the alternate upstream source.",
-
+  "ysf.low_deviation",
+  "ysf.self_only",
+  "ysf.remote_gateway",
+  "ysf.tx_hang",
+  "ysf.mode_hang",
+  "ysfgw.startup",
+  "ysfgw.ysf_network",
+  "ysfgw.fcs_network",
+  "ysfgw.ycs_network",
+  "ysfgw.wiresx_passthrough",
+  "ysfgw.revert",
+  "ysfgw.inactivity_timeout",
+  "ysfgw.aprs",
+  "ysfgw.suffix",
+  "ysfgw.enable_dgid",
+  "ysfgw.upper_hostfiles",
   // --- P25 / NXDN / M17 ---
-  "p25.nac": "Network Access Code — P25's equivalent of a CTCSS tone, written in <b>hex</b>. It must match at both ends. <code>293</code> is the common default.",
-  "p25.self_only": "Accept traffic only from your own ID.",
-  "p25.override_uid_check": "Skip validation of the source ID on incoming traffic. Leave off unless a radio you trust is being rejected.",
-  "p25.remote_gateway": "Hands network control to a gateway running elsewhere. Leave off when the node runs its own P25 gateway.",
-  "p25gw.static": "Talkgroups the node links to at startup and stays on. Leave blank to start unlinked.",
-  "p25gw.voice": "Play spoken announcements when the node links or unlinks.",
-  "p25gw.rf_hang_time": "Seconds the node stays on a talkgroup after <b>you</b> stop transmitting.",
-  "p25gw.net_hang_time": "Seconds the node stays on a talkgroup after <b>network</b> traffic stops.",
-  "nxdn.ran": "Radio Access Number — NXDN's equivalent of a CTCSS tone, <b>0–63</b>. It must match at both ends. 1 is the common default.",
-  "nxdn.self_only": "Accept traffic only from your own ID.",
-  "nxdn.remote_gateway": "Hands network control to a gateway running elsewhere. Leave off when the node runs its own NXDN gateway.",
-  "nxdngw.static": "Talkgroups the node links to at startup and stays on. Leave blank to start unlinked.",
-  "nxdngw.voice": "Play spoken announcements when the node links or unlinks.",
-  "nxdngw.rf_hang_time": "Seconds the node stays on a talkgroup after you stop transmitting.",
-  "nxdngw.net_hang_time": "Seconds the node stays on a talkgroup after network traffic stops.",
-  "m17.can": "Channel Access Number — M17's equivalent of a CTCSS tone, <b>0–15</b>. It must match at both ends. 0 is the common default.",
-  "m17.self_only": "Accept traffic only from your own callsign.",
-  "m17.allow_encryption": "Pass encrypted M17 frames through the node. <b>Encrypted transmissions are prohibited on amateur bands in most countries</b> — leave this off unless you are certain of your local rules.",
-  "m17gw.startup": "The reflector and module this node links to when it starts, e.g. <code>M17-M17 C</code>. Leave blank to start unlinked.",
-  "m17gw.suffix": "A short suffix distinguishing several M17 nodes running on one callsign.",
-  "m17gw.voice": "Play spoken announcements when the node links or unlinks.",
-  "m17gw.revert": "Return to the startup reflector after the hang time below.",
-  "m17gw.hang_time": "Seconds of silence before the node reverts to its startup reflector.",
-
+  "p25.nac",
+  "p25.self_only",
+  "p25.override_uid_check",
+  "p25.remote_gateway",
+  "p25gw.static",
+  "p25gw.voice",
+  "p25gw.rf_hang_time",
+  "p25gw.net_hang_time",
+  "nxdn.ran",
+  "nxdn.self_only",
+  "nxdn.remote_gateway",
+  "nxdngw.static",
+  "nxdngw.voice",
+  "nxdngw.rf_hang_time",
+  "nxdngw.net_hang_time",
+  "m17.can",
+  "m17.self_only",
+  "m17.allow_encryption",
+  "m17gw.startup",
+  "m17gw.suffix",
+  "m17gw.voice",
+  "m17gw.revert",
+  "m17gw.hang_time",
   // --- FM ---
-  "fm.ctcss": "The sub-audible access tone in Hz, e.g. <code>88.5</code>. Your radio must send the same tone before the node will repeat you.",
-  "fm.timeout": "Maximum seconds of continuous transmission before the node stops keying — the classic repeater timer that stops a stuck mic holding the channel.",
-  "fm.kerchunk_time": "Seconds you must hold a transmission before the node responds, which stops brief “kerchunks” keying it. 0 turns it off.",
-  "fm.rf_audio_boost": "Gain applied to audio arriving over the air. Raise it if you sound quiet to the network.",
-  "fm.ext_audio_boost": "Gain applied to audio arriving from the network. Raise it if the network sounds quiet on the air.",
-  "fm.access_mode": "How a transmission is allowed to open the repeater — on carrier alone, or only with the correct CTCSS tone. Requiring the tone stops unrelated signals keying the node.",
-
+  "fm.ctcss",
+  "fm.timeout",
+  "fm.kerchunk_time",
+  "fm.rf_audio_boost",
+  "fm.ext_audio_boost",
+  "fm.access_mode",
   // --- POCSAG ---
-  "pocsag.frequency": "The paging transmit frequency in Hz. Amateur paging uses specific national allocations — check yours before transmitting.",
-  "pocsag.server": "DAPNET server this node fetches pages from, e.g. <code>dapnet.afu.rwth-aachen.de</code>.",
-  "pocsag.callsign": "The callsign this node authenticates to DAPNET with. It must be registered with DAPNET separately from your radio licence.",
-  "pocsag.auth_key": "The AuthKey issued by the DAPNET portal for your callsign. Stored on the node and never shown again.",
-  "pocsag.whitelist": "Only transmit pages for these RICs (pager addresses). Leave blank to transmit everything the server sends.",
-  "pocsag.blacklist": "Never transmit pages for these RICs, even when the server sends them.",
-
+  "pocsag.frequency",
+  "pocsag.server",
+  "pocsag.callsign",
+  "pocsag.auth_key",
+  "pocsag.whitelist",
+  "pocsag.blacklist",
   // --- station ID + history ---
-  "station_id.enable": "Keys your callsign in Morse at a fixed interval, so the node identifies itself without you doing anything. <b>Most licences require periodic identification</b> — in the US, every 10 minutes (§97.119).",
-  "station_id.time_mins": "Minutes between identifications. Set this to your licence's requirement or shorter — 10 minutes in the US. Identification is sent between transmissions, never during one.",
-  "station_id.callsign": "Identify with a different callsign from your station callsign. Leave blank to track General → Callsign automatically.",
-  "station_id.tx_level": "Loudness of the Morse identification, as a percentage of full deviation. Raise it if the ID is hard to copy, lower it if it is jarring next to voice traffic.",
-  "history.retention_days": "How many days of last-heard and event history the node keeps on disk. <b>0 keeps it forever.</b> Older events are pruned nightly; a longer window uses more SD-card space.",
-
+  "station_id.enable",
+  "station_id.time_mins",
+  "station_id.callsign",
+  "station_id.tx_level",
+  "history.retention_days",
   // --- updates ---
-  "update.check_enabled": "Check the signed Waypoint apt repository for new versions. Turning this off means the node never contacts the update server — you will need to check by hand.",
-  "update.auto_apply": "Install updates automatically when they are found. Updates are health-checked after installing, and roll themselves back if the modem does not come back up.",
-  "update.channel": "Which stream of releases this node follows. Stable is the tested one; the others get changes earlier and with more risk.",
-  "update.quiet_window": "A daily window during which updates are not installed, so a restart never lands in the middle of your regular operating time.",
-
+  "update.check_enabled",
+  "update.auto_apply",
+  "update.channel",
+  "update.quiet_window",
   // --- display / LCD ---
-  "display.port": "Where the display is attached — the modem's own pass-through, or a named serial device. <b>None</b> leaves the node headless, which is the normal Waypoint setup.",
-  "display.hd44780_rows": "Character rows on the panel — 2 and 4 are the common sizes.",
-  "display.hd44780_cols": "Characters per row — usually 16 or 20.",
-  "display.hd44780_i2c_addr": "I2C address of the panel's PCF8574 backpack, in hex. <code>0x27</code> and <code>0x3F</code> cover most modules.",
-  "lcd.enabled": "Drive a physically attached HD44780 character panel. Off by default — the node stays headless and reports status over MQTT instead.",
-  "lcd.activity_interrupt": "Let radio activity take over the panel as it happens, instead of waiting for the page rotation to come round.",
-  "lcd.i2c_bus": "I2C device the panel is wired to. <code>/dev/i2c-1</code> is the header bus on every Pi since the B+.",
-  "lcd.i2c_address": "I2C address of the panel's backpack, in hex — commonly <code>0x27</code> or <code>0x3F</code>.",
-  "lcd.scroll_speed": "How fast text longer than the panel scrolls across it.",
-  "lcd.linger_secs": "Seconds a page stays on the panel before the next one rotates in.",
-};
+  "display.port",
+  "display.hd44780_rows",
+  "display.hd44780_cols",
+  "display.hd44780_i2c_addr",
+  "lcd.enabled",
+  "lcd.activity_interrupt",
+  "lcd.i2c_bus",
+  "lcd.i2c_address",
+  "lcd.scroll_speed",
+  "lcd.linger_secs",
+]);
 
 const THEMES = [
   { key: "phosphor", color: "#35d07f", attr: "" },
@@ -261,6 +258,19 @@ const NAV_OPEN_KEY = "wp-nav-groups";   // persisted group expansion (D2)
 const MODE_SUB_KEY = "wp-mode-sub";     // persisted Modes sub-tab (D5)
 let navOpen = loadNavOpen();  // group name -> expanded?
 let navView = "panel";        // narrow-viewport view: "grid" (tiles) or "panel"
+
+// Message catalogs — see i18n.js. Named msg() rather than t() because `t` is
+// already this file's name for a tab object, a theme and an event target; a
+// global of that name would be shadowed exactly where translation is needed.
+const msg = (key, params) => WPI18n.t(key, params);
+
+// A tab's copy, by id. Kept as one-liners so call sites read like the field
+// access they replaced.
+const tabLabel = (tab) => msg("tab." + tab.id + ".label");
+const tabSub = (tab) => msg("tab." + tab.id + ".sub");
+const tabTitle = (tab) => msg("tab." + tab.id + ".title");
+const tabDesc = (tab) => msg("tab." + tab.id + ".desc");
+const tabCrumb = (tab) => msg("tab." + tab.id + ".crumb");
 
 const el = (t, cls, html) => { const e = document.createElement(t); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -628,46 +638,46 @@ function extLink(href, text) { return `<a class="ext" href="${esc(href)}" target
 // "allow other DMR IDs" fields are two framings of the same setting.
 function nodeLockRow() {
   const on = !!(edit.dmr || {}).self_only;
-  return `<div class="toggle-row"><span class="name">Node Lock (Private / Public)</span><button type="button" class="pill ${on ? "on" : "off"}" data-toggle="dmr.self_only" aria-pressed="${on}" aria-label="Node Lock (Private / Public)">${on ? "PRIVATE" : "PUBLIC"}</button></div>`;
+  return `<div class="toggle-row"><span class="name">${msg("nodeLockRow.nodeLockPrivatePublic")}</span><button type="button" class="pill ${on ? "on" : "off"}" data-toggle="dmr.self_only" aria-pressed="${on}" aria-label="Node Lock (Private / Public)">${on ? "PRIVATE" : "PUBLIC"}</button></div>`;
 }
 
 // --- panels --------------------------------------------------------------
 function panelGeneral() {
-  const left = card("STATION IDENTITY",
+  const left = card(msg("general.stationIdentity"),
     input("general", "callsign", { label: "Callsign" }) +
     input("general", "id", { label: "DMR ID" }) +
     input("general", "location", { label: "Location" }) +
     input("general", "url", { label: "Dashboard URL" }));
-  const radio = card("RADIO / FREQUENCY",
+  const radio = card(msg("general.radioFrequency"),
     input("modem", "rx_freq_hz", { label: "RX Frequency", kind: "mhz", unit: "MHz", accent: true }) +
     input("modem", "tx_freq_hz", { label: "TX Frequency", kind: "mhz", unit: "MHz", accent: true }) +
     input("modem", "port", { label: "Modem Port" }) +
     boardRow() +
     baudRow() +
     input("general", "power", { label: "RF Power", unit: "" }) +
-    toggle("general", "duplex", "Duplex", "DUPLEX", "SIMPLEX") +
-    note("Don't type the port and board in by hand — the <b>Hardware</b> tab asks the modem what it is and fills all of this in."));
-  const cal = card("CALIBRATION",
+    toggle("general", "duplex", msg("general.duplex"), msg("general.duplex2"), msg("general.simplex")) +
+    note(msg("general.donTTypePort")));
+  const cal = card(msg("general.calibration"),
     input("modem", "rx_offset", { label: "RX Offset", unit: "Hz" }) +
     input("modem", "tx_offset", { label: "TX Offset", unit: "Hz" }) +
     input("modem", "rx_level", { label: "RX Level", unit: "%" }) +
     input("modem", "tx_level", { label: "TX Level", unit: "%" }) +
     input("modem", "rf_level", { label: "RF Power", unit: "%" }) +
-    note("Measure these rather than guess them — the <b>Hardware</b> tab sweeps for the offset with your radio and writes the answer here."));
+    note(msg("general.measureTheseRatherThan")));
   // The analog controls a full-size repeater board needs and a hotspot ignores
   // outright: MMDVM_HS's firmware does not read the invert flags or the DC
   // offsets at all. Saying so beside the fields is the difference between "this
   // slider does nothing" and "this slider is not for my board".
-  const analog = card("REPEATER BOARD ONLY",
-    toggle("modem", "rx_invert", "RX Invert", "INVERTED", "NORMAL") +
-    toggle("modem", "tx_invert", "TX Invert", "INVERTED", "NORMAL") +
-    toggle("modem", "ptt_invert", "PTT Invert", "INVERTED", "NORMAL") +
+  const analog = card(msg("general.repeaterBoardOnly"),
+    toggle("modem", "rx_invert", msg("general.rxInvert"), msg("general.inverted"), msg("general.normal")) +
+    toggle("modem", "tx_invert", msg("general.txInvert"), msg("general.inverted"), msg("general.normal")) +
+    toggle("modem", "ptt_invert", msg("general.pttInvert"), msg("general.inverted"), msg("general.normal")) +
     input("modem", "rx_dc_offset", { label: "RX DC Offset" }) +
     input("modem", "tx_dc_offset", { label: "TX DC Offset" }) +
     input("modem", "dmr_delay", { label: "DMR Delay" }) +
     input("modem", "rssi_mapping_file", { label: "RSSI Map" }) +
-    note("A hotspot board ignores every setting in this card — its firmware never reads them. They are for full-size MMDVM repeater boards."));
-  const levels = card("PER-MODE TX LEVELS",
+    note(msg("general.hotspotBoardIgnoresEvery")));
+  const levels = card(msg("general.perModeTxLevels"),
     input("modem", "dstar_tx_level", { label: "D-Star", unit: "%" }) +
     input("modem", "dmr_tx_level", { label: "DMR", unit: "%" }) +
     input("modem", "ysf_tx_level", { label: "System Fusion", unit: "%" }) +
@@ -675,7 +685,7 @@ function panelGeneral() {
     input("modem", "nxdn_tx_level", { label: "NXDN", unit: "%" }) +
     input("modem", "pocsag_tx_level", { label: "POCSAG", unit: "%" }) +
     input("modem", "fm_tx_level", { label: "FM", unit: "%" }) +
-    note("Leave blank to follow <b>TX Level</b>, which is what almost every node wants. M17 has no separate level — MMDVM-Host has no key for one, so it always follows TX Level."));
+    note(msg("general.leaveBlankFollowTx")));
   return `<div class="grid2">${left}<div class="stack">${radio}${cal}${levels}${analog}</div></div>`;
 }
 
@@ -704,7 +714,7 @@ function modemFrom(m) {
 function boardRow() {
   const cur = (edit.modem || {}).board || "";
   const boards = (hardware && hardware.boards) || [];
-  let opts = `<option value=""${cur === "" ? " selected" : ""}>Not set</option>`;
+  let opts = `<option value=""${cur === "" ? " selected" : ""}>${msg("boardRow.notSet")}</option>`;
   let seen = false;
   opts += boards.map((b) => {
     if (b.id === cur) seen = true;
@@ -712,7 +722,7 @@ function boardRow() {
     return `<option value="${esc(b.id)}"${b.id === cur ? " selected" : ""}>${esc(b.name)}${esc(suffix)}</option>`;
   }).join("");
   if (cur && !seen) opts += `<option value="${esc(cur)}" selected>${esc(cur)}</option>`;
-  return row("Radio / Modem", `<select data-sec="modem" data-key="board">${opts}</select>`);
+  return row(msg("boardRow.radioModem"), `<select data-sec="modem" data-key="board">${opts}</select>`);
 }
 
 // baudRow is WPSD's Baudrate field. 115200 covers the whole launch tier; the
@@ -722,18 +732,18 @@ function baudRow() {
   const speeds = ["115200", "230400", "460800"];
   if (!speeds.includes(cur)) speeds.unshift(cur);
   const opts = speeds.map((v) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(v)}</option>`).join("");
-  return row("Baudrate", `<select data-sec="modem" data-key="uart_speed">${opts}</select>`);
+  return row(msg("baudRow.baudrate"), `<select data-sec="modem" data-key="uart_speed">${opts}</select>`);
 }
 
 function panelDmr() {
-  const master = card("DMR MASTER",
-    toggle("modes", "dmr", "Enabled") +
+  const master = card(msg("dmr.dmrMaster"),
+    toggle("modes", "dmr", msg("dmr.enabled")) +
     input("dmr", "color_code", { label: "Color Code", accent: true }) +
     input("dmr", "id", { label: "DMR ID" }));
-  const slots = card("TIME SLOTS & ADVANCED",
-    toggleRow("dmrnet", "slot1", "Time Slot 1 Enabled") +
-    toggleRow("dmrnet", "slot2", "Time Slot 2 Enabled") +
-    toggleRow("dmr", "embedded_lc_only", "Embedded LC Only") +
+  const slots = card(msg("dmr.timeSlotsAdvanced"),
+    toggleRow("dmrnet", "slot1", msg("dmr.timeSlot1Enabled")) +
+    toggleRow("dmrnet", "slot2", msg("dmr.timeSlot2Enabled")) +
+    toggleRow("dmr", "embedded_lc_only", msg("dmr.embeddedLcOnly")) +
     nodeLockRow());
   return `<div class="grid2">${master}${slots}</div>`;
 }
@@ -774,10 +784,10 @@ function panelModesSection() {
       aria-controls="mode-subpanel" tabindex="${on ? 0 : -1}">${esc(m.label)}<span class="msub-dot" aria-hidden="true"></span><span class="sr-only">${enabled ? " (enabled)" : " (disabled)"}</span></button>`;
   }).join("");
   return `
-    <div class="mode-sec-t">MODE ENABLE</div>
-    <p class="mode-sec-d">Turn a mode on to have MMDVM-Host handle it. Toggling one restarts the stack on Apply.</p>
+    <div class="mode-sec-t">${msg("modes.modeEnable")}</div>
+    <p class="mode-sec-d">${msg("modes.turnModeHaveMmdvm")}</p>
     ${panelModes()}
-    <div class="mode-sec-t mode-sec-gap">MODE SETTINGS</div>
+    <div class="mode-sec-t mode-sec-gap">${msg("modes.modeSettings")}</div>
     <div class="mode-subs" role="tablist" aria-label="Mode settings">${tabs}</div>
     <div class="mode-subpanel" id="mode-subpanel" role="tabpanel" tabindex="0" aria-labelledby="msub-${esc(cur.id)}">${cur.panel()}</div>`;
 }
@@ -795,9 +805,9 @@ function panelDisplay() {
   const trxSel = `<select data-trxmode>` +
     [["simplex", "Simplex Node"], ["duplex", "Duplex Repeater"]]
       .map(([v, l]) => `<option value="${v}"${(v === "duplex") === !!g.duplex ? " selected" : ""}>${l}</option>`).join("") + `</select>`;
-  const control = card("CONTROL SOFTWARE",
-    row("Radio Control Software", `<input value="MMDVMHost" readonly>`) +
-    row("TRX Mode", trxSel));
+  const control = card(msg("display.controlSoftware"),
+    row(msg("display.radioControlSoftware"), `<input value="MMDVMHost" readonly>`) +
+    row(msg("display.trxMode"), trxSel));
 
   // Combined display-type value: OLED folds its Type into the option (OLED3/OLED6).
   const typeVal = d.type === "OLED" ? "OLED" + (d.oled_type || "3") : (d.type || "None");
@@ -814,15 +824,15 @@ function panelDisplay() {
   const portOpts = portList.map((p) => `<option value="${esc(p)}"${p === cur ? " selected" : ""}>${esc(p)}</option>`).join("");
 
   let displayRows =
-    row("Display Type", `<select data-displaytype>${typeOpts}</select>`) +
-    row("Port", `<select data-sec="display" data-key="port">${portOpts}</select>`);
+    row(msg("display.displayType"), `<select data-displaytype>${typeOpts}</select>`) +
+    row(msg("display.port"), `<select data-sec="display" data-key="port">${portOpts}</select>`);
 
   // Nextion layout — only when a Nextion is selected.
   if (d.type === "Nextion") {
     const lay = d.nextion_layout || "0";
     const layOpts = [["0", "G4KLX"], ["2", "ON7LDS L2"], ["3", "ON7LDS L3"], ["4", "ON7LDS L3 HS"]]
       .map(([v, l]) => `<option value="${v}"${v === lay ? " selected" : ""}>${l}</option>`).join("");
-    displayRows += row("Nextion Layout", `<select data-sec="display" data-key="nextion_layout">${layOpts}</select>`);
+    displayRows += row(msg("display.nextionLayout"), `<select data-sec="display" data-key="nextion_layout">${layOpts}</select>`);
   }
 
   // HD44780 geometry + I2C wiring — only when HD44780 is selected. This node wires
@@ -835,8 +845,8 @@ function panelDisplay() {
       input("display", "hd44780_i2c_addr", { label: "I2C Address", accent: true });
   }
 
-  const display = card("DISPLAY", displayRows);
-  const hint = note("This MMDVM-Host build is <b>display-free</b> — it renders status over MQTT and ignores these keys. They are carried for WPSD parity and for a clone running stock MMDVM-Host or driving a physical panel.");
+  const display = card(msg("display.display"), displayRows);
+  const hint = note(msg("display.mmdvmHostBuildDisplay"));
   return `<div class="grid2">${control}${display}</div>${hint}`;
 }
 
@@ -914,28 +924,28 @@ function updatePageWarning(i) {
 function lcdLegend() {
   const items = LCD_TOKEN_HELP.map(([tk, desc]) =>
     `<dt>{${esc(tk)}}</dt><dd>${esc(desc)}</dd>`).join("");
-  return `<details class="lcd-legend"><summary>TOKEN REFERENCE</summary><dl>${items}</dl></details>`;
+  return `<details class="lcd-legend"><summary>${msg("lcdLegend.tokenReference")}</summary><dl>${items}</dl></details>`;
 }
 
 function panelLCD() {
   const l = edit.lcd || (edit.lcd = lcdFrom({}));
   const rows = Math.max(1, parseInt(l.rows, 10) || 4);
   const cols = l.cols || "20";
-  const panel = card("PANEL",
-    lcdToggleRow("enabled", "Driver enabled", "ENABLED", "DISABLED") +
+  const panel = card(msg("lcd.panel"),
+    lcdToggleRow("enabled", msg("lcd.driverEnabled"), msg("common.enabled"), msg("common.disabled")) +
     input("lcd", "i2c_bus", { label: "I2C bus" }) +
     input("lcd", "i2c_address", { label: "I2C address", accent: true }) +
-    row("Rows", lcdSelect("rows", [["2", "2 rows"], ["4", "4 rows"]], l.rows)) +
-    row("Columns", lcdSelect("cols", [["16", "16 columns"], ["20", "20 columns"]], l.cols)) +
+    row(msg("lcd.rows"), lcdSelect("rows", [["2", "2 rows"], ["4", "4 rows"]], l.rows)) +
+    row(msg("lcd.columns"), lcdSelect("cols", [["16", "16 columns"], ["20", "20 columns"]], l.cols)) +
     input("lcd", "scroll_speed", { label: "Scroll speed", unit: "ms" }) +
-    lcdToggleRow("activity_interrupt", "Interrupt on activity", "ON", "OFF") +
+    lcdToggleRow("activity_interrupt", msg("lcd.interruptActivity"), "ON", "OFF") +
     input("lcd", "linger_secs", { label: "Interrupt linger", unit: "s" }));
-  const help = note("Lines fill in from <b>{tokens}</b> — e.g. <code>{callsign}</code>, <code>{status}</code>, <code>{source}</code>. A line wider than the panel scrolls; characters outside plain ASCII show as <code>?</code>. A page may have at most as many lines as the panel has rows.");
-  const disabled = l.enabled ? "" : note("The driver is <b>disabled</b> — pages are saved but nothing is drawn until you enable it above.");
+  const help = note(msg("lcd.linesFillTokensE"));
+  const disabled = l.enabled ? "" : note(msg("lcd.driverDisabledPagesAre"));
   const pages = (l.pages || []).map((p, i) => pageCard(p, i, rows, cols, (l.pages || []).length)).join("");
-  const add = `<button type="button" class="btn ghost mini-btn" id="lcd-add-page">+ ADD PAGE</button>`;
+  const add = `<button type="button" class="btn ghost mini-btn" id="lcd-add-page">${msg("lcd.addPage")}</button>`;
   return `<div class="grid2">${panel}<div class="stack">${help}${lcdLegend()}${disabled}</div></div>` +
-    `<div class="stack" style="margin-top:16px;">${pages || note("No pages yet — add one to show something on the panel.")}${add}</div>`;
+    `<div class="stack" style="margin-top:16px;">${pages || note(msg("lcd.noPagesYetAdd"))}${add}</div>`;
 }
 
 // updatePagePreview refreshes one page's live preview in place (no re-render) so
@@ -1002,21 +1012,21 @@ function hostlistNote(name) {
   if (h.entries > 0 && !h.from_seed && !h.stale) return "";
 
   if (h.entries === 0 && !h.has_seed && h.last_error) {
-    return note(`<b>This list could not be downloaded, so the picker below is empty.</b> ` +
+    return note(`<b>${msg("hostlistNote.listCouldNotDownloaded")}</b> ` +
       `Every source failed${when ? ` — the last successful download was ${esc(when)}` : ", and it has never downloaded"}. ` +
       `You can still type a value in by hand. <span style="color:var(--muted)">${esc(shortErr(h.last_error))}</span>`);
   }
   if (h.from_seed) {
-    return note(`<b>Showing the list that shipped with Waypoint.</b> ` +
+    return note(`<b>${msg("hostlistNote.showingListShippedWaypoint")}</b> ` +
       `The node has not managed to download a newer one${h.last_error ? "" : " yet"}, so entries added upstream since the release will be missing. ` +
       `You can still type a value in by hand.`);
   }
   if (h.stale && when) {
-    return note(`<b>This list may be out of date.</b> It last downloaded on ${esc(when)}; refreshes since then have failed. ` +
+    return note(`<b>${msg("hostlistNote.listMayOutDate")}</b> It last downloaded on ${esc(when)}; refreshes since then have failed. ` +
       `<span style="color:var(--muted)">${esc(shortErr(h.last_error))}</span>`);
   }
   if (h.entries === 0) {
-    return note(`<b>This list is empty.</b> It downloaded without error but contained no entries. You can still type a value in by hand.`);
+    return note(`<b>${msg("hostlistNote.listEmpty")}</b> It downloaded without error but contained no entries. You can still type a value in by hand.`);
   }
   return "";
 }
@@ -1067,7 +1077,7 @@ function masterSelect(type, cat, n) {
 // essidSelect: None / 01..99 extended-ID suffix, per Pi-Star.
 function essidSelect(type, n) {
   const cur = (n && n.essid) || "";
-  let opts = `<option value=""${cur === "" ? " selected" : ""}>None</option>`;
+  let opts = `<option value=""${cur === "" ? " selected" : ""}>${msg("essidSelect.none")}</option>`;
   for (let i = 1; i <= 99; i++) { const v = String(i).padStart(2, "0"); opts += `<option value="${v}"${v === cur ? " selected" : ""}>${v}</option>`; }
   return `<select data-netf="${type}" data-nkey="essid">${opts}</select>`;
 }
@@ -1085,60 +1095,60 @@ function panelBrandmeister() {
     .map(([v, l]) => `<option value="${v}"${v === primaryType ? " selected" : ""}>${l}</option>`).join("");
 
   const master = `<section class="card">
-      <div class="card-head"><span class="sq"></span><span class="t">DMR Master</span></div>
-      ${row("DMR Master", `<select data-dmrprimary>${masterSel}</select>`)}
+      <div class="card-head"><span class="sq"></span><span class="t">${msg("bm.dmrMaster")}</span></div>
+      ${row(msg("bm.dmrMaster"), `<select data-dmrprimary>${masterSel}</select>`)}
     </section>`;
 
   const bmSec = `<section class="card">
-      ${sectionHead("BrandMeister Network Settings", "brandmeister", bm)}
-      ${row("BrandMeister Master", masterSelect("brandmeister", "brandmeister", bm))}
-      ${row("BM Hotspot Security", `<input data-netf="brandmeister" data-nkey="password" type="password" value="${esc(bm ? bm.password || "" : "")}" placeholder="${bm && bm.has_password ? "•••••• unchanged" : ""}">`)}
-      ${row("BrandMeister Network ESSID", essidSelect("brandmeister", bm))}
-      ${row("BrandMeister Manager", extLink("https://brandmeister.network/?page=hotspots", "Manage hotspot & static TGs"))}
-      ${row("BrandMeister Dashboards", extLink("https://brandmeister.network/", "Open dashboard"))}
+      ${sectionHead(msg("bm.brandmeisterNetworkSettings"), "brandmeister", bm)}
+      ${row(msg("bm.brandmeisterMaster"), masterSelect("brandmeister", "brandmeister", bm))}
+      ${row(msg("bm.bmHotspotSecurity"), `<input data-netf="brandmeister" data-nkey="password" type="password" value="${esc(bm ? bm.password || "" : "")}" placeholder="${bm && bm.has_password ? "•••••• unchanged" : ""}">`)}
+      ${row(msg("bm.brandmeisterNetworkEssid"), essidSelect("brandmeister", bm))}
+      ${row(msg("bm.brandmeisterManager"), extLink("https://brandmeister.network/?page=hotspots", msg("bm.manageHotspotStaticTgs")))}
+      ${row(msg("bm.brandmeisterDashboards"), extLink("https://brandmeister.network/", msg("bm.openDashboard")))}
     </section>`;
 
   const dpSec = `<section class="card">
-      ${sectionHead("DMR+ / FreeDMR / HBlink Network Settings", "dmrplus", dp)}
-      ${row("DMR Master", masterSelect("dmrplus", "dmrplus", dp))}
-      ${row("Network Options", netField("dmrplus", "options", dp, ""))}
-      ${row("ESSID", essidSelect("dmrplus", dp))}
+      ${sectionHead(msg("bm.dmrFreedmrHblinkNetwork"), "dmrplus", dp)}
+      ${row(msg("bm.dmrMaster"), masterSelect("dmrplus", "dmrplus", dp))}
+      ${row(msg("bm.networkOptions"), netField("dmrplus", "options", dp, ""))}
+      ${row(msg("bm.essid"), essidSelect("dmrplus", dp))}
     </section>`;
 
   const sxSec = `<section class="card">
-      ${sectionHead("SystemX Network Settings", "systemx", sx)}
-      ${row("SystemX Master", masterSelect("systemx", "systemx", sx))}
-      ${row("Network Options", netField("systemx", "options", sx, ""))}
-      ${row("ESSID", essidSelect("systemx", sx))}
-      ${note("Dial SystemX talkgroups with the <b>4</b> prefix (e.g. TG 3021 → <b>4</b>003021 on TS2); routing is generated on the node.")}
+      ${sectionHead(msg("bm.systemxNetworkSettings"), "systemx", sx)}
+      ${row(msg("bm.systemxMaster"), masterSelect("systemx", "systemx", sx))}
+      ${row(msg("bm.networkOptions"), netField("systemx", "options", sx, ""))}
+      ${row(msg("bm.essid"), essidSelect("systemx", sx))}
+      ${note(msg("bm.dialSystemxTalkgroups4"))}
     </section>`;
 
   const tgSec = `<section class="card">
-      ${sectionHead("TGIF Network Settings", "tgif", tg)}
-      ${row("TGIF Security Key", `<input data-netf="tgif" data-nkey="password" type="password" value="${esc(tg ? tg.password || "" : "")}" placeholder="${tg && tg.has_password ? "•••••• unchanged" : ""}">`)}
-      ${row("ESSID", essidSelect("tgif", tg))}
-      ${row("TGIF Dashboards", extLink("https://tgif.network/", "Open dashboard"))}
-      ${note("Dial TGIF talkgroups with the <b>5</b> prefix (e.g. TG 31665 → <b>5</b>031665 on TS2).")}
+      ${sectionHead(msg("bm.tgifNetworkSettings"), "tgif", tg)}
+      ${row(msg("bm.tgifSecurityKey"), `<input data-netf="tgif" data-nkey="password" type="password" value="${esc(tg ? tg.password || "" : "")}" placeholder="${tg && tg.has_password ? "•••••• unchanged" : ""}">`)}
+      ${row(msg("bm.essid"), essidSelect("tgif", tg))}
+      ${row(msg("bm.tgifDashboards"), extLink("https://tgif.network/", msg("bm.openDashboard")))}
+      ${note(msg("bm.dialTgifTalkgroups5"))}
     </section>`;
 
   const xlSec = `<section class="card">
-      ${sectionHead("XLX Network Settings", "xlx", xl)}
-      ${row("XLX Startup TG", netField("xlx", "xlx_startup", xl, ""))}
-      ${row("XLX Startup Module", netField("xlx", "xlx_module", xl, ""))}
-      ${row("Time Slot", slotSelect(xl && xl.xlx_slot, `data-netf="xlx" data-nkey="xlx_slot"`))}
+      ${sectionHead(msg("bm.xlxNetworkSettings"), "xlx", xl)}
+      ${row(msg("bm.xlxStartupTg"), netField("xlx", "xlx_startup", xl, ""))}
+      ${row(msg("bm.xlxStartupModule"), netField("xlx", "xlx_module", xl, ""))}
+      ${row(msg("bm.timeSlot"), slotSelect(xl && xl.xlx_slot, `data-netf="xlx" data-nkey="xlx_slot"`))}
     </section>`;
 
   const cc = d.color_code || "1";
   let ccOpts = "";
   for (let i = 0; i <= 15; i++) ccOpts += `<option value="${i}"${String(i) === String(cc) ? " selected" : ""}>${i}</option>`;
   const general = `<section class="card">
-      <div class="card-head"><span class="sq"></span><span class="t">General DMR Settings</span></div>
-      <div class="toggle-row"><span class="name">DMR Roaming Beacon</span><button type="button" class="pill ${d.beacons ? "on" : "off"}" data-toggle="dmr.beacons" aria-pressed="${!!d.beacons}" aria-label="DMR Roaming Beacon">${d.beacons ? "ON" : "OFF"}</button></div>
-      ${row("DMR Color Code", `<select data-sec="dmr" data-key="color_code">${ccOpts}</select>`)}
-      <div class="toggle-row"><span class="name">DMR EmbeddedLCOnly</span><button type="button" class="pill ${d.embedded_lc_only ? "on" : "off"}" data-toggle="dmr.embedded_lc_only" aria-pressed="${!!d.embedded_lc_only}" aria-label="DMR EmbeddedLCOnly">${d.embedded_lc_only ? "ON" : "OFF"}</button></div>
-      <div class="toggle-row"><span class="name">DMR DumpTAData</span><button type="button" class="pill ${d.dump_ta_data ? "on" : "off"}" data-toggle="dmr.dump_ta_data" aria-pressed="${!!d.dump_ta_data}" aria-label="DMR DumpTAData">${d.dump_ta_data ? "ON" : "OFF"}</button></div>
+      <div class="card-head"><span class="sq"></span><span class="t">${msg("bm.generalDmrSettings")}</span></div>
+      <div class="toggle-row"><span class="name">${msg("bm.dmrRoamingBeacon")}</span><button type="button" class="pill ${d.beacons ? "on" : "off"}" data-toggle="dmr.beacons" aria-pressed="${!!d.beacons}" aria-label="DMR Roaming Beacon">${d.beacons ? "ON" : "OFF"}</button></div>
+      ${row(msg("bm.dmrColorCode"), `<select data-sec="dmr" data-key="color_code">${ccOpts}</select>`)}
+      <div class="toggle-row"><span class="name">${msg("bm.dmrEmbeddedlconly")}</span><button type="button" class="pill ${d.embedded_lc_only ? "on" : "off"}" data-toggle="dmr.embedded_lc_only" aria-pressed="${!!d.embedded_lc_only}" aria-label="DMR EmbeddedLCOnly">${d.embedded_lc_only ? "ON" : "OFF"}</button></div>
+      <div class="toggle-row"><span class="name">${msg("bm.dmrDumptadata")}</span><button type="button" class="pill ${d.dump_ta_data ? "on" : "off"}" data-toggle="dmr.dump_ta_data" aria-pressed="${!!d.dump_ta_data}" aria-label="DMR DumpTAData">${d.dump_ta_data ? "ON" : "OFF"}</button></div>
       ${nodeLockRow()}
-      ${note("<b>Private</b> locks TX to this node's own DMR ID; <b>Public</b> allows other DMR IDs through the hotspot.")}
+      ${note(msg("bm.privateLocksTxNode"))}
     </section>`;
 
   return `${supply}<div class="stack">${master}${bmSec}${dpSec}${sxSec}${tgSec}${xlSec}${general}</div>${routingTable()}`;
@@ -1163,14 +1173,14 @@ function routingTable() {
       <button class="netdel" data-rtdel="${j}" aria-label="Remove route ${j + 1}">✕</button>
     </div>`).join("");
   const body = routes.length
-    ? `<div class="route-head"><span>Slot</span><span>Dialed TG</span><span></span><span>Gateway</span><span></span></div>${rows}`
-    : `<div class="route-empty">No overrides — every talkgroup follows its network's prefix, and anything unrouted goes to the primary.</div>`;
+    ? `<div class="route-head"><span>${msg("routingTable.slot")}</span><span>${msg("routingTable.dialedTg")}</span><span></span><span>${msg("routingTable.gateway")}</span><span></span></div>${rows}`
+    : `<div class="route-empty">${msg("routingTable.noOverridesEveryTalkgroup")}</div>`;
   return `
     <div class="card" style="margin-top:16px;">
-      <div class="route-title">TALKGROUP ROUTING</div>
+      <div class="route-title">${msg("routingTable.talkgroupRouting")}</div>
       <datalist id="dmr-tgs">${tgOpts}</datalist>
       ${body}
-      <button class="btn ghost mini-btn" id="route-add"${nets.length ? "" : " disabled"}>+ ADD ROUTE</button>
+      <button class="btn ghost mini-btn" id="route-add"${nets.length ? "" : " disabled"}>${msg("routingTable.addRoute")}</button>
     </div>`;
 }
 
@@ -1190,10 +1200,10 @@ function tgNumber(v) {
 }
 
 function panelExpert(c, h) {
-  const rows = card("VERSIONS",
-    `<div class="row"><label>Dashboard (waypointd)</label><input value="${esc((h && h.version) || "—")}" readonly></div>` +
-    `<div class="row"><label>Config store</label><input value="${esc((c.sources && c.sources.store) || "—")}" readonly></div>`);
-  return `<div class="grid2">${rows}${note("Raw INI editing and power controls land in a later slice. Config now lives in the store; the INIs are regenerated on Apply — <a href='https://github.com/KN4OQW/waypoint/issues/29'>waypoint#29</a>.")}</div>${panelImport()}${panelOverrides()}`;
+  const rows = card(msg("expert.versions"),
+    `<div class="row"><label>${msg("expert.dashboardWaypointd")}</label><input value="${esc((h && h.version) || "—")}" readonly></div>` +
+    `<div class="row"><label>${msg("expert.configStore")}</label><input value="${esc((c.sources && c.sources.store) || "—")}" readonly></div>`);
+  return `<div class="grid2">${rows}${note(msg("expert.rawIniEditingPower"))}</div>${panelImport()}${panelOverrides()}`;
 }
 
 // panelImport is the Pi-Star / WPSD migration surface (RFC-0007 / issue #4): point
@@ -1201,15 +1211,15 @@ function panelExpert(c, h) {
 // files, Scan for a preview + report, then Import to bulk-write the store.
 function panelImport() {
   const dis = importBusy ? " disabled" : "";
-  const input = card("IMPORT FROM PI-STAR / WPSD", `
-    <div class="row"><label>Mounted card path</label>
+  const input = card(msg("import.importPiStarWpsd"), `
+    <div class="row"><label>${msg("import.mountedCardPath")}</label>
       <input id="import-dir" placeholder="/mnt/sdcard  (or /media/…)" aria-label="Mounted incumbent card path"></div>
     <div style="display:flex; gap:12px; align-items:center; margin-top:6px; flex-wrap:wrap;">
-      <button type="button" id="import-scan-dir"${dis} style="padding:8px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:6px;">SCAN DIRECTORY</button>
+      <button type="button" id="import-scan-dir"${dis} style="padding:8px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:6px;">${msg("import.scanDirectory")}</button>
       <label class="import-upload" style="font-family:var(--mono); font-size:12px; cursor:pointer; text-decoration:underline;">
-        …or upload config files<input id="import-files" type="file" multiple style="display:none;"></label>
+        ${msg("import.uploadConfigFiles")}<input id="import-files" type="file" multiple style="display:none;"></label>
     </div>
-    ${note("Copy the incumbent's <code>/etc/mmdvmhost</code>, <code>/etc/dmrgateway</code> and other gateway config files off the old card, or mount the card and give its path. Nothing is written until you press <b>Import</b>.")}`);
+    ${note(msg("import.copyIncumbentSEtc"))}`);
 
   const result = importScan ? importReport(importScan) : "";
   return `<div style="margin-top:14px;">${input}${result}</div>`;
@@ -1221,19 +1231,19 @@ function importReport(s) {
     `<div class="row"><label>${esc(f.role)}</label><span style="font-family:var(--mono); font-size:12px;">${f.found ? "✓ " + esc(f.name) : "— not found"}</span></div>`).join("");
   const modes = (rep.modes || []).length ? esc((rep.modes || []).join(", ")) : "—";
   const nets = (rep.networks || []).map((n) =>
-    `<div class="row"><label>${esc(n.name)}</label><span style="font-family:var(--mono); font-size:12px;">${esc(n.type)}${n.custom ? " · <b>custom routing preserved</b>" : ""}${n.enabled ? "" : " · disabled"}</span></div>`).join("") || note("No DMR networks found.");
+    `<div class="row"><label>${esc(n.name)}</label><span style="font-family:var(--mono); font-size:12px;">${esc(n.type)}${n.custom ? " · <b>custom routing preserved</b>" : ""}${n.enabled ? "" : " · disabled"}</span></div>`).join("") || note(msg("importReport.noDmrNetworksFound"));
   const unmapped = (rep.unmapped || []).length
-    ? `<div class="card"><div class="card-head"><span class="sq"></span><span class="t">WON'T CARRY OVER</span></div>${(rep.unmapped || []).map((u) => `<div class="row"><label>${esc(u.file)} · ${esc(u.section)}</label><span style="font-family:var(--mono); font-size:12px;">${esc(u.what)}</span></div>`).join("")}${note("These incumbent features aren't modeled yet — reconfigure them in Waypoint after importing.")}</div>`
-    : note("Everything found maps to Waypoint — nothing left behind.");
+    ? `<div class="card"><div class="card-head"><span class="sq"></span><span class="t">${msg("importReport.wonTCarryOver")}</span></div>${(rep.unmapped || []).map((u) => `<div class="row"><label>${esc(u.file)} · ${esc(u.section)}</label><span style="font-family:var(--mono); font-size:12px;">${esc(u.what)}</span></div>`).join("")}${note(msg("importReport.theseIncumbentFeaturesAren"))}</div>`
+    : note(msg("importReport.everythingFoundMapsWaypoint"));
   const dis = importBusy ? " disabled" : "";
-  const summary = card("SCAN RESULT",
-    `<div class="row"><label>Detected</label><span style="font-family:var(--mono); font-size:12px;">${esc(rep.platform || "unknown")}</span></div>` +
-    `<div class="row"><label>Modes</label><span style="font-family:var(--mono); font-size:12px;">${modes}</span></div>` + files);
+  const summary = card(msg("importReport.scanResult"),
+    `<div class="row"><label>${msg("importReport.detected")}</label><span style="font-family:var(--mono); font-size:12px;">${esc(rep.platform || "unknown")}</span></div>` +
+    `<div class="row"><label>${msg("importReport.modes")}</label><span style="font-family:var(--mono); font-size:12px;">${modes}</span></div>` + files);
   const apply = `<div style="display:flex; gap:12px; align-items:center; margin-top:10px;">
-      <button type="button" id="import-apply"${dis} style="padding:9px 20px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">IMPORT INTO STORE</button>
-      <span class="note" style="margin:0;">Overwrites your current mode &amp; network config with the scanned values. Passwords carry over from the card; review, then <b>Apply</b> to go live.</span>
+      <button type="button" id="import-apply"${dis} style="padding:9px 20px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">${msg("importReport.importIntoStore")}</button>
+      <span class="note" style="margin:0;">${msg("importReport.overwritesCurrentModeAmp")} <b>${msg("importReport.apply")}</b> ${msg("importReport.goLive")}</span>
     </div>`;
-  return `<div class="stack" style="margin-top:12px;">${summary}${card("DMR NETWORKS", nets)}${unmapped}</div>${apply}`;
+  return `<div class="stack" style="margin-top:12px;">${summary}${card(msg("importReport.dmrNetworks"), nets)}${unmapped}</div>${apply}`;
 }
 
 // panelOverrides renders the read-only Override layer view (RFC-0005 / issue #2):
@@ -1243,14 +1253,14 @@ function importReport(s) {
 // change and which fragment wins.
 function panelOverrides() {
   const d = overridesData;
-  if (!d) return card("OVERRIDES", note("Loading override layer…"));
-  const dirLine = note(`Override drop-ins live under <code>${esc(d.dir || "—")}/&lt;daemon&gt;.d/*.conf</code> and host-file hooks under <code>&lt;hostfile&gt;.prepend.d/</code> · <code>.append.d/</code>. They merge last into the generated files and are never touched by an update (<a href="https://github.com/KN4OQW/waypoint/issues/2">waypoint#2</a>).`);
+  if (!d) return card(msg("overrides.overrides"), note(msg("overrides.loadingOverrideLayer")));
+  const dirLine = note(`Override drop-ins live under <code>${esc(d.dir || "—")}/&lt;daemon&gt;.d/*.conf</code> ${msg("overrides.hostFileHooksUnder")} <code>${msg("overrides.ltHostfileGtPrepend")}</code> · <code>.append.d/</code>. They merge last into the generated files and are never touched by an update (<a href="https://github.com/KN4OQW/waypoint/issues/2">${msg("overrides.waypoint2")}</a>).`);
   const warn = (d.warnings && d.warnings.length)
     ? note(`<b>${d.warnings.length} malformed override line(s) ignored:</b><br>${d.warnings.map(esc).join("<br>")}`)
     : "";
   const list = d.overrides || [];
   if (!list.length) {
-    return card("OVERRIDES", dirLine + note("No overrides active — the generated configuration is exactly what the store renders.") + warn);
+    return card(msg("overrides.overrides"), dirLine + note(msg("overrides.noOverridesActiveGenerated")) + warn);
   }
   // Group by daemon so each generated file's overrides read together.
   const byDaemon = {};
@@ -1259,7 +1269,7 @@ function panelOverrides() {
     const rows = byDaemon[daemon].map(overrideRow).join("");
     return `<div class="card"><div class="card-head"><span class="sq"></span><span class="t">${esc(daemon)}</span></div>${rows}</div>`;
   }).join("");
-  return card("OVERRIDES", dirLine + warn) + `<div class="stack">${groups}</div>`;
+  return card(msg("overrides.overrides"), dirLine + warn) + `<div class="stack">${groups}</div>`;
 }
 
 // overrideRow renders one effective override as a read-only status line:
@@ -1267,8 +1277,8 @@ function panelOverrides() {
 // winning fragment filename (the provenance).
 function overrideRow(o) {
   let change;
-  if (o.unset) change = `<s>${esc(o.old)}</s> <b>REMOVED</b>`;
-  else if (o.added) change = `<b>${esc(o.new)}</b> <span class="note" style="display:inline">ADDED</span>`;
+  if (o.unset) change = `<s>${esc(o.old)}</s> <b>${msg("overrideRow.removed")}</b>`;
+  else if (o.added) change = `<b>${esc(o.new)}</b> <span class="note" style="display:inline">${msg("overrideRow.added")}</span>`;
   else change = `<s>${esc(o.old)}</s> → <b>${esc(o.new)}</b>`;
   const label = `[${o.section}] ${o.key}`;
   return `<div class="row"><label>${esc(label)}</label><span style="font-family:var(--mono); font-size:12px;">${change} <span class="note" style="display:inline; opacity:.7;">· ${esc(o.source)}</span></span></div>`;
@@ -1278,30 +1288,30 @@ function overrideRow(o) {
 // setups as cards with Activate / Export / Delete, a "save current setup as…"
 // field, and Import. Data from GET /api/profiles (metadata only — never secrets).
 function panelProfiles() {
-  const save = card("SAVE CURRENT SETUP", `
+  const save = card(msg("profiles.saveCurrentSetup"), `
     <div class="row">
-      <label>Profile name</label>
+      <label>${msg("profiles.profileName")}</label>
       <input id="prof-name" placeholder="e.g. BM DMR duplex" maxlength="64" aria-label="New profile name">
     </div>
     <div style="display:flex; gap:12px; align-items:center; margin-top:6px;">
-      <button type="button" id="prof-save"${profileBusy ? " disabled" : ""} style="padding:8px 18px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">SAVE PROFILE</button>
+      <button type="button" id="prof-save"${profileBusy ? " disabled" : ""} style="padding:8px 18px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">${msg("profiles.saveProfile")}</button>
       <label class="prof-import" style="font-family:var(--mono); font-size:12px; cursor:pointer; text-decoration:underline;">
-        Import from file…<input id="prof-import-file" type="file" accept=".json,application/json" style="display:none;">
+        ${msg("profiles.importFile")}<input id="prof-import-file" type="file" accept=".json,application/json" style="display:none;">
       </label>
     </div>`);
 
   let listHTML;
-  if (profiles === null) listHTML = note("Loading profiles…");
-  else if (!profiles.length) listHTML = note("No profiles yet. Configure your modes and networks, then <b>Save current setup</b> to capture this configuration as a profile you can switch back to.");
+  if (profiles === null) listHTML = note(msg("profiles.loadingProfiles"));
+  else if (!profiles.length) listHTML = note(msg("profiles.noProfilesYetConfigure"));
   else listHTML = `<div class="stack">${profiles.map(profileCard).join("")}</div>`;
 
-  const hint = note("Activating a profile writes its saved modes & networks and restarts the stack — the same as an Apply. Exported files have <b>passwords removed</b>; on import you re-enter any that are needed (or the target node keeps its own). Identity and calibration are never in a profile (<a href='https://github.com/KN4OQW/waypoint/blob/main/docs/rfcs/0006-connection-profiles.md'>RFC-0006</a>).");
+  const hint = note(msg("profiles.activatingProfileWritesIts"));
   return `<div class="grid2">${save}${hint}</div>${listHTML}`;
 }
 
 function profileCard(p) {
   const badge = p.active
-    ? `<span class="prof-badge" style="font-family:var(--mono); font-size:11px; color:var(--accent); border:1px solid var(--accent); border-radius:4px; padding:1px 6px;">ACTIVE</span>`
+    ? `<span class="prof-badge" style="font-family:var(--mono); font-size:11px; color:var(--accent); border:1px solid var(--accent); border-radius:4px; padding:1px 6px;">${msg("profileCard.active")}</span>`
     : "";
   const fp = p.fingerprint || {};
   const fpText = (fp.rx_freq_hz || fp.tx_freq_hz)
@@ -1313,18 +1323,18 @@ function profileCard(p) {
   const dis = profileBusy ? " disabled" : "";
   return `<div class="card">
     <div class="card-head"><span class="sq"></span><span class="t">${esc(p.name)}</span> ${badge}</div>
-    <div class="row"><label>Captured</label><span style="font-family:var(--mono); font-size:12px; opacity:.8;">${esc(p.updated_at || p.created_at || "—")}${fpText ? " · " + esc(fpText) : ""}</span></div>
+    <div class="row"><label>${msg("profileCard.captured")}</label><span style="font-family:var(--mono); font-size:12px; opacity:.8;">${esc(p.updated_at || p.created_at || "—")}${fpText ? " · " + esc(fpText) : ""}</span></div>
     ${sens}
     <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
-      <button type="button" data-prof-activate="${esc(p.name)}"${dis} aria-label="Activate profile ${esc(p.name)}"${p.active ? " title='Already active'" : ""} style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">ACTIVATE</button>
-      <button type="button" data-prof-export="${esc(p.name)}" aria-label="Export profile ${esc(p.name)}" style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:6px;">EXPORT</button>
-      <button type="button" data-prof-delete="${esc(p.name)}"${dis} aria-label="Delete profile ${esc(p.name)}" style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:6px;">DELETE</button>
+      <button type="button" data-prof-activate="${esc(p.name)}"${dis} aria-label="Activate profile ${esc(p.name)}"${p.active ? " title='Already active'" : ""} style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">${msg("profileCard.activate")}</button>
+      <button type="button" data-prof-export="${esc(p.name)}" aria-label="Export profile ${esc(p.name)}" style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:6px;">${msg("profileCard.export")}</button>
+      <button type="button" data-prof-delete="${esc(p.name)}"${dis} aria-label="Delete profile ${esc(p.name)}" style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:6px;">${msg("profileCard.delete")}</button>
     </div>
   </div>`;
 }
 
 function panelPending(what) {
-  return note(`<b>${esc(what)}</b> settings aren't wired yet — a later slice of the configuration store (<a href="https://github.com/KN4OQW/waypoint/issues/1">waypoint#1</a>).`);
+  return note(`<b>${esc(what)}</b> ${msg("pending.settingsArenTWired")}<a href="https://github.com/KN4OQW/waypoint/issues/1">${msg("pending.waypoint1")}</a>).`);
 }
 
 // --- Network (host / OS) -------------------------------------------------
@@ -1343,26 +1353,26 @@ function statRow(label, value) {
 }
 function panelNetwork() {
   const live = netStatusSection();
-  const editors = netEdit ? `${netHostCard()}${netEthCard()}${netWifiCard()}${netVlanCard()}` : note("Loading network configuration…");
+  const editors = netEdit ? `${netHostCard()}${netEthCard()}${netWifiCard()}${netVlanCard()}` : note(msg("network.loadingNetworkConfiguration"));
   // The network Apply is SEPARATE from the radio Apply: it routes through the
   // confirm-or-revert guard (save → guarded apply → countdown). No direct-apply
   // escape hatch exists for host networking.
   const actions = `<div class="net-actions" style="display:flex; gap:12px; align-items:center; margin-top:6px;">
-      <button type="button" id="net-apply"${netDirty ? "" : " disabled"} style="padding:8px 18px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">APPLY NETWORK</button>
-      <span class="note" style="margin:0;">Applies through confirm-or-revert — you'll get a countdown to keep the change before it auto-reverts.</span>
+      <button type="button" id="net-apply"${netDirty ? "" : " disabled"} style="padding:8px 18px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">${msg("network.applyNetwork")}</button>
+      <span class="note" style="margin:0;">${msg("network.appliesThroughConfirmRevert")}</span>
     </div>`;
-  const hint = note("Editing here writes the store and, on <b>Apply Network</b>, renders NetworkManager keyfiles behind a confirm-or-revert guard so a bad change can't strand the node. Waypoint only manages its own <code>waypoint-*</code> profiles; your hand-made connections are never touched.");
+  const hint = note(msg("network.editingHereWritesStore"));
   return `<div class="grid2">${live}<div class="stack">${editors}</div></div>${actions}${hint}`;
 }
 
 // netStatusSection is the live, read-only host-network state (unchanged from the
 // status-only slice): what the box is actually doing right now.
 function netStatusSection() {
-  if (!netStatus) return card("LIVE STATUS", note("Fetching live network status…"));
+  if (!netStatus) return card(msg("netStatusSection.liveStatus"), note(msg("netStatusSection.fetchingLiveNetworkStatus")));
   const s = netStatus;
-  const host = card("HOST (LIVE)", statRow("Hostname", s.hostname) + statRow("NTP", ntpText(s.ntp)) + (s.wifi ? statRow("Wi-Fi", `${s.wifi.ssid} · ${s.wifi.signal}%`) : ""));
+  const host = card(msg("netStatusSection.hostLive"), statRow(msg("netStatusSection.hostname"), s.hostname) + statRow("NTP", ntpText(s.ntp)) + (s.wifi ? statRow(msg("netStatusSection.wiFi"), `${s.wifi.ssid} · ${s.wifi.signal}%`) : ""));
   const devs = (s.devices || []).filter((d) => d.type === "ethernet" || d.type === "wifi");
-  const devCards = devs.length ? devs.map(deviceCard).join("") : note("No live Ethernet or Wi-Fi interfaces reported.");
+  const devCards = devs.length ? devs.map(deviceCard).join("") : note(msg("netStatusSection.noLiveEthernetWi"));
   return `${host}${devCards}`;
 }
 function ntpText(ntp) {
@@ -1374,10 +1384,10 @@ function deviceCard(d) {
   const title = `${d.name} · ${d.type.toUpperCase()} (LIVE)`;
   const conn = d.connection ? d.connection + (d.managed ? " (waypoint)" : "") : "—";
   return card(title,
-    statRow("State", d.state) +
-    statRow("Profile", conn) +
+    statRow(msg("deviceCard.state"), d.state) +
+    statRow(msg("deviceCard.profile"), conn) +
     statRow("IPv4", d.ipv4 + (d.method ? ` (${d.method})` : "")) +
-    statRow("Gateway", d.gateway) +
+    statRow(msg("deviceCard.gateway"), d.gateway) +
     statRow("DNS", (d.dns || []).join(", ")) +
     statRow("MAC", d.mac));
 }
@@ -1481,34 +1491,34 @@ function textToList(s) { return String(s || "").split(/[\s,]+/).filter(Boolean);
 // "vlan:<idx>"); `label` names it for screen readers.
 function ipv4Editor(ip, scope, label) {
   const isStatic = ip.method === "manual";
-  const methodSel = row("IPv4 method",
+  const methodSel = row(msg("ipv4Editor.ipv4Method"),
     `<select data-netmethod="${esc(scope)}" aria-label="IPv4 method for ${esc(label)}">
-       <option value="auto"${isStatic ? "" : " selected"}>DHCP (automatic)</option>
-       <option value="manual"${isStatic ? " selected" : ""}>Static</option>
+       <option value="auto"${isStatic ? "" : " selected"}>${msg("ipv4Editor.dhcpAutomatic")}</option>
+       <option value="manual"${isStatic ? " selected" : ""}>${msg("ipv4Editor.static")}</option>
      </select>`);
   const staticFields = isStatic
-    ? row("IP address", `<input data-netip="${esc(scope)}" data-ipkey="address" value="${esc(ip.address)}" placeholder="192.168.1.50" aria-label="IP address for ${esc(label)}">`) +
-      row("Prefix (CIDR)", `<input data-netip="${esc(scope)}" data-ipkey="prefix" value="${esc(ip.prefix)}" placeholder="24" aria-label="Network prefix length for ${esc(label)}">`) +
-      row("Gateway", `<input data-netip="${esc(scope)}" data-ipkey="gateway" value="${esc(ip.gateway)}" placeholder="192.168.1.1" aria-label="Default gateway for ${esc(label)}">`)
+    ? row(msg("ipv4Editor.ipAddress"), `<input data-netip="${esc(scope)}" data-ipkey="address" value="${esc(ip.address)}" placeholder="192.168.1.50" aria-label="IP address for ${esc(label)}">`) +
+      row(msg("ipv4Editor.prefixCidr"), `<input data-netip="${esc(scope)}" data-ipkey="prefix" value="${esc(ip.prefix)}" placeholder="24" aria-label="Network prefix length for ${esc(label)}">`) +
+      row(msg("ipv4Editor.gateway"), `<input data-netip="${esc(scope)}" data-ipkey="gateway" value="${esc(ip.gateway)}" placeholder="192.168.1.1" aria-label="Default gateway for ${esc(label)}">`)
     : "";
   const dnsLabel = isStatic ? "DNS servers" : "DNS override (optional)";
   const dns = row(dnsLabel, `<input data-netdns="${esc(scope)}" value="${esc(listToText(ip.dns))}" placeholder="1.1.1.1, 8.8.8.8" aria-label="${esc(dnsLabel)} for ${esc(label)}">`) +
-    (isStatic ? "" : note("With DHCP, listing DNS servers here <b>replaces</b> the ones the DHCP server hands out (ignore-auto-dns)."));
-  const search = row("Search domains (optional)", `<input data-netsearch="${esc(scope)}" value="${esc(listToText(ip.search_domains))}" placeholder="lan, example.org" aria-label="DNS search domains for ${esc(label)}">`);
+    (isStatic ? "" : note(msg("ipv4Editor.dhcpListingDnsServers")));
+  const search = row(msg("ipv4Editor.searchDomainsOptional"), `<input data-netsearch="${esc(scope)}" value="${esc(listToText(ip.search_domains))}" placeholder="lan, example.org" aria-label="DNS search domains for ${esc(label)}">`);
   return methodSel + staticFields + dns + search;
 }
 function netEthCard() {
   const c = netEthConn();
-  return card("ETHERNET (waypoint-eth0)", ipv4Editor(c.ipv4, "conn:ethernet", "Ethernet"));
+  return card(msg("netEthCard.ethernetWaypointEth0"), ipv4Editor(c.ipv4, "conn:ethernet", "Ethernet"));
 }
 function netWifiCard() {
   const c = netWifiConn();
   const creds =
-    row("SSID (network name)", `<input data-netwifi="wifi" data-wkey="ssid" value="${esc(c.ssid)}" placeholder="Your Wi-Fi name" aria-label="Wi-Fi SSID">`) +
-    row("Passphrase", `<input data-netpsk="wifi" type="password" value="${esc(c.psk)}" placeholder="${c.has_psk ? "•••••• unchanged" : "Wi-Fi passphrase"}" aria-label="Wi-Fi passphrase">`) +
-    switchRow("Hidden network", "nethidden", "wifi", c.hidden) +
-    row("Regulatory country", `<input data-netwifi="wifi" data-wkey="country" value="${esc(c.country)}" maxlength="2" placeholder="US" aria-label="Regulatory country code">`);
-  return card("WI-FI (waypoint-wifi)", creds) + netScanSection() + card("WI-FI IPv4", ipv4Editor(c.ipv4, "conn:wifi", "Wi-Fi"));
+    row(msg("netWifiCard.ssidNetworkName"), `<input data-netwifi="wifi" data-wkey="ssid" value="${esc(c.ssid)}" placeholder="Your Wi-Fi name" aria-label="Wi-Fi SSID">`) +
+    row(msg("netWifiCard.passphrase"), `<input data-netpsk="wifi" type="password" value="${esc(c.psk)}" placeholder="${c.has_psk ? "•••••• unchanged" : "Wi-Fi passphrase"}" aria-label="Wi-Fi passphrase">`) +
+    switchRow(msg("netWifiCard.hiddenNetwork"), "nethidden", "wifi", c.hidden) +
+    row(msg("netWifiCard.regulatoryCountry"), `<input data-netwifi="wifi" data-wkey="country" value="${esc(c.country)}" maxlength="2" placeholder="US" aria-label="Regulatory country code">`);
+  return card(msg("netWifiCard.wiFiWaypointWifi"), creds) + netScanSection() + card(msg("netWifiCard.wiFiIpv4"), ipv4Editor(c.ipv4, "conn:wifi", "Wi-Fi"));
 }
 
 // switchRow renders an accessible on/off switch: a role="switch" pill with
@@ -1527,12 +1537,12 @@ function netHostCard() {
   const tzOptions = (netTimezones || []).map((z) => `<option value="${esc(z)}"></option>`).join("");
   const liveTz = netStatus && netStatus.timezone ? ` <span class="note" style="margin:0">(now: ${esc(netStatus.timezone)})</span>` : "";
   const body =
-    row("Hostname", `<input data-hostf="1" data-hkey="hostname" value="${esc(h.hostname)}" placeholder="${esc((netStatus && netStatus.hostname) || "waypoint")}" aria-label="Hostname">`) +
-    row("Timezone", `<input list="tz-list" data-hostf="1" data-hkey="timezone" value="${esc(h.timezone)}" placeholder="Region/City" aria-label="Timezone (type to search)"><datalist id="tz-list">${tzOptions}</datalist>${liveTz}`) +
-    switchRow("NTP time sync", "netntp", "1", n.enabled) +
-    row("NTP servers (optional)", `<input data-ntpservers="1" value="${esc(listToText(n.servers))}" placeholder="pool.ntp.org, time.cloudflare.com" aria-label="NTP servers">`) +
-    `<div style="margin-top:10px;"><button type="button" id="host-apply"${netHostDirty ? "" : " disabled"} style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">APPLY HOST SETTINGS</button> <span class="note" style="margin:0;">Applies immediately (hostname, timezone &amp; NTP can't strand the node).</span></div>`;
-  return card("HOST · TIME · NTP", body);
+    row(msg("netHostCard.hostname"), `<input data-hostf="1" data-hkey="hostname" value="${esc(h.hostname)}" placeholder="${esc((netStatus && netStatus.hostname) || "waypoint")}" aria-label="Hostname">`) +
+    row(msg("netHostCard.timezone"), `<input list="tz-list" data-hostf="1" data-hkey="timezone" value="${esc(h.timezone)}" placeholder="Region/City" aria-label="Timezone (type to search)"><datalist id="tz-list">${tzOptions}</datalist>${liveTz}`) +
+    switchRow(msg("netHostCard.ntpTimeSync"), "netntp", "1", n.enabled) +
+    row(msg("netHostCard.ntpServersOptional"), `<input data-ntpservers="1" value="${esc(listToText(n.servers))}" placeholder="pool.ntp.org, time.cloudflare.com" aria-label="NTP servers">`) +
+    `<div style="margin-top:10px;"><button type="button" id="host-apply"${netHostDirty ? "" : " disabled"} style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">${msg("netHostCard.applyHostSettings")}</button> <span class="note" style="margin:0;">${msg("netHostCard.appliesImmediatelyHostnameTimezone")}</span></div>`;
+  return card(msg("netHostCard.hostTimeNtp"), body);
 }
 
 // netVlanCard: the VLAN list. Each VLAN is a tagged interface on a parent, with its
@@ -1542,17 +1552,17 @@ function netVlanCard() {
   const vlans = netEdit.vlans || [];
   const blocks = vlans.map((v, i) => {
     const head = `<div class="toggle-row"><span class="name">VLAN ${esc(v.id || "?")}${v.name ? " · " + esc(v.name) : ""} <span class="note" style="margin:0">(waypoint-vlan${esc(v.id || "?")})</span></span>` +
-      `<button type="button" class="pill off" data-vlandel="${i}" style="cursor:pointer;" aria-label="Remove VLAN ${esc(v.id || "")}">REMOVE</button></div>`;
+      `<button type="button" class="pill off" data-vlandel="${i}" style="cursor:pointer;" aria-label="Remove VLAN ${esc(v.id || "")}">${msg("netVlanCard.remove")}</button></div>`;
     const fields =
-      row("Parent interface", `<input data-vlanf="${i}" data-vkey="parent" value="${esc(v.parent)}" placeholder="eth0" aria-label="VLAN ${esc(v.id || "")} parent interface">`) +
-      row("VLAN id (1–4094)", `<input data-vlanf="${i}" data-vkey="id" type="number" min="1" max="4094" value="${esc(v.id)}" placeholder="50" aria-label="VLAN id">`) +
-      row("Label (optional)", `<input data-vlanf="${i}" data-vkey="name" value="${esc(v.name)}" placeholder="iot" aria-label="VLAN label">`) +
+      row(msg("netVlanCard.parentInterface"), `<input data-vlanf="${i}" data-vkey="parent" value="${esc(v.parent)}" placeholder="eth0" aria-label="VLAN ${esc(v.id || "")} parent interface">`) +
+      row(msg("netVlanCard.vlanId14094"), `<input data-vlanf="${i}" data-vkey="id" type="number" min="1" max="4094" value="${esc(v.id)}" placeholder="50" aria-label="VLAN id">`) +
+      row(msg("netVlanCard.labelOptional"), `<input data-vlanf="${i}" data-vkey="name" value="${esc(v.name)}" placeholder="iot" aria-label="VLAN label">`) +
       ipv4Editor(v.ipv4, "vlan:" + i, "VLAN " + (v.id || (i + 1)));
     return `<div style="border-top:1px solid var(--line,rgba(128,128,128,0.25)); padding-top:8px; margin-top:8px;">${head}${fields}</div>`;
   }).join("");
-  const empty = vlans.length ? "" : note("No VLANs. Add one to put a tagged interface on a parent device.");
-  const add = `<div style="margin-top:10px;"><button type="button" id="vlan-add" style="padding:6px 14px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--accent); border:1px solid var(--accent); border-radius:6px;">+ ADD VLAN</button></div>`;
-  return card("VLANs", empty + blocks + add);
+  const empty = vlans.length ? "" : note(msg("netVlanCard.noVlansAddOne"));
+  const add = `<div style="margin-top:10px;"><button type="button" id="vlan-add" style="padding:6px 14px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--accent); border:1px solid var(--accent); border-radius:6px;">${msg("netVlanCard.addVlan")}</button></div>`;
+  return card(msg("netVlanCard.vlans"), empty + blocks + add);
 }
 function netScanSection() {
   const rows = (netScanResults || []).map((n) => {
@@ -1561,9 +1571,9 @@ function netScanSection() {
     return `<div class="toggle-row"><span class="name">${esc(n.ssid)} ${lock} <span style="opacity:0.6">${n.signal}%</span>${inuse}</span>` +
       `<button type="button" class="pill off" data-netjoin="${esc(n.ssid)}" data-netsec="${esc(n.security)}" style="cursor:pointer;" aria-label="Join Wi-Fi network ${esc(n.ssid)}">JOIN</button></div>`;
   }).join("");
-  const body = (netScanResults && netScanResults.length) ? rows : note("No networks found yet — press Rescan, or enter an SSID above for a hidden network.");
-  const refresh = `<div style="margin-top:8px;"><button type="button" id="net-scan-refresh" style="padding:6px 14px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--accent); border:1px solid var(--accent); border-radius:6px;">RESCAN</button></div>`;
-  return card("NEARBY NETWORKS", body + refresh);
+  const body = (netScanResults && netScanResults.length) ? rows : note(msg("netScanSection.noNetworksFoundYet"));
+  const refresh = `<div style="margin-top:8px;"><button type="button" id="net-scan-refresh" style="padding:6px 14px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--accent); border:1px solid var(--accent); border-radius:6px;">${msg("netScanSection.rescan")}</button></div>`;
+  return card(msg("netScanSection.nearbyNetworks"), body + refresh);
 }
 
 // showNetworkConfirmBar renders the "Keep these settings?" countdown after a
@@ -1588,7 +1598,7 @@ function showNetworkConfirmBar(deadlineISO, token) {
   bar.style.cssText = "position:fixed; left:0; right:0; bottom:0; z-index:50; padding:13px 18px; display:flex; align-items:center; gap:16px; font-family:var(--mono); font-size:13px; background:rgba(255,107,107,0.10); border-top:1px solid var(--warn); color:var(--warn);";
 
   const msg = el("span");
-  msg.innerHTML = `<b>Keep these network settings?</b> The node reverts automatically (in <span id="net-count" aria-hidden="true">…</span>) unless you confirm it is still reachable.`;
+  msg.innerHTML = `<b>${msg("showNetworkConfirmBar.keepTheseNetworkSettings")}</b> ${msg("showNetworkConfirmBar.nodeRevertsAutomatically")} <span id="net-count" aria-hidden="true">…</span>) unless you confirm it is still reachable.`;
   bar.appendChild(msg);
 
   if (token) {
@@ -1627,13 +1637,13 @@ function hideNetworkConfirmBar() {
   netCountdown = null;
 }
 async function confirmNetwork(token) {
-  if (!token) { banner("This browser doesn't hold the confirm token for the pending change — confirm from the tab that applied it, or let it revert.", "bad"); return; }
+  if (!token) { banner(msg("confirmNetwork.browserDoesnTHold"), "bad"); return; }
   try {
     const r = await fetch("/api/network/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
     if (!r.ok) throw new Error((await r.text()).trim());
     sessionStorage.removeItem("wp-net-token");
     hideNetworkConfirmBar();
-    banner("Network settings kept.", "ok");
+    banner(msg("confirmNetwork.networkSettingsKept"), "ok");
     loadNetwork();
   } catch (err) {
     banner("Confirm failed: " + String(err.message || err), "bad");
@@ -1702,14 +1712,14 @@ function cleanAttachment(a) {
 
 function panelGateways() {
   const buses = edit.buses || [];
-  const migrate = card("MIGRATE FROM RETIRED BRIDGES",
-    note("The old per-mode bridges (YSF2DMR, DMR2YSF, YSF2NXDN, DMR2NXDN, NXDN2DMR) are retired. Migration seeds a bus from whatever you had configured — your saved bridge settings are <b>preserved either way</b>, migration only <b>adds</b> a bus, it never deletes anything.") +
-    `<div class="row"><button type="button" class="btn accent" id="bus-migrate">Migrate bridges → bus</button></div>` +
+  const migrate = card(msg("gateways.migrateRetiredBridges"),
+    note(msg("gateways.oldPerModeBridges")) +
+    `<div class="row"><button type="button" class="btn accent" id="bus-migrate">${msg("gateways.migrateBridgesBus")}</button></div>` +
     (busMigrateMsg ? note(esc(busMigrateMsg)) : ""));
   const list = buses.length
     ? buses.map(busCard).join("")
-    : note("No buses yet. A <b>bus</b> lets its attached modes hear each other (DMR ⇄ YSF ⇄ NXDN), with IDs/talkgroups translated per side. Create one, then attach two or more modes.");
-  const create = `<div class="row"><button type="button" class="btn" id="bus-create">＋ Create bus</button></div>`;
+    : note(msg("gateways.noBusesYetBus"));
+  const create = `<div class="row"><button type="button" class="btn" id="bus-create">${msg("gateways.createBus")}</button></div>`;
   return `<div class="stack">${peersCard()}${migrate}${list}${create}</div>`;
 }
 
@@ -1720,15 +1730,15 @@ function busCard(bus) {
   const busyBadge = busy
     ? `<span class="pill busy" title="Another source is talking; ${esc(busy.loser)} traffic is held off">busy: via ${esc(busy.winner)}${busy.node ? " @ " + esc(busy.node) : ""}</span>` : "";
   const enPill = `<button type="button" class="pill ${bus.enabled ? "on" : "off"}" data-busen="${esc(bus.id)}" aria-pressed="${bus.enabled}" aria-label="Bus enabled">${bus.enabled ? "ENABLED" : "DISABLED"}</button>`;
-  const del = (atts.length === 0 && remotes.length === 0) ? `<button type="button" class="btn danger" data-busdel="${esc(bus.id)}">Delete</button>` : "";
+  const del = (atts.length === 0 && remotes.length === 0) ? `<button type="button" class="btn danger" data-busdel="${esc(bus.id)}">${msg("busCard.delete")}</button>` : "";
   const head = `<div class="card-head"><span class="sq"></span><span class="t">${esc(bus.name || bus.id)}</span>${busyBadge}<span class="bus-actions">${enPill}${del}</span></div>`;
-  const nameRow = row("Name", `<input data-busname="${esc(bus.id)}" value="${esc(bus.name)}" placeholder="e.g. Local Bus A">`);
+  const nameRow = row(msg("busCard.name"), `<input data-busname="${esc(bus.id)}" value="${esc(bus.name)}" placeholder="e.g. Local Bus A">`);
   // Owner-offline state on a member (RFC-0016 §4), self-clearing (no latch).
   const down = busDown[bus.name] || busDown[bus.id];
   const downNote = down ? `<div class="note bus-down"><b>Bus ${esc(bus.name || bus.id)} down</b> — owner ${esc(down)} offline</div>` : "";
-  const disableNote = bus.enabled ? "" : note("Disabled — its attachments are kept and return when you re-enable it.");
+  const disableNote = bus.enabled ? "" : note(msg("busCard.disabledItsAttachmentsAre"));
   const total = atts.length + remotes.length;
-  const lowNote = (bus.enabled && total < 2) ? note("A bus needs at least two attachments to hub traffic; add another mode before applying.") : "";
+  const lowNote = (bus.enabled && total < 2) ? note(msg("busCard.busNeedsLeastTwo")) : "";
   const attHTML = atts.map((a) => attachmentBlock(a, edit.attachments.indexOf(a))).join("");
   const remoteHTML = remotes.map(remoteAttachmentBlock).join("");
   return `<div class="card bus-card">${head}${downNote}${nameRow}${disableNote}${lowNote}${attHTML}${remoteHTML}${attachPickerHTML(bus.id)}</div>`;
@@ -1741,15 +1751,15 @@ function remoteAttachmentBlock(r) {
   const pname = peer ? (peer.name || peer.id) : r.peer_id;
   const dormant = !peer || peer.state !== "paired";
   const badge = dormant
-    ? `<span class="pill off" title="peer not paired — this edge is dormant until re-paired">DORMANT</span>`
-    : `<span class="pill on">VIA PEER</span>`;
+    ? `<span class="pill off" title="peer not paired — this edge is dormant until re-paired">${msg("remoteAttachmentBlock.dormant")}</span>`
+    : `<span class="pill on">${msg("remoteAttachmentBlock.viaPeer")}</span>`;
   const key = `${r.bus_id}|${r.peer_id}|${r.mode}`;
-  return `<div class="attach remote-attach"><div class="toggle-row"><span class="name">${esc(BUS_MODE_LABEL[r.mode] || r.mode)} @ ${esc(pname)} ${badge}</span><button type="button" class="btn" data-remotedel="${esc(key)}">Detach</button></div></div>`;
+  return `<div class="attach remote-attach"><div class="toggle-row"><span class="name">${esc(BUS_MODE_LABEL[r.mode] || r.mode)} @ ${esc(pname)} ${badge}</span><button type="button" class="btn" data-remotedel="${esc(key)}">${msg("remoteAttachmentBlock.detach")}</button></div></div>`;
 }
 
 function attachmentBlock(a, idx) {
   const label = esc(BUS_MODE_LABEL[a.mode] || a.mode);
-  const headRow = `<div class="toggle-row"><span class="name">${label} attachment</span><button type="button" class="btn" data-attachdel="${idx}">Detach</button></div>`;
+  const headRow = `<div class="toggle-row"><span class="name">${label} attachment</span><button type="button" class="btn" data-attachdel="${idx}">${msg("attachmentBlock.detach")}</button></div>`;
   // RFC-0003 Addendum A §2/§3: a YSF or NXDN attachment DISPLACES the stock gateway
   // — the bus becomes the mode's gateway on its loopback and reflectors are
   // unavailable for the duration. Say so in plain copy so it is a knowing choice,
@@ -1764,22 +1774,22 @@ function attachmentBlock(a, idx) {
 function attachParams(a, idx) {
   if (a.mode === "dmr") {
     const slot = a.slot || "2";
-    const slotSel = row("Slot", `<select data-attach="${idx}" data-akey="slot"><option value="1"${slot === "1" ? " selected" : ""}>1</option><option value="2"${slot === "2" ? " selected" : ""}>2</option></select>`);
+    const slotSel = row(msg("attachParams.slot"), `<select data-attach="${idx}" data-akey="slot"><option value="1"${slot === "1" ? " selected" : ""}>1</option><option value="2"${slot === "2" ? " selected" : ""}>2</option></select>`);
     const nets = edit.networks || [];
-    const creds = row("Credentials (DMR network)",
-      `<select data-attach="${idx}" data-akey="credentials_ref"><option value="">(none — rides local DMRGateway)</option>${nets.map((n) => `<option value="${esc(n.name)}"${a.credentials_ref === n.name ? " selected" : ""}>${esc(n.name)}</option>`).join("")}</select>`);
-    return slotSel + attField(idx, "default_tg", "Default TG", "e.g. 91") + creds + tgMapEditor(a, idx);
+    const creds = row(msg("attachParams.credentialsDmrNetwork"),
+      `<select data-attach="${idx}" data-akey="credentials_ref"><option value="">${msg("attachParams.noneRidesLocalDmrgateway")}</option>${nets.map((n) => `<option value="${esc(n.name)}"${a.credentials_ref === n.name ? " selected" : ""}>${esc(n.name)}</option>`).join("")}</select>`);
+    return slotSel + attField(idx, "default_tg", msg("attachParams.defaultTg"), "e.g. 91") + creds + tgMapEditor(a, idx);
   }
   if (a.mode === "ysf") {
     const opts = ysfRefs.map((r) => `<option value="${esc(r.name)}">${esc([r.country, r.description].filter(Boolean).join(" · "))}</option>`).join("");
-    const target = row("Reflector / DG-ID", `<input data-attach="${idx}" data-akey="target" list="bus-ysf-refs" value="${esc(a.target || "")}" placeholder="e.g. FCS00290 or a YSF reflector"><datalist id="bus-ysf-refs">${opts}</datalist>`);
-    const wx = `<div class="toggle-row"><span class="name">Wires-X passthrough</span><button type="button" class="pill ${a.wiresx_passthrough ? "on" : "off"}" data-attachbool="${idx}" data-abkey="wiresx_passthrough" aria-pressed="${a.wiresx_passthrough}" aria-label="Wires-X passthrough">${a.wiresx_passthrough ? "ON" : "OFF"}</button></div>`;
+    const target = row(msg("attachParams.reflectorDgId"), `<input data-attach="${idx}" data-akey="target" list="bus-ysf-refs" value="${esc(a.target || "")}" placeholder="e.g. FCS00290 or a YSF reflector"><datalist id="bus-ysf-refs">${opts}</datalist>`);
+    const wx = `<div class="toggle-row"><span class="name">${msg("attachParams.wiresXPassthrough")}</span><button type="button" class="pill ${a.wiresx_passthrough ? "on" : "off"}" data-attachbool="${idx}" data-abkey="wiresx_passthrough" aria-pressed="${a.wiresx_passthrough}" aria-label="Wires-X passthrough">${a.wiresx_passthrough ? "ON" : "OFF"}</button></div>`;
     return target + wx;
   }
   if (a.mode === "nxdn") {
-    return attField(idx, "id", "NXDN ID", "network id") + attField(idx, "tg", "TG", "talkgroup") + attField(idx, "default_id", "Default ID", "");
+    return attField(idx, "id", msg("attachParams.nxdnId"), msg("attachParams.networkId")) + attField(idx, "tg", "TG", "talkgroup") + attField(idx, "default_id", msg("attachParams.defaultId"), "");
   }
-  return note("This mode cannot attach in the committed reframe tier.");
+  return note(msg("attachParams.modeCannotAttachCommitted"));
 }
 
 function attField(idx, key, label, ph) {
@@ -1790,14 +1800,14 @@ function attField(idx, key, label, ph) {
 function tgMapEditor(a, idx) {
   const rows = (a._tgrows || []).map((r, ri) =>
     `<div class="row tgmap-row"><input data-tgmap="${idx}" data-tgi="${ri}" data-tgk="from" value="${esc(r.from)}" placeholder="source TG"><span class="arrow">→</span><input data-tgmap="${idx}" data-tgi="${ri}" data-tgk="to" value="${esc(r.to)}" placeholder="DMR TG"><button type="button" class="btn" data-tgdel="${idx}" data-tgi="${ri}" aria-label="Remove mapping">✕</button></div>`).join("");
-  return `<div class="note">TG map — rewrite a source-side talkgroup to a DMR TG (optional)</div>${rows}<div class="row"><button type="button" class="btn" data-tgadd="${idx}">＋ Add mapping</button></div>`;
+  return `<div class="note">${msg("tgMapEditor.tgMapRewriteSource")}</div>${rows}<div class="row"><button type="button" class="btn" data-tgadd="${idx}">${msg("tgMapEditor.addMapping")}</button></div>`;
 }
 
 function attachPickerHTML(busId) {
   if (!attachPicker || attachPicker.busId !== busId) {
-    return `<div class="row"><button type="button" class="btn" data-attachopen="${esc(busId)}">＋ Attach mode</button></div>`;
+    return `<div class="row"><button type="button" class="btn" data-attachopen="${esc(busId)}">${msg("attachPickerHTML.attachMode")}</button></div>`;
   }
-  if (attachPicker.loading) return note("Checking which modes can attach…");
+  if (attachPicker.loading) return note(msg("attachPickerHTML.checkingWhichModesCan"));
   const btns = (attachPicker.opts || []).map((o) =>
     o.ok
       ? `<button type="button" class="btn attach-ok" data-attachpick="${esc(o.key)}">${esc(o.label)}</button>`
@@ -1808,7 +1818,7 @@ function attachPickerHTML(busId) {
   let peerSection = "";
   if (paired.length) {
     const peerBtns = paired.map((p) => `<button type="button" class="btn${attachPicker.remote && attachPicker.remote.peerId === p.id ? " attach-ok" : ""}" data-attachpeer="${esc(p.id)}">via ${esc(p.name || p.id)}</button>`).join("");
-    peerSection = `<div class="note">Or attach a mode from a paired peer:</div><div class="picker-row">${peerBtns}</div>`;
+    peerSection = `<div class="note">${msg("attachPickerHTML.attachModePairedPeer")}</div><div class="picker-row">${peerBtns}</div>`;
     const rp = attachPicker.remote;
     if (rp) {
       const rbtns = rp.loading ? "Checking…" : (rp.opts || []).map((o) =>
@@ -1818,7 +1828,7 @@ function attachPickerHTML(busId) {
       peerSection += `<div class="note">via ${esc(peerName(rp.peerId))}:</div><div class="picker-row">${rbtns}</div>`;
     }
   }
-  return `<div class="attach-picker"><div class="note">Attach a local mode (greyed-out modes can't, reason shown):</div><div class="picker-row">${btns}</div>${peerSection}<div class="row"><button type="button" class="btn" data-attachcancel="1">Cancel</button></div></div>`;
+  return `<div class="attach-picker"><div class="note">${msg("attachPickerHTML.attachLocalModeGreyed")}</div><div class="picker-row">${btns}</div>${peerSection}<div class="row"><button type="button" class="btn" data-attachcancel="1">${msg("attachPickerHTML.cancel")}</button></div></div>`;
 }
 
 function peerName(id) { const p = (edit.peers || []).find((x) => x.id === id); return p ? (p.name || p.id) : id; }
@@ -2003,24 +2013,24 @@ function peersCard() {
   const other = peers.filter((p) => p.state !== "paired");
 
   const pairedRows = paired.length
-    ? paired.map((p) => `<div class="toggle-row peer-row"><span class="name">${esc(p.name || p.id)}<span class="peer-fp" title="certificate fingerprint">${esc(shortFp(p.fingerprint))}</span></span><span class="bus-actions"><span class="pill on">PAIRED</span><button type="button" class="btn danger" data-peerrevoke="${esc(p.id)}" data-peername="${esc(p.name || p.id)}">Revoke</button></span></div>`).join("")
-    : note("No paired peers yet. Discover a node or add one by host:port, then pair.");
+    ? paired.map((p) => `<div class="toggle-row peer-row"><span class="name">${esc(p.name || p.id)}<span class="peer-fp" title="certificate fingerprint">${esc(shortFp(p.fingerprint))}</span></span><span class="bus-actions"><span class="pill on">${msg("peersCard.paired")}</span><button type="button" class="btn danger" data-peerrevoke="${esc(p.id)}" data-peername="${esc(p.name || p.id)}">${msg("peersCard.revoke")}</button></span></div>`).join("")
+    : note(msg("peersCard.noPairedPeersYet"));
   const otherRows = other.map((p) => `<div class="toggle-row peer-row muted"><span class="name">${esc(p.name || p.id)}<span class="peer-fp">${esc(shortFp(p.fingerprint))}</span></span><span class="pill off">${esc((p.state || "").toUpperCase())}</span></div>`).join("");
 
   let disc = "";
   if (peering.discovered !== null) {
     disc = peering.discovered.length
-      ? peering.discovered.map((d) => `<div class="row peer-disc"><label>${esc(d.instance || d.host)}<span class="peer-fp">${esc(d.host)}:${esc(String(d.port))}</span></label><button type="button" class="btn accent" data-peerpair="${esc(d.host)}:${esc(String(d.port))}">Pair</button></div>`).join("")
-      : note("No peers found on the LAN. Add one by host:port below (mDNS may be filtered on your network).");
+      ? peering.discovered.map((d) => `<div class="row peer-disc"><label>${esc(d.instance || d.host)}<span class="peer-fp">${esc(d.host)}:${esc(String(d.port))}</span></label><button type="button" class="btn accent" data-peerpair="${esc(d.host)}:${esc(String(d.port))}">${msg("peersCard.pair")}</button></div>`).join("")
+      : note(msg("peersCard.noPeersFoundLan"));
   }
   const discBtn = `<button type="button" class="btn" id="peer-discover"${peering.busy ? " disabled" : ""}>${peering.busy ? "Scanning…" : "Discover peers (mDNS)"}</button>`;
-  const manual = `<div class="row"><input id="peer-manual" placeholder="host:port — e.g. 10.0.0.20:42501" aria-label="peer host and port"><button type="button" class="btn" id="peer-pair-manual">Pair</button></div>`;
+  const manual = `<div class="row"><input id="peer-manual" placeholder="host:port — e.g. 10.0.0.20:42501" aria-label="peer host and port"><button type="button" class="btn" id="peer-pair-manual">${msg("peersCard.pair")}</button></div>`;
 
-  return card("LAN PEERS (RFC-0016)",
-    note("Pair Waypoint nodes on your LAN so a bus can span them. Pairing shows a short code on <b>both</b> screens — enter it to confirm; the certificate fingerprint is shown for out-of-band verification.") +
+  return card(msg("peersCard.lanPeersRfc0016"),
+    note(msg("peersCard.pairWaypointNodesLan")) +
     `<div class="row">${discBtn}</div>` + disc + manual +
     (peering.msg ? note(esc(peering.msg)) : "") +
-    `<div class="note">Paired peers</div>` + pairedRows + otherRows);
+    `<div class="note">${msg("peersCard.pairedPeers")}</div>` + pairedRows + otherRows);
 }
 
 function shortFp(fp) {
@@ -2043,20 +2053,20 @@ function renderPeerModal() {
   const peer = s.peer_name || s.peer_node || "the other node";
   const fpRow = s.fingerprint
     ? `<div class="pair-fp">fingerprint <span class="mono">${esc(s.fingerprint)}</span></div>`
-    : `<div class="pair-fp muted">exchanging certificate…</div>`;
+    : `<div class="pair-fp muted">${msg("peerModal.exchangingCertificate")}</div>`;
   let body;
   if (s.role === "initiator") {
-    body = `<p>Enter this code on <b>${esc(peer)}</b>'s LAN Peers screen, then confirm here.</p>
-      <div class="pair-code"><span class="mono" id="pair-code-val">${esc(s.code || "")}</span><button type="button" class="btn" data-paircopy="${esc(s.code || "")}" aria-label="copy code">Copy</button></div>
+    body = `<p>${msg("peerModal.enterCode")} <b>${esc(peer)}</b>${msg("peerModal.sLanPeersScreen")}</p>
+      <div class="pair-code"><span class="mono" id="pair-code-val">${esc(s.code || "")}</span><button type="button" class="btn" data-paircopy="${esc(s.code || "")}" aria-label="copy code">${msg("peerModal.copy")}</button></div>
       ${fpRow}
-      <div class="row pair-actions"><button type="button" class="btn accent" data-pairconfirm="${esc(s.sid)}">Confirm pairing</button><button type="button" class="btn" data-paircancel="${esc(s.sid)}">Cancel</button></div>`;
+      <div class="row pair-actions"><button type="button" class="btn accent" data-pairconfirm="${esc(s.sid)}">${msg("peerModal.confirmPairing")}</button><button type="button" class="btn" data-paircancel="${esc(s.sid)}">${msg("peerModal.cancel")}</button></div>`;
   } else {
-    body = `<p>Incoming pairing from <b>${esc(peer)}</b>. Enter the code shown on <b>${esc(peer)}</b>:</p>
+    body = `<p>${msg("peerModal.incomingPairing")} <b>${esc(peer)}</b>. Enter the code shown on <b>${esc(peer)}</b>:</p>
       <div class="pair-code"><input class="mono pair-input" id="pair-code-input" inputmode="numeric" maxlength="6" placeholder="000000" aria-label="pairing code"></div>
       ${fpRow}
-      <div class="row pair-actions"><button type="button" class="btn accent" data-pairenter="${esc(s.sid)}">Confirm</button><button type="button" class="btn" data-paircancel="${esc(s.sid)}">Cancel</button></div>`;
+      <div class="row pair-actions"><button type="button" class="btn accent" data-pairenter="${esc(s.sid)}">${msg("peerModal.confirm")}</button><button type="button" class="btn" data-paircancel="${esc(s.sid)}">${msg("peerModal.cancel")}</button></div>`;
   }
-  root.innerHTML = `<div class="pair-backdrop"><div class="pair-modal card"><div class="card-head"><span class="sq"></span><span class="t">PAIRING</span></div>${body}</div></div>`;
+  root.innerHTML = `<div class="pair-backdrop"><div class="pair-modal card"><div class="card-head"><span class="sq"></span><span class="t">${msg("peerModal.pairing")}</span></div>${body}</div></div>`;
 }
 
 async function peeringGet(path) {
@@ -2142,35 +2152,35 @@ function panelYSF() {
   // can type-filter YSF reflectors / FCS rooms while still allowing a raw id.
   const opts = ysfRefs.map((r) => `<option value="${esc(r.name)}">${esc([r.country, r.description].filter(Boolean).join(" · "))}</option>`).join("");
   const startup = (edit.ysfgw || {}).startup || "";
-  const gateway = card("GATEWAY",
-    toggle("modes", "ysf", "System Fusion", "ENABLED", "DISABLED") +
+  const gateway = card(msg("common.gateway"),
+    toggle("modes", "ysf", msg("ysf.systemFusion"), msg("common.enabled"), msg("common.disabled")) +
     input("ysfgw", "suffix", { label: "Suffix (RPT/ND)" }) +
-    row("Startup reflector", `<input data-sec="ysfgw" data-key="startup" list="ysf-refs" value="${esc(startup)}" placeholder="e.g. FCS00290 or a YSF reflector"><datalist id="ysf-refs">${opts}</datalist>`) +
+    row(msg("common.startupReflector"), `<input data-sec="ysfgw" data-key="startup" list="ysf-refs" value="${esc(startup)}" placeholder="e.g. FCS00290 or a YSF reflector"><datalist id="ysf-refs">${opts}</datalist>`) +
     input("ysfgw", "inactivity_timeout", { label: "Inactivity revert", unit: "min" }));
   // Mode params render into MMDVM-Host's [System Fusion] (self_only, low_deviation,
   // remote_gateway, tx_hang, mode_hang) — the "ysf" store section, split from the
   // "ysfgw" gateway section like p25/p25gw and nxdn/nxdngw.
-  const behaviour = card("BEHAVIOUR",
-    toggleRow("ysf", "self_only", "Self only (accept only my callsign)") +
-    toggleRow("ysf", "low_deviation", "Low deviation (narrow-band C4FM)") +
-    toggleRow("ysf", "remote_gateway", "Remote gateway (advanced — leave off for local control)") +
-    toggleRow("ysfgw", "wiresx_passthrough", "Wires-X passthrough (advanced — leave off for local control)") +
-    toggleRow("ysfgw", "revert", "Revert to startup on inactivity"));
-  const timers = card("HANG TIMERS",
+  const behaviour = card(msg("common.behaviour"),
+    toggleRow("ysf", "self_only", msg("common.selfOnlyAcceptOnly")) +
+    toggleRow("ysf", "low_deviation", msg("ysf.lowDeviationNarrowBand")) +
+    toggleRow("ysf", "remote_gateway", msg("common.remoteGatewayAdvancedLeave")) +
+    toggleRow("ysfgw", "wiresx_passthrough", msg("ysf.wiresXPassthroughAdvanced")) +
+    toggleRow("ysfgw", "revert", msg("ysf.revertStartupInactivity")));
+  const timers = card(msg("common.hangTimers"),
     input("ysf", "tx_hang", { label: "TX hang", unit: "sec" }) +
     input("ysf", "mode_hang", { label: "Mode hang", unit: "sec" }));
-  const networks = card("REFLECTOR NETWORKS",
-    toggleRow("ysfgw", "ysf_network", "YSF reflector network") +
-    toggleRow("ysfgw", "fcs_network", "FCS room network") +
-    toggleRow("ysfgw", "aprs", "APRS position beacon"));
+  const networks = card(msg("ysf.reflectorNetworks"),
+    toggleRow("ysfgw", "ysf_network", msg("ysf.ysfReflectorNetwork")) +
+    toggleRow("ysfgw", "fcs_network", msg("ysf.fcsRoomNetwork")) +
+    toggleRow("ysfgw", "aprs", msg("ysf.aprsPositionBeacon")));
   // DG-ID gateway: swaps YSFGateway for DGIdGateway (mutually exclusive daemons).
   // With it on, the startup reflector links via a DG-ID (YCS network) and the
   // radio's Wires-X gateway sits on DG-ID 0.
-  const dgid = card("DG-ID GATEWAY",
-    toggleRow("ysfgw", "enable_dgid", "Use DGIdGateway (DG-ID addressed) instead of YSFGateway") +
-    toggleRow("ysfgw", "ycs_network", "Link the startup reflector as a DG-ID network (YCS)") +
-    toggleRow("ysfgw", "upper_hostfiles", "UPPERCASE reflector names in the hostlist"));
-  const hint = ysfRefs.length ? "" : note("Reflector list not loaded yet (fetched from the YSF register on a schedule). You can still type a reflector id above.");
+  const dgid = card(msg("ysf.dgIdGateway"),
+    toggleRow("ysfgw", "enable_dgid", msg("ysf.useDgidgatewayDgId")) +
+    toggleRow("ysfgw", "ycs_network", msg("ysf.linkStartupReflectorDg")) +
+    toggleRow("ysfgw", "upper_hostfiles", msg("ysf.uppercaseReflectorNamesHostlist")));
+  const hint = ysfRefs.length ? "" : note(msg("ysf.reflectorListNotLoaded"));
   return `${supply}<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}${networks}${dgid}</div></div>${hint}`;
 }
 
@@ -2180,19 +2190,19 @@ function panelP25() {
   // comma-separated list, so the datalist is a reference the user types from.
   const opts = p25Refs.map((r) => `<option value="${esc(r.designator)}">${esc([r.name, r.country, r.sponsor].filter(Boolean).join(" · "))}</option>`).join("");
   const stat = (edit.p25gw || {}).static || "";
-  const gateway = card("GATEWAY",
-    toggle("modes", "p25", "P25", "ENABLED", "DISABLED") +
+  const gateway = card(msg("common.gateway"),
+    toggle("modes", "p25", "P25", msg("common.enabled"), msg("common.disabled")) +
     input("p25", "nac", { label: "NAC (hex)", accent: true }) +
-    row("Startup talkgroups", `<input data-sec="p25gw" data-key="static" list="p25-refs" value="${esc(stat)}" placeholder="comma-separated TGs, e.g. 10100,10200"><datalist id="p25-refs">${opts}</datalist>`) +
-    toggleRow("p25gw", "voice", "Voice announcements"));
-  const behaviour = card("BEHAVIOUR",
-    toggleRow("p25", "self_only", "Self only (accept only my ID)") +
-    toggleRow("p25", "override_uid_check", "Override UID check") +
-    toggleRow("p25", "remote_gateway", "Remote gateway (advanced — leave off for local control)"));
-  const timers = card("HANG TIMERS",
+    row(msg("p25.startupTalkgroups"), `<input data-sec="p25gw" data-key="static" list="p25-refs" value="${esc(stat)}" placeholder="comma-separated TGs, e.g. 10100,10200"><datalist id="p25-refs">${opts}</datalist>`) +
+    toggleRow("p25gw", "voice", msg("common.voiceAnnouncements")));
+  const behaviour = card(msg("common.behaviour"),
+    toggleRow("p25", "self_only", msg("p25.selfOnlyAcceptOnly")) +
+    toggleRow("p25", "override_uid_check", msg("p25.overrideUidCheck")) +
+    toggleRow("p25", "remote_gateway", msg("common.remoteGatewayAdvancedLeave")));
+  const timers = card(msg("common.hangTimers"),
     input("p25gw", "rf_hang_time", { label: "RF hang", unit: "sec" }) +
     input("p25gw", "net_hang_time", { label: "Network hang", unit: "sec" }));
-  const hint = p25Refs.length ? "" : note("Talkgroup list not loaded yet (fetched from the P25 register on a schedule). You can still type talkgroup numbers above.");
+  const hint = p25Refs.length ? "" : note(msg("p25.talkgroupListNotLoaded"));
   return `${supply}<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
 }
 
@@ -2202,18 +2212,18 @@ function panelNXDN() {
   // comma-separated list, so the datalist is a reference the user types from.
   const opts = nxdnRefs.map((r) => `<option value="${esc(r.designator)}">${esc([r.name, r.country, r.sponsor].filter(Boolean).join(" · "))}</option>`).join("");
   const stat = (edit.nxdngw || {}).static || "";
-  const gateway = card("GATEWAY",
-    toggle("modes", "nxdn", "NXDN", "ENABLED", "DISABLED") +
+  const gateway = card(msg("common.gateway"),
+    toggle("modes", "nxdn", "NXDN", msg("common.enabled"), msg("common.disabled")) +
     input("nxdn", "ran", { label: "RAN", accent: true }) +
-    row("Startup talkgroups", `<input data-sec="nxdngw" data-key="static" list="nxdn-refs" value="${esc(stat)}" placeholder="comma-separated TGs, e.g. 10200,65000"><datalist id="nxdn-refs">${opts}</datalist>`) +
-    toggleRow("nxdngw", "voice", "Voice announcements"));
-  const behaviour = card("BEHAVIOUR",
-    toggleRow("nxdn", "self_only", "Self only (accept only my ID)") +
-    toggleRow("nxdn", "remote_gateway", "Remote gateway (advanced — leave off for local control)"));
-  const timers = card("HANG TIMERS",
+    row(msg("nxdn.startupTalkgroups"), `<input data-sec="nxdngw" data-key="static" list="nxdn-refs" value="${esc(stat)}" placeholder="comma-separated TGs, e.g. 10200,65000"><datalist id="nxdn-refs">${opts}</datalist>`) +
+    toggleRow("nxdngw", "voice", msg("common.voiceAnnouncements")));
+  const behaviour = card(msg("common.behaviour"),
+    toggleRow("nxdn", "self_only", msg("nxdn.selfOnlyAcceptOnly")) +
+    toggleRow("nxdn", "remote_gateway", msg("common.remoteGatewayAdvancedLeave")));
+  const timers = card(msg("common.hangTimers"),
     input("nxdngw", "rf_hang_time", { label: "RF hang", unit: "sec" }) +
     input("nxdngw", "net_hang_time", { label: "Network hang", unit: "sec" }));
-  const hint = nxdnRefs.length ? "" : note("Talkgroup list not loaded yet (fetched from the NXDN register on a schedule). You can still type talkgroup numbers above.");
+  const hint = nxdnRefs.length ? "" : note(msg("nxdn.talkgroupListNotLoaded"));
   return `${supply}<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
 }
 
@@ -2226,25 +2236,25 @@ function panelDStar() {
   const opts = dstarRefs.map((r) => `<option value="${esc(r.name)} ">${esc(r.type)}</option>`).join("");
   const gw = edit.dstargw || {};
   const reflector = gw.reflector || "";
-  const gateway = card("GATEWAY",
-    toggle("modes", "dstar", "D-Star", "ENABLED", "DISABLED") +
+  const gateway = card(msg("common.gateway"),
+    toggle("modes", "dstar", "D-Star", msg("common.enabled"), msg("common.disabled")) +
     input("dstar", "module", { label: "Module (band letter)", accent: true }) +
-    row("Startup reflector", `<input data-sec="dstargw" data-key="reflector" list="dstar-refs" value="${esc(reflector)}" placeholder="e.g. REF001 C — blank for none"><datalist id="dstar-refs">${opts}</datalist>`) +
+    row(msg("common.startupReflector"), `<input data-sec="dstargw" data-key="reflector" list="dstar-refs" value="${esc(reflector)}" placeholder="e.g. REF001 C — blank for none"><datalist id="dstar-refs">${opts}</datalist>`) +
     input("dstargw", "reflector_reconnect", { label: "Reflector reconnect (min / Never / Fixed)" }));
-  const ircddb = card("ircDDB (CALLSIGN ROUTING)",
+  const ircddb = card(msg("dstar.ircddbCallsignRouting"),
     input("dstargw", "ircddb_hostname", { label: "ircDDB host" }) +
     input("dstargw", "ircddb_username", { label: "Username (blank = callsign)" }) +
-    row("Password", `<input data-sec="dstargw" data-key="ircddb_password" type="password" value="${esc(gw.ircddb_password || "")}" placeholder="${gw.has_ircddb_password ? "•••••• unchanged" : "blank = anonymous"}">`));
-  const behaviour = card("RF BEHAVIOUR",
-    toggleRow("dstar", "self_only", "Self only (accept only my callsign)") +
-    toggleRow("dstar", "remote_gateway", "Remote gateway (advanced — leave off for local control)"));
-  const protocols = card("REFLECTOR PROTOCOLS",
-    toggleRow("dstargw", "dextra", "DExtra (XRF)") +
-    toggleRow("dstargw", "dplus", "D-Plus (REF — needs a registered callsign)") +
-    row("D-Plus login", `<input data-sec="dstargw" data-key="dplus_login" value="${esc(gw.dplus_login || "")}" placeholder="registered callsign (blank = station callsign)">`) +
+    row(msg("dstar.password"), `<input data-sec="dstargw" data-key="ircddb_password" type="password" value="${esc(gw.ircddb_password || "")}" placeholder="${gw.has_ircddb_password ? "•••••• unchanged" : "blank = anonymous"}">`));
+  const behaviour = card(msg("dstar.rfBehaviour"),
+    toggleRow("dstar", "self_only", msg("common.selfOnlyAcceptOnly")) +
+    toggleRow("dstar", "remote_gateway", msg("common.remoteGatewayAdvancedLeave")));
+  const protocols = card(msg("dstar.reflectorProtocols"),
+    toggleRow("dstargw", "dextra", msg("dstar.dextraXrf")) +
+    toggleRow("dstargw", "dplus", msg("dstar.dPlusRefNeeds")) +
+    row(msg("dstar.dPlusLogin"), `<input data-sec="dstargw" data-key="dplus_login" value="${esc(gw.dplus_login || "")}" placeholder="registered callsign (blank = station callsign)">`) +
     toggleRow("dstargw", "dcs", "DCS") +
     toggleRow("dstargw", "xlx", "XLX"));
-  const hint = dstarRefs.length ? "" : note("Reflector list not loaded yet (fetched from the pinned D-Star register on a schedule). You can still type a reflector above.");
+  const hint = dstarRefs.length ? "" : note(msg("dstar.reflectorListNotLoaded"));
   return `${supply}<div class="grid2"><div class="stack">${gateway}${ircddb}</div><div class="stack">${behaviour}${protocols}</div></div>${hint}`;
 }
 
@@ -2255,19 +2265,19 @@ function panelM17() {
   const suffix = (gw.suffix || "H").toUpperCase();
   const suffixSel = `<select data-sec="m17gw" data-key="suffix">` +
     ["H", "R"].map((v) => `<option value="${v}"${v === suffix ? " selected" : ""}>${v === "H" ? "H — hotspot" : "R — repeater"}</option>`).join("") + `</select>`;
-  const gateway = card("GATEWAY",
-    toggle("modes", "m17", "M17", "ENABLED", "DISABLED") +
+  const gateway = card(msg("common.gateway"),
+    toggle("modes", "m17", "M17", msg("common.enabled"), msg("common.disabled")) +
     input("m17", "can", { label: "CAN", accent: true }) +
-    row("Startup reflector", `<input data-sec="m17gw" data-key="startup" list="m17-refs" value="${esc(gw.startup || "")}" placeholder="e.g. M17-M17 C — blank for none"><datalist id="m17-refs">${opts}</datalist>`) +
-    row("Node suffix", suffixSel) +
-    toggleRow("m17gw", "voice", "Voice announcements"));
-  const behaviour = card("BEHAVIOUR",
-    toggleRow("m17", "self_only", "Self only (accept only my callsign)") +
-    toggleRow("m17", "allow_encryption", "Allow encrypted M17 frames") +
-    toggleRow("m17gw", "revert", "Revert to startup reflector after inactivity"));
-  const timers = card("HANG TIMER",
+    row(msg("common.startupReflector"), `<input data-sec="m17gw" data-key="startup" list="m17-refs" value="${esc(gw.startup || "")}" placeholder="e.g. M17-M17 C — blank for none"><datalist id="m17-refs">${opts}</datalist>`) +
+    row(msg("m17.nodeSuffix"), suffixSel) +
+    toggleRow("m17gw", "voice", msg("common.voiceAnnouncements")));
+  const behaviour = card(msg("common.behaviour"),
+    toggleRow("m17", "self_only", msg("common.selfOnlyAcceptOnly")) +
+    toggleRow("m17", "allow_encryption", msg("m17.allowEncryptedM17Frames")) +
+    toggleRow("m17gw", "revert", msg("m17.revertStartupReflectorAfter")));
+  const timers = card(msg("m17.hangTimer"),
     input("m17gw", "hang_time", { label: "Network hang", unit: "sec" }));
-  const hint = m17Refs.length ? "" : note("Reflector list not loaded yet (fetched from the M17 register on a schedule). You can still type a reflector above.");
+  const hint = m17Refs.length ? "" : note(msg("m17.reflectorListNotLoaded"));
   return `${supply}<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
 }
 
@@ -2277,17 +2287,17 @@ function panelM17() {
 // the placeholder, exactly like the ircDDB password.
 function panelPocsag() {
   const p = edit.pocsag || (edit.pocsag = {});
-  const paging = card("PAGING CHANNEL",
-    toggle("modes", "pocsag", "POCSAG", "ENABLED", "DISABLED") +
+  const paging = card(msg("pocsag.pagingChannel"),
+    toggle("modes", "pocsag", "POCSAG", msg("common.enabled"), msg("common.disabled")) +
     input("pocsag", "frequency", { label: "Paging frequency", kind: "mhz", unit: "MHz", accent: true }));
-  const dapnet = card("DAPNET LOGIN",
+  const dapnet = card(msg("pocsag.dapnetLogin"),
     input("pocsag", "server", { label: "DAPNET server" }) +
     input("pocsag", "callsign", { label: "Callsign (blank = station callsign)" }) +
-    row("AuthKey", `<input data-sec="pocsag" data-key="auth_key" type="password" value="${esc(p.auth_key || "")}" placeholder="${p.has_auth_key ? "•••••• unchanged" : "from the DAPNET portal"}">`));
-  const filters = card("RIC FILTERS (OPTIONAL)",
+    row(msg("pocsag.authkey"), `<input data-sec="pocsag" data-key="auth_key" type="password" value="${esc(p.auth_key || "")}" placeholder="${p.has_auth_key ? "•••••• unchanged" : "from the DAPNET portal"}">`));
+  const filters = card(msg("pocsag.ricFiltersOptional"),
     input("pocsag", "whitelist", { label: "Whitelist (comma-separated RICs)" }) +
     input("pocsag", "blacklist", { label: "Blacklist (comma-separated RICs)" }));
-  const hint = note("DAPNETGateway will not connect until a valid AuthKey is set (get one from the DAPNET web portal). Leave whitelist/blacklist blank to pass all RICs.");
+  const hint = note(msg("pocsag.dapnetgatewayWillNotConnect"));
   return `<div class="grid2"><div class="stack">${paging}${filters}</div>${dapnet}</div>${hint}`;
 }
 
@@ -2300,14 +2310,14 @@ function panelFm() {
     [["0", "0 — Carrier access with COS"], ["1", "1 — CTCSS access, no COS"],
      ["2", "2 — CTCSS access with COS"], ["3", "3 — CTCSS start, then carrier"]]
       .map(([v, l]) => `<option value="${v}"${v === amVal ? " selected" : ""}>${esc(l)}</option>`).join("") + `</select>`;
-  const access = card("ACCESS",
-    toggle("modes", "fm", "FM", "ENABLED", "DISABLED") +
+  const access = card(msg("fm.access"),
+    toggle("modes", "fm", "FM", msg("common.enabled"), msg("common.disabled")) +
     input("fm", "ctcss", { label: "CTCSS tone", unit: "Hz", accent: true }) +
-    row("Access mode", amSel));
-  const timing = card("TIMING",
+    row(msg("fm.accessMode"), amSel));
+  const timing = card(msg("fm.timing"),
     input("fm", "timeout", { label: "Timeout", unit: "sec" }) +
     input("fm", "kerchunk_time", { label: "Kerchunk time", unit: "sec" }));
-  const audio = card("AUDIO LEVELS",
+  const audio = card(msg("fm.audioLevels"),
     input("fm", "rf_audio_boost", { label: "RF audio boost" }) +
     input("fm", "ext_audio_boost", { label: "Network audio boost" }));
   return `<div class="grid2">${access}<div class="stack">${timing}${audio}</div></div>`;
@@ -2319,10 +2329,10 @@ function panelFm() {
 function panelStation() {
   const h = edit.history || (edit.history = { retention_days: 7 });
   const days = h.retention_days ?? 7;
-  const retention = card("EVENT HISTORY",
-    row("Retention window",
+  const retention = card(msg("station.eventHistory"),
+    row(msg("station.retentionWindow"),
       `<div class="unit"><input data-sec="history" data-key="retention_days" data-kind="int" inputmode="numeric" value="${esc(days)}"><span class="u">days</span></div>`) +
-    note("How long this node keeps its persistent last-heard and event log (stored on-device). <b>0 keeps history forever.</b> Older events are pruned nightly; a longer window uses more SD-card space."));
+    note(msg("station.howLongNodeKeeps")));
   // Automatic CW identification. The effective callsign is echoed back from the
   // view rather than computed here, so what the operator reads is exactly what the
   // renderer will put in [CW Id].
@@ -2331,20 +2341,20 @@ function panelStation() {
   // fall back to the working copy so the preview tracks what the operator just typed.
   const effective = esc(sid.callsign.trim() || (edit.general || {}).callsign || ((state.config || {}).station_id || {}).effective_callsign || "");
   const idRows =
-    toggle("station_id", "enable", "Identify automatically", "ON", "OFF") +
-    row("Interval",
+    toggle("station_id", "enable", msg("station.identifyAutomatically"), "ON", "OFF") +
+    row(msg("station.interval"),
       `<div class="unit"><input data-sec="station_id" data-key="time_mins" inputmode="numeric" value="${esc(sid.time_mins)}"><span class="u">minutes</span></div>`) +
     input("station_id", "callsign", { label: "Callsign override" }) +
-    row("Tone level",
+    row(msg("station.toneLevel"),
       `<div class="unit"><input data-sec="station_id" data-key="tx_level" inputmode="numeric" value="${esc(sid.tx_level)}"><span class="u">%</span></div>`);
   const idNote = sid.enable
-    ? note(`Your node keys <b>${effective}</b> in Morse every <b>${esc(sid.time_mins)}</b> minute(s) while idle, so it identifies itself without you touching it. Leave the override blank to track your station callsign. <b>Most licences require periodic identification</b> — in the US, every 10 minutes (§97.119).`)
-    : note("<b>This node will not identify itself.</b> Automatic identification is off, so nothing announces your callsign on the air. Most licences require periodic identification — turn this on unless you are identifying by another means.");
+    ? note(`Your node keys <b>${effective}</b> ${msg("station.morseEvery")} <b>${esc(sid.time_mins)}</b> ${msg("station.minuteSWhileIdle")} <b>${msg("station.mostLicencesRequirePeriodic")}</b> — in the US, every 10 minutes (§97.119).`)
+    : note(msg("station.nodeWillNotIdentify"));
   // The host only keys CW between transmissions, so a long transmission is not
   // identified until after it ends. Say so here rather than let an operator infer a
   // guarantee the software cannot make.
-  const idCaveat = note("<span style=\"color:var(--muted)\">Identification is sent between transmissions, not during one.</span>");
-  const beacon = card("STATION IDENTIFICATION", idRows + idNote + idCaveat);
+  const idCaveat = note(msg("station.identificationSentBetweenTransmissions"));
+  const beacon = card(msg("station.stationIdentification"), idRows + idNote + idCaveat);
   return `<div class="grid2">${retention}${beacon}</div>`;
 }
 
@@ -2362,10 +2372,10 @@ function panelUpdates() {
   // Installed versions.
   let verRows = row("waypointd", `<span class="accent">${esc(wv)}</span>`);
   if (st.configured) {
-    verRows += row("Stack", `<span class="accent">${esc(inst["waypoint-stack"] || "—")}</span>`);
+    verRows += row(msg("updates.stack"), `<span class="accent">${esc(inst["waypoint-stack"] || "—")}</span>`);
     verRows += daemons.map((p) => row(shortName(p), `<span>${esc(inst[p] || "—")}</span>`)).join("");
   }
-  const versions = card("INSTALLED VERSIONS", verRows);
+  const versions = card(msg("updates.installedVersions"), verRows);
 
   // A new waypointd release, from the cached signed-manifest check (#15). Shown
   // above the stack rows because it is the node's own binary, not a service.
@@ -2373,22 +2383,22 @@ function panelUpdates() {
   let binInner = "";
   if (bin.available) {
     binInner = row("waypointd", `<span>${esc(bin.current || wv)} → <span class="accent">${esc(bin.version || "—")}</span></span>`) +
-      (bin.notes_url ? row("Release notes", extLink(bin.notes_url, "What changed")) : "") +
-      note("A new <b>waypointd</b> release is available. Install it on the node with <b>waypointd -update</b>: the download is signature-verified before anything is touched, health-checked after the swap, and rolled back automatically if the new version does not come up.");
+      (bin.notes_url ? row(msg("updates.releaseNotes"), extLink(bin.notes_url, msg("updates.whatChanged"))) : "") +
+      note(msg("updates.newWaypointdReleaseAvailable"));
   }
 
   // Available updates + apply/check.
   let availInner;
   if (!st.configured) {
-    availInner = note("The signed apt repo is not configured on this node, so stack updates are unavailable here. waypointd still self-updates its own binary (RFC-0014).");
+    availInner = note(msg("updates.signedAptRepoNot"));
   } else if (st.applying) {
-    availInner = note("<b>Applying an update…</b> Services are being updated and health-checked. This page refreshes automatically.");
+    availInner = note(msg("updates.applyingUpdateServicesAre"));
   } else if ((st.available || []).length) {
     const list = (st.available || []).map((u) =>
       row(shortName(u.package), `<span>${esc(u.from || "—")} → <span class="accent">${esc(u.to || "—")}</span></span>`)).join("");
     availInner = list +
-      `<div class="row"><label></label><button type="button" id="stack-apply" class="btn primary">UPDATE NOW</button></div>` +
-      note("Applying stops the affected services, installs the new versions, restarts, and health-checks the modem. If the stack does not come back up healthy it is <b>automatically rolled back</b> to the previous versions.");
+      `<div class="row"><label></label><button type="button" id="stack-apply" class="btn primary">${msg("updates.updateNow")}</button></div>` +
+      note(msg("updates.applyingStopsAffectedServices"));
   } else {
     availInner = note(hasCheck(st) ? `Up to date. Last checked ${fmtWhen(st.last_check)}.` : "No update check has run yet.");
   }
@@ -2397,14 +2407,14 @@ function panelUpdates() {
   }
   // CHECK NOW is offered even without the apt repo: there is always the waypointd
   // manifest to ask about, and asking is the operator's own action.
-  availInner += `<div class="row"><label></label><button type="button" id="stack-check" class="btn ghost">CHECK NOW</button></div>`;
+  availInner += `<div class="row"><label></label><button type="button" id="stack-check" class="btn ghost">${msg("updates.checkNow")}</button></div>`;
   if (st.configured && st.last_result) availInner += note(`Last result: ${esc(st.last_result)}`);
   // Say so when the node is not checking on its own, so "no update check has run
   // yet" reads as a setting rather than a fault.
   if ((st.prefs || {}).check_enabled === false) {
-    availInner += note("<b>Automatic update checks are off.</b> This node checks only when you press <b>CHECK NOW</b>.");
+    availInner += note(msg("updates.automaticUpdateChecksAre"));
   }
-  const available = card("AVAILABLE UPDATES", binInner + availInner);
+  const available = card(msg("updates.availableUpdates"), binInner + availInner);
 
   // Update policy (edit-backed; saved with Apply Changes).
   const u = edit.update || (edit.update = { channel: "stable", check_enabled: true, auto_apply: false, quiet_window: "04:00" });
@@ -2412,20 +2422,20 @@ function panelUpdates() {
   const chanSel = `<select data-sec="update" data-key="channel">` +
     [["stable", "Stable"], ["beta", "Beta"]].map(([v, l]) => `<option value="${v}"${v === chan ? " selected" : ""}>${esc(l)}</option>`).join("") +
     `</select>`;
-  const policy = card("UPDATE POLICY",
-    row("Channel", chanSel) +
-    toggle("update", "check_enabled", "Automatic update checks", "ON", "OFF") +
-    toggle("update", "auto_apply", "Automatic updates", "ON", "OFF") +
-    row("Quiet window", `<input type="time" data-sec="update" data-key="quiet_window" value="${esc(u.quiet_window || "04:00")}">`) +
-    note("<b>Automatic update checks</b> ask on a schedule whether a newer version exists. The request is an anonymous fetch of a signed, static file — it carries no callsign, no ID, and nothing else about this node, and there is no telemetry anywhere in Waypoint. Turn it OFF and the node stops asking on its own; <b>CHECK NOW</b>, applying an update, and everything else keep working — but automatic updates stop with it, since they install what a check found.") +
-    note("Default is notify-and-click: updates wait for you to press <b>UPDATE NOW</b>. Turn <b>Automatic updates</b> ON to apply them during the quiet window (local time) instead."));
+  const policy = card(msg("updates.updatePolicy"),
+    row(msg("updates.channel"), chanSel) +
+    toggle("update", "check_enabled", msg("updates.automaticUpdateChecks"), "ON", "OFF") +
+    toggle("update", "auto_apply", msg("updates.automaticUpdates"), "ON", "OFF") +
+    row(msg("updates.quietWindow"), `<input type="time" data-sec="update" data-key="quiet_window" value="${esc(u.quiet_window || "04:00")}">`) +
+    note(msg("updates.automaticUpdateChecksAsk")) +
+    note(msg("updates.defaultNotifyClickUpdates")));
 
   // Recent history.
   const hist = (st.history || []).slice(0, 8);
   const histInner = hist.length
     ? hist.map((h) => row(shortName(h.package), `<span>${esc(h.from || "—")} → ${esc(h.to || "—")} · ${esc(h.result)}</span>`)).join("")
-    : note("No stack update history yet.");
-  const history = card("RECENT UPDATES", histInner);
+    : note(msg("updates.noStackUpdateHistory"));
+  const history = card(msg("updates.recentUpdates"), histInner);
 
   return `<div class="grid2">${versions}${available}</div><div class="grid2">${policy}${history}</div>`;
 }
@@ -2455,25 +2465,25 @@ function panelHardware() {
   if (id) {
     const proto = id.protocol === 2 ? "2 (reports its own capabilities)" : "1 (capabilities assumed)";
     idInner =
-      row("Identity", `<span class="accent">${esc(id.description || id.hw_type || "—")}</span>`) +
-      row("Found on", `<span>${esc(id.port)} · ${esc((id.transport || "").toUpperCase())} · ${esc(String(id.baud || ""))} baud</span>`) +
-      (id.firmware ? row("Firmware", `<span>${esc(id.firmware)}${id.built ? " (" + esc(id.built) + ")" : ""}${id.author ? " by " + esc(id.author) : ""}</span>`) : "") +
-      row("Reference oscillator", `<span>${esc(tcxoText(id))}</span>`) +
-      row("Radios", `<span>${id.duplex ? "Two (duplex-capable)" : "One (simplex)"}</span>`) +
-      row("Protocol", `<span>${esc(proto)}</span>`) +
-      (id.udid ? row("Chip ID", `<span class="mono-sm">${esc(id.udid)}</span>`) : "") +
-      row("Modes the firmware carries", `<span>${esc(modeSupportText(id.modes))}</span>`);
+      row(msg("hardware.identity"), `<span class="accent">${esc(id.description || id.hw_type || "—")}</span>`) +
+      row(msg("hardware.found"), `<span>${esc(id.port)} · ${esc((id.transport || "").toUpperCase())} · ${esc(String(id.baud || ""))} baud</span>`) +
+      (id.firmware ? row(msg("hardware.firmware"), `<span>${esc(id.firmware)}${id.built ? " (" + esc(id.built) + ")" : ""}${id.author ? " by " + esc(id.author) : ""}</span>`) : "") +
+      row(msg("hardware.referenceOscillator"), `<span>${esc(tcxoText(id))}</span>`) +
+      row(msg("hardware.radios"), `<span>${id.duplex ? "Two (duplex-capable)" : "One (simplex)"}</span>`) +
+      row(msg("hardware.protocol"), `<span>${esc(proto)}</span>`) +
+      (id.udid ? row(msg("hardware.chipId"), `<span class="mono-sm">${esc(id.udid)}</span>`) : "") +
+      row(msg("hardware.modesFirmwareCarries"), `<span>${esc(modeSupportText(id.modes))}</span>`);
     if (det.checked_at) idInner += note(`Last detected ${esc(fmtWhen(det.checked_at))}.`);
   } else if (det.checked_at) {
-    idInner = note(`<b>No modem answered.</b> Every candidate port was asked and none replied — the table below shows which, and what each one did. Last looked ${esc(fmtWhen(det.checked_at))}.`);
+    idInner = note(`<b>${msg("hardware.noModemAnswered")}</b> Every candidate port was asked and none replied — the table below shows which, and what each one did. Last looked ${esc(fmtWhen(det.checked_at))}.`);
   } else {
-    idInner = note("This node has not looked for a modem yet. <b>Detect</b> asks every serial port that could plausibly be a modem what is on the end of it — it sends one three-byte version request and nothing else.");
+    idInner = note(msg("hardware.nodeHasNotLooked"));
   }
   if (det.bootloader) {
-    idInner += note(`<b>A board is sitting in its bootloader</b> on ${esc(det.bootloader)}. It cannot answer a version request in that state, but it is one firmware flash away from working.`);
+    idInner += note(`<b>${msg("hardware.boardSittingItsBootloader")}</b> on ${esc(det.bootloader)}. It cannot answer a version request in that state, but it is one firmware flash away from working.`);
   }
   idInner += `<div class="row"><label></label><button type="button" id="hw-detect" class="btn primary"${hwBusy ? " disabled" : ""}>${hwBusy ? "DETECTING…" : "DETECT"}</button></div>`;
-  const identity = card("ATTACHED MODEM", idInner);
+  const identity = card(msg("hardware.attachedModem"), idInner);
 
   // --- adopt into the config ---
   let adoptInner = "";
@@ -2487,28 +2497,28 @@ function panelHardware() {
       const b = byID[bid] || { id: bid, name: bid };
       return `<option value="${esc(b.id)}"${b.id === chosen ? " selected" : ""}>${esc(b.name)}</option>`;
     }).join("");
-    adoptInner += row("This board is a", `<select id="hw-board">${opts}</select>`);
+    adoptInner += row(msg("hardware.board"), `<select id="hw-board">${opts}</select>`);
     if (cands.length > 1) {
       adoptInner += note(`<b>${cands.length} boards ship this firmware</b>, and nothing the modem says tells them apart. Pick the one you have — the choice changes no generated config, it is what lets Waypoint refuse a setting your board cannot do.`);
     } else if (!cands.length) {
-      adoptInner += note("This modem answered, but its identity does not match any board Waypoint knows. Its port is still worth adopting; leave the board as-is or pick the closest match.");
+      adoptInner += note(msg("hardware.modemAnsweredButIts"));
     }
-    adoptInner += `<div class="row"><label></label><button type="button" id="hw-adopt" class="btn accent"${hwBusy ? " disabled" : ""}>USE THIS MODEM</button></div>`;
-    adoptInner += note("Adopting writes the port, line speed, board and reference oscillator into this node's configuration. An oscillator the firmware did not actually report is never written — a reference frequency guessed wrong detunes the radio.");
+    adoptInner += `<div class="row"><label></label><button type="button" id="hw-adopt" class="btn accent"${hwBusy ? " disabled" : ""}>${msg("hardware.useModem")}</button></div>`;
+    adoptInner += note(msg("hardware.adoptingWritesPortLine"));
   } else {
-    adoptInner = note("Nothing to adopt until a modem has been found.");
+    adoptInner = note(msg("hardware.nothingAdoptUntilModem"));
   }
   // Two cards, not one: what this node currently believes, and the act of
   // changing that belief. Folding them together would put two controls labelled
   // "board" in one card — the read-only one and the picker — which is confusing
   // to read and ambiguous to a screen reader.
-  const configured = card("THIS NODE IS CONFIGURED FOR",
-    row("Port", `<span>${esc(cfg.port || "—")}</span>`) +
-    row("Line speed", `<span>${esc(cfg.uart_speed || "115200 (default)")}</span>`) +
-    row("Board", `<span>${esc(cfg.board_name || cfg.board || "—")}</span>`) +
-    row("Reference oscillator", `<span>${esc(cfg.tcxo_label || cfg.tcxo_hz || "—")}</span>`) +
+  const configured = card(msg("hardware.nodeConfigured"),
+    row(msg("hardware.port"), `<span>${esc(cfg.port || "—")}</span>`) +
+    row(msg("hardware.lineSpeed"), `<span>${esc(cfg.uart_speed || "115200 (default)")}</span>`) +
+    row(msg("hardware.board2"), `<span>${esc(cfg.board_name || cfg.board || "—")}</span>`) +
+    row(msg("hardware.referenceOscillator"), `<span>${esc(cfg.tcxo_label || cfg.tcxo_hz || "—")}</span>`) +
     (det.adopted_description ? note(`Taken from a detected modem identifying as <b>${esc(det.adopted_description)}</b>${det.adopted_at ? ", " + esc(fmtWhen(det.adopted_at)) : ""}.`) : ""));
-  const adopt = card("USE THE DETECTED MODEM", adoptInner);
+  const adopt = card(msg("hardware.useDetectedModem"), adoptInner);
 
   // --- disagreements ---
   const warns = hw.warnings || [];
@@ -2518,8 +2528,8 @@ function panelHardware() {
       const bad = w.severity === "error";
       return `<li class="hw-warn ${bad ? "bad" : "warn"}"><span class="hw-warn-k">${esc(bad ? "Will not work" : "Check this")}</span> <span class="hw-warn-f">${esc(w.field)}</span><div>${esc(w.message)}</div></li>`;
     }).join("");
-    warnCard = card("THIS NODE AND THIS MODEM DISAGREE", `<ul class="hw-warns">${items}</ul>` +
-      note("These are configurations that produce a node which starts, reports itself healthy, and does not work on the air. Nothing here blocks Apply — the modem may be the thing that is wrong."));
+    warnCard = card(msg("hardware.nodeModemDisagree"), `<ul class="hw-warns">${items}</ul>` +
+      note(msg("hardware.theseAreConfigurationsProduce")));
   }
 
   // --- what was looked at ---
@@ -2530,8 +2540,8 @@ function panelHardware() {
       const what = sc.known ? esc(sc.known) : (sc.usb_id ? "USB " + esc(sc.usb_id) : esc((sc.transport || "").toUpperCase()));
       return row(sc.port, `<span>${esc(outcomeText(sc.outcome))} · ${what}${sc.detail ? " · " + esc(sc.detail) : ""}</span>`);
     }).join("");
-    scanCard = card("PORTS LOOKED AT", rows +
-      note("Ports already claimed for something else — a Nextion display, above all — are left alone rather than probed."));
+    scanCard = card(msg("hardware.portsLooked"), rows +
+      note(msg("hardware.portsAlreadyClaimedSomething")));
   }
 
   // --- the GPIO serial port ---
@@ -2539,14 +2549,14 @@ function panelHardware() {
   const uart = hw.uart;
   if (uart) {
     if (uart.ok) {
-      uartCard = card("GPIO SERIAL PORT", note("The GPIO serial port is free for a modem: the UART is on, Bluetooth is not holding it, and no login console is attached."));
+      uartCard = card(msg("hardware.gpioSerialPort"), note(msg("hardware.gpioSerialPortFree")));
     } else {
       const probs = (uart.problems || []).map((p) => `<li>${esc(p.message)}</li>`).join("");
-      uartCard = card("GPIO SERIAL PORT", 
-        note("<b>A hat fitted to this node cannot be heard.</b> On stock Raspberry Pi OS the serial port a GPIO modem needs is switched off, owned by the onboard Bluetooth controller, or occupied by a login console — the board is electrically fine and completely silent.") +
+      uartCard = card(msg("hardware.gpioSerialPort"), 
+        note(msg("hardware.hatFittedNodeCannot")) +
         `<ul class="hw-warns">${probs}</ul>` +
-        `<div class="row"><label></label><button type="button" id="hw-uart" class="btn primary"${hwBusy ? " disabled" : ""}>FREE THE SERIAL PORT</button></div>` +
-        note("This edits <code>config.txt</code> and <code>cmdline.txt</code> on the boot partition and masks the serial login service. Your own settings in those files are left alone. <b>The node must be rebooted</b> for it to take effect."));
+        `<div class="row"><label></label><button type="button" id="hw-uart" class="btn primary"${hwBusy ? " disabled" : ""}>${msg("hardware.freeSerialPort")}</button></div>` +
+        note(msg("hardware.editsConfigTxtCmdline")));
     }
   }
 
@@ -2575,15 +2585,15 @@ function panelCalibration() {
   let inner = "";
 
   if (c.rx_freq_hz) {
-    inner += row("Listening on", `<span class="accent">${esc(mhz(c.rx_freq_hz))} MHz</span>${c.band ? ` <span>· ${esc(c.band)}</span>` : ""}`);
+    inner += row(msg("cal.listening"), `<span class="accent">${esc(mhz(c.rx_freq_hz))} MHz</span>${c.band ? ` <span>· ${esc(c.band)}</span>` : ""}`);
   }
-  inner += row("Offset in use now", `<span>${esc(offsetText(c.current_rx_offset))} RX · ${esc(offsetText(c.current_tx_offset))} TX</span>`);
+  inner += row(msg("cal.offsetUseNow"), `<span>${esc(offsetText(c.current_rx_offset))} RX · ${esc(offsetText(c.current_tx_offset))} TX</span>`);
   if (last.ran_at && !running) {
-    inner += row("Last swept", `<span>${esc(fmtWhen(last.ran_at))}${last.board_id ? " · " + esc(last.board_id) : ""}</span>`);
+    inner += row(msg("cal.lastSwept"), `<span>${esc(fmtWhen(last.ran_at))}${last.board_id ? " · " + esc(last.board_id) : ""}</span>`);
   }
 
   if (!c.available && c.reason) {
-    inner += note(`<b>Calibration cannot run yet.</b> ${esc(c.reason)}`);
+    inner += note(`<b>${msg("cal.calibrationCannotRunYet")}</b> ${esc(c.reason)}`);
   }
 
   // What the operator has to do, said before the button rather than after it.
@@ -2591,16 +2601,16 @@ function panelCalibration() {
   // most likely way a first attempt fails.
   if (c.available && !running) {
     inner += note("<b>You need your radio for this.</b> Set it to <b>DMR</b> on " +
-      `<b>${esc(mhz(c.rx_freq_hz))} MHz</b>, colour code <b>${esc(String(c.color_code || 1))}</b>, then start the sweep and hold PTT when it asks. ` +
+      `<b>${esc(mhz(c.rx_freq_hz))} MHz</b>${msg("cal.colourCode")} <b>${esc(String(c.color_code || 1))}</b>, then start the sweep and hold PTT when it asks. ` +
       "It steps the modem's own frequency across a few kHz and scores each step by the bit error rate of what it hears. Let go whenever you like — it pauses and picks up where it left off.");
     if (c.host_running) {
-      inner += note("This node goes <b>off the air</b> while the sweep runs, and comes back on its own afterwards.");
+      inner += note(msg("cal.nodeGoesOffAir"));
     }
   }
 
   if (running) inner += calProgress(job);
   if (job && job.error && !running) {
-    inner += note(`<b>The sweep did not finish.</b> ${esc(job.error)}`);
+    inner += note(`<b>${msg("cal.sweepDidNotFinish")}</b> ${esc(job.error)}`);
   }
 
   if (result) inner += calCurve(result, c);
@@ -2616,9 +2626,9 @@ function panelCalibration() {
   inner += actions;
 
   if (!running && result && result.best) {
-    inner += note("Applying writes the same number to <b>both</b> RX and TX offset. A hotspot has one reference oscillator clocking both paths, so an error measured on receive is the same error transmitting — and the sweep can only measure the receive side without test equipment.");
+    inner += note(msg("cal.applyingWritesSameNumber"));
   }
-  return card("CALIBRATION", inner);
+  return card(msg("cal.calibration"), inner);
 }
 
 // calProgress is the live readout. It is not a percentage bar: a sweep that is
@@ -2643,7 +2653,7 @@ function calCurve(res, c) {
   const pts = (res.points || []).filter((p) => p.heard);
   const silent = (res.points || []).filter((p) => !p.heard).length;
   if (!pts.length) {
-    return note("<b>Nothing was decoded at any frequency.</b> The radio was not transmitting, was not in DMR, or is outside the range the sweep covered.");
+    return note(msg("calCurve.nothingWasDecodedAny"));
   }
   const worst = Math.max(...pts.map((p) => p.ber_percent), 0.001);
   const bestOff = res.best ? res.best.offset_hz : null;
@@ -2666,15 +2676,15 @@ function calCurve(res, c) {
     ? `Bit error rate against frequency offset. Best ${offsetText(String(res.best.offset_hz))} at ${res.best.ber_percent.toFixed(3)} percent, measured on ${res.best.frames} frames. ${pts.length} of ${res.points.length} frequencies decoded a signal.`
     : `Bit error rate against frequency offset. ${pts.length} of ${res.points.length} frequencies decoded a signal; none was measured on enough frames to choose.`;
   let out = `<div class="cal-chart" role="img" aria-label="${esc(alt)}">${bars}</div>`;
-  out += `<div class="cal-axis"><span>${esc(offsetText(String((res.points[0] || {}).offset_hz || 0)))}</span><span>lower is better</span><span>${esc(offsetText(String((res.points[res.points.length - 1] || {}).offset_hz || 0)))}</span></div>`;
+  out += `<div class="cal-axis"><span>${esc(offsetText(String((res.points[0] || {}).offset_hz || 0)))}</span><span>${msg("calCurve.lowerBetter")}</span><span>${esc(offsetText(String((res.points[res.points.length - 1] || {}).offset_hz || 0)))}</span></div>`;
   if (res.best) {
-    out += row("Best", `<span class="accent">${esc(offsetText(String(res.best.offset_hz)))} at ${res.best.ber_percent.toFixed(3)}% BER</span>`);
+    out += row(msg("calCurve.best"), `<span class="accent">${esc(offsetText(String(res.best.offset_hz)))} at ${res.best.ber_percent.toFixed(3)}% BER</span>`);
   }
   if (silent) {
     out += note(`${silent} of ${res.points.length} frequencies decoded nothing at all — that is normal at the edges of the sweep, where the signal is too far off frequency for the modem to hear.`);
   }
   if (res.aborted) {
-    out += note("<b>This curve is incomplete</b> — the sweep ran out of time or was stopped. What is drawn was measured; what is missing was not.");
+    out += note(msg("calCurve.curveIncompleteSweepRan"));
   }
   return out;
 }
@@ -2706,10 +2716,10 @@ function panelFirmware() {
   let inner = "";
 
   if (id) {
-    inner += row("Running now", `<span class="accent">${esc(id.firmware ? "v" + id.firmware : (id.description || "unknown"))}</span>`);
+    inner += row(msg("firmware.runningNow"), `<span class="accent">${esc(id.firmware ? "v" + id.firmware : (id.description || "unknown"))}</span>`);
   }
   if (fw.catalog_version) {
-    inner += row("Available", `<span>${esc(fw.catalog_version)}</span>`);
+    inner += row(msg("firmware.available"), `<span>${esc(fw.catalog_version)}</span>`);
   }
 
   // What would be written, or why nothing can be. The two refusals read
@@ -2718,11 +2728,11 @@ function panelFirmware() {
   // telling the operator the opposite of what the screen is doing.
   const choices = fw.choices || [];
   if (fw.match) {
-    inner += row("Would write", `<span>${esc(fw.match.describe)}</span>`);
+    inner += row(msg("firmware.wouldWrite"), `<span>${esc(fw.match.describe)}</span>`);
   } else if (fw.reason && choices.length) {
-    inner += note(`<b>Waypoint will not choose this for you.</b> ${esc(fw.reason)}`);
+    inner += note(`<b>${msg("firmware.waypointWillNotChoose")}</b> ${esc(fw.reason)}`);
   } else if (fw.reason) {
-    inner += note(`<b>Nothing can be flashed yet.</b> ${esc(fw.reason)}`);
+    inner += note(`<b>${msg("firmware.nothingCanFlashedYet")}</b> ${esc(fw.reason)}`);
   }
 
   // The picker: only when the server said the choice is the operator's. Its
@@ -2735,16 +2745,16 @@ function panelFirmware() {
       const v = byID[cid] || { id: cid, describe: cid };
       return `<option value="${esc(v.id)}">${esc(v.describe || v.id)}</option>`;
     }).join("");
-    inner += row("Firmware to write", `<select id="fw-variant">${opts}</select>`);
-    inner += note("Pick the image that matches the oscillator fitted to your board. Getting this wrong does not fail loudly — the node comes up and transmits off frequency — which is why Waypoint will not choose for you.");
+    inner += row(msg("firmware.firmwareWrite"), `<select id="fw-variant">${opts}</select>`);
+    inner += note(msg("firmware.pickImageMatchesOscillator"));
   }
 
   if (running) {
     inner += fwProgressHTML(job);
   } else if (job && job.error) {
-    inner += note(`<b>The last flash failed.</b> ${esc(job.error)}<br>The modem was released and MMDVM-Host restarted. On a GPIO board the bootloader is in the chip itself, so a failed write leaves the board reachable exactly as it was — press FLASH again.`);
+    inner += note(`<b>${msg("firmware.lastFlashFailed")}</b> ${esc(job.error)}<br>The modem was released and MMDVM-Host restarted. On a GPIO board the bootloader is in the chip itself, so a failed write leaves the board reachable exactly as it was — press FLASH again.`);
   } else if (job && job.after) {
-    inner += note(`<b>Flashed.</b> ${esc(job.before ? "v" + job.before + " → v" + job.after : "v" + job.after)}${job.detail ? " (" + esc(job.detail) + ")" : ""}.`);
+    inner += note(`<b>${msg("firmware.flashed")}</b> ${esc(job.before ? "v" + job.before + " → v" + job.after : "v" + job.after)}${job.detail ? " (" + esc(job.detail) + ")" : ""}.`);
   } else if (job && job.variant) {
     inner += note(`<b>Flashed ${esc(job.detail || job.variant)}.</b> The modem did not answer a re-probe afterwards, so the new version could not be read back — the write itself was verified.`);
   }
@@ -2753,17 +2763,17 @@ function panelFirmware() {
   inner += `<div class="row"><label></label>` +
     `<button type="button" id="fw-flash" class="btn primary"${canFlash ? "" : " disabled"}>` +
     `${running ? "FLASHING…" : "FLASH FIRMWARE"}</button>` +
-    `<button type="button" id="fw-refresh" class="btn"${fwBusy || running ? " disabled" : ""}>CHECK FOR FIRMWARE</button></div>`;
+    `<button type="button" id="fw-refresh" class="btn"${fwBusy || running ? " disabled" : ""}>${msg("firmware.checkFirmware")}</button></div>`;
 
   if (fw.from_config) {
-    inner += note("<b>Nothing answered detection</b>, so this is using the board and port already configured on this node. That is the normal state after an interrupted flash — the modem cannot run its firmware, so it cannot answer — and it is exactly when flashing has to still work. The bootloader is in the chip and answers regardless.");
+    inner += note(msg("firmware.nothingAnsweredDetectionSo"));
   }
   if (fw.host_running) {
-    inner += note("<b>This node is on the air.</b> Flashing stops MMDVM-Host, writes the modem, and starts it again — about a minute of downtime. You will be asked to confirm.");
+    inner += note(msg("firmware.nodeAirFlashingStops"));
   }
-  inner += note("Firmware is downloaded from a signed release and its signature checked before a byte reaches the modem. On a GPIO board the bootloader lives in the chip and cannot be erased, so an interrupted flash is recoverable by trying again.");
+  inner += note(msg("firmware.firmwareDownloadedSignedRelease"));
 
-  return card("MODEM FIRMWARE", inner);
+  return card(msg("firmware.modemFirmware"), inner);
 }
 
 // fwProgressHTML draws the running job. The stage and percentage are written out
@@ -2918,7 +2928,7 @@ async function startSweep() {
       throw new Error(body.error || "the sweep could not be started");
     } else {
       calib = Object.assign({}, calib, { job: body.job });
-      banner("Sweeping — key your radio when it asks.", "ok");
+      banner(msg("startSweep.sweepingKeyRadioWhen"), "ok");
       watchCal();
     }
   } catch (err) {
@@ -2931,7 +2941,7 @@ async function startSweep() {
 async function cancelSweep() {
   try {
     await fetch("/api/cal/cancel", { method: "POST" });
-    banner("Stopping the sweep — the node comes back on the air by itself.", "ok");
+    banner(msg("cancelSweep.stoppingSweepNodeComes"), "ok");
   } catch (err) {
     banner(String(err.message || err), "bad");
   }
@@ -3000,7 +3010,7 @@ async function flashFirmware() {
       throw new Error(body.error || "the flash could not be started");
     } else {
       firmware = Object.assign({}, firmware, { job: body.job });
-      banner("Flashing — do not power the node off.", "ok");
+      banner(msg("flashFirmware.flashingDoNotPower"), "ok");
       watchFlash();
     }
   } catch (err) {
@@ -3083,7 +3093,7 @@ async function detectModem(stopHost) {
     if (r.status === 409) {
       const body = await r.json().catch(() => ({}));
       hwBusy = false;
-      if (confirm("The modem is in use by MMDVM-Host, so it cannot answer.\n\nStop it, look for the modem, and start it again? This node will be off the air for a few seconds.")) {
+      if (confirm(msg("detectModem.modemUseMmdvmHost"))) {
         return detectModem(true);
       }
       banner(body.error || "The modem is in use.", "bad");
@@ -3139,7 +3149,7 @@ async function adoptBoard() {
 // worse than not offering it.
 async function fixUART() {
   if (hwBusy) return;
-  if (!confirm("Free the GPIO serial port for the modem?\n\nThis edits config.txt and cmdline.txt on the boot partition and masks the serial login service. The node must be rebooted afterwards.")) return;
+  if (!confirm(msg("fixUART.freeGpioSerialPort"))) return;
   hwBusy = true;
   renderPanel();
   try {
@@ -3148,11 +3158,11 @@ async function fixUART() {
     const body = await r.json();
     const res = body.result || {};
     if (!res.applicable) {
-      banner("This host has no Raspberry Pi boot partition, so there is no GPIO serial port to free.", "bad");
+      banner(msg("fixUART.hostHasNoRaspberry"), "bad");
     } else if (res.reboot_required) {
       banner("Done: " + (res.changed || []).join("; ") + ". Reboot the node for it to take effect.", "ok");
     } else {
-      banner("The GPIO serial port was already free.", "ok");
+      banner(msg("fixUART.gpioSerialPortWas"), "ok");
     }
   } catch (err) {
     banner(String(err.message || err), "bad");
@@ -3197,7 +3207,7 @@ function enhanceA11y() {
 // datalists, unit wrappers, bespoke rows like nodeLockRow — and every one of them
 // already carries data-sec/data-key or data-toggle. Walking the rendered DOM
 // therefore covers all of them uniformly, and any control added later gets help
-// for free just by appearing in the HELP table.
+// for free just by appearing in the HELP set.
 //
 // The body is .sr-only when collapsed rather than hidden: aria-describedby cannot
 // reach display:none content, and a screen-reader user should get the description
@@ -3209,8 +3219,8 @@ function helpId(key) { return "wp-help-" + key.replace(/[^A-Za-z0-9_-]/g, "-"); 
 function enhanceHelp(box) {
   box.querySelectorAll("[data-toggle], [data-sec][data-key]").forEach((ctrl) => {
     const key = ctrl.dataset.toggle || ctrl.dataset.sec + "." + ctrl.dataset.key;
-    const text = HELP[key];
-    if (!text) return;
+    if (!HELP.has(key)) return;
+    const text = msg("help." + key);
     const rowEl = ctrl.closest(".row, .toggle-row");
     // One help block per row: a row with several controls (an IPv4 editor, say)
     // would otherwise get one per field.
@@ -3227,7 +3237,7 @@ function enhanceHelp(box) {
     btn.dataset.help = id;
     btn.setAttribute("aria-expanded", String(open));
     btn.setAttribute("aria-controls", id);
-    btn.innerHTML = `<span aria-hidden="true">?</span><span class="sr-only">What is “${esc(label)}”?</span>`;
+    btn.innerHTML = `<span aria-hidden="true">?</span><span class="sr-only">${esc(msg("help.whatIs", { label }))}</span>`;
     host.appendChild(btn);
 
     const body = el("p", "row-help" + (open ? "" : " sr-only"), text);
@@ -3340,7 +3350,16 @@ function reset() {
 // --- chrome --------------------------------------------------------------
 // A tab's nav group is the crumb prefix (D1) — "SYSTEM / GENERAL" files General
 // under SYSTEM. Filing a new tab is therefore just a matter of its crumb.
-function groupOf(t) { return String(t.crumb || "").split("/")[0].trim().toUpperCase() || "OTHER"; }
+function groupOf(t) { return String(WPI18n.base("tab." + t.id + ".crumb")).split("/")[0].trim().toUpperCase() || "OTHER"; }
+
+// The sidebar heading for a group. A crumb prefix with no catalog entry falls
+// back to the prefix itself, so an unrecognised group still renders its tabs
+// rather than a bare key.
+function groupLabel(name) {
+  const key = "nav.group." + name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const s = msg(key);
+  return s === key ? name : s;
+}
 
 // Groups in NAV_GROUPS order, then any prefix not on that list in first-seen order,
 // so an unrecognised crumb can never silently drop its tab off the sidebar.
@@ -3422,8 +3441,8 @@ function navItem(t) {
   const item = el("button", "nav-item" + (on ? " on" : ""));
   item.type = "button";
   if (on) item.setAttribute("aria-current", "page");
-  item.setAttribute("aria-label", t.label + " — " + t.sub);
-  item.innerHTML = `<div class="bar" aria-hidden="true"></div><div class="tag" aria-hidden="true">${esc(t.tag)}</div><div><div class="label">${esc(t.label)}</div><div class="sub">${esc(t.sub)}</div></div>`;
+  item.setAttribute("aria-label", msg("nav.itemLabel", { label: tabLabel(t), sub: tabSub(t) }));
+  item.innerHTML = `<div class="bar" aria-hidden="true"></div><div class="tag" aria-hidden="true">${esc(t.tag)}</div><div><div class="label">${esc(tabLabel(t))}</div><div class="sub">${esc(tabSub(t))}</div></div>`;
   item.onclick = () => selectTab(t.id);
   return item;
 }
@@ -3435,7 +3454,7 @@ function navItem(t) {
 function buildNavTiles(body) {
   const back = el("button", "nav-back");
   back.type = "button";
-  back.innerHTML = `<span class="chev" aria-hidden="true">←</span><span>All settings</span>`;
+  back.innerHTML = `<span class="chev" aria-hidden="true">←</span><span>${esc(msg("nav.allSettings"))}</span>`;
   back.onclick = () => showNavGrid(true);
   body.appendChild(back);
 
@@ -3443,7 +3462,7 @@ function buildNavTiles(body) {
   navGroups().forEach((g) => {
     const head = el("h2", "tile-sec");
     head.id = "tile-" + g.id;
-    head.textContent = g.name;
+    head.textContent = groupLabel(g.name);
     grid.appendChild(head);
     const row = el("div", "tile-row");
     row.setAttribute("role", "group");
@@ -3453,7 +3472,7 @@ function buildNavTiles(body) {
       const tile = el("button", "nav-tile" + (on ? " on" : ""));
       tile.type = "button";
       if (on) tile.setAttribute("aria-current", "page");
-      tile.innerHTML = `<span class="tag" aria-hidden="true">${esc(t.tag)}</span><span class="label">${esc(t.label)}</span><span class="sub">${esc(t.sub)}</span>`;
+      tile.innerHTML = `<span class="tag" aria-hidden="true">${esc(t.tag)}</span><span class="label">${esc(tabLabel(t))}</span><span class="sub">${esc(tabSub(t))}</span>`;
       tile.onclick = () => selectTab(t.id);
       row.appendChild(tile);
     });
@@ -3472,9 +3491,9 @@ function setNavView(v) {
 // stranded behind the back button (D6).
 function showNavGrid(focus) {
   setNavView("grid");
-  document.getElementById("crumb").textContent = "SETTINGS";
-  document.getElementById("title").textContent = "Settings";
-  document.getElementById("desc").textContent = "Choose a section to configure this node.";
+  document.getElementById("crumb").textContent = msg("settings.crumb");
+  document.getElementById("title").textContent = msg("settings.title");
+  document.getElementById("desc").textContent = msg("settings.chooseSection");
   renderNav();
   if (!focus) return;
   const first = document.querySelector("#nav .nav-tile.on") || document.querySelector("#nav .nav-tile");
@@ -3516,9 +3535,11 @@ function resolveTarget(raw) {
 function safeDecode(s) { try { return decodeURIComponent(s || ""); } catch (e) { return String(s || ""); } }
 
 function crumbFor(t) {
-  if (t.id !== "modes") return t.crumb;
+  if (t.id !== "modes") return tabCrumb(t);
+  // The mode's own name is a protocol token and stays as it is; only the frame
+  // around it is translated.
   const m = MODE_SUBS.find((x) => x.id === currentModeSub()) || MODE_SUBS[0];
-  return "MODES / " + m.crumb;
+  return msg("tab.modes.crumbForMode", { mode: m.crumb });
 }
 
 function selectTab(id, sub) {
@@ -3539,8 +3560,8 @@ function selectTab(id, sub) {
   if (!groupExpanded(g)) { delete navOpen[g]; saveNavOpen(); }
   setNavView("panel");
   document.getElementById("crumb").textContent = crumbFor(t);
-  document.getElementById("title").textContent = t.title;
-  document.getElementById("desc").textContent = t.desc;
+  document.getElementById("title").textContent = tabTitle(t);
+  document.getElementById("desc").textContent = tabDesc(t);
   renderNav();
   renderPanel();
   // The Network tab shows live system state, fetched on demand (not part of the
@@ -3588,10 +3609,10 @@ function renderThemes() {
   // Dark/Light toggle first (RFC-0009), then the accent swatches.
   const toggle = el("button", "swatch mode-toggle" + (mode === "light" ? " light" : ""));
   toggle.type = "button";
-  toggle.title = mode === "light" ? "Switch to dark" : "Switch to light";
-  toggle.setAttribute("aria-label", "Toggle light mode");
+  toggle.title = mode === "light" ? msg("theme.switchToDark") : msg("theme.switchToLight");
+  toggle.setAttribute("aria-label", msg("theme.toggleLight"));
   toggle.setAttribute("aria-pressed", String(mode === "light"));
-  toggle.textContent = mode === "light" ? "☀ Light" : "☾ Dark";
+  toggle.textContent = mode === "light" ? msg("theme.light") : msg("theme.dark");
   toggle.onclick = () => {
     const next = currentMode() === "light" ? "dark" : "light";
     localStorage.setItem("wp-mode", next);
@@ -3602,8 +3623,9 @@ function renderThemes() {
   THEMES.forEach((th) => {
     const s = el("button", "swatch" + (th.key === cur ? " on" : ""));
     s.type = "button";
-    s.title = th.key;
-    s.setAttribute("aria-label", th.key + " theme");
+    const themeName = msg("theme." + th.key);
+    s.title = themeName;
+    s.setAttribute("aria-label", msg("theme.swatchLabel", { theme: themeName }));
     s.setAttribute("aria-pressed", String(th.key === cur));
     s.innerHTML = `<span class="dot" style="background:${th.color}; box-shadow:0 0 7px ${th.color};" aria-hidden="true"></span>`;
     s.onclick = () => { applyTheme(th.key); localStorage.setItem("wp-theme", th.key); renderThemes(); };
@@ -3790,14 +3812,14 @@ async function stackCheckNow() {
 // and polls the status until it settles to confirmed/reverted.
 async function stackApplyNow() {
   if (stackBusy) return;
-  if (!confirm("Apply the available stack updates now? The affected services restart, and the update rolls back automatically if the modem does not come back up.")) return;
+  if (!confirm(msg("stackApplyNow.applyAvailableStackUpdates"))) return;
   stackBusy = true;
   const btn = document.getElementById("stack-apply");
   if (btn) { btn.textContent = "STARTING…"; btn.disabled = true; }
   try {
     const r = await fetch("/api/update/stack/apply", { method: "POST" });
     if (!r.ok && r.status !== 202) throw new Error((await r.text()).trim());
-    banner("Update started — health-checking the stack; this may take up to a minute.", "ok");
+    banner(msg("stackApplyNow.updateStartedHealthChecking"), "ok");
   } catch (err) {
     banner(String(err.message || err), "bad");
   } finally {
@@ -3873,7 +3895,7 @@ async function importProfile(file) {
     const text = await file.text();
     let r = await fetch("/api/profiles/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: text });
     if (r.status === 409) {
-      if (confirm("A profile with that name already exists. Overwrite it?")) {
+      if (confirm(msg("importProfile.profileNameAlreadyExists"))) {
         r = await fetch("/api/profiles/import?overwrite=1", { method: "POST", headers: { "Content-Type": "application/json" }, body: text });
       } else { profileBusy = false; renderPanel(); return; }
     }
@@ -3908,13 +3930,13 @@ async function runImportScan(input) {
 
 async function applyImport() {
   if (!importInput) return;
-  if (!confirm("Import the scanned config? This overwrites your current mode & network settings. You'll review and Apply afterward.")) return;
+  if (!confirm(msg("applyImport.importScannedConfigOverwrites"))) return;
   importBusy = true; renderPanel();
   try {
     const r = await fetch("/api/import/apply", importFetchInit(importInput));
     if (!r.ok) alert("Import failed: " + (await r.text()));
     else {
-      alert("Imported. Review the settings, then press Apply to regenerate configs and restart the stack.");
+      alert(msg("applyImport.importedReviewSettingsThen"));
       importScan = null; importInput = null;
       await load(); // refresh the editor from the freshly-written store
     }
@@ -3957,7 +3979,7 @@ async function applyNetwork() {
     sessionStorage.setItem("wp-net-token", j.token);
     netDirty = false;
     showNetworkConfirmBar(j.deadline, j.token);
-    banner("Network change applied — confirm to keep it before it reverts.", "ok");
+    banner(msg("applyNetwork.networkChangeAppliedConfirm"), "ok");
   } catch (err) {
     banner("Network apply failed: " + String(err.message || err), "bad");
   } finally {
@@ -4306,25 +4328,48 @@ document.getElementById("panels").addEventListener("focusin", (e) => {
 document.getElementById("btn-apply").onclick = apply;
 document.getElementById("btn-reset").onclick = reset;
 
-renderNav();
-renderThemes();
-{
-  // A deep link opens straight onto its panel — including the retired per-mode ids.
-  // Without one, a narrow viewport opens on the tile grid (there is nothing to go
-  // "back" to yet); the sidebar layout has no grid view and just lands on the first
-  // tab, as before.
-  const target = (location.hash || "").slice(1);
-  selectTab(target || "general");
-  if (!target && NAV_NARROW.matches) showNavGrid(false);
-}
-load();
-initBusEvents(); // live bus_busy surfacing on the Buses tab (RFC-0003 §5)
-// LAN peering (RFC-0016): a modal overlay for the active pairing, and a poll so a
-// responder learns of an incoming pairing request while on the tab.
-(function initPeeringUI() {
-  const el = document.createElement("div");
-  el.id = "peer-modal";
-  el.hidden = true;
-  document.body.appendChild(el);
-  startPeeringPoll();
-})();
+// Every panel is built from template literals that re-read msg() on each render,
+// so a language change is a re-render of the chrome plus the open panel.
+function mountLanguagePicker() { WPI18n.renderPicker(document.getElementById("lang-pick")); }
+addEventListener("wp-lang-changed", () => {
+  mountLanguagePicker();
+  renderThemes();
+  renderNav();
+  const tab = TABS.find((x) => x.id === state.tab);
+  if (tab) {
+    document.getElementById("crumb").textContent = crumbFor(tab);
+    document.getElementById("title").textContent = tabTitle(tab);
+    document.getElementById("desc").textContent = tabDesc(tab);
+  }
+  renderPanel();
+});
+
+// Nothing below paints until the catalogs are in: msg() would answer with bare
+// keys, and i18n.js re-applying the static markup afterwards would overwrite what
+// had already rendered. WPI18n.ready never rejects — a missing catalog degrades
+// to English inside i18n.js.
+WPI18n.ready.then(() => {
+  renderNav();
+  renderThemes();
+  mountLanguagePicker();
+  {
+    // A deep link opens straight onto its panel — including the retired per-mode ids.
+    // Without one, a narrow viewport opens on the tile grid (there is nothing to go
+    // "back" to yet); the sidebar layout has no grid view and just lands on the first
+    // tab, as before.
+    const target = (location.hash || "").slice(1);
+    selectTab(target || "general");
+    if (!target && NAV_NARROW.matches) showNavGrid(false);
+  }
+  load();
+  initBusEvents(); // live bus_busy surfacing on the Buses tab (RFC-0003 §5)
+  // LAN peering (RFC-0016): a modal overlay for the active pairing, and a poll so a
+  // responder learns of an incoming pairing request while on the tab.
+  (function initPeeringUI() {
+    const el = document.createElement("div");
+    el.id = "peer-modal";
+    el.hidden = true;
+    document.body.appendChild(el);
+    startPeeringPoll();
+  })();
+});

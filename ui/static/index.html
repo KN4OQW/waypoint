@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Waypoint · Dashboard</title>
+<title data-i18n="dash.pageTitle">Waypoint · Dashboard</title>
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <script>
   /* Apply the saved theme + mode before first paint so a light-mode reload never
@@ -239,7 +239,7 @@
         <svg width="27" height="27" viewBox="0 0 512 512" style="flex:none;" fill="var(--accent)" aria-hidden="true"><path d="M256 474 C201 410 138 362 138 284 A118 118 0 0 1 374 284 C374 362 311 410 256 474 Z"></path><path d="M247 302 L265 302 L259 128 L253 128 Z"></path><circle cx="256" cy="110" r="16"></circle><g fill="none" stroke="var(--accent)" stroke-width="13" stroke-linecap="round"><path d="M216 80 Q188 110 216 140"></path><path d="M196 60 Q156 110 196 160"></path><path d="M296 80 Q324 110 296 140"></path><path d="M316 60 Q356 110 316 160"></path></g><circle cx="256" cy="288" r="46" fill="#0b0d12"></circle></svg>
         <div>
           <div class="brand-name">WAYPOINT</div>
-          <div class="brand-sub">HOTSPOT CONTROL</div>
+          <div class="brand-sub" data-i18n="sidebar.tagline">HOTSPOT CONTROL</div>
         </div>
       </div>
       <div class="callsign-chip">
@@ -250,10 +250,10 @@
         <div class="online"><span class="led" id="side-led"></span><span class="txt" id="side-online" data-i18n="sidebar.connecting">CONNECTING</span></div>
       </div>
     </div>
-    <nav aria-label="Primary">
-      <div class="nav-head">OVERVIEW</div>
-      <a class="nav-item on" href="/" aria-current="page"><span class="bar" aria-hidden="true"></span><span class="tag" aria-hidden="true">DB</span><span><span class="label" data-i18n="nav.dashboard">Dashboard</span><span class="sub">LIVE STATUS</span></span></a>
-      <a class="nav-item" href="settings.html"><span class="bar" aria-hidden="true"></span><span class="tag" aria-hidden="true">⚙</span><span><span class="label" data-i18n="nav.settings">Settings</span><span class="sub">CONFIGURE NODE</span></span></a>
+    <nav aria-label="Primary" data-i18n-attr="aria-label:nav.primary">
+      <div class="nav-head" data-i18n="nav.overview">OVERVIEW</div>
+      <a class="nav-item on" href="/" aria-current="page"><span class="bar" aria-hidden="true"></span><span class="tag" aria-hidden="true">DB</span><span><span class="label" data-i18n="nav.dashboard">Dashboard</span><span class="sub" data-i18n="nav.dashboardSub">LIVE STATUS</span></span></a>
+      <a class="nav-item" href="settings.html"><span class="bar" aria-hidden="true"></span><span class="tag" aria-hidden="true">⚙</span><span><span class="label" data-i18n="nav.settings">Settings</span><span class="sub" data-i18n="nav.settingsSub">CONFIGURE NODE</span></span></a>
     </nav>
     <div class="theme-pick">
       <div class="theme-head" id="theme-head" data-i18n="chrome.theme">DISPLAY THEME</div>
@@ -265,62 +265,62 @@
 
   <main id="main">
     <div class="statusbar">
-      <div class="stat"><span class="k" id="mode-k">MODE</span><span class="v accent" id="st-mode" role="status" aria-live="polite" aria-labelledby="mode-k st-mode">—</span></div>
-      <div class="stat"><span class="k">VERSION</span><span class="v" id="st-version">—</span></div>
-      <div class="stat"><span class="k">FEED</span><span class="v" id="st-feed">live</span></div>
-      <span id="demo-badge" class="badge demo" hidden>demo feed</span>
+      <div class="stat"><span class="k" id="mode-k" data-i18n="status.mode">MODE</span><span class="v accent" id="st-mode" role="status" aria-live="polite" aria-labelledby="mode-k st-mode">—</span></div>
+      <div class="stat"><span class="k" data-i18n="status.version">VERSION</span><span class="v" id="st-version">—</span></div>
+      <div class="stat"><span class="k" data-i18n="status.feed">FEED</span><span class="v" id="st-feed">live</span></div>
+      <span id="demo-badge" class="badge demo" hidden data-i18n="status.demoBadge">demo feed</span>
       <div class="conn-led down" id="conn-led" role="status" aria-live="polite"><span class="d" aria-hidden="true"></span><span id="conn-txt" data-i18n="status.connecting">connecting…</span></div>
     </div>
 
     <div class="scroll">
       <div class="pagehead">
         <div>
-          <div class="crumb">STATUS / LIVE</div>
-          <h1>Dashboard</h1>
-          <p>Live activity for this node. Every row arrives over <code>/api/events</code> — no log scraping.</p>
+          <div class="crumb" data-i18n="dash.crumb">STATUS / LIVE</div>
+          <h1 data-i18n="dash.title">Dashboard</h1>
+          <p data-i18n-html="dash.intro">Live activity for this node. Every row arrives over <code>/api/events</code> — no log scraping.</p>
         </div>
       </div>
 
       <section class="card" aria-labelledby="onair-h">
-        <div class="card-head"><span class="sq" aria-hidden="true"></span><span class="t" id="onair-h">ON AIR</span></div>
-        <div id="onair" class="onair idle" role="status" aria-live="polite" aria-atomic="true" aria-label="On air status"><p class="onair-idle" data-i18n="dash.onair.idle">Listening — no active transmission</p></div>
+        <div class="card-head"><span class="sq" aria-hidden="true"></span><span class="t" id="onair-h" data-i18n="dash.onair.head">ON AIR</span></div>
+        <div id="onair" class="onair idle" role="status" aria-live="polite" aria-atomic="true" aria-label="On air status" data-i18n-attr="aria-label:dash.onair.label"><p class="onair-idle" data-i18n="dash.onair.idle">Listening — no active transmission</p></div>
       </section>
 
       <div class="grid2">
         <section class="card" aria-labelledby="lh-h">
-          <div class="card-head"><span class="sq" aria-hidden="true"></span><span class="t" id="lh-h">LAST HEARD</span></div>
+          <div class="card-head"><span class="sq" aria-hidden="true"></span><span class="t" id="lh-h" data-i18n="dash.lastheard.head">LAST HEARD</span></div>
           <div class="tscroll">
-          <table id="lastheard" aria-label="Last heard stations">
-            <thead><tr><th scope="col">Station</th><th scope="col">Dest</th><th scope="col">Mode</th><th scope="col">Dur</th><th scope="col">BER</th><th scope="col">When</th></tr></thead>
+          <table id="lastheard" aria-label="Last heard stations" data-i18n-attr="aria-label:dash.lastheard.label">
+            <thead><tr><th scope="col" data-i18n="dash.lastheard.station">Station</th><th scope="col" data-i18n="dash.lastheard.dest">Dest</th><th scope="col" data-i18n="dash.lastheard.mode">Mode</th><th scope="col" data-i18n="dash.lastheard.dur">Dur</th><th scope="col" data-i18n="dash.lastheard.ber">BER</th><th scope="col" data-i18n="dash.lastheard.when">When</th></tr></thead>
             <tbody></tbody>
           </table>
           </div>
-          <p class="empty" id="lastheard-empty">Nothing heard yet.</p>
+          <p class="empty" id="lastheard-empty" data-i18n="dash.lastheard.empty">Nothing heard yet.</p>
         </section>
 
         <section class="card" aria-labelledby="net-h">
-          <div class="card-head"><span class="sq" aria-hidden="true"></span><span class="t" id="net-h">NETWORKS</span></div>
-          <ul id="networks" class="netlist" aria-label="Network links"></ul>
-          <p class="empty" id="networks-empty">No network links reported.</p>
+          <div class="card-head"><span class="sq" aria-hidden="true"></span><span class="t" id="net-h" data-i18n="dash.networks.head">NETWORKS</span></div>
+          <ul id="networks" class="netlist" aria-label="Network links" data-i18n-attr="aria-label:dash.networks.label"></ul>
+          <p class="empty" id="networks-empty" data-i18n="dash.networks.empty">No network links reported.</p>
         </section>
         <section class="card" aria-labelledby="gw-h">
-          <div class="card-head"><span class="sq" aria-hidden="true"></span><span class="t" id="gw-h">GATEWAYS</span></div>
-          <ul id="gateways" class="netlist" aria-label="Gateway daemon status"></ul>
-          <p class="empty" id="gateways-empty">Gateway status appears here on a live node.</p>
+          <div class="card-head"><span class="sq" aria-hidden="true"></span><span class="t" id="gw-h" data-i18n="dash.gateways.head">GATEWAYS</span></div>
+          <ul id="gateways" class="netlist" aria-label="Gateway daemon status" data-i18n-attr="aria-label:dash.gateways.label"></ul>
+          <p class="empty" id="gateways-empty" data-i18n="dash.gateways.empty">Gateway status appears here on a live node.</p>
         </section>
       </div>
 
       <section class="card" aria-labelledby="ev-h">
-        <div class="card-head"><span class="sq" aria-hidden="true"></span><span class="t" id="ev-h">EVENT LOG</span></div>
-        <div class="loglimit tscroll" tabindex="0" role="region" aria-label="Event log">
-          <table id="eventlog" aria-label="Event log entries">
-            <thead><tr><th scope="col">Time</th><th scope="col">Event</th></tr></thead>
+        <div class="card-head"><span class="sq" aria-hidden="true"></span><span class="t" id="ev-h" data-i18n="dash.eventlog.head">EVENT LOG</span></div>
+        <div class="loglimit tscroll" tabindex="0" role="region" aria-label="Event log" data-i18n-attr="aria-label:dash.eventlog.region">
+          <table id="eventlog" aria-label="Event log entries" data-i18n-attr="aria-label:dash.eventlog.label">
+            <thead><tr><th scope="col" data-i18n="dash.eventlog.time">Time</th><th scope="col" data-i18n="dash.eventlog.event">Event</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
       </section>
 
-      <div class="foot"><span id="foot-version">waypointd</span> · <a href="https://github.com/KN4OQW/waypoint">source</a></div>
+      <div class="foot"><span id="foot-version">waypointd</span> · <a href="https://github.com/KN4OQW/waypoint" data-i18n="foot.source">source</a></div>
     </div>
   </main>
 </div>

@@ -86,10 +86,19 @@ const WPI18n = (function () {
   }
 
   // applyTranslations rewrites static markup in place:
-  //   data-i18n="key"                          -> textContent
+  //   data-i18n="key"                           -> textContent
+  //   data-i18n-html="key"                      -> innerHTML
   //   data-i18n-attr="title:key;aria-label:key" -> attributes
   // Dynamically rendered markup (the settings.js template-literal pattern) calls
   // t() directly instead; this walk only covers what is in the HTML.
+  //
+  // data-i18n-html exists for the handful of sentences that wrap an element
+  // mid-phrase — "arrives over <code>/api/events</code>" — where splitting the
+  // sentence into fragments around the tag would hand translators a phrase they
+  // cannot reorder. Catalog values are shipped source, reviewed in the same diff
+  // as any other file, and the settings page already renders catalog-supplied
+  // markup through note(); it is not a channel for untrusted input. Prefer
+  // data-i18n unless the markup is genuinely inside the sentence.
   function applyTranslations(root) {
     const scope = root || document;
     const each = (sel, fn) => {
@@ -97,6 +106,7 @@ const WPI18n = (function () {
       scope.querySelectorAll(sel).forEach(fn);
     };
     each("[data-i18n]", (el) => { el.textContent = t(el.getAttribute("data-i18n")); });
+    each("[data-i18n-html]", (el) => { el.innerHTML = t(el.getAttribute("data-i18n-html")); });
     each("[data-i18n-attr]", (el) => {
       for (const pair of el.getAttribute("data-i18n-attr").split(";")) {
         const sep = pair.indexOf(":");
@@ -135,6 +145,15 @@ const WPI18n = (function () {
     await loadCatalog(tag);
     applyTranslations(document);
     window.dispatchEvent(new CustomEvent("wp-lang-changed", { detail: { tag: activeTag } }));
+  }
+
+  // base resolves a key against en-US only, ignoring the active language. It is
+  // for the few strings that are structure rather than copy — the settings page
+  // derives a tab's nav group from the English prefix of its breadcrumb, and a
+  // translated prefix would match nothing.
+  function base(key) {
+    const s = lookup(baseMsgs, key);
+    return s === null ? key : s;
   }
 
   function currentLanguage() { return activeTag; }
@@ -199,5 +218,5 @@ const WPI18n = (function () {
     whenDOMReady(() => applyTranslations(document));
   })();
 
-  return { ready, t, setLanguage, currentLanguage, availableLanguages, applyTranslations, renderPicker };
+  return { ready, t, base, setLanguage, currentLanguage, availableLanguages, applyTranslations, renderPicker };
 })();
