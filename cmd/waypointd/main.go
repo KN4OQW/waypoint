@@ -50,6 +50,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/seed"
 	"github.com/KN4OQW/waypoint/internal/status"
 	"github.com/KN4OQW/waypoint/internal/store"
+	"github.com/KN4OQW/waypoint/internal/supervisor"
 	"github.com/KN4OQW/waypoint/internal/tlscert"
 	"github.com/KN4OQW/waypoint/internal/updater"
 	"github.com/KN4OQW/waypoint/internal/verifydl"
@@ -104,8 +105,12 @@ type server struct {
 	netKeyfileDir     string
 	netConfirmTimeout time.Duration
 	netBackend        string // "composite" (NM + keyfile) or "keyfile" (fallback)
-	timesyncdConf     string // rendered systemd-timesyncd drop-in path (NTP direct apply)
-	netGuard          *netconfig.Guard
+	// setupAPIface is excluded from the route check the supervisor and netwatch
+	// share: the setup access point's own route is not a way out, and counting it
+	// would tell a node that had raised the AP that it was back online.
+	setupAPIface  string
+	timesyncdConf string // rendered systemd-timesyncd drop-in path (NTP direct apply)
+	netGuard      *netconfig.Guard
 	// Wi-Fi scan cache + timezone list cache (netScanMu guards both).
 	netScanMu  sync.Mutex
 	netScan    []netconfig.WiFiScanResult
@@ -1816,6 +1821,8 @@ func main() {
 	statusTick := flag.Duration("status-watchdog-tick", time.Second, "how often the status aggregator runs its stranded-transmission watchdog")
 	probeInterval := flag.Duration("gateway-probe-interval", time.Second, "how often the supervisor probes gateway liveness (RFC-0008; keep < 2s for the #5 acceptance)")
 	linkTTL := flag.Duration("link-ttl", status.LinkTTLOff, "how long a network link stays claimed without re-confirmation; 0 disables (nothing re-confirms links until the resilience supervisor, #22)")
+	supervisorInterval := flag.Duration("supervisor-interval", supervisor.DefaultInterval, "how often the resilience supervisor evaluates each upstream attachment (#22)")
+	supervisorRemediate := flag.Bool("supervisor-remediate", false, "let the resilience supervisor restart a gateway that has lost its upstream link; off means it observes and reports only (#22)")
 	mqttUser := flag.String("mqtt-user", "", "MQTT username (optional)")
 	mqttPass := flag.String("mqtt-pass", "", "MQTT password (optional)")
 	mmdvmINI := flag.String("mmdvm-ini", "/home/pi-star/waypoint/etc/MMDVM-Host.ini", "MMDVM-Host.ini render target (the file the daemon reads)")
@@ -2006,7 +2013,7 @@ func main() {
 		},
 		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts, dmrTGs: *dmrTGs, dmrIDs: *dmrIDs,
 		netKeyfileDir: *nmKeyfileDir, netConfirmTimeout: *netConfirmTimeout, netBackend: *netBackend,
-		timesyncdConf: *timesyncdConf,
+		timesyncdConf: *timesyncdConf, setupAPIface: *setupAPIface,
 	}
 	// The confirm-or-revert guard for network applies (needs s.netKeyfileDir set).
 	s.netGuard = s.newNetGuard()
@@ -2143,6 +2150,9 @@ func main() {
 				Username:  *mqttUser,
 				Password:  *mqttPass,
 				BusPrefix: *busTopicPrefix, // D4: also ingest waypoint/bus/# as hub events
+				// #22: DMRGateway's own status plane, where a failed or successful
+				// master login is announced the moment it happens.
+				GatewayNames: []string{config.MQTTNameDMRGateway},
 			}); err != nil {
 				log.Printf("mqtt bridge stopped: %v", err)
 			}
@@ -2151,6 +2161,11 @@ func main() {
 		// restarted gateway shows truth within the probe interval — the #5 acceptance,
 		// from systemd state (not log scraping). Live mode only (a demo runs no gateways).
 		go s.runLivenessProbe(context.Background(), *probeInterval)
+		// Network resilience (#22): watch every upstream attachment the config
+		// declares and keep the node honest about them. Live mode only — a demo
+		// node has no masters to lose. Remediation is opt-in for now; the detection
+		// and reporting path runs either way.
+		go s.runSupervisor(context.Background(), *supervisorInterval, *supervisorRemediate)
 		// Update poller (D2 / #15): periodically refresh the stack and waypointd
 		// available-update caches and drive opt-in quiet-window auto-apply. Live mode
 		// only. Ticks every 15 min so it reliably lands in the one-hour quiet window; a

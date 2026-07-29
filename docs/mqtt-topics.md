@@ -88,6 +88,28 @@ introduces them.
 Discovery is published only to the broker the node already talks to
 (`-mqtt-broker`); Waypoint never reaches out to a new host.
 
+## Topics Waypoint consumes
+
+Everything above is published. Waypoint also **subscribes** to the daemons' own
+planes — it is where live status comes from, and there is no log reader anywhere
+in the path.
+
+| Topic | Publisher | Used for |
+|---|---|---|
+| `mmdvm/json` | MMDVM-Host | Per-mode voice traffic → the event stream, last-heard, on-air. |
+| `dmr-gateway/json` | DMRGateway | Its own status plane: `{"status":{"message":"Logged into DMR Network: X"}}` and the failed-login/closing counterparts, published the moment a master accepts or refuses. |
+| `waypoint/bus/#` | Mode-bus daemons | Bus events, mapped 1:1 (below). |
+
+A DMRGateway status message becomes a `gateway_status` hub event naming the
+network, so it persists and shows in the event log. It is **not** folded into link
+state on its own: the resilience supervisor
+([#22](https://github.com/KN4OQW/waypoint/issues/22)) weighs it against the
+systemd unit state and Waypoint's own endpoint probe, and publishes the resulting
+`link_up`/`link_down` verdict. The message is English prose assembled upstream
+with string concatenation, so a wording change would silently stop matching —
+which is exactly why it is one signal of three and never the authority. Losing it
+costs the supervisor its fastest detection path, not its correctness.
+
 ## Mode-bus event topics (`waypoint/bus/#`)
 
 Mode buses (RFC-0003) run in their own `waypoint-bus@<id>` processes. The stack's

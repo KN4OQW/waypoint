@@ -21,6 +21,12 @@ type Options struct {
 	// (D4; default "waypoint/bus"). The consumer subscribes <BusPrefix>/# and maps
 	// each JSON payload 1:1 onto a hub.Event.
 	BusPrefix string
+	// GatewayNames are the [MQTT] Name values of the gateway daemons whose own
+	// status planes carry upstream link news — DMRGateway's "Logged into DMR
+	// Network: X" and its failure counterparts (#22). Each is subscribed at
+	// <name>/json alongside MMDVM-Host's. Empty means none, which is what a node
+	// running no gateways wants.
+	GatewayNames []string
 }
 
 // Run connects to the broker, subscribes to <Name>/json, and republishes every
@@ -71,6 +77,24 @@ func Run(ctx context.Context, h *hub.Hub, opts Options) error {
 		}); tok.Wait() && tok.Error() != nil {
 			log.Printf("mqtt: subscribe %s failed: %v", busTopic, tok.Error())
 			return
+		}
+		// The gateway daemons' own status planes (#22). Each is its own topic
+		// rather than a wildcard so a foreign publisher on the broker cannot inject
+		// link news about a network this node does not have.
+		for _, name := range opts.GatewayNames {
+			if name == "" {
+				continue
+			}
+			gwTopic := name + "/json"
+			if tok := c.Subscribe(gwTopic, 0, func(_ mqtt.Client, m mqtt.Message) {
+				if e, ok := TranslateGatewayStatus(m.Payload()); ok {
+					h.Publish(e)
+				}
+			}); tok.Wait() && tok.Error() != nil {
+				// Not fatal: a gateway that is not running publishes nothing, and the
+				// supervisor's other signals carry on without this one.
+				log.Printf("mqtt: subscribe %s failed: %v", gwTopic, tok.Error())
+			}
 		}
 		log.Printf("mqtt: subscribed to %s and %s on %s", topic, busTopic, opts.Broker)
 		// feed_up drives the status pipeline's Feed health (RFC-0008): the dashboard

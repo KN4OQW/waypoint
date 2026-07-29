@@ -85,6 +85,14 @@ const (
 	TypeFeedDown = "feed_down"
 	TypeGWUp     = "gateway_up"
 	TypeGWDown   = "gateway_down"
+	// TypeGatewayStatus is a gateway daemon's own report about one of its upstream
+	// links, verbatim from its MQTT status plane. The fold deliberately ignores it:
+	// it is raw daemon chatter, one input the supervisor weighs against the unit
+	// state and its own endpoint probe before claiming anything. What lands in
+	// Networks is the supervisor's link_up/link_down verdict, not this. It is still
+	// a hub event so it persists and shows in the event log, where a "Failed login
+	// into DMR Network" line is exactly what an operator wants to see.
+	TypeGatewayStatus = "gateway_status"
 )
 
 // DefaultTxTTL is the stranded-transmission watchdog: a transmission not ended

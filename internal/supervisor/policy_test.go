@@ -25,13 +25,13 @@ func testPolicy() Policy {
 
 // healthy is an observation of an attachment that is working.
 func healthy(at time.Time) Observation {
-	return Observation{Now: at, WANUp: true, UnitActive: true, Endpoint: ReachOK, Login: LoginYes}
+	return Observation{Now: at, WANUp: true, Unit: TriYes, Endpoint: TriYes, Login: TriYes}
 }
 
 // broken is an observation of an attachment whose master has gone away — the
 // daemon is running, the node is online, the endpoint no longer resolves.
 func broken(at time.Time) Observation {
-	return Observation{Now: at, WANUp: true, UnitActive: true, Endpoint: ReachFail, Login: LoginNo}
+	return Observation{Now: at, WANUp: true, Unit: TriYes, Endpoint: TriNo, Login: TriNo}
 }
 
 // A healthy attachment is left alone and claimed up.
@@ -52,7 +52,7 @@ func TestHealthyIsLeftAlone(t *testing.T) {
 // must not be restarted on the strength of an absence.
 func TestUnknownsAreNotFailures(t *testing.T) {
 	m := NewMonitor(testAttachment(), testPolicy())
-	o := Observation{Now: t0, WANUp: true, UnitActive: true, Endpoint: ReachUnknown, Login: LoginUnknown}
+	o := Observation{Now: t0, WANUp: true, Unit: TriYes, Endpoint: TriUnknown, Login: TriUnknown}
 	for i := 0; i < 10; i++ {
 		o.Now = t0.Add(time.Duration(i) * time.Minute)
 		if d := m.Step(o); d.Action != ActNone || !d.Claim.Up {
@@ -130,7 +130,7 @@ func TestNoRemediationWhileOffline(t *testing.T) {
 
 	now := t0
 	for i := 0; i < 60; i++ { // ten minutes of outage
-		d := m.Step(Observation{Now: now, WANUp: false, UnitActive: true, Endpoint: ReachFail, Login: LoginNo})
+		d := m.Step(Observation{Now: now, WANUp: false, Unit: TriYes, Endpoint: TriNo, Login: TriNo})
 		if d.Action != ActNone {
 			t.Fatalf("remediated during a WAN outage at +%v: %+v", now.Sub(t0), d)
 		}
@@ -154,7 +154,7 @@ func TestWANRestoreGivesAFreshGrace(t *testing.T) {
 
 	now := t0
 	for i := 0; i < 60; i++ {
-		m.Step(Observation{Now: now, WANUp: false, UnitActive: true, Endpoint: ReachFail, Login: LoginNo})
+		m.Step(Observation{Now: now, WANUp: false, Unit: TriYes, Endpoint: TriNo, Login: TriNo})
 		now = now.Add(10 * time.Second)
 	}
 	// Route back, attachment still broken: no instant restart.
@@ -178,7 +178,7 @@ func TestSelfRecoveryNeedsNoRestart(t *testing.T) {
 
 	now := t0
 	for i := 0; i < 30; i++ {
-		m.Step(Observation{Now: now, WANUp: false, UnitActive: true, Endpoint: ReachFail, Login: LoginNo})
+		m.Step(Observation{Now: now, WANUp: false, Unit: TriYes, Endpoint: TriNo, Login: TriNo})
 		now = now.Add(10 * time.Second)
 	}
 	m.Step(broken(now)) // route back, not yet logged in
@@ -261,12 +261,12 @@ func TestAssessReasons(t *testing.T) {
 		healthy bool
 		reason  string
 	}{
-		{"unit down", Observation{UnitActive: false, Endpoint: ReachOK, Login: LoginYes}, false, "the gateway is not running"},
-		{"endpoint gone", Observation{UnitActive: true, Endpoint: ReachFail, Login: LoginYes}, false, "the endpoint is unreachable"},
-		{"login refused", Observation{UnitActive: true, Endpoint: ReachOK, Login: LoginNo}, false, "not logged in"},
-		{"logged in", Observation{UnitActive: true, Endpoint: ReachOK, Login: LoginYes}, true, "logged in"},
-		{"reachable only", Observation{UnitActive: true, Endpoint: ReachOK, Login: LoginUnknown}, true, "reachable"},
-		{"nothing known", Observation{UnitActive: true, Endpoint: ReachUnknown, Login: LoginUnknown}, true, "running"},
+		{"unit down", Observation{Unit: TriNo, Endpoint: TriYes, Login: TriYes}, false, "the gateway is not running"},
+		{"endpoint gone", Observation{Unit: TriYes, Endpoint: TriNo, Login: TriYes}, false, "the endpoint is unreachable"},
+		{"login refused", Observation{Unit: TriYes, Endpoint: TriYes, Login: TriNo}, false, "not logged in"},
+		{"logged in", Observation{Unit: TriYes, Endpoint: TriYes, Login: TriYes}, true, "logged in"},
+		{"reachable only", Observation{Unit: TriYes, Endpoint: TriYes, Login: TriUnknown}, true, "reachable"},
+		{"nothing known", Observation{Unit: TriYes, Endpoint: TriUnknown, Login: TriUnknown}, true, "running"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -278,12 +278,28 @@ func TestAssessReasons(t *testing.T) {
 	}
 }
 
+// A unit the liveness probe has not reached yet is not a dead one. This is the
+// difference a bool cannot carry: at startup the probe has filed nothing, and
+// reading that emptiness as "not running" would have the supervisor restarting
+// every gateway on the node the moment it came up.
+func TestUnknownUnitIsNotADeadUnit(t *testing.T) {
+	p := testPolicy()
+	m := NewMonitor(testAttachment(), p)
+	o := Observation{Now: t0, WANUp: true, Unit: TriUnknown, Endpoint: TriUnknown, Login: TriUnknown}
+	for i := 0; i < 20; i++ {
+		o.Now = t0.Add(time.Duration(i) * time.Minute)
+		if d := m.Step(o); d.Action != ActNone {
+			t.Fatalf("restarted a unit nothing had reported on yet: %+v", d)
+		}
+	}
+}
+
 // A dead unit is a failure the supervisor acts on: it is the signal that survives
 // when a daemon crashes outright rather than merely losing its link.
 func TestDeadUnitIsRemediated(t *testing.T) {
 	p := testPolicy()
 	m := NewMonitor(testAttachment(), p)
-	dead := Observation{Now: t0, WANUp: true, UnitActive: false, Endpoint: ReachOK, Login: LoginUnknown}
+	dead := Observation{Now: t0, WANUp: true, Unit: TriNo, Endpoint: TriYes, Login: TriUnknown}
 
 	m.Step(dead)
 	dead.Now = t0.Add(p.Grace + time.Second)

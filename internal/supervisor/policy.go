@@ -11,25 +11,20 @@ import (
 // from becoming a restart loop against somebody else's server is a table test
 // that runs in microseconds rather than a property nobody can check.
 
-// Reach is what an endpoint probe found. Unknown is not a failure: a probe that
-// has not run yet, or one the node cannot perform, must never be read as bad news.
-type Reach int
+// Tri is a signal that can be good, bad, or not yet known.
+//
+// The third case is the one that matters and the reason this is not a bool. Every
+// signal here can legitimately be missing — a probe that has not run, a unit the
+// liveness poll has not reached, a daemon that reports nothing at all — and the
+// difference between "reported bad" and "not reported" is the difference between
+// restarting a daemon and leaving a working one alone. Collapsing them into a
+// bool makes every gap in the node's knowledge read as a fault.
+type Tri int
 
 const (
-	ReachUnknown Reach = iota
-	ReachOK
-	ReachFail
-)
-
-// Login is what the daemon itself last said about this attachment, read from its
-// MQTT status plane. Like Reach, Unknown means no news — several daemons say
-// nothing at all, and silence is not a report of failure.
-type Login int
-
-const (
-	LoginUnknown Login = iota
-	LoginYes
-	LoginNo
+	TriUnknown Tri = iota
+	TriYes
+	TriNo
 )
 
 // Observation is everything known about one attachment at one instant. The
@@ -37,16 +32,20 @@ const (
 type Observation struct {
 	Now time.Time
 	// WANUp is whether the node has a route out at all — the same question
-	// netwatch asks the kernel. It gates remediation entirely.
+	// netwatch asks the kernel. Always known (the kernel always answers), and it
+	// gates remediation entirely.
 	WANUp bool
 	// TXActive is whether a transmission is on the air right now. Restarting a
 	// gateway mid-transmission drops somebody's audio to fix a link that has
 	// already been broken for minutes; it can wait for the release.
 	TXActive bool
-	// UnitActive is the attachment's systemd unit state, from the liveness probe.
-	UnitActive bool
-	Endpoint   Reach
-	Login      Login
+	// Unit is the attachment's systemd unit state, from the liveness probe.
+	Unit Tri
+	// Endpoint is what an address probe found.
+	Endpoint Tri
+	// Login is what the daemon itself last said about this attachment on its MQTT
+	// status plane — a hint, never the sole authority (see hint.go).
+	Login Tri
 }
 
 // Action is what the supervisor should do about an attachment.
@@ -217,15 +216,15 @@ func (m *Monitor) Step(o Observation) Decision {
 // than restarted on the strength of a probe that has not run.
 func assess(o Observation) (bool, string) {
 	switch {
-	case !o.UnitActive:
+	case o.Unit == TriNo:
 		return false, "the gateway is not running"
-	case o.Endpoint == ReachFail:
+	case o.Endpoint == TriNo:
 		return false, "the endpoint is unreachable"
-	case o.Login == LoginNo:
+	case o.Login == TriNo:
 		return false, "not logged in"
-	case o.Login == LoginYes:
+	case o.Login == TriYes:
 		return true, "logged in"
-	case o.Endpoint == ReachOK:
+	case o.Endpoint == TriYes:
 		return true, "reachable"
 	default:
 		return true, "running"

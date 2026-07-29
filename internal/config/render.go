@@ -74,6 +74,12 @@ const (
 	UnitDMRGateway    = unitDMRGateway
 	UnitDAPNETGateway = unitDAPNETGateway
 
+	// MQTTNameDMRGateway is the [MQTT] Name rendered into DMRGateway.ini, and so
+	// the topic root it publishes its own status on (<name>/json). The supervisor
+	// subscribes there for the daemon's link reports, and must use the same string
+	// this file writes or it would listen to a topic nothing publishes to.
+	MQTTNameDMRGateway = "dmr-gateway"
+
 	// Cross-mode transcoding bridge units (MMDVM_CM). The per-bridge-daemon model is
 	// retired for the RFC-0003 bus architecture, so RenderTargets no longer restarts
 	// them. They remain named here only so apply can STOP any that a node was still
@@ -1388,7 +1394,7 @@ func (m *Model) RenderDMRGateway() string {
 		kv("Port", "1883"),
 		kv("Keepalive", "60"),
 		kv("Auth", "0"),
-		kv("Name", "dmr-gateway"),
+		kv("Name", MQTTNameDMRGateway),
 	)
 
 	dmrID := firstNonEmpty(m.DMR.ID, m.General.ID)
