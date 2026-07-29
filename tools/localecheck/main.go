@@ -195,17 +195,16 @@ func load(path string) (*catalog, []finding) {
 		c.messages[k] = s
 	}
 
-	switch {
-	case c.meta == nil:
+	if c.meta == nil {
 		findings = append(findings, finding{name, `is missing the reserved "_meta" object`, true})
-	default:
-		want := strings.TrimSuffix(name, ".json")
-		if c.meta.Tag != want {
-			findings = append(findings, finding{name, fmt.Sprintf("_meta.tag is %q but the filename says %q — a catalog is fetched by its filename, so they must match", c.meta.Tag, want), true})
-		}
-		if strings.TrimSpace(c.meta.Name) == "" {
-			findings = append(findings, finding{name, "_meta.name is empty — it is the native-language name the picker shows", true})
-		}
+		return c, findings
+	}
+	want := strings.TrimSuffix(name, ".json")
+	if c.meta.Tag != want {
+		findings = append(findings, finding{name, fmt.Sprintf("_meta.tag is %q but the filename says %q — a catalog is fetched by its filename, so they must match", c.meta.Tag, want), true})
+	}
+	if strings.TrimSpace(c.meta.Name) == "" {
+		findings = append(findings, finding{name, "_meta.name is empty — it is the native-language name the picker shows", true})
 	}
 	return c, findings
 }
