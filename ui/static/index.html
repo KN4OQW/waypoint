@@ -76,7 +76,7 @@
   ::selection { background: var(--accent-soft); }
 
   /* Keyboard-only focus ring on every interactive control. */
-  a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
+  a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-visible {
     outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px;
   }
   /* Skip link — hidden until focused, then pinned top-left over everything. */
@@ -129,6 +129,12 @@
   .swatch.on { background: var(--swatch-on); }
   .swatch.mode-toggle { flex: 1 1 100%; font-family: var(--mono); font-size: 11px; letter-spacing: 1px; color: var(--ink-body); margin-bottom: 7px; padding: 8px 0; }
   .swatch.mode-toggle.light { color: var(--accent); }
+  /* Language picker, below the swatches. Rendered (and unhidden) by i18n.js only
+     when more than one catalog ships, so an English-only node keeps this row. */
+  .lang-pick { margin-top: 13px; }
+  .lang-select { width: 100%; padding: 8px 9px; border-radius: 7px; cursor: pointer;
+    background: var(--swatch-bg); border: 1px solid var(--chip-line); color: var(--ink-body);
+    font-family: var(--mono); font-size: 11px; }
 
   /* main — identical shell to settings */
   main { min-width: 0; display: flex; flex-direction: column; max-height: 100vh; overflow: hidden; }
@@ -180,6 +186,7 @@
     .tscroll table { min-width: 420px; }
     /* Comfortable tap targets on the theme swatches + nav on a phone. */
     .swatch { min-height: 44px; }
+    .lang-select { min-height: 44px; }
     .nav-item { min-height: 44px; }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -224,7 +231,7 @@
 </style>
 </head>
 <body>
-<a class="skip-link" href="#main">Skip to main content</a>
+<a class="skip-link" href="#main" data-i18n="chrome.skipToMain">Skip to main content</a>
 <div class="app">
   <aside>
     <div class="brand">
@@ -237,20 +244,22 @@
       </div>
       <div class="callsign-chip">
         <div>
-          <div class="chip-k">CALLSIGN</div>
+          <div class="chip-k" data-i18n="sidebar.callsign">CALLSIGN</div>
           <div class="chip-v" id="side-callsign">—</div>
         </div>
-        <div class="online"><span class="led" id="side-led"></span><span class="txt" id="side-online">CONNECTING</span></div>
+        <div class="online"><span class="led" id="side-led"></span><span class="txt" id="side-online" data-i18n="sidebar.connecting">CONNECTING</span></div>
       </div>
     </div>
     <nav aria-label="Primary">
       <div class="nav-head">OVERVIEW</div>
-      <a class="nav-item on" href="/" aria-current="page"><span class="bar" aria-hidden="true"></span><span class="tag" aria-hidden="true">DB</span><span><span class="label">Dashboard</span><span class="sub">LIVE STATUS</span></span></a>
-      <a class="nav-item" href="settings.html"><span class="bar" aria-hidden="true"></span><span class="tag" aria-hidden="true">⚙</span><span><span class="label">Settings</span><span class="sub">CONFIGURE NODE</span></span></a>
+      <a class="nav-item on" href="/" aria-current="page"><span class="bar" aria-hidden="true"></span><span class="tag" aria-hidden="true">DB</span><span><span class="label" data-i18n="nav.dashboard">Dashboard</span><span class="sub">LIVE STATUS</span></span></a>
+      <a class="nav-item" href="settings.html"><span class="bar" aria-hidden="true"></span><span class="tag" aria-hidden="true">⚙</span><span><span class="label" data-i18n="nav.settings">Settings</span><span class="sub">CONFIGURE NODE</span></span></a>
     </nav>
     <div class="theme-pick">
-      <div class="theme-head" id="theme-head">DISPLAY THEME</div>
+      <div class="theme-head" id="theme-head" data-i18n="chrome.theme">DISPLAY THEME</div>
       <div class="swatches" id="swatches" role="group" aria-labelledby="theme-head"></div>
+      <!-- Filled by i18n.js via app.js; stays hidden while only one catalog ships. -->
+      <div class="lang-pick" id="lang-pick" hidden></div>
     </div>
   </aside>
 
@@ -260,7 +269,7 @@
       <div class="stat"><span class="k">VERSION</span><span class="v" id="st-version">—</span></div>
       <div class="stat"><span class="k">FEED</span><span class="v" id="st-feed">live</span></div>
       <span id="demo-badge" class="badge demo" hidden>demo feed</span>
-      <div class="conn-led down" id="conn-led" role="status" aria-live="polite"><span class="d" aria-hidden="true"></span><span id="conn-txt">connecting…</span></div>
+      <div class="conn-led down" id="conn-led" role="status" aria-live="polite"><span class="d" aria-hidden="true"></span><span id="conn-txt" data-i18n="status.connecting">connecting…</span></div>
     </div>
 
     <div class="scroll">
@@ -274,7 +283,7 @@
 
       <section class="card" aria-labelledby="onair-h">
         <div class="card-head"><span class="sq" aria-hidden="true"></span><span class="t" id="onair-h">ON AIR</span></div>
-        <div id="onair" class="onair idle" role="status" aria-live="polite" aria-atomic="true" aria-label="On air status"><p class="onair-idle">Listening — no active transmission</p></div>
+        <div id="onair" class="onair idle" role="status" aria-live="polite" aria-atomic="true" aria-label="On air status"><p class="onair-idle" data-i18n="dash.onair.idle">Listening — no active transmission</p></div>
       </section>
 
       <div class="grid2">
@@ -316,6 +325,7 @@
   </main>
 </div>
 
+<script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

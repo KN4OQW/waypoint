@@ -7,6 +7,10 @@ import (
 	"io/fs"
 )
 
+// static/locales/index.json is derived from the catalogs beside it, so it is
+// generated rather than maintained. See tools/genlocaleindex.
+//go:generate go run ../tools/genlocaleindex -dir static/locales
+
 //go:embed static
 var static embed.FS
 

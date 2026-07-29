@@ -1,0 +1,10 @@
+{
+  "_note": "Generated from each catalog's _meta block by tools/genlocaleindex. Do not edit by hand — run `go generate ./...`.",
+  "languages": [
+    {
+      "tag": "en-US",
+      "name": "English (US)",
+      "reviewed": true
+    }
+  ]
+}
