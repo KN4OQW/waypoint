@@ -114,11 +114,18 @@ func (m *fakeModem) fill() {
 			flipBit(frame, dmrBTable[:], 192, i%20)
 		}
 	}
+	// A real DMR superframe is a sync burst (control 0x20) followed by five
+	// counted ones. The sweep will not score anything until it sees the sync, so
+	// a fake that never sent one would be a fake that cannot be measured.
 	m.seq++
 	if m.seq > 5 {
-		m.seq = 1
+		m.seq = 0 // 0 stands in for the sync burst below
 	}
-	m.out = append(m.out, dmrFrame(m.seq, frame)...)
+	ctrl := m.seq
+	if ctrl == 0 {
+		ctrl = 0x20
+	}
+	m.out = append(m.out, dmrFrame(ctrl, frame)...)
 }
 
 // frameErrors is the physics: errors climb with the tuning error, and past the
@@ -202,10 +209,12 @@ func fastPlan() Plan {
 	return Plan{
 		CoarseSpanHz: 2000, CoarseStepHz: 250,
 		FineSpanHz: 600, FineStepHz: 100,
-		MinFrames: 10,
-		Dwell:     150 * time.Millisecond,
-		IdleGap:   200 * time.Millisecond,
-		Timeout:   60 * time.Second,
+		MinFrames:       10,
+		Settle:          time.Millisecond,
+		FirstSignalWait: 2 * time.Second,
+		Dwell:           150 * time.Millisecond,
+		IdleGap:         200 * time.Millisecond,
+		Timeout:         60 * time.Second,
 	}
 }
 

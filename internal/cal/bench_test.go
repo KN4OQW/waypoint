@@ -7,7 +7,7 @@ package cal
 // of this package is tested against and a real one.
 //
 //	GOOS=linux GOARCH=arm GOARM=6 go test -tags bench -c ./internal/cal
-//	scp cal.test <node>:  &&  ssh <node> 'sudo systemctl stop waypoint-mmdvmhost && sudo ./cal.test -test.v'
+//	scp cal.test <node>:  &&  ssh <node> 'sudo systemctl stop waypoint-mmdvm && sudo ./cal.test -test.v'
 //
 // NOTHING HERE TRANSMITS. Every test in this file is receive-only: it opens the
 // port, asks the modem what it is, writes the calibration configuration, tunes
@@ -25,12 +25,39 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/KN4OQW/waypoint/internal/modem"
 )
+
+// requireModemFree refuses to run while MMDVM-Host holds the UART.
+//
+// This guard exists because its absence cost a whole bench session. Both
+// processes can open the port — root bypasses the advisory exclusive lock — so
+// nothing fails loudly: MMDVM-Host polls the modem for its version every 1.8 s,
+// reconfigures it out from under the session, and consumes the DMR frames the
+// sweep is waiting for. What the operator sees is a sweep that hears nothing and
+// a handheld that will not key, with no indication that a second program is on
+// the wire.
+//
+// The unit is `waypoint-mmdvm.service`. The DEBIAN PACKAGE is called
+// `waypoint-mmdvmhost`, which is the trap: stopping "waypoint-mmdvmhost" gets
+// "Unit not loaded", which reads as "not installed" rather than "wrong name".
+func requireModemFree(t *testing.T) {
+	t.Helper()
+	out, _ := exec.Command("systemctl", "is-active", "waypoint-mmdvm.service").Output()
+	switch strings.TrimSpace(string(out)) {
+	case "active", "activating", "reloading":
+		t.Fatalf("MMDVM-Host is running and owns %s — both processes would be on the UART.\n"+
+			"Stop it first (note the unit name, which is NOT the package name):\n"+
+			"    sudo systemctl stop waypoint-mmdvm\n"+
+			"and start it again afterwards.", benchPort())
+	}
+}
 
 func benchPort() string {
 	if p := os.Getenv("WAYPOINT_BENCH_PORT"); p != "" {
@@ -75,6 +102,7 @@ func benchPlan() Plan {
 
 func benchOpen(t *testing.T) *Session {
 	t.Helper()
+	requireModemFree(t)
 	freq := benchFreq()
 	s, err := Open(context.Background(), Options{
 		Port:      benchPort(),
@@ -226,7 +254,8 @@ func TestBenchRawListen(t *testing.T) {
 	}
 	t.Logf("listening on %d Hz for %ds — key your radio NOW and hold it", freq, secs)
 
-	deadline := time.Now().Add(time.Duration(secs) * time.Second)
+	started := time.Now()
+	deadline := started.Add(time.Duration(secs) * time.Second)
 	counts := map[byte]int{}
 	var total, scored int
 	for time.Now().Before(deadline) {
@@ -236,12 +265,23 @@ func TestBenchRawListen(t *testing.T) {
 		}
 		total++
 		counts[f.Type]++
-		if total <= 40 { // the first few in full, then just the tally
+		if total <= 6 { // the first few in full, then just the tally
 			ctrl := "-"
 			if len(f.Payload) > 0 {
 				ctrl = fmt.Sprintf("0x%02X", f.Payload[0])
 			}
-			t.Logf("  frame type=0x%02X (%s) len=%d ctrl=%s", f.Type, frameName(f.Type), len(f.Payload), ctrl)
+			// The printable text of the payload, because "type 0x00" alone does
+			// not distinguish a genuine version reply from a mis-framed read.
+			var txt []rune
+			for _, b := range f.Payload {
+				if b >= 0x20 && b < 0x7F {
+					txt = append(txt, rune(b))
+				} else {
+					txt = append(txt, '.')
+				}
+			}
+			t.Logf("  +%6dms type=0x%02X (%s) len=%d ctrl=%s\n      %q",
+				time.Since(started).Milliseconds(), f.Type, frameName(f.Type), len(f.Payload), ctrl, string(txt))
 		}
 		if _, _, ok := scoreFrame(f); ok {
 			scored++
@@ -290,4 +330,169 @@ func frameName(t byte) string {
 		return "debug"
 	}
 	return "?"
+}
+
+// TestBenchMeasureHere scores ONE frequency for a fixed window and prints every
+// frame's error count, rather than sweeping.
+//
+// It exists to separate two explanations of a flat, high bit error rate that a
+// sweep cannot tell apart: a link that really is that bad at every offset, or a
+// scorer that is looking at the wrong bits. Scoring random data through a
+// perfect Golay code yields about 19 errors in 141 bits — near 13% — so a
+// suspiciously constant 13% is exactly what a misaligned payload looks like.
+//
+// A healthy DMR link at the correct frequency should score well under 2%, and
+// per-frame counts should vary. Twenty identical-ish counts near 19 mean the
+// bits being scored are not the AMBE codewords.
+//
+//	WAYPOINT_BENCH_OFFSET=0 WAYPOINT_BENCH_LISTEN_S=25 ./cal.test -test.v -test.run TestBenchMeasureHere
+func TestBenchMeasureHere(t *testing.T) {
+	s := benchOpen(t)
+	secs := benchEnvInt("WAYPOINT_BENCH_LISTEN_S", 25)
+	off := benchEnvInt("WAYPOINT_BENCH_OFFSET", 0)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(secs+20)*time.Second)
+	defer cancel()
+
+	rx := applyOffset(benchFreq(), off)
+	cfg := SweepConfig(uint8(benchEnvInt("WAYPOINT_BENCH_CC", 1)), 50)
+	if err := s.tune(ctx, rx, rx, cfg); err != nil {
+		t.Fatalf("tune to %d (%+d Hz): %v", rx, off, err)
+	}
+	t.Logf("measuring at %d Hz (%+d Hz offset) for %ds — key up and hold", rx, off, secs)
+
+	var meter Meter
+	var perFrame []int
+	deadline := time.Now().Add(time.Duration(secs) * time.Second)
+	for time.Now().Before(deadline) {
+		f, err := modem.ReadFrame(s.port)
+		if err != nil {
+			continue
+		}
+		errs, bits, ok := scoreFrame(f)
+		if !ok {
+			continue
+		}
+		meter.Add(errs, bits)
+		perFrame = append(perFrame, errs)
+		if len(perFrame) <= 30 {
+			t.Logf("  frame %2d: %3d errors of %d bits (%.2f%%)", len(perFrame), errs, bits, float64(errs)*100/float64(bits))
+		}
+	}
+
+	t.Logf("RESULT at %+d Hz: %d frames, %d/%d bits, BER %.4f%%",
+		off, meter.Frames, meter.Errors, meter.Bits, meter.Percent())
+	if meter.Frames == 0 {
+		t.Log("nothing decoded here")
+		return
+	}
+	// The distribution is the evidence. Real errors cluster low and vary; random
+	// data pinned by a perfect code clusters tightly around 19.
+	lo, hi := perFrame[0], perFrame[0]
+	for _, e := range perFrame {
+		if e < lo {
+			lo = e
+		}
+		if e > hi {
+			hi = e
+		}
+	}
+	t.Logf("per-frame errors: min %d, max %d, mean %.1f", lo, hi, float64(meter.Errors)/float64(meter.Frames))
+	switch {
+	case meter.Percent() < 2:
+		t.Log("HEALTHY: this is a good link and the scorer is working.")
+	case lo > 10 && hi < 30:
+		t.Log("SUSPICIOUS: every frame lands near 19 errors, which is what scoring NON-AMBE bits looks like.")
+	default:
+		t.Log("Degraded but varying — consistent with a real frequency error.")
+	}
+}
+
+// TestBenchCompareOffsets measures a handful of offsets properly, in one over.
+//
+// The sweep's eight-frame samples turned out to be far too small on this link:
+// the same frequency read 0.44% in a sweep and 4.52% over 245 frames, because
+// the receiver's alignment after a retune is intermittent and a short sample
+// catches whichever state it happened to land in. Rather than sweep more points
+// badly, this measures FEW points WELL — long enough that each number means
+// something — which is also kinder to a radio with a time-out timer.
+//
+//	WAYPOINT_BENCH_OFFSETS=-200,0,200 WAYPOINT_BENCH_EACH_S=8 ./cal.test \
+//	  -test.v -test.run TestBenchCompareOffsets
+func TestBenchCompareOffsets(t *testing.T) {
+	s := benchOpen(t)
+	each := time.Duration(benchEnvInt("WAYPOINT_BENCH_EACH_S", 8)) * time.Second
+
+	list := os.Getenv("WAYPOINT_BENCH_OFFSETS")
+	if list == "" {
+		list = "-200,-100,0,100,200"
+	}
+	var offs []int
+	for _, part := range strings.Split(list, ",") {
+		n, err := strconv.Atoi(strings.TrimSpace(part))
+		if err != nil {
+			t.Fatalf("bad offset %q", part)
+		}
+		offs = append(offs, n)
+	}
+
+	total := time.Duration(len(offs))*each + 60*time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), total)
+	defer cancel()
+
+	cfg := SweepConfig(uint8(benchEnvInt("WAYPOINT_BENCH_CC", 1)), 50)
+	t.Logf("measuring %d offsets for %s each — key up and hold for about %s total",
+		len(offs), each, time.Duration(len(offs))*each)
+
+	type result struct {
+		off   int
+		meter Meter
+	}
+	var results []result
+	for _, off := range offs {
+		rx := applyOffset(benchFreq(), off)
+		if err := s.tune(ctx, rx, rx, cfg); err != nil {
+			t.Fatalf("tune %+d: %v", off, err)
+		}
+		time.Sleep(300 * time.Millisecond) // settle before believing anything
+		var meter Meter
+		discard := 3
+		deadline := time.Now().Add(each)
+		for time.Now().Before(deadline) {
+			f, err := modem.ReadFrame(s.port)
+			if err != nil {
+				continue
+			}
+			errs, bits, ok := scoreFrame(f)
+			if !ok {
+				continue
+			}
+			if discard > 0 {
+				discard--
+				continue
+			}
+			meter.Add(errs, bits)
+		}
+		results = append(results, result{off, meter})
+		t.Logf("  %+5d Hz: %3d frames, BER %6.3f%%  (%d/%d bits)",
+			off, meter.Frames, meter.Percent(), meter.Errors, meter.Bits)
+	}
+
+	best := -1
+	for i, r := range results {
+		if r.meter.Frames < 20 {
+			continue // too small a sample to trust, whatever it says
+		}
+		if best < 0 || r.meter.Percent() < results[best].meter.Percent() {
+			best = i
+		}
+	}
+	if best < 0 {
+		t.Log("no offset gathered enough frames to be trusted — was the radio keyed throughout?")
+		return
+	}
+	t.Logf("BEST: %+d Hz at %.3f%% BER over %d frames",
+		results[best].off, results[best].meter.Percent(), results[best].meter.Frames)
+	if results[best].meter.Percent() < 1.0 {
+		t.Logf("Under 1%% — this meets issue #20's acceptance threshold.")
+	}
 }

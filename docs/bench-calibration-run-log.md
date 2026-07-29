@@ -40,10 +40,16 @@ Two defects were found there that a bench run would have found the hard way:
 
 ## Run 1 — receive-only checks. **PASS**
 
-Nothing transmitted; the node was never keyed. MMDVM-Host was not running, so
-no arbitration was exercised (`waypoint-mmdvmhost.service` is not installed on
-this bench — worth knowing, because the sweep's port-ownership path therefore
-has no hardware coverage yet either).
+Nothing transmitted; the node was never keyed.
+
+**Correction, made after the fact:** this run was made with **MMDVM-Host still
+running**. The command used to stop it named `waypoint-mmdvmhost`, which is not
+the unit — it is `waypoint-mmdvm.service` — and systemd's "Unit not loaded" was
+read as "not installed" rather than "you have the name wrong". Two processes were
+therefore on the UART for every check below. The results still stand (the modem
+answered, and answered correctly), but the silence in `TestBenchListenForFrames`
+had a second cause nobody had accounted for, and the port-ownership path was
+never exercised.
 
 ### The firmware these frames were validated against
 
@@ -137,9 +143,9 @@ GOOS=linux GOARCH=arm GOARM=6 go test -tags bench -c -o cal.test ./internal/cal
 scp cal.test rescue@172.16.50.13:/tmp/
 
 ssh rescue@172.16.50.13
-sudo systemctl stop waypoint-mmdvmhost
+sudo systemctl stop waypoint-mmdvm
 cd /tmp && sudo WAYPOINT_BENCH_FREQ=438800000 ./cal.test -test.v
-sudo systemctl start waypoint-mmdvmhost
+sudo systemctl start waypoint-mmdvm
 ```
 
 What each test is for, and what would make it interesting:
@@ -158,7 +164,76 @@ Waypoint, and this is where it is checked against the board.
 
 </details>
 
-## Run 2 — the acceptance criterion. **NOT YET RUN** (a radio is keyed — this transmits)
+## Run 2 — first live measurements, 2026-07-29. **The engine works; four defects found**
+
+A DMR handheld on a simplex channel, 433.900 MHz, colour code 2, into the Dual
+Hat's receiver. Every number below is a real bit error rate measured off the air.
+
+### The measurement is real
+
+The decisive run, five offsets at eight seconds each:
+
+```
+-200 Hz  110 frames   1.238%   (192/15510 bits)
+-100 Hz  131 frames   1.305%   (241/18471 bits)
+  +0 Hz  131 frames   0.807%   (149/18471 bits)   ← minimum
++100 Hz  131 frames   1.299%   (240/18471 bits)
++200 Hz  131 frames   1.575%   (291/18471 bits)
+```
+
+A smooth curve with its minimum at the configured frequency, at **0.807% BER** —
+so this node needs no offset, and the sweep would correctly tell its operator so.
+An earlier fixed-frequency run scored 245 frames at 4.52% with per-frame errors
+ranging 0 to 21; **a frame with zero errors is the proof the scorer is right**,
+because misaligned bits cannot produce one.
+
+### Four defects, none of which any amount of emulation would have found
+
+**1. Two processes on one UART, silently.** Every early run heard nothing, and
+the modem answered with a GET_VERSION reply every 1.8 seconds — MMDVM-Host,
+running under `waypoint-mmdvm.service`, polling a modem it could not keep. The
+stop command used `waypoint-mmdvmhost`, which is the DEBIAN PACKAGE name, not the
+unit; systemd's "Unit not loaded" was read as "not installed". Root bypasses the
+advisory exclusive lock, so nothing failed loudly — the two processes simply
+interleaved, and the handheld could not key either. The bench harness now refuses
+to run while MMDVM-Host is active and says which name to stop.
+
+**2. A duplex channel cannot calibrate.** The handheld sat "trying to connect"
+and dropped after five bursts. A radio on a repeater channel will not transmit
+until it hears a downlink, and the sweep — by design — never transmits. Both ends
+were behaving exactly as specified. The panel now says "simplex, Direct Mode or
+DMO" before the button, and names the trap.
+
+**3. The sweep gave up before the operator could key.** With nothing ever heard,
+every candidate dwelled out and a seven-point run ended in 23 seconds — less time
+than it takes to pick up a radio. There is now a bounded first-signal wait
+(60 s default) before any candidate is consumed, which still gives up and sweeps
+anyway, because the configured frequency is exactly where a badly-tuned board
+hears nothing.
+
+**4. Scoring during re-acquisition, and samples far too small.** The first
+complete sweep alternated real values (1.9%, 2.3%) with **exactly 13.0319%** at
+scattered offsets — the value random bits give through a perfect Golay code,
+whose covering radius is 3. Retuning restarts the receiver mid-transmission and
+it re-acquires sync, sometimes onto a false position. A settle delay plus
+discarding the first frames fixed most of it; the rest was sample size. Ten
+frames was the original default and the same frequency read 0.44% on eight frames
+and 0.807% on a hundred and thirty-one. **The default is now fifty.**
+
+One thing tried and reverted: gating the score on the receiver's own sync burst
+(control 0x20) instead of discarding frames. It was worse — every point then read
+a uniform 11.5% — so scoring from a just-re-correlated burst evidently catches it
+before it is trustworthy. Recorded because the idea is an obvious one to have
+again.
+
+### Still not done
+
+The injected-error half of the acceptance criterion. This node is already
+correctly tuned, so the sweep had nothing to find; proving it *recovers* from a
+known error still needs the +400 Hz injection below, now with the fifty-frame
+default in place.
+
+## Run 3 — the acceptance criterion. **NOT YET RUN** (a radio is keyed — this transmits)
 
 > "A misconfigured bench unit (+400 Hz offset injected) is brought to <1% BER by
 > wizard alone."
@@ -190,7 +265,7 @@ unhelpful. The last one matters most — the measurement is the easy part.
 ## Not covered, and known not to be
 
 - **The keyed acceptance run**, above.
-- **Port arbitration.** `waypoint-mmdvmhost.service` is not installed on this
+- **Port arbitration.** `waypoint-mmdvm.service` is not installed on this
   bench, so "stop MMDVM-Host, sweep, restart it no matter what" has unit-test
   coverage and no hardware coverage.
 - **The repeater workflow.** No full-size MMDVM exists on this bench. The

@@ -47,6 +47,29 @@ type Plan struct {
 	// IdleGap is how long without a frame anywhere before the sweep decides the
 	// operator has let go of the PTT, stops consuming candidates and waits.
 	IdleGap time.Duration
+	// Settle is how long to leave the modem alone after retuning, and
+	// SettleFrames is how many frames to discard once it starts producing them.
+	//
+	// Retuning reprograms the ADF7021 and restarts the mode's interface
+	// configuration, and the receiver then has to re-acquire the transmission it
+	// is already in the middle of. Scoring during that reads about 13% — what
+	// random bits give through a perfect Golay code, whose covering radius is 3
+	// — and that is indistinguishable from a bad frequency except that it
+	// repeats to four decimal places.
+	//
+	// Gating on the receiver's own sync burst instead was tried on the bench and
+	// was WORSE — every point then read a uniform 11.5%, where discarding frames
+	// had produced 0.44% at the best offset. Scoring from the burst the receiver
+	// has only just re-correlated evidently catches it before it is reliable.
+	// The mechanism that measured well is the one kept.
+	Settle       time.Duration
+	SettleFrames int
+	// FirstSignalWait is how long to wait for the FIRST frame before starting to
+	// consume candidates. Without it a sweep that begins before the operator has
+	// keyed up spends its whole grid on silence and reports hearing nothing —
+	// seven candidates at a three-second dwell is over in twenty seconds, which
+	// is less time than it takes to pick up a radio.
+	FirstSignalWait time.Duration
 	// Timeout bounds the whole sweep, including time spent waiting.
 	Timeout time.Duration
 }
@@ -65,18 +88,36 @@ func (p Plan) withDefaults() Plan {
 		p.FineStepHz = 100
 	}
 	if p.MinFrames <= 0 {
-		// Ten frames is 600 ms of speech — enough that a single burst of noise
-		// does not decide a candidate, short enough that a full sweep is a
-		// handful of PTT presses.
-		p.MinFrames = 10
+		// Fifty frames, about three seconds of speech. Ten was the original
+		// guess and it was wrong by enough to invalidate a measurement: on the
+		// bench the same frequency read 0.44% on an eight-frame sample and
+		// 0.807% on a hundred and thirty-one, and neighbouring candidates
+		// disagreed by ten percentage points on short samples while the long
+		// ones formed a clean curve. The receiver's alignment after a retune is
+		// intermittent, so a small sample reports whichever state it caught.
+		//
+		// The cost is real — fifty frames per point is three seconds of held PTT
+		// — which is why the sweep pauses and resumes rather than demanding one
+		// long over.
+		p.MinFrames = 50
 	}
 	if p.Dwell <= 0 {
-		// Comfortably longer than the 600 ms MinFrames needs, so a candidate is
-		// only abandoned when the signal genuinely is not decodable there.
+		// Silence at a candidate, not time spent on it — the dwell clock resets
+		// on every frame. Three seconds of nothing, while frames are arriving
+		// elsewhere, means this frequency genuinely cannot hear the signal.
 		p.Dwell = 3 * time.Second
 	}
 	if p.IdleGap <= 0 {
 		p.IdleGap = 2 * time.Second
+	}
+	if p.Settle <= 0 {
+		p.Settle = 250 * time.Millisecond
+	}
+	if p.SettleFrames <= 0 {
+		p.SettleFrames = 3
+	}
+	if p.FirstSignalWait <= 0 {
+		p.FirstSignalWait = 60 * time.Second
 	}
 	if p.Timeout <= 0 {
 		p.Timeout = 10 * time.Minute
@@ -171,6 +212,11 @@ func (s *Session) Sweep(ctx context.Context, plan Plan, emit func(Progress)) (Re
 	// their radio.
 	s.lastFrame = time.Time{}
 
+	// Wait for the operator before spending the grid on silence.
+	if err := s.awaitFirstSignal(ctx, cfg, plan, emit); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		return res, err
+	}
+
 	coarse := offsets(-plan.CoarseSpanHz, plan.CoarseSpanHz, plan.CoarseStepHz)
 	if err := s.runPass(ctx, PhaseCoarse, coarse, cfg, plan, &res, emit); err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		return res, err
@@ -234,6 +280,49 @@ func (s *Session) runPass(ctx context.Context, phase Phase, offs []int, cfg Conf
 		}
 		res.Points = append(res.Points, p)
 	}
+	return nil
+}
+
+// awaitFirstSignal holds at the configured frequency until the operator's radio
+// is heard, before any candidate is scored.
+//
+// It is bounded, and then gives up and sweeps anyway. That matters as much as
+// the waiting does: the node's own frequency is exactly where a badly-tuned
+// board CANNOT hear anything, so a wait that insisted on a signal here would
+// hang forever on the boards this feature exists for. Waiting is the common
+// case; sweeping regardless is the one that must still work.
+func (s *Session) awaitFirstSignal(ctx context.Context, cfg Config, plan Plan, emit func(Progress)) error {
+	if plan.FirstSignalWait <= 0 {
+		return nil
+	}
+	if err := s.tune(ctx, s.opt.RXFreqHz, s.opt.TXFreqHz, cfg); err != nil {
+		return err
+	}
+	emit(Progress{Phase: PhaseWaiting, FreqHz: s.opt.RXFreqHz,
+		Detail: "waiting for your radio — key up on this frequency in DMR simplex and hold it"})
+
+	deadline := s.opt.now().Add(plan.FirstSignalWait)
+	for s.opt.now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		f, err := modem.ReadFrame(s.port)
+		if err != nil {
+			if errors.Is(err, modem.ErrTimeout) {
+				continue
+			}
+			return fmt.Errorf("cal: read from %s: %w", s.opt.Port, err)
+		}
+		if _, _, ok := scoreFrame(f); ok {
+			s.lastFrame = s.opt.now()
+			emit(Progress{Phase: PhaseCoarse, FreqHz: s.opt.RXFreqHz, Detail: "heard you — sweeping"})
+			return nil
+		}
+	}
+	// Nothing here. That is not a failure: this frequency may be the one the
+	// board cannot hear on, which is the whole reason for sweeping.
+	emit(Progress{Phase: PhaseCoarse, FreqHz: s.opt.RXFreqHz,
+		Detail: "nothing heard on the configured frequency — sweeping to look for it"})
 	return nil
 }
 
@@ -354,7 +443,15 @@ func (s *Session) measure(ctx context.Context, phase Phase, freq uint32, off, st
 		return p, err
 	}
 
+	// Let the synthesiser and the receiver settle before believing anything.
+	if plan.Settle > 0 {
+		if err := sleepCtx(ctx, plan.Settle); err != nil {
+			return p, err
+		}
+	}
+
 	var meter Meter
+	discard := plan.SettleFrames
 	dwellStart := s.opt.now()
 	waiting := false
 
@@ -394,6 +491,15 @@ func (s *Session) measure(ctx context.Context, phase Phase, freq uint32, off, st
 
 		errs, bits, ok := scoreFrame(f)
 		if !ok {
+			continue
+		}
+		if discard > 0 {
+			// Still settling after the retune. It counts as SIGNAL — the operator
+			// is transmitting and the dwell clock must not run out on them — but
+			// not as a measurement.
+			discard--
+			s.lastFrame = s.opt.now()
+			dwellStart = s.lastFrame
 			continue
 		}
 		meter.Add(errs, bits)
@@ -575,4 +681,16 @@ func abs(v int) int {
 		return -v
 	}
 	return v
+}
+
+// sleepCtx waits, or gives up early if the caller does.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
