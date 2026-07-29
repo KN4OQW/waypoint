@@ -682,3 +682,42 @@ func TestControllerUpIsIdempotent(t *testing.T) {
 		t.Errorf("APUp was called %d times, want 1", n)
 	}
 }
+
+// The controller must remember which interface the helper actually raised the AP
+// on. It is the only place that learns it — the operator names none on a node with
+// one radio, and the helper picks — and both route checks exclude it. Before this,
+// the exclusion read a flag that is empty on a normal node, so it silently did
+// nothing exactly where it mattered: a node that raised its AP during an outage
+// would count the AP's own route as a way out.
+func TestControllerRecordsTheRaisedInterface(t *testing.T) {
+	fake := privtest.NewFake()
+	c := &Controller{Prov: fake, SSID: "Waypoint-Setup-TEST", Logf: func(string, ...any) {}}
+
+	if got := c.APInterface(); got != "" {
+		t.Errorf("before the AP is raised there is nothing to exclude, got %q", got)
+	}
+	if err := c.Up(context.Background()); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	// The request named no interface; the helper chose, and the controller kept it.
+	if got := c.APInterface(); got == "" {
+		t.Fatal("the interface the helper chose was discarded")
+	} else if got != "wlan0" {
+		t.Errorf("APInterface = %q, want the helper's choice", got)
+	}
+}
+
+// What was actually raised wins over what was configured, since only the former is
+// the interface the route checks must exclude.
+func TestControllerPrefersTheRaisedInterface(t *testing.T) {
+	c := &Controller{SSID: "s", Interface: "wlan0"}
+	if got := c.APInterface(); got != "wlan0" {
+		t.Errorf("with no AP up, the configured interface is the best guess: got %q", got)
+	}
+	c.mu.Lock()
+	c.iface = "wlan1" // as recorded from an APUp response
+	c.mu.Unlock()
+	if got := c.APInterface(); got != "wlan1" {
+		t.Errorf("APInterface = %q, want the interface actually raised", got)
+	}
+}

@@ -72,6 +72,13 @@ type Controller struct {
 	seen    bool // a client has been observed
 	raised  time.Time
 	lastDwn Reason
+	// iface is the interface the helper actually raised the AP on, which is not
+	// necessarily c.Interface: that is usually empty, because an operator has no
+	// reason to name a wireless device on a node with one. The helper picks, and
+	// callers that need to reason about the AP's own interface — the route checks in
+	// netwatch and the resilience supervisor, which must not count the AP as a way
+	// out — have no other way to learn which it chose.
+	iface string
 }
 
 func (c *Controller) now() time.Time {
@@ -113,18 +120,22 @@ func (c *Controller) Up(ctx context.Context) error {
 	}
 	c.mu.Unlock()
 
-	if _, err := c.Prov.APUp(ctx, privhelper.APUpRequest{
+	resp, err := c.Prov.APUp(ctx, privhelper.APUpRequest{
 		SSID:        c.SSID,
 		Passphrase:  c.PSK,
 		Interface:   c.Interface,
 		Country:     c.Country,
 		AddressCIDR: c.AddressCIDR,
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
 
 	c.mu.Lock()
 	c.up, c.raised = true, c.now()
+	if resp.Interface != "" {
+		c.iface = resp.Interface
+	}
 	c.mu.Unlock()
 
 	protection := "open"
@@ -216,6 +227,22 @@ func (c *Controller) Reraise(ctx context.Context, why Reason) error {
 // the setup AP does not come back without a reboot.
 func (c *Controller) Commit(ctx context.Context) error {
 	return c.Down(ctx, ReasonJoined)
+}
+
+// APInterface reports the interface the setup AP is on, or "" when it has never
+// been raised and the operator named none.
+//
+// This is what the route checks exclude. Reading the configured field alone was
+// not enough: it is empty on a normal node, so the exclusion silently did nothing
+// and the guard against a node treating its own access point as connectivity was
+// inert exactly where it was needed.
+func (c *Controller) APInterface() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.iface != "" {
+		return c.iface
+	}
+	return c.Interface
 }
 
 // NoteClient records that a client is using the AP. It is called from the

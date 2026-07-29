@@ -85,8 +85,14 @@ func (s *server) runSupervisor(ctx context.Context, opts supervisorOptions) {
 			// The kernel's route table, excluding the setup AP's own interface —
 			// the same question netwatch asks, and for the same reason: a probe
 			// against a third party's host would make their outage look like ours.
+			//
+			// The interface comes from the AP rather than the flag, which is empty
+			// unless the operator named a device. Counting the AP's own route as a
+			// way out would have the supervisor decide the node was back online in
+			// the middle of the outage that raised the AP, and start restarting
+			// gateways over it.
 			WANUp: func() bool {
-				return netwatch.HasDefaultRoute(netwatch.RoutePath, s.setupAPIface)
+				return netwatch.HasDefaultRoute(netwatch.RoutePath, s.apInterface())
 			},
 			TXActive:   func() bool { return s.agg != nil && s.agg.Snapshot().TX != nil },
 			UnitActive: s.unitLiveness,
@@ -161,3 +167,14 @@ type unitError struct {
 
 func (e *unitError) Error() string { return e.err.Error() + ": " + e.out }
 func (e *unitError) Unwrap() error { return e.err }
+
+// apInterface is the setup AP's interface, or the configured one before the AP has
+// ever been raised. Both route checks on this node share it.
+func (s *server) apInterface() string {
+	if s.ap != nil {
+		if iface := s.ap.APInterface(); iface != "" {
+			return iface
+		}
+	}
+	return s.setupAPIface
+}
