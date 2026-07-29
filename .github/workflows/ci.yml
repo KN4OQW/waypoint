@@ -51,6 +51,26 @@ jobs:
           version: v2.6.2
           args: --new-from-rev=origin/main
 
+  # ui/static/locales/index.json is generated from the catalogs' _meta blocks
+  # (tools/genlocaleindex). That is what makes adding a language a new .json file
+  # and nothing else — issue #23's acceptance criterion. A hand-edited or stale
+  # index quietly breaks it, so regenerate and refuse any diff.
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: go generate
+        run: go generate ./...
+      - name: Refuse a stale generated file
+        run: |
+          if ! git diff --exit-code; then
+            echo "::error::Generated files are out of date. Run 'go generate ./...' and commit the result."
+            exit 1
+          fi
+
   # Every unit the image ships is parsed by systemd itself. A directive that
   # systemd silently ignores — a misspelled hardening option, a stale unit name in
   # an After= — is invisible until the node it was meant to protect is in the
