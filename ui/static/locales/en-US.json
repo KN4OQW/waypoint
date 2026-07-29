@@ -244,6 +244,8 @@
   "hardware.board2": "Board",
   "hardware.boardSittingItsBootloader": "A board is sitting in its bootloader",
   "hardware.chipId": "Chip ID",
+  "hardware.detect": "DETECT",
+  "hardware.detecting": "DETECTING…",
   "hardware.editsConfigTxtCmdline": "This edits <code>config.txt</code> and <code>cmdline.txt</code> on the boot partition and masks the serial login service. Your own settings in those files are left alone. <b>The node must be rebooted</b> for it to take effect.",
   "hardware.firmware": "Firmware",
   "hardware.found": "Found on",
@@ -446,8 +448,35 @@
   "lcd.noPagesYetAdd": "No pages yet — add one to show something on the panel.",
   "lcd.panel": "PANEL",
   "lcd.rows": "Rows",
+  "lcd.token.ber": "Bit-error rate of the last transmission",
+  "lcd.token.callsign": "Station callsign (config)",
+  "lcd.token.date": "Date, YYYY-MM-DD",
+  "lcd.token.dmr_id": "DMR ID (config)",
+  "lcd.token.freq_rx": "RX frequency, MHz (modem config)",
+  "lcd.token.freq_tx": "TX frequency, MHz (modem config)",
+  "lcd.token.hostname": "Node hostname",
+  "lcd.token.ip": "Node's LAN IPv4 address",
+  "lcd.token.lh_ago": "Time since the last transmission",
+  "lcd.token.lh_ber": "Last heard bit-error rate",
+  "lcd.token.lh_call": "Last heard callsign",
+  "lcd.token.lh_mode": "Last heard mode",
+  "lcd.token.lh_rssi": "Last heard RSSI, dBm",
+  "lcd.token.lh_tg": "Last heard talkgroup",
+  "lcd.token.mode": "Active mode, else IDLE",
+  "lcd.token.modes": "Enabled modes, space-joined",
+  "lcd.token.rssi": "Signal of the last transmission",
+  "lcd.token.source": "Caller now, else last heard",
+  "lcd.token.status": "Activity line, else Listening",
+  "lcd.token.tg": "Talkgroup now, else last heard",
+  "lcd.token.time": "Clock, HH:MM",
+  "lcd.token.uptime": "Time since the daemon started",
+  "lcd.token.version": "Waypoint version",
+  "lcd.tokenPaletteTitle": "{desc} — inserts {token}",
 
   "lcdLegend.tokenReference": "TOKEN REFERENCE",
+
+  "leds.modeDisabled": "{mode} disabled",
+  "leds.modeEnabled": "{mode} enabled",
 
   "log.link": "{network}: {detail}",
   "log.mode": "mode {mode}",
@@ -464,6 +493,7 @@
   "m17.reflectorListNotLoaded": "Reflector list not loaded yet (fetched from the M17 register on a schedule). You can still type a reflector above.",
   "m17.revertStartupReflectorAfter": "Revert to startup reflector after inactivity",
 
+  "modes.cardLabel": "{mode} mode",
   "modes.modeEnable": "MODE ENABLE",
   "modes.modeSettings": "MODE SETTINGS",
   "modes.turnModeHaveMmdvm": "Turn a mode on to have MMDVM-Host handle it. Toggling one restarts the stack on Apply.",
@@ -524,6 +554,8 @@
   "network.editingHereWritesStore": "Editing here writes the store and, on <b>Apply Network</b>, renders NetworkManager keyfiles behind a confirm-or-revert guard so a bad change can't strand the node. Waypoint only manages its own <code>waypoint-*</code> profiles; your hand-made connections are never touched.",
   "network.loadingNetworkConfiguration": "Loading network configuration…",
 
+  "networks.enabledLabel": "{network} network enabled",
+
   "nodeLockRow.nodeLockPrivatePublic": "Node Lock (Private / Public)",
 
   "nxdn.selfOnlyAcceptOnly": "Self only (accept only my ID)",
@@ -555,6 +587,7 @@
   "peerModal.pairing": "PAIRING",
   "peerModal.sLanPeersScreen": "'s LAN Peers screen, then confirm here.",
 
+  "peersCard.discoverPeers": "Discover peers (mDNS)",
   "peersCard.lanPeersRfc0016": "LAN PEERS (RFC-0016)",
   "peersCard.noPairedPeersYet": "No paired peers yet. Discover a node or add one by host:port, then pair.",
   "peersCard.noPeersFoundLan": "No peers found on the LAN. Add one by host:port below (mDNS may be filtered on your network).",
@@ -563,6 +596,7 @@
   "peersCard.paired": "PAIRED",
   "peersCard.pairedPeers": "Paired peers",
   "peersCard.revoke": "Revoke",
+  "peersCard.scanning": "Scanning…",
 
   "pending.settingsArenTWired": "settings aren't wired yet — a later slice of the configuration store (",
   "pending.waypoint1": "waypoint#1",

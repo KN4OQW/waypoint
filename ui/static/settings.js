@@ -421,32 +421,34 @@ function lcdFrom(l) {
 // so the UI never offers a token the driver can't expand. `sample` feeds the live
 // preview (a representative "active DMR call" snapshot).
 const LCD_TOKEN_HELP = [
-  ["callsign", "Station callsign (config)", "KN4OQW"],
-  ["dmr_id", "DMR ID (config)", "3180202"],
-  ["ip", "Node's LAN IPv4 address", "192.168.1.50"],
-  ["hostname", "Node hostname", "waypoint"],
-  ["version", "Waypoint version", "1.0"],
-  ["freq_rx", "RX frequency, MHz (modem config)", "433.1250"],
-  ["freq_tx", "TX frequency, MHz (modem config)", "433.1250"],
-  ["time", "Clock, HH:MM", "15:04"],
-  ["date", "Date, YYYY-MM-DD", "2026-07-14"],
-  ["uptime", "Time since the daemon started", "1h30m"],
-  ["mode", "Active mode, else IDLE", "DMR"],
-  ["modes", "Enabled modes, space-joined", "DMR YSF"],
-  ["status", "Activity line, else Listening", "RX DMR TG91 W1ABC"],
-  ["source", "Caller now, else last heard", "W1ABC"],
-  ["tg", "Talkgroup now, else last heard", "TG91"],
-  ["rssi", "Signal of the last transmission", "-70"],
-  ["ber", "Bit-error rate of the last transmission", "0.5%"],
-  ["lh_call", "Last heard callsign", "W1ABC"],
-  ["lh_tg", "Last heard talkgroup", "TG91"],
-  ["lh_mode", "Last heard mode", "DMR"],
-  ["lh_ber", "Last heard bit-error rate", "0.5%"],
-  ["lh_rssi", "Last heard RSSI, dBm", "-70"],
-  ["lh_ago", "Time since the last transmission", "30s"],
+  ["callsign", "KN4OQW"],
+  ["dmr_id",   "3180202"],
+  ["ip",       "192.168.1.50"],
+  ["hostname", "waypoint"],
+  ["version",  "1.0"],
+  ["freq_rx",  "433.1250"],
+  ["freq_tx",  "433.1250"],
+  ["time",     "15:04"],
+  ["date",     "2026-07-14"],
+  ["uptime",   "1h30m"],
+  ["mode",     "DMR"],
+  ["modes",    "DMR YSF"],
+  ["status",   "RX DMR TG91 W1ABC"],
+  ["source",   "W1ABC"],
+  ["tg",       "TG91"],
+  ["rssi",     "-70"],
+  ["ber",      "0.5%"],
+  ["lh_call",  "W1ABC"],
+  ["lh_tg",    "TG91"],
+  ["lh_mode",  "DMR"],
+  ["lh_ber",   "0.5%"],
+  ["lh_rssi",  "-70"],
+  ["lh_ago",   "30s"],
 ];
 const LCD_TOKENS = LCD_TOKEN_HELP.map((t) => t[0]);
-const LCD_SAMPLE = LCD_TOKEN_HELP.reduce((m, t) => { m[t[0]] = t[2]; return m; }, {});
+const LCD_SAMPLE = LCD_TOKEN_HELP.reduce((m, t) => { m[t[0]] = t[1]; return m; }, {});
+// A token's human description, for the palette tooltips and the legend.
+const lcdTokenDesc = (tok) => msg("lcd.token." + tok);
 // unknownTokens returns the {tokens} in a line that aren't in LCD_TOKENS.
 function unknownTokens(line) {
   const bad = [];
@@ -757,7 +759,7 @@ function panelModes() {
     // Tab and flips on Enter/Space. aria-pressed carries the enabled state; the
     // "ENABLED/DISABLED" text and the LED both back up the accent colour.
     return `
-    <button type="button" class="mode-card ${on ? "on" : ""}" data-toggle="modes.${k}" aria-pressed="${on}" aria-label="${esc(names[k])} mode">
+    <button type="button" class="mode-card ${on ? "on" : ""}" data-toggle="modes.${k}" aria-pressed="${on}" aria-label="${esc(msg("modes.cardLabel", { mode: names[k] }))}">
       <div class="mode-top">
         <div><div class="mode-name">${esc(names[k])}</div><div class="mode-desc">${esc(k.toUpperCase())}</div></div>
         <div class="track" aria-hidden="true"><div class="knob"></div></div>
@@ -882,7 +884,7 @@ function pageCard(p, i, rows, cols, total) {
   }
   const warn = `<div class="lcd-warn${bad.length ? "" : " hide"}" role="alert" data-lcdwarn="${i}">${warnText(bad)}</div>`;
   const palette = `<div class="lcd-tokens" role="group" aria-label="Insert a token into page ${i + 1}">` +
-    LCD_TOKEN_HELP.map(([tk, desc]) => `<button type="button" class="lcd-tok" data-lcdtoken="${esc(tk)}" data-lcdpageidx="${i}" title="${esc(desc)} — inserts {${esc(tk)}}">{${esc(tk)}}</button>`).join("") + `</div>`;
+    LCD_TOKEN_HELP.map(([tk]) => `<button type="button" class="lcd-tok" data-lcdtoken="${esc(tk)}" data-lcdpageidx="${i}" title="${esc(msg("lcd.tokenPaletteTitle", { desc: lcdTokenDesc(tk), token: "{" + tk + "}" }))}">{${esc(tk)}}</button>`).join("") + `</div>`;
   const preview = `<div class="lcd-preview">` +
     `<div class="lcd-preview-label" id="lcd-pv-label-${i}">Preview (${esc(cols)}×${esc(String(rows))})</div>` +
     `<pre class="lcd-screen" data-lcdpreview="${i}" role="group" aria-labelledby="lcd-pv-label-${i}">${esc(lcdPreviewText(p, rows, parseInt(cols, 10) || 20))}</pre></div>`;
@@ -922,8 +924,8 @@ function updatePageWarning(i) {
 // It is generated from LCD_TOKEN_HELP so it can never drift from the palette or
 // the renderer. Rendered as a real <dl> inside <details> for accessible reading.
 function lcdLegend() {
-  const items = LCD_TOKEN_HELP.map(([tk, desc]) =>
-    `<dt>{${esc(tk)}}</dt><dd>${esc(desc)}</dd>`).join("");
+  const items = LCD_TOKEN_HELP.map(([tk]) =>
+    `<dt>{${esc(tk)}}</dt><dd>${esc(lcdTokenDesc(tk))}</dd>`).join("");
   return `<details class="lcd-legend"><summary>${msg("lcdLegend.tokenReference")}</summary><dl>${items}</dl></details>`;
 }
 
@@ -1059,7 +1061,7 @@ function ensureNet(type) {
   return n;
 }
 
-const enPill = (type, n) => { const on = !!(n && n.enabled); return `<button type="button" class="pill ${on ? "on" : "off"}" data-neten="${type}" aria-pressed="${on}" aria-label="${esc(type)} network enabled">${on ? "ENABLED" : "DISABLED"}</button>`; };
+const enPill = (type, n) => { const on = !!(n && n.enabled); return `<button type="button" class="pill ${on ? "on" : "off"}" data-neten="${type}" aria-pressed="${on}" aria-label="${esc(msg("networks.enabledLabel", { network: type }))}">${on ? "ENABLED" : "DISABLED"}</button>`; };
 const netField = (type, key, n, ph, pw) =>
   `<input data-netf="${type}" data-nkey="${key}"${pw ? ' type="password"' : ""} value="${esc(n ? (n[key] || "") : "")}" placeholder="${esc(ph || "")}">`;
 
@@ -2023,7 +2025,7 @@ function peersCard() {
       ? peering.discovered.map((d) => `<div class="row peer-disc"><label>${esc(d.instance || d.host)}<span class="peer-fp">${esc(d.host)}:${esc(String(d.port))}</span></label><button type="button" class="btn accent" data-peerpair="${esc(d.host)}:${esc(String(d.port))}">${msg("peersCard.pair")}</button></div>`).join("")
       : note(msg("peersCard.noPeersFoundLan"));
   }
-  const discBtn = `<button type="button" class="btn" id="peer-discover"${peering.busy ? " disabled" : ""}>${peering.busy ? "Scanning…" : "Discover peers (mDNS)"}</button>`;
+  const discBtn = `<button type="button" class="btn" id="peer-discover"${peering.busy ? " disabled" : ""}>${esc(peering.busy ? msg("peersCard.scanning") : msg("peersCard.discoverPeers"))}</button>`;
   const manual = `<div class="row"><input id="peer-manual" placeholder="host:port — e.g. 10.0.0.20:42501" aria-label="peer host and port"><button type="button" class="btn" id="peer-pair-manual">${msg("peersCard.pair")}</button></div>`;
 
   return card(msg("peersCard.lanPeersRfc0016"),
@@ -2482,7 +2484,7 @@ function panelHardware() {
   if (det.bootloader) {
     idInner += note(`<b>${msg("hardware.boardSittingItsBootloader")}</b> on ${esc(det.bootloader)}. It cannot answer a version request in that state, but it is one firmware flash away from working.`);
   }
-  idInner += `<div class="row"><label></label><button type="button" id="hw-detect" class="btn primary"${hwBusy ? " disabled" : ""}>${hwBusy ? "DETECTING…" : "DETECT"}</button></div>`;
+  idInner += `<div class="row"><label></label><button type="button" id="hw-detect" class="btn primary"${hwBusy ? " disabled" : ""}>${esc(hwBusy ? msg("hardware.detecting") : msg("hardware.detect"))}</button></div>`;
   const identity = card(msg("hardware.attachedModem"), idInner);
 
   // --- adopt into the config ---
@@ -3659,8 +3661,9 @@ function renderStatus() {
   leds.innerHTML = "";
   (c.modes || []).forEach((m) => {
     const d = el("div", "led-mode" + (m.enabled ? " on" : ""));
-    d.title = m.name + (m.enabled ? " enabled" : " disabled");
-    d.setAttribute("aria-label", m.name + (m.enabled ? " enabled" : " disabled"));
+    const label = msg(m.enabled ? "leds.modeEnabled" : "leds.modeDisabled", { mode: m.name });
+    d.title = label;
+    d.setAttribute("aria-label", label);
     d.innerHTML = `<span class="d" aria-hidden="true"></span><span class="a">${esc(m.key.toUpperCase())}</span>`;
     leds.appendChild(d);
   });
