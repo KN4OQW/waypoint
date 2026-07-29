@@ -29,7 +29,16 @@ git clone https://github.com/KN4OQW/waypoint
 cd waypoint
 go build ./...     # daemon
 go test ./...
+go generate ./...  # refresh generated files; CI fails if any are stale
 ```
+
+### Translations
+
+UI strings live in flat JSON catalogs under `ui/static/locales/`, one file per
+language, with `en-US.json` as the base every key originates from. Adding a
+language is a new catalog plus `go generate ./...` to refresh
+`ui/static/locales/index.json` — that index is generated from each catalog's
+`_meta` block and must never be hand-edited.
 
 The UI (`ui/`) lands in Phase 1 (Svelte). The g4klx stack builds live in [waypoint-stack](https://github.com/KN4OQW/waypoint-stack).
 

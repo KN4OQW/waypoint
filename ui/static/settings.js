@@ -23,6 +23,7 @@ const TABS = [
   { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Routing",   crumb: "NETWORKS / GATEWAYS",     title: "Cross-Mode Gateways",   desc: "Cross-mode routing is being redesigned as a bus system (RFC-0003)." },
   { id: "profiles",     tag: "PF", label: "Profiles",     sub: "Saved Setups",         crumb: "ADMIN / PROFILES",        title: "Connection Profiles",   desc: "Named snapshots of your mode & network setup — save the current one, switch to another in a click, or carry a setup between nodes as a file. Callsign, frequencies and calibration are never part of a profile, so switching can't change your identity or detune the radio." },
   { id: "updates",      tag: "UP", label: "Updates",       sub: "Version & Channel",    crumb: "ADMIN / UPDATES",         title: "Software Updates",      desc: "Installed versions, available updates from the signed Waypoint apt repo, and the update policy. Updates are applied on the node, health-checked, and rolled back automatically if the modem does not come back up." },
+  { id: "system",       tag: "SS", label: "System",        sub: "MQTT & Logging",       crumb: "ADMIN / SYSTEM",          title: "System & Data Plane",   desc: "The MQTT broker every daemon on this node shares, the topic roots it publishes under, and how much each daemon logs. These were start-up flags until now — changing them here takes effect on Apply." },
   { id: "expert",       tag: "SY", label: "Expert",       sub: "System & Config",      crumb: "ADMIN / EXPERT",          title: "Expert & System",       desc: "Firmware versions and low-level configuration." },
 ];
 
@@ -187,6 +188,15 @@ const HELP = {
   "station_id.time_mins": "Minutes between identifications. Set this to your licence's requirement or shorter — 10 minutes in the US. Identification is sent between transmissions, never during one.",
   "station_id.callsign": "Identify with a different callsign from your station callsign. Leave blank to track General → Callsign automatically.",
   "station_id.tx_level": "Loudness of the Morse identification, as a percentage of full deviation. Raise it if the ID is hard to copy, lower it if it is jarring next to voice traffic.",
+  // --- System tab: MQTT data plane + logging ---
+  "mqtt.host": "Where the MQTT broker lives. Every daemon on this node publishes to it and the dashboard reads from it, so this is the one address they all have to agree on. Normally <code>127.0.0.1</code> — mosquitto runs on the node itself and is not exposed to the network.",
+  "mqtt.port": "Broker TCP port. <b>1883</b> is plain MQTT (the default for a local broker); 8883 is the conventional TLS port.",
+  "mqtt.auth": "Whether the daemons log in to the broker. Leave this <b>off</b> for the normal setup, where mosquitto listens only on localhost and there is nothing to authenticate against. Turn it on if you have pointed this node at a broker that requires credentials.",
+  "mqtt.username": "Broker username, sent only when authentication is on.",
+  "mqtt.password": "Broker password. Stored on the node and <b>never shown again</b> — leave the field blank to keep the one already saved.",
+  "mqtt.name": "MMDVM-Host's <code>[MQTT] Name</code>, which is the root of every topic the modem publishes (<code>&lt;name&gt;/json</code>, <code>&lt;name&gt;/log</code>). The dashboard subscribes to the same value, so changing it here moves both together. <b>Only change this if you run two nodes against one broker</b> and need to tell them apart.",
+  "mqtt.status_prefix": "Topic root for the normalized status this dashboard republishes for Home Assistant and other consumers. Change it only to avoid a collision with something else on a shared broker — Home Assistant discovery follows it automatically.",
+  "mqtt.bus_prefix": "Topic root for mode-bus events. The bus daemons publish here and the dashboard consumes it; both are rewritten on Apply, so the badges keep working across the change.",
   "history.retention_days": "How many days of last-heard and event history the node keeps on disk. <b>0 keeps it forever.</b> Older events are pruned nightly; a longer window uses more SD-card space.",
 
   // --- updates ---
@@ -332,6 +342,21 @@ function buildEdit(c) {
     // pairings are fetched dynamically (they are not config sections).
     peers: (c.peers || []).map((p) => ({ id: p.id, name: p.name || "", host: p.host || "", port: p.port || "", mdns_instance: p.mdns_instance || "", state: p.state || "", fingerprint: p.fingerprint || "", has_certificate: !!p.has_certificate, has_key: !!p.has_key })),
     remote_attachments: (c.remote_attachments || []).map((r) => ({ bus_id: r.bus_id, peer_id: r.peer_id, mode: r.mode, target: r.target || "", default_tg: r.default_tg || "", slot: r.slot || "", tg: r.tg || "", id: r.id || "", default_id: r.default_id || "" })),
+    // System tab (#29). The view already projects EFFECTIVE values (defaults
+    // resolved server-side), so these fall back only if the response is truncated.
+    // password starts blank — blank means "keep the stored one"; has_password drives
+    // the placeholder, and the value itself is never sent to the browser (D4).
+    mqtt: {
+      host: (c.mqtt || {}).host || "127.0.0.1",
+      port: (c.mqtt || {}).port || "1883",
+      auth: !!(c.mqtt || {}).auth,
+      username: (c.mqtt || {}).username || "",
+      password: "",
+      name: (c.mqtt || {}).name || "mmdvm",
+      status_prefix: (c.mqtt || {}).status_prefix || "waypoint/status",
+      bus_prefix: (c.mqtt || {}).bus_prefix || "waypoint/bus",
+    },
+    logging: loggingFrom(c.logging || {}),
   };
   dirty = new Set();
   refreshActions();
@@ -580,6 +605,42 @@ function cleanDstargw(d) {
     dcs: !!d.dcs, xlx: !!d.xlx,
   };
   if (d.ircddb_password) out.ircddb_password = d.ircddb_password;
+  return out;
+}
+
+// loggingFrom builds the logging working copy, defaulting each daemon to the
+// levels the renderers use when the section is absent: MQTT 1 / display 0 for the
+// MQTT-era daemons (everything on the data plane, nothing duplicated into the
+// journal) and display 1 / file 0 for pre-MQTT M17Gateway.
+function loggingFrom(l) {
+  const pair = (d, dDef, mDef) => ({ display: (l[d] || {}).display || dDef, mqtt: (l[d] || {}).mqtt || mDef });
+  return {
+    mmdvm:         pair("mmdvm", "0", "1"),
+    dmrgateway:    pair("dmrgateway", "0", "1"),
+    ysfgateway:    pair("ysfgateway", "0", "1"),
+    dgidgateway:   pair("dgidgateway", "0", "1"),
+    p25gateway:    pair("p25gateway", "0", "1"),
+    nxdngateway:   pair("nxdngateway", "0", "1"),
+    dstargateway:  pair("dstargateway", "0", "1"),
+    dapnetgateway: pair("dapnetgateway", "0", "1"),
+    m17gateway: {
+      display: (l.m17gateway || {}).display || "1",
+      file: (l.m17gateway || {}).file || "0",
+    },
+  };
+}
+
+// cleanMqtt omits the password when the field was left blank, so the server-side
+// merge keeps the stored secret (the same rule cleanDstargw and cleanPocsag follow).
+// A supplied password replaces it. has_password is a view-only flag the store would
+// reject as an unknown field, and it is never in the working copy to begin with.
+function cleanMqtt(q) {
+  const out = {
+    host: q.host || "", port: q.port || "", auth: !!q.auth,
+    username: q.username || "", name: q.name || "",
+    status_prefix: q.status_prefix || "", bus_prefix: q.bus_prefix || "",
+  };
+  if (q.password) out.password = q.password;
   return out;
 }
 
@@ -1187,6 +1248,104 @@ function tgDisplay(tg) {
 function tgNumber(v) {
   const m = /^\s*(\d+)/.exec(v || "");
   return m ? m[1] : (v || "").trim();
+}
+
+// LOG_LEVELS is the ladder every pinned daemon accepts: MMDVM-Host's Log.h defines
+// 1 DEBUG … 6 FATAL and treats 0 as "this sink is off" (Log.cpp: `level >=
+// m_displayLevel && m_displayLevel != 0U`), and DStarGateway clamps to the same
+// 0..6 explicitly. The labels name the THRESHOLD, because that is what the number
+// means — level 3 emits INFO and everything more severe, not INFO alone.
+const LOG_LEVELS = [
+  ["0", "0 — off"],
+  ["1", "1 — debug"],
+  ["2", "2 — message"],
+  ["3", "3 — info"],
+  ["4", "4 — warning"],
+  ["5", "5 — error"],
+  ["6", "6 — fatal"],
+];
+
+// LOG_DAEMONS is one row per render target, in the order RenderTargets emits them
+// so the card reads in the same order an operator sees units restart on Apply.
+// m17gateway is the odd one out: the pinned M17Gateway has no libmosquitto, so it
+// logs to a file instead of the data plane and its second level is `file`, not
+// `mqtt`. Offering it an MQTT level would be a control that silently does nothing.
+const LOG_DAEMONS = [
+  { key: "mmdvm",         label: "MMDVM-Host" },
+  { key: "dmrgateway",    label: "DMRGateway" },
+  { key: "ysfgateway",    label: "YSFGateway" },
+  { key: "dgidgateway",   label: "DGIdGateway" },
+  { key: "p25gateway",    label: "P25Gateway" },
+  { key: "nxdngateway",   label: "NXDNGateway" },
+  { key: "dstargateway",  label: "DStarGateway" },
+  { key: "dapnetgateway", label: "DAPNETGateway" },
+  { key: "m17gateway",    label: "M17Gateway", second: "file", secondLabel: "File" },
+];
+
+// levelSelect renders one 0..6 dropdown bound to logging.<daemon>.<field>. The
+// nested path is why it uses its own data attributes rather than data-sec/data-key:
+// the logging section is a map of per-daemon objects, not a flat one.
+function levelSelect(daemon, field) {
+  const cur = String((((edit.logging || {})[daemon]) || {})[field] ?? "");
+  const opts = LOG_LEVELS.map(([v, lbl]) =>
+    `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(lbl)}</option>`).join("");
+  return `<select data-log="${esc(daemon)}" data-logfield="${esc(field)}" aria-label="${esc(daemon)} ${esc(field)} log level">${opts}</select>`;
+}
+
+// panelSystem is the System tab (#29): the MQTT data plane and the per-daemon log
+// levels, which were command-line flags until they became store sections, plus the
+// deployment-owned listen address shown read-only.
+function panelSystem(c) {
+  const q = edit.mqtt || (edit.mqtt = {});
+  const hasPw = !!((c.mqtt || {}).has_password);
+
+  // Broker. Username/password only matter when Auth is on — the daemons do not
+  // send them otherwise, and the renderer leaves them out of every INI — so the
+  // credential rows appear with the toggle rather than sitting there inert.
+  let brokerRows =
+    input("mqtt", "host", { label: "Broker host" }) +
+    input("mqtt", "port", { label: "Broker port" }) +
+    toggle("mqtt", "auth", "Authenticate", "ON", "OFF");
+  if (q.auth) {
+    brokerRows +=
+      input("mqtt", "username", { label: "Username" }) +
+      row("Password", `<input data-sec="mqtt" data-key="password" type="password" value="${esc(q.password || "")}" placeholder="${hasPw ? "•••••• unchanged" : "broker password"}" aria-label="MQTT broker password">`);
+  }
+  const broker = card("MQTT BROKER", brokerRows +
+    note("Every daemon on this node — MMDVM-Host, each gateway, and the dashboard itself — connects to this broker. It is normally mosquitto on <code>127.0.0.1</code>. The password is stored on the node and never shown again once saved; leave it blank to keep the one already there."));
+
+  // Topic roots. Renaming any of these moves a whole subtree, so the note shows
+  // what the topics become rather than making the operator derive it.
+  const name = (q.name || "mmdvm").trim() || "mmdvm";
+  const statusPrefix = (q.status_prefix || "waypoint/status").trim() || "waypoint/status";
+  const busPrefix = (q.bus_prefix || "waypoint/bus").trim() || "waypoint/bus";
+  const topics = card("TOPIC PREFIXES",
+    input("mqtt", "name", { label: "MMDVM-Host name" }) +
+    input("mqtt", "status_prefix", { label: "Status prefix" }) +
+    input("mqtt", "bus_prefix", { label: "Bus prefix" }) +
+    note(`The modem publishes to <code>${esc(name)}/json</code>, this dashboard republishes normalized status under <code>${esc(statusPrefix)}/…</code>, and mode buses publish events under <code>${esc(busPrefix)}/…</code>. Changing a prefix rewrites every affected config and moves the dashboard with it on Apply, so nothing is left listening to the old topic.`));
+
+  // Log levels. A single grid of dropdowns: two per daemon, one row each.
+  const logRows = LOG_DAEMONS.map((d) => {
+    const second = d.second || "mqtt";
+    const secondLabel = d.secondLabel || "MQTT";
+    return `<div class="row"><label>${esc(d.label)}</label>` +
+      `<div style="display:flex; gap:8px; flex-wrap:wrap;">` +
+      `<span style="display:flex; gap:6px; align-items:center;"><span style="font-family:var(--mono); font-size:11px; color:var(--muted);">${esc(secondLabel)}</span>${levelSelect(d.key, second)}</span>` +
+      `<span style="display:flex; gap:6px; align-items:center;"><span style="font-family:var(--mono); font-size:11px; color:var(--muted);">Display</span>${levelSelect(d.key, "display")}</span>` +
+      `</div></div>`;
+  }).join("");
+  const logging = card("LOG LEVELS", logRows +
+    note("<b>Display</b> goes to the systemd journal (<code>journalctl -u waypoint-…</code>); <b>MQTT</b> goes to the data plane this dashboard reads. Each is a threshold — level 3 emits info and everything more severe. <b>0 turns that sink off.</b> Raising a level is the first step in diagnosing a daemon that will not link; lower it again afterwards, since debug on an SD card is a lot of writes. M17Gateway is pre-MQTT, so it writes a file instead."));
+
+  // The listen address is deployment-owned (#29 scope amendment). Editing it live
+  // could move the UI out from under the browser doing the edit, so it is shown,
+  // not offered — with the reason and the file to change stated plainly.
+  const listen = card("DASHBOARD LISTENER",
+    `<div class="row"><label>HTTPS listen address</label><input value="${esc((c.sources && c.sources.listen) || "—")}" readonly aria-label="waypointd HTTPS listen address (read-only)"></div>` +
+    note("Set by the packaged systemd unit (<code>waypointd.service</code>, the <code>-addr</code> flag), not from this page. Changing the address that is serving this page could leave the dashboard unreachable at the address you just left, so it is deliberately not editable here — edit the unit and restart <code>waypointd</code> if you need to move it."));
+
+  return `<div class="grid2"><div class="stack">${broker}${topics}</div><div class="stack">${logging}${listen}</div></div>`;
 }
 
 function panelExpert(c, h) {
@@ -3258,6 +3417,7 @@ function renderPanel() {
     case "station":      box.innerHTML = panelStation(); break;
     case "updates":      box.innerHTML = panelUpdates(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
+    case "system":       box.innerHTML = panelSystem(c); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
     case "gateways":     box.innerHTML = panelGateways(); break;
     case "network":      box.innerHTML = panelNetwork(); break;
@@ -3310,6 +3470,7 @@ async function apply() {
         : sec === "routes" ? (edit.routes || []).filter((r) => r.tg && r.network)
         : sec === "dstargw" ? cleanDstargw(edit.dstargw)
         : sec === "pocsag" ? cleanPocsag(edit.pocsag)
+        : sec === "mqtt" ? cleanMqtt(edit.mqtt)
         : sec === "attachments" ? (edit.attachments || []).map(cleanAttachment)
         : edit[sec];
       const r = await fetch("/api/config/" + sec, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
@@ -4013,6 +4174,14 @@ document.getElementById("panels").addEventListener("input", (e) => {
   if (t.dataset.busname != null) { const b = (edit.buses || []).find((x) => x.id === t.dataset.busname); if (b) { b.name = t.value; dirty.add("buses"); } return; }
   if (t.dataset.tgmap != null) { const a = edit.attachments[+t.dataset.tgmap]; a._tgrows[+t.dataset.tgi][t.dataset.tgk] = t.value; dirty.add("attachments"); return; }
   if (t.dataset.attach != null) { edit.attachments[+t.dataset.attach][t.dataset.akey] = t.value; dirty.add("attachments"); return; }
+  // --- per-daemon log levels (System tab). logging is a map of per-daemon
+  // objects, so it needs its own path rather than the flat data-sec/data-key pair.
+  if (t.dataset.log != null) {
+    const l = edit.logging || (edit.logging = {});
+    (l[t.dataset.log] || (l[t.dataset.log] = {}))[t.dataset.logfield] = t.value;
+    dirty.add("logging"); refreshActions();
+    return;
+  }
   if (t.dataset.sec) {
     let v = t.value;
     if (t.dataset.kind === "mhz") { const f = parseFloat(v); v = isNaN(f) ? "" : String(Math.round(f * 1e6)); }

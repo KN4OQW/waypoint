@@ -16,7 +16,7 @@ are three ways, and which one you want depends on what you can still reach.
 
 None of these is a security hole. Each one requires something an attacker on the
 internet does not have: a live session, a shell on the box, or the card in your
-hand. That is the same reasoning [RFC-0002](rfcs/0002-security-posture.md) uses.
+hand. That is the same reasoning [RFC-0002](https://github.com/KN4OQW/waypoint/discussions/156) uses.
 
 ---
 

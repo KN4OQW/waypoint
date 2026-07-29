@@ -38,7 +38,6 @@ import (
 	"github.com/KN4OQW/waypoint/internal/lcd/hd44780"
 	"github.com/KN4OQW/waypoint/internal/m17hosts"
 	"github.com/KN4OQW/waypoint/internal/minisign"
-	"github.com/KN4OQW/waypoint/internal/mqtt"
 	"github.com/KN4OQW/waypoint/internal/netconfig"
 	"github.com/KN4OQW/waypoint/internal/netwatch"
 	"github.com/KN4OQW/waypoint/internal/nxdnhosts"
@@ -68,11 +67,24 @@ type server struct {
 	started   time.Time
 	store     *store.Store
 	storePath string
-	evStore   *events.Store      // persistent event history (RFC-0004); nil only in tests
-	auth      *auth.Auth         // first-boot claim state machine + sessions (RFC-0002)
-	paths     config.Paths       // where each daemon reads its generated INI (render targets)
-	agg       *status.Aggregator // live-status fold served by /api/status + WS (RFC-0008); nil only in some tests
-	peering   *peering.Manager   // RFC-0016 LAN pairing manager (nil until initPeering runs / if it fails)
+	evStore   *events.Store // persistent event history (RFC-0004); nil only in tests
+	auth      *auth.Auth    // first-boot claim state machine + sessions (RFC-0002)
+	paths     config.Paths  // where each daemon reads its generated INI (render targets)
+	// mqttFlags is the command-line MQTT surface plus which of those flags the
+	// operator typed explicitly. The store owns the data plane (#29), so this exists
+	// only to let an explicit flag shadow it with a logged warning (D1 / system.go).
+	mqttFlags mqttFlags
+	// dp owns the live MQTT consumer + status republisher, reconfigured by apply when
+	// the operator changes the data plane (dataplane.go). Nil in demo mode and in
+	// tests, where reconfigure is a no-op.
+	dp *dataPlane
+	// listenAddr is the HTTPS address the daemon was told to serve on. It is shown
+	// READ-ONLY on the System tab: it is deployment-owned via the packaged systemd
+	// unit, and editing it live would move the UI out from under the browser doing
+	// the edit (#29 scope amendment).
+	listenAddr string
+	agg        *status.Aggregator // live-status fold served by /api/status + WS (RFC-0008); nil only in some tests
+	peering    *peering.Manager   // RFC-0016 LAN pairing manager (nil until initPeering runs / if it fails)
 	// wiz is the first-boot setup wizard (docs/provisioning.md). Nil disables it
 	// and the gate becomes a pass-through, which is what every test that builds a
 	// server directly relies on.
@@ -313,7 +325,7 @@ func (s *server) configView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(m.View(s.storePath))
+	_ = json.NewEncoder(w).Encode(m.View(s.viewSources()))
 }
 
 // isCrossBridge reports whether a section name is one of the cross-mode
@@ -357,6 +369,30 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 	// field keeps the stored one (see SetDAPNET).
 	if section == "pocsag" {
 		if err := config.SetDAPNET(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// The MQTT data plane carries the broker password, the same write-only secret
+	// rule (D4): the View never returns it, so a blank field keeps the stored one.
+	// SetMQTT also validates the port and the topic prefixes before the store row is
+	// written, so an unusable data plane is refused at save rather than discovered
+	// when the daemons fail to connect after an Apply.
+	if section == "mqtt" {
+		if err := config.SetMQTT(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// Log levels validate to the 0..6 ladder the pinned daemons accept, so a typo is
+	// refused rather than silently atoi()'d to 0 — which would turn a sink OFF, the
+	// exact opposite of what an operator asking for more logging wants.
+	if section == "logging" {
+		if err := config.SetLogging(s.store, body, "api"); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -505,12 +541,25 @@ func (s *server) configApply(w http.ResponseWriter, _ *http.Request) {
 // the LCD in line. by attributes the journal entry ("api" for a manual apply,
 // "profile:<name>" for an activation). Errors are returned already prefixed.
 func (s *server) applyRender(by string) (restarted, stopped []string, err error) {
-	m, err := config.Load(s.store)
+	// The RESOLVED model (D1): the store, with any explicitly-set command-line MQTT
+	// flag written over it. Everything below — the INI renderers, the bus configs,
+	// the override merge — therefore sees one already-reconciled data plane, and
+	// effectivePaths carries the same answer to the bus-config render (D5).
+	m, err := s.resolvedModel()
 	if err != nil {
 		return nil, nil, err
 	}
-	targets := m.RenderTargets(s.paths)
-	warnings, err := m.WriteFiles(s.paths)
+	paths := s.effectivePaths(m)
+	// D5: the data plane propagates everywhere or nowhere. Move waypointd's own
+	// consumer and status republisher onto the new broker/topic roots BEFORE the
+	// daemons are restarted onto them, so the renamed topic has a subscriber waiting
+	// rather than a window where the modem publishes into the void and the dashboard
+	// reports feed_down. A no-op when the operator changed something else.
+	if s.dp != nil {
+		s.dp.reconfigure(context.Background(), dataPlaneConfigFrom(m.MQTT))
+	}
+	targets := m.RenderTargets(paths)
+	warnings, err := m.WriteFiles(paths)
 	if err != nil {
 		return nil, nil, fmt.Errorf("render: %w", err)
 	}
@@ -866,7 +915,7 @@ func (s *server) importScan(w http.ResponseWriter, r *http.Request) {
 	}
 	// preview is the SAME redacted view the config API serves — secrets appear only
 	// as has_* booleans, never in the scan response.
-	writeJSON(w, map[string]any{"report": report, "preview": m.View(s.storePath)})
+	writeJSON(w, map[string]any{"report": report, "preview": m.View(s.viewSources())})
 }
 
 // importApply re-reads the incumbent input, maps it, and bulk-writes the model to
@@ -1495,12 +1544,12 @@ func (s *server) history(w http.ResponseWriter, r *http.Request) {
 // UI can tell the operator where fragments live, and surfaces any malformed-line
 // warnings rather than dropping them silently.
 func (s *server) overridesView(w http.ResponseWriter, _ *http.Request) {
-	m, err := config.Load(s.store)
+	m, err := s.resolvedModel()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	applied, warnings, err := m.Overrides(s.paths)
+	applied, warnings, err := m.Overrides(s.effectivePaths(m))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1599,7 +1648,7 @@ func newLCDDevice(cfg config.LCD) lcd.LCDDevice {
 // are the enabled modes' short keys (DMR, YSF, …) — compact for a narrow panel.
 func lcdInfo(m *config.Model, version string, started time.Time) lcd.Info {
 	var modes []string
-	for _, md := range m.View("").Modes {
+	for _, md := range m.View(config.Sources{}).Modes {
 		if md.Enabled {
 			modes = append(modes, strings.ToUpper(md.Key))
 		}
@@ -2016,6 +2065,11 @@ func main() {
 		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts, dmrTGs: *dmrTGs, dmrIDs: *dmrIDs,
 		netKeyfileDir: *nmKeyfileDir, netConfirmTimeout: *netConfirmTimeout, netBackend: *netBackend,
 		timesyncdConf: *timesyncdConf, setupAPIface: *setupAPIface,
+		// D1: which MQTT flags the operator actually typed, so an explicit one can
+		// shadow the store (with a logged warning) and an untouched one cannot.
+		mqttFlags: newMQTTFlags(*broker, *mqttName, *mqttUser, *mqttPass, *statusPrefix, *busTopicPrefix),
+		// Deployment-owned, displayed read-only on the System tab (#29 amendment).
+		listenAddr: *addr,
 	}
 	// The confirm-or-revert guard for network applies (needs s.netKeyfileDir set).
 	s.netGuard = s.newNetGuard()
@@ -2145,20 +2199,17 @@ func main() {
 	if *demoMode {
 		go demo.Run(context.Background(), s.hub)
 	} else {
-		go func() {
-			if err := mqtt.Run(context.Background(), s.hub, mqtt.Options{
-				Broker:    *broker,
-				Name:      *mqttName,
-				Username:  *mqttUser,
-				Password:  *mqttPass,
-				BusPrefix: *busTopicPrefix, // D4: also ingest waypoint/bus/# as hub events
-				// #22: DMRGateway's own status plane, where a failed or successful
-				// master login is announced the moment it happens.
-				GatewayNames: []string{config.MQTTNameDMRGateway},
-			}); err != nil {
-				log.Printf("mqtt bridge stopped: %v", err)
-			}
-		}()
+		// The MQTT data plane is store-owned (#29): the consumer's topic roots, the
+		// broker and the credentials come from the RESOLVED model (store, with any
+		// explicitly-set flag written over it — D1), and applyRender reconfigures the
+		// live connections when the operator changes them, so renaming the modem's
+		// topic root in the System tab does not take the dashboard down until the next
+		// daemon restart.
+		dpModel, err := s.resolvedModel()
+		if err != nil {
+			log.Fatalf("mqtt: config load: %v", err)
+		}
+		logShadowed(s.mqttFlags.resolve(dpModel))
 		// Supervisor liveness probe: emits gateway_up/gateway_down so a killed or
 		// restarted gateway shows truth within the probe interval — the #5 acceptance,
 		// from systemd state (not log scraping). Live mode only (a demo runs no gateways).
@@ -2167,19 +2218,14 @@ func main() {
 		// declares, keep the node honest about them, and restart a gateway that has
 		// lost one and cannot get it back on its own. Live mode only — a demo node
 		// has no masters to lose.
-		// The commander is how the supervisor ASKS a gateway where its links stand,
-		// rather than waiting to be told. Its own connection, so a wedged query can
-		// never stall the event consumer or the status publisher.
-		commander := mqtt.NewCommander(mqtt.Options{
-			Broker: *broker, Username: *mqttUser, Password: *mqttPass,
-		}, []string{config.MQTTNameDMRGateway}, 0)
-		defer commander.Close()
 		go s.runSupervisor(context.Background(), supervisorOptions{
 			Interval:      *supervisorInterval,
 			Remediate:     *supervisorRemediate,
 			MaxRestarts:   *supervisorMaxRestarts,
 			RestartWindow: *supervisorRestartWindow,
-			Commander:     commander,
+			// Read per cycle, not captured: the data plane rebuilds this connection
+			// when the store's broker moves (#29), and the supervisor has to follow.
+			Commander: s.dp.commander,
 		})
 		// Update poller (D2 / #15): periodically refresh the stack and waypointd
 		// available-update caches and drive opt-in quiet-window auto-apply. Live mode
@@ -2189,39 +2235,15 @@ func main() {
 		if s.stack != nil || s.update != nil {
 			go s.runUpdatePoller(context.Background(), 15*time.Minute, *updatePollInterval)
 		}
-		// Republish the normalized status onto retained waypoint/status/# topics for
-		// Home Assistant and other consumers (RFC-0008). Best-effort, live mode only.
-		// When HA discovery is on, the publisher also carries the offline Last-Will +
-		// online-on-connect availability (RFC-0011).
-		prefix := *statusPrefix
-		avail := ""
-		if *haDiscovery {
-			avail = status.AvailabilityTopic(prefix)
+		// Bring the consumer + status republisher (RFC-0008) and Home Assistant
+		// discovery (RFC-0011) up on the resolved settings. Both follow later edits;
+		// see dataplane.go for why the consumer restarts and the publisher does not.
+		s.dp = &dataPlane{
+			hub: s.hub, agg: s.agg,
+			haDiscovery: *haDiscovery, haPrefix: *haPrefix, nodeID: *nodeID, version: Version,
+			seen: map[string]bool{},
 		}
-		pub := mqtt.NewPublisher(mqtt.Options{Broker: *broker, Name: *mqttName, Username: *mqttUser, Password: *mqttPass}, avail)
-		s.agg.OnChange(func(st status.Status) { status.Republish(st, prefix, pub.Publish) })
-		// Home Assistant MQTT discovery (RFC-0011): publish a retained config for each
-		// entity, pointing HA at the status topics — zero YAML. Configs are published
-		// once per topic as the entity first appears (gateways/networks show up over
-		// time); retained, so HA gets them whenever it connects.
-		if *haDiscovery {
-			haOpts := status.DiscoveryOptions{Prefix: *haPrefix, NodeID: *nodeID, StatePrefix: prefix, Version: Version}
-			var seenMu sync.Mutex
-			seen := map[string]bool{}
-			publishDiscovery := func(st status.Status) {
-				for _, d := range status.DiscoveryConfigs(st, haOpts) {
-					seenMu.Lock()
-					dup := seen[d.Topic]
-					seen[d.Topic] = true
-					seenMu.Unlock()
-					if !dup {
-						pub.Publish(d.Topic, d.Payload)
-					}
-				}
-			}
-			publishDiscovery(s.agg.Snapshot()) // the always-present mode/tx/feed entities now
-			s.agg.OnChange(publishDiscovery)
-		}
+		s.dp.start(context.Background(), dataPlaneConfigFrom(dpModel.MQTT))
 		// Keep the reflector hostlists fresh for the gateways + pickers. Daily: these
 		// lists change slowly, they are the largest things the node downloads, and
 		// the upstreams ask not to be hammered. The YSF list honors the "UPPERCASE
@@ -2249,7 +2271,7 @@ func main() {
 		go dmrids.Run(context.Background(), hostsrc.Split(*dmrIDsURL), *dmrIDs, 24*time.Hour, hostVerify)
 	}
 
-	mode := "live, mqtt " + *broker
+	mode := "live, mqtt " + s.dataPlaneBroker(*broker)
 	if *demoMode {
 		mode = "demo"
 	}

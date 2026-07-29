@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "name": "English (US)",
+    "tag": "en-US",
+    "reviewed": true
+  },
+
+  "chrome.language": "LANGUAGE",
+  "chrome.skipToMain": "Skip to main content",
+  "chrome.theme": "DISPLAY THEME",
+  "chrome.unreviewed": "(unreviewed)",
+
+  "common.apply": "APPLY CHANGES",
+  "common.cancel": "Cancel",
+  "common.reset": "RESET",
+
+  "dash.onair.idle": "Listening — no active transmission",
+
+  "foot.version": "waypointd {version}",
+
+  "nav.dashboard": "Dashboard",
+  "nav.settings": "Settings",
+
+  "sidebar.callsign": "CALLSIGN",
+  "sidebar.connecting": "CONNECTING",
+  "sidebar.offline": "OFFLINE",
+  "sidebar.online": "ONLINE",
+
+  "status.connected": "connected",
+  "status.connecting": "connecting…",
+  "status.disconnected": "disconnected"
+}

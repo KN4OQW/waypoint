@@ -22,9 +22,17 @@ ExecStartPre=-/home/pi-star/waypoint/bin/waypointd -update-boot-check \
 # (RFC-0002) — the image ships neither, so the box is unclaimed until an operator
 # claims it over the web UI. -release-pubkey is the RFC-0013 key the updater
 # verifies waypointd releases against.
+#
+# The MQTT flags this line used to carry (-mqtt-broker 127.0.0.1:1883 -mqtt-name
+# mmdvm) are GONE on purpose. The data plane is store-owned now (#29, the System
+# tab), and an explicitly-set flag beats the store by design — so pinning the
+# stock values here would have made the broker and topic-root fields inert on
+# every packaged node and logged a shadowing warning on every boot. The values
+# they set are the daemon's compiled defaults, so removing them changes nothing
+# about how a node starts; it only lets the operator's edit take effect.
+# -addr stays: the listen address is deployment-owned and shown read-only.
 ExecStart=/home/pi-star/waypoint/bin/waypointd \
   -addr 0.0.0.0:443 -tls -http-redirect-addr 0.0.0.0:80 \
-  -mqtt-broker 127.0.0.1:1883 -mqtt-name mmdvm \
   -release-pubkey /usr/share/waypoint/waypoint-release.pub
 Restart=on-failure
 RestartSec=3

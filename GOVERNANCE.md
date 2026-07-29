@@ -18,7 +18,7 @@ This document is a set of commitments, written down *before* the project had use
 
 ## RFCs
 
-Changes that alter architecture, protocol/API contracts, security posture, or governance itself require an RFC: a markdown document PR'd to `docs/rfcs/`, open for comment for at least 14 days, accepted by consensus of maintainers (supermajority if contested). Small changes never need an RFC — when in doubt, open an issue and ask.
+Changes that alter architecture, protocol/API contracts, security posture, or governance itself require an RFC: a document opened as a discussion in the [RFCs category](https://github.com/KN4OQW/waypoint/discussions/categories/rfcs), open for comment for at least 14 days, accepted by consensus of maintainers (supermajority if contested). Comment threads live on the discussion itself, and its status line is edited in place as it moves from proposed to accepted. Small changes never need an RFC — when in doubt, open an issue and ask.
 
 ## AI-assisted triage
 

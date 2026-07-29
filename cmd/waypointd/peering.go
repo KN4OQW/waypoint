@@ -153,7 +153,7 @@ func (s *server) peeringPeers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, m.View(s.storePath).Peers)
+	writeJSON(w, m.View(s.viewSources()).Peers)
 }
 
 // peeringRevoke: POST /api/peering/revoke {peer_id} — immediate local revoke.

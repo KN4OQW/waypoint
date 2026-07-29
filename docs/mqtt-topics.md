@@ -5,12 +5,30 @@ MQTT topics, and describes them to Home Assistant via MQTT Discovery so entities
 appear with **zero YAML**. This document is the contract third-party consumers can
 build against.
 
-- Status pipeline & topic design: [RFC-0008](rfcs/0008-status-pipeline.md)
-- Home Assistant discovery: [RFC-0011](rfcs/0011-home-assistant-discovery.md)
+- Status pipeline & topic design: [RFC-0008](https://github.com/KN4OQW/waypoint/discussions/163)
+- Home Assistant discovery: [RFC-0011](https://github.com/KN4OQW/waypoint/discussions/166)
 
 All topics below are **retained** (a late-joining subscriber reads current state
 immediately) and are published only in live mode (a `-demo` node has no broker).
-The status prefix defaults to `waypoint/status` (`-status-topic-prefix`).
+The status prefix defaults to `waypoint/status`.
+
+## Where the prefixes are set
+
+The three topic roots on this page — the modem's `Name`, the status prefix, and
+the bus prefix — plus the broker address and credentials are **store-owned**
+(issue #29). Edit them in the settings UI under **Admin → System**; Apply rewrites
+every affected config, restarts the daemons whose file changed, and moves
+waypointd's own consumer and status republisher onto the new topics in the same
+pass, so nothing is left subscribed to the old root.
+
+The matching command-line flags (`-mqtt-broker`, `-mqtt-name`,
+`-status-topic-prefix`, `-bus-topic-prefix`, `-mqtt-user`, `-mqtt-pass`) still
+exist as an **override layer**, following RFC-0005 precedence: a flag set
+explicitly on the command line wins over the store and logs which store key it is
+shadowing; a flag left alone takes the stored value; an absent store row takes the
+compiled default. So a packaged unit that pins `-mqtt-broker` keeps working
+unchanged, and an operator whose System-tab edit appears not to take effect finds
+the reason in the journal rather than in a bug report.
 
 ## State topics (`waypoint/status/#`)
 
@@ -85,8 +103,10 @@ introduces them.
 - `-node-id=<id>` — pin the device id (keep it stable across reflashes so HA
   keeps the same device).
 
-Discovery is published only to the broker the node already talks to
-(`-mqtt-broker`); Waypoint never reaches out to a new host.
+Discovery is published only to the broker the node already talks to (the store's
+broker setting, or `-mqtt-broker` when that flag overrides it); Waypoint never
+reaches out to a new host. Changing the status prefix republishes the discovery
+configs under the new state topics, so HA follows without manual intervention.
 
 ## Topics Waypoint consumes
 
@@ -134,7 +154,8 @@ onto the local broker and waypointd's consumer ingests them as ordinary hub
 events — RFC-0004 persistence, RFC-0008 status, and the dashboard bus badges then
 work with no further plumbing. Third-party consumers get bus events for free.
 
-The prefix defaults to `waypoint/bus` (`-bus-topic-prefix`). Each message is one
+The prefix defaults to `waypoint/bus` and is edited under **Admin → System** (see
+[Where the prefixes are set](#where-the-prefixes-are-set)). Each message is one
 `hub.Event` as JSON — the **same schema** the SSE/UI layer already speaks, mapped
 1:1 with no translation layer.
 

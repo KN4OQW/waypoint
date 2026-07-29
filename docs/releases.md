@@ -2,7 +2,7 @@
 
 A Waypoint release is a **git semver tag**, and every surface that reports a
 version derives from that one tag — so the CLI, the API, the dashboard, and the
-GitHub release page always agree. This is [RFC-0015](rfcs/0015-tagged-releases-visible-versioning.md),
+GitHub release page always agree. This is [RFC-0015](https://github.com/KN4OQW/waypoint/discussions/170),
 issue [#14](https://github.com/KN4OQW/waypoint/issues/14).
 
 ## One version, four surfaces
@@ -32,14 +32,14 @@ which:
 
 1. **Builds** `waypointd` for `linux/amd64`, `linux/arm64`, and `linux/arm` (GOARM=6,
    the Pi Zero), each stamped with the tag and `CGO_ENABLED=0` (a static binary).
-2. **Signs** each binary with minisign ([RFC-0013](rfcs/0013-signed-releases-verified-downloads.md)),
+2. **Signs** each binary with minisign ([RFC-0013](https://github.com/KN4OQW/waypoint/discussions/168)),
    emitting a `.minisig` beside it.
 3. **Publishes** the binaries + signatures to a GitHub release named for the tag,
    with a **generated changelog** — GitHub composes the release body from the pull
    requests merged since the previous tag (no hand-maintained `CHANGELOG.md` to
    drift).
 4. **Assembles + signs `update.json`** — the manifest the atomic updater fetches
-   ([RFC-0014](rfcs/0014-atomic-updates.md)). Its per-artifact SHA-256 is computed
+   ([RFC-0014](https://github.com/KN4OQW/waypoint/discussions/169)). Its per-artifact SHA-256 is computed
    over the actually-uploaded binaries, and the manifest itself is minisign-signed,
    so a node can verify *what to fetch* and *what it fetched* under one pinned key.
 

@@ -48,7 +48,13 @@ var profileSections = []string{
 // it is who the node says it is on the air, and a legal obligation of the licensee
 // operating it. Switching profiles must never change the callsign being keyed, nor
 // silently disable identification — so a profile carries neither.
-var profileExcluded = []string{"general", "modem", "display", "lcd", "history", "station_id", "update", "peers", "remote_attachments", "peering"}
+// The MQTT data plane and the log levels (#29 System tab) are excluded for the
+// same reason general and modem are: they describe THIS node's plumbing, not the
+// networks it connects to. mqtt additionally carries the broker password, a
+// node-local secret that must never travel in a portable profile — and a profile
+// that moved the broker address would take the dashboard down on the node it was
+// imported to, which is the opposite of what switching a profile is for.
+var profileExcluded = []string{"general", "modem", "display", "lcd", "history", "station_id", "update", "peers", "remote_attachments", "peering", "mqtt", "logging"}
 
 // profileSecretFields registers the secret-bearing fields per section — shared by
 // export scrub and activate reconcile so the two can never drift. The values are

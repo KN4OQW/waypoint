@@ -25,10 +25,11 @@ type supervisorOptions struct {
 	Remediate     bool
 	MaxRestarts   int
 	RestartWindow time.Duration
-	// Commander asks the gateway daemons about their own links. Nil leaves the
-	// supervisor on announcements and probes alone — slower to notice a link that
-	// went away quietly, but not wrong.
-	Commander *mqtt.Commander
+	// Commander resolves the live command client each time it is called, because
+	// the data plane rebuilds that connection when the store's broker moves.
+	// Nil, or a nil return, leaves the supervisor on announcements and probes
+	// alone — slower to notice a link that went away quietly, but not wrong.
+	Commander func() *mqtt.Commander
 }
 
 // dmrLinkState asks DMRGateway which of its masters are still connected, and maps
@@ -93,7 +94,11 @@ func (s *server) runSupervisor(ctx context.Context, opts supervisorOptions) {
 				if opts.Commander == nil {
 					return nil
 				}
-				return s.dmrLinkState(opts.Commander)
+				cmd := opts.Commander()
+				if cmd == nil {
+					return nil // the data plane has not come up yet
+				}
+				return s.dmrLinkState(cmd)
 			},
 			Restart: func(unit string) error {
 				out, err := systemctlRun("restart", unit)
