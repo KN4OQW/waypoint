@@ -37,7 +37,7 @@ the reason in the journal rather than in a bug report.
 | `waypoint/status/mode` | string, e.g. `DMR` | Current active mode, or `IDLE`. |
 | `waypoint/status/tx` | JSON `{mode,slot,source,dest,network,direction,started_at}` or empty | The transmission on the air; empty payload when idle. |
 | `waypoint/status/feed` | JSON `{connected,detail,since}` | Health of the MMDVM-Host MQTT feed everything derives from. |
-| `waypoint/status/network/<name>` | JSON `{up,detail,since}` | Per network/reflector link state. `<name>` is topic-sanitized. |
+| `waypoint/status/network/<name>` | JSON `{up,detail,since}` | Per network/reflector link state. `<name>` is topic-sanitized. `up` moves in **both** directions — see below. |
 | `waypoint/status/gateway/<name>` | JSON `{up,detail,since}` | Per gateway-daemon liveness (from the supervisor probe). |
 | `waypoint/status/availability` | `online` / `offline` | Device availability. `offline` is the connection's MQTT Last-Will, so it flips the moment the node drops. |
 
@@ -47,6 +47,27 @@ safe topic levels.
 Status is **self-healing** (RFC-0008): a stranded transmission clears on a
 watchdog and a killed gateway shows down within the supervisor probe interval, so
 these topics reflect truth rather than a latched last value — no log scraping.
+
+### Network links go down as well as up
+
+`network/<name>` reports `up: false` when a link is lost, not just `up: true`
+when one is made. A link stops being claimed on any of three signals:
+
+- an explicit **`link_down`** event naming the network (its `detail` says why);
+- **loss of the MMDVM-Host feed** — nothing can re-assert a link with the feed
+  gone, and `detail` reads `unconfirmed — MMDVM-Host feed down`;
+- the **confirmation watchdog**, when armed: a link nothing has re-confirmed
+  within `-link-ttl` reports `unconfirmed for <window>`.
+
+The watchdog is **off by default** (`-link-ttl=0`) because nothing re-confirms a
+link yet; the resilience supervisor ([#22](https://github.com/KN4OQW/waypoint/issues/22))
+is what arms it. `since` is when the link entered its *current* state, so a
+re-confirmation of an already-up link neither moves `since` nor republishes the
+topic.
+
+The event stream carries `link_up`/`link_down` for this; the original `link`
+spelling still means "up" and is still accepted, because `events.db` holds rows
+written before the pair existed and `GET /api/history` replays them.
 
 ## Home Assistant discovery (`homeassistant/#`)
 
@@ -86,6 +107,44 @@ Discovery is published only to the broker the node already talks to (the store's
 broker setting, or `-mqtt-broker` when that flag overrides it); Waypoint never
 reaches out to a new host. Changing the status prefix republishes the discovery
 configs under the new state topics, so HA follows without manual intervention.
+
+## Topics Waypoint consumes
+
+Everything above is published. Waypoint also **subscribes** to the daemons' own
+planes — it is where live status comes from, and there is no log reader anywhere
+in the path.
+
+| Topic | Publisher | Used for |
+|---|---|---|
+| `mmdvm/json` | MMDVM-Host | Per-mode voice traffic → the event stream, last-heard, on-air. |
+| `dmr-gateway/json` | DMRGateway | Its own status plane: `{"status":{"message":"Logged into DMR Network: X"}}` and the failed-login/closing counterparts, published the moment a master accepts or refuses. |
+| `waypoint/bus/#` | Mode-bus daemons | Bus events, mapped 1:1 (below). |
+
+### Supervisor events
+
+Two event types come from the resilience supervisor and appear in the event log
+and the `/api/history` record like any other:
+
+| Type | Meaning |
+|---|---|
+| `link_up` / `link_down` | The supervisor's verdict about one upstream attachment, with the reason in `detail`. This is what drives `waypoint/status/network/<name>`. |
+| `supervisor_action` | Something it did, or declined to do, about a lost link — `restarted waypoint-dmrgateway.service — BM_3102: the endpoint is unreachable`. `source` is the unit. |
+
+Actions are events rather than log lines because unattended recovery has to be
+legible after the fact: an operator who was asleep when the ISP dropped should be
+able to read what happened. Declining is recorded too — a supervisor that hits its
+restart cap and goes quiet is otherwise indistinguishable from one that fixed the
+problem.
+
+A DMRGateway status message becomes a `gateway_status` hub event naming the
+network, so it persists and shows in the event log. It is **not** folded into link
+state on its own: the resilience supervisor
+([#22](https://github.com/KN4OQW/waypoint/issues/22)) weighs it against the
+systemd unit state and Waypoint's own endpoint probe, and publishes the resulting
+`link_up`/`link_down` verdict. The message is English prose assembled upstream
+with string concatenation, so a wording change would silently stop matching —
+which is exactly why it is one signal of three and never the authority. Losing it
+costs the supervisor its fastest detection path, not its correctness.
 
 ## Mode-bus event topics (`waypoint/bus/#`)
 

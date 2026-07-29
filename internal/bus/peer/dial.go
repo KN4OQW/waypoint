@@ -5,6 +5,8 @@ import (
 	"crypto/tls"
 	"net"
 	"time"
+
+	"github.com/KN4OQW/waypoint/internal/backoff"
 )
 
 // dial.go is the thin socket layer: dial a peer with exponential backoff and wrap
@@ -13,31 +15,16 @@ import (
 // unit-tested without dialing.
 
 // Backoff is an exponential dial backoff with a cap. Zero value is unusable; use
-// DefaultBackoff.
-type Backoff struct {
-	Initial time.Duration
-	Max     time.Duration
-	attempt int
-}
+// DefaultBackoff. The schedule itself lives in internal/backoff, shared with the
+// resilience supervisor; this alias keeps the dialer's call sites reading in terms
+// of peering.
+type Backoff = backoff.Backoff
 
 // DefaultBackoff dials quickly at first (1 s) and backs off to 30 s, so a peer
-// that is briefly down reconnects fast without hammering one that is gone.
+// that is briefly down reconnects fast without hammering one that is gone. No
+// jitter: these are LAN peers on the operator's own bus, not a shared upstream a
+// herd of nodes could stampede.
 func DefaultBackoff() Backoff { return Backoff{Initial: time.Second, Max: 30 * time.Second} }
-
-// Next returns the delay before the next attempt and advances the schedule:
-// Initial, 2×, 4× … capped at Max.
-func (b *Backoff) Next() time.Duration {
-	d := b.Initial << b.attempt
-	if d <= 0 || d > b.Max { // overflow or past the cap
-		d = b.Max
-	} else {
-		b.attempt++
-	}
-	return d
-}
-
-// Reset returns the schedule to the start (call after a successful connect).
-func (b *Backoff) Reset() { b.attempt = 0 }
 
 // DialFunc dials an address and returns a connection; it is injectable so the
 // reconnect loop is testable with a fake dialer.

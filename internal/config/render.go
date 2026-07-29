@@ -67,6 +67,19 @@ const (
 	unitM17Gateway    = "waypoint-m17gateway.service"
 	unitDAPNETGateway = "waypoint-dapnetgateway.service"
 
+	// The public spelling of the two units the resilience supervisor (#22) has to
+	// name: an upstream attachment derived from this model has to say which unit
+	// carries it, and the supervisor lives outside this package. Aliases rather than
+	// renames so RenderTargets and the apply path keep reading in lower case.
+	UnitDMRGateway    = unitDMRGateway
+	UnitDAPNETGateway = unitDAPNETGateway
+
+	// MQTTNameDMRGateway is the [MQTT] Name rendered into DMRGateway.ini, and so
+	// the topic root it publishes its own status on (<name>/json). The supervisor
+	// subscribes there for the daemon's link reports, and must use the same string
+	// this file writes or it would listen to a topic nothing publishes to.
+	MQTTNameDMRGateway = "dmr-gateway"
+
 	// Cross-mode transcoding bridge units (MMDVM_CM). The per-bridge-daemon model is
 	// retired for the RFC-0003 bus architecture, so RenderTargets no longer restarts
 	// them. They remain named here only so apply can STOP any that a node was still
@@ -1302,6 +1315,35 @@ func (m *Model) RenderDAPNETGateway() string {
 	return b.String()
 }
 
+// DMRNetworkOrder returns the network names in the order RenderDMRGateway writes
+// their [DMR Network N] sections, so index i is the network the daemon calls
+// "net<i+1>".
+//
+// That translation is the whole reason this exists. DMRGateway's status query
+// answers positionally — "xlx:n/a net1:conn net2:disc" — with no names in it, so
+// a supervisor reading that reply has to know which network each slot is. Deriving
+// the order anywhere other than here would be a second copy of a rule that already
+// exists, free to drift from the file the daemon actually read; RenderDMRGateway
+// and this function iterate identically and a test renders the INI and compares.
+//
+// Disabled networks are included: they are still written as sections (with
+// Enabled=0) and still consume a slot, so skipping them here would shift every
+// name after them onto the wrong link.
+func (m *Model) DMRNetworkOrder() []string {
+	dmrID := firstNonEmpty(m.DMR.ID, m.General.ID)
+	var out []string
+	for _, bn := range m.dmrBusNetworks(dmrID) {
+		out = append(out, bn.name)
+	}
+	for _, net := range m.Networks {
+		if net.Type == NetXLX {
+			continue // its own [XLX Network] section; reported as "xlx", not "netN"
+		}
+		out = append(out, net.Name)
+	}
+	return out
+}
+
 // RenderDMRGateway renders a complete DMRGateway.ini from the model.
 func (m *Model) RenderDMRGateway() string {
 	var b strings.Builder
@@ -1316,7 +1358,24 @@ func (m *Model) RenderDMRGateway() string {
 		kv("Daemon", "0"),
 	)
 	sect(&b, "Log", m.logSectionMQTT(m.Logging.DMRGateway)...)
-	sect(&b, "MQTT", m.mqttSection("Address", "Auth", "dmr-gateway")...)
+	sect(&b, "MQTT", m.mqttSection("Address", "Auth", MQTTNameDMRGateway)...)
+	// [Remote Commands] is what lets waypointd ASK this daemon whether each of its
+	// masters is still connected, by publishing "status" to <name>/command and
+	// reading net1:conn/net2:disc off <name>/response (RemoteControl.cpp →
+	// buildNetworkStatusString → CDMRNetwork::isConnected, which is the login state
+	// machine itself).
+	//
+	// Without it the daemon is unaskable, and that is not a small loss. DMRGateway
+	// announces a link change when one happens and then says nothing — so when a
+	// master goes away and the daemon fails to recover, it emits no status, no log,
+	// and no answer: measured on the bench harness, 200 seconds of complete silence
+	// (see test/tier2/resilience_test.go). A supervisor with only the announcements
+	// to go on would hold the last thing it heard, which was "Logged in", and never
+	// notice. Polling turns link state into something re-confirmed on Waypoint's
+	// schedule rather than on the daemon's.
+	sect(&b, "Remote Commands",
+		kb("Enable", true),
+	)
 
 	dmrID := firstNonEmpty(m.DMR.ID, m.General.ID)
 	n := 0

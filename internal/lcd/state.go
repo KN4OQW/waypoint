@@ -60,12 +60,15 @@ func (s *state) handle(e hub.Event) {
 	switch e.Type {
 	case "mode":
 		s.activeMode = e.Mode
-	case "link":
+	case "link", "link_up", "link_down":
+		// "link" is the original up-only spelling, still written to events.db and
+		// still replayed from it; link_up/link_down are the pair that can also take
+		// a network back down (#22).
 		if e.Network != "" {
 			if s.links == nil {
 				s.links = map[string]bool{}
 			}
-			s.links[e.Network] = true
+			s.links[e.Network] = e.Type != "link_down"
 		}
 	case "rf_voice_start", "net_voice_start":
 		call, tg := callTG(e)

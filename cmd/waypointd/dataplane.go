@@ -46,6 +46,11 @@ type dataPlane struct {
 	started bool
 	cancel  context.CancelFunc // stops the running consumer
 	pub     *mqtt.Publisher
+	// cmd is how the supervisor ASKS a gateway where its links stand (#22). It
+	// lives here rather than in main() for the same reason the publisher does: the
+	// broker it talks to is store-owned, so an operator who moves the broker in the
+	// System tab must not leave the supervisor querying the old one forever.
+	cmd *mqtt.Commander
 	// seen dedupes Home Assistant discovery configs by topic. It is cleared on a
 	// prefix change: the new prefix is a different set of topics, and HA needs the
 	// configs republished there or the entities never appear.
@@ -150,6 +155,18 @@ func (dp *dataPlane) publisher() (string, *mqtt.Publisher) {
 	return dp.cur.StatusPrefix, dp.pub
 }
 
+// commander returns the live command client, or nil before the data plane has
+// started. The supervisor calls this per cycle rather than capturing the value, so
+// a broker change swaps the connection underneath it without a restart.
+func (dp *dataPlane) commander() *mqtt.Commander {
+	if dp == nil {
+		return nil
+	}
+	dp.mu.Lock()
+	defer dp.mu.Unlock()
+	return dp.cmd
+}
+
 // brokerAndPrefix reports the live broker and status prefix (for logging/tests).
 func (dp *dataPlane) brokerAndPrefix() (string, string) {
 	dp.mu.Lock()
@@ -184,6 +201,9 @@ func (dp *dataPlane) reconfigure(ctx context.Context, cfg dataPlaneConfig) {
 				Username:  cfg.Username,
 				Password:  cfg.Password,
 				BusPrefix: cfg.BusPrefix, // D4: also ingest <BusPrefix>/# as hub events
+				// #22: DMRGateway's own status plane, where a failed or successful
+				// master login is announced the moment it happens.
+				GatewayNames: []string{config.MQTTNameDMRGateway},
 			}); err != nil && cctx.Err() == nil {
 				log.Printf("mqtt bridge stopped: %v", err)
 			}
@@ -197,6 +217,15 @@ func (dp *dataPlane) reconfigure(ctx context.Context, cfg dataPlaneConfig) {
 		dp.pub = mqtt.NewPublisher(mqtt.Options{
 			Broker: cfg.Broker, Name: cfg.Name, Username: cfg.Username, Password: cfg.Password,
 		}, avail)
+		// The commander's connection depends on exactly what the publisher's does,
+		// so it is rebuilt on the same trigger.
+		oldCmd := dp.cmd
+		dp.cmd = mqtt.NewCommander(mqtt.Options{
+			Broker: cfg.Broker, Username: cfg.Username, Password: cfg.Password,
+		}, []string{config.MQTTNameDMRGateway}, 0)
+		if oldCmd != nil {
+			defer oldCmd.Close()
+		}
 	}
 	dp.mu.Unlock()
 

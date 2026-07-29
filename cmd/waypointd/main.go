@@ -49,6 +49,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/seed"
 	"github.com/KN4OQW/waypoint/internal/status"
 	"github.com/KN4OQW/waypoint/internal/store"
+	"github.com/KN4OQW/waypoint/internal/supervisor"
 	"github.com/KN4OQW/waypoint/internal/tlscert"
 	"github.com/KN4OQW/waypoint/internal/updater"
 	"github.com/KN4OQW/waypoint/internal/verifydl"
@@ -116,8 +117,12 @@ type server struct {
 	netKeyfileDir     string
 	netConfirmTimeout time.Duration
 	netBackend        string // "composite" (NM + keyfile) or "keyfile" (fallback)
-	timesyncdConf     string // rendered systemd-timesyncd drop-in path (NTP direct apply)
-	netGuard          *netconfig.Guard
+	// setupAPIface is excluded from the route check the supervisor and netwatch
+	// share: the setup access point's own route is not a way out, and counting it
+	// would tell a node that had raised the AP that it was back online.
+	setupAPIface  string
+	timesyncdConf string // rendered systemd-timesyncd drop-in path (NTP direct apply)
+	netGuard      *netconfig.Guard
 	// Wi-Fi scan cache + timezone list cache (netScanMu guards both).
 	netScanMu  sync.Mutex
 	netScan    []netconfig.WiFiScanResult
@@ -1864,6 +1869,11 @@ func main() {
 	nodeID := flag.String("node-id", defaultNodeID(), "device id + MQTT node segment for HA discovery (stable across restarts)")
 	statusTick := flag.Duration("status-watchdog-tick", time.Second, "how often the status aggregator runs its stranded-transmission watchdog")
 	probeInterval := flag.Duration("gateway-probe-interval", time.Second, "how often the supervisor probes gateway liveness (RFC-0008; keep < 2s for the #5 acceptance)")
+	linkTTL := flag.Duration("link-ttl", status.LinkTTLOff, "how long a network link stays claimed without re-confirmation; 0 disables (nothing re-confirms links until the resilience supervisor, #22)")
+	supervisorInterval := flag.Duration("supervisor-interval", supervisor.DefaultInterval, "how often the resilience supervisor evaluates each upstream attachment (#22)")
+	supervisorRemediate := flag.Bool("supervisor-remediate", true, "let the resilience supervisor restart a gateway that has lost its upstream link; false observes and reports only (#22)")
+	supervisorMaxRestarts := flag.Int("supervisor-max-restarts", supervisor.DefaultMaxRestarts, "global backstop: most gateway restarts the supervisor may perform inside -supervisor-restart-window")
+	supervisorRestartWindow := flag.Duration("supervisor-restart-window", supervisor.DefaultRestartWindow, "the window -supervisor-max-restarts is counted over")
 	mqttUser := flag.String("mqtt-user", "", "MQTT username (optional)")
 	mqttPass := flag.String("mqtt-pass", "", "MQTT password (optional)")
 	mmdvmINI := flag.String("mmdvm-ini", "/home/pi-star/waypoint/etc/MMDVM-Host.ini", "MMDVM-Host.ini render target (the file the daemon reads)")
@@ -2036,7 +2046,7 @@ func main() {
 	s := &server{
 		hub: hub.New(), demo: *demoMode, started: time.Now(),
 		store: st, storePath: *storePath, evStore: ev,
-		agg: status.New(status.DefaultTxTTL),
+		agg: status.New(status.DefaultTxTTL, *linkTTL),
 		paths: config.Paths{
 			MMDVM: *mmdvmINI, DMRGateway: *dmrgwINI, YSFGateway: *ysfgwINI, DGIdGateway: *dgidgwINI,
 			P25Gateway: *p25gwINI, NXDNGateway: *nxdngwINI, DStarGateway: *dstargwINI, M17Gateway: *m17gwINI,
@@ -2054,7 +2064,7 @@ func main() {
 		},
 		ysfHosts: *ysfHosts, p25Hosts: *p25Hosts, nxdnHosts: *nxdnHosts, dstarHosts: *dstarHosts, m17Hosts: *m17Hosts, dmrHosts: *dmrHosts, dmrTGs: *dmrTGs, dmrIDs: *dmrIDs,
 		netKeyfileDir: *nmKeyfileDir, netConfirmTimeout: *netConfirmTimeout, netBackend: *netBackend,
-		timesyncdConf: *timesyncdConf,
+		timesyncdConf: *timesyncdConf, setupAPIface: *setupAPIface,
 		// D1: which MQTT flags the operator actually typed, so an explicit one can
 		// shadow the store (with a logged warning) and an untouched one cannot.
 		mqttFlags: newMQTTFlags(*broker, *mqttName, *mqttUser, *mqttPass, *statusPrefix, *busTopicPrefix),
@@ -2204,6 +2214,19 @@ func main() {
 		// restarted gateway shows truth within the probe interval — the #5 acceptance,
 		// from systemd state (not log scraping). Live mode only (a demo runs no gateways).
 		go s.runLivenessProbe(context.Background(), *probeInterval)
+		// Network resilience (#22): watch every upstream attachment the config
+		// declares, keep the node honest about them, and restart a gateway that has
+		// lost one and cannot get it back on its own. Live mode only — a demo node
+		// has no masters to lose.
+		go s.runSupervisor(context.Background(), supervisorOptions{
+			Interval:      *supervisorInterval,
+			Remediate:     *supervisorRemediate,
+			MaxRestarts:   *supervisorMaxRestarts,
+			RestartWindow: *supervisorRestartWindow,
+			// Read per cycle, not captured: the data plane rebuilds this connection
+			// when the store's broker moves (#29), and the supervisor has to follow.
+			Commander: s.dp.commander,
+		})
 		// Update poller (D2 / #15): periodically refresh the stack and waypointd
 		// available-update caches and drive opt-in quiet-window auto-apply. Live mode
 		// only. Ticks every 15 min so it reliably lands in the one-hour quiet window; a
