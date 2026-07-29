@@ -67,6 +67,13 @@ const (
 	unitM17Gateway    = "waypoint-m17gateway.service"
 	unitDAPNETGateway = "waypoint-dapnetgateway.service"
 
+	// The public spelling of the two units the resilience supervisor (#22) has to
+	// name: an upstream attachment derived from this model has to say which unit
+	// carries it, and the supervisor lives outside this package. Aliases rather than
+	// renames so RenderTargets and the apply path keep reading in lower case.
+	UnitDMRGateway    = unitDMRGateway
+	UnitDAPNETGateway = unitDAPNETGateway
+
 	// Cross-mode transcoding bridge units (MMDVM_CM). The per-bridge-daemon model is
 	// retired for the RFC-0003 bus architecture, so RenderTargets no longer restarts
 	// them. They remain named here only so apply can STOP any that a node was still
