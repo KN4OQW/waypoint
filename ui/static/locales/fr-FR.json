@@ -1,6 +1,3 @@
-Here is the translated JSON file with French values for the UI strings, while preserving all JSON keys, code tokens, placeholders, HTML tags, and metadata formatting.
-
-```json
 {
   "_meta": {
     "name": "Français (French)",
@@ -969,5 +966,3 @@ Here is the translated JSON file with French values for the UI strings, while pr
   "ysf.wiresXPassthroughAdvanced": "Pass-through Wires-X (avancé — laisser désactivé pour un contrôle local)",
   "ysf.ysfReflectorNetwork": "Réseau de réflecteurs YSF"
 }
-
-```
