@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Waypoint · Settings</title>
+<title data-i18n="settings.pageTitle">Waypoint · Settings</title>
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <script>
   /* Apply saved theme + mode before first paint (RFC-0009); dark is the default. */
@@ -133,6 +133,11 @@
   .swatch.on { background: var(--swatch-on); }
   .swatch.mode-toggle { flex: 1 1 100%; font-family: var(--mono); font-size: 11px; letter-spacing: 1px; color: var(--ink-body); margin-bottom: 7px; padding: 8px 0; }
   .swatch.mode-toggle.light { color: var(--accent); }
+  /* Language picker, below the swatches — same control as the dashboard. */
+  .lang-pick { margin-top: 13px; }
+  .lang-select { width: 100%; padding: 8px 9px; border-radius: 7px; cursor: pointer;
+    background: var(--swatch-bg); border: 1px solid var(--chip-line); color: var(--ink-body);
+    font-family: var(--mono); font-size: 11px; }
 
   /* main */
   main { min-width: 0; display: flex; flex-direction: column; max-height: 100vh; overflow: hidden; }
@@ -222,6 +227,7 @@
     .row input, .row select { min-height: 44px; }
     .pill, .btn, .mode-card, button.pill { min-height: 40px; }
     .swatch { min-height: 44px; }
+    .lang-select { min-height: 44px; }
   }
   @media (prefers-reduced-motion: reduce) {
     * { animation: none !important; transition: none !important; }
@@ -477,40 +483,42 @@
 </style>
 </head>
 <body>
-<a class="skip-link" href="#main">Skip to settings</a>
+<a class="skip-link" href="#main" data-i18n="chrome.skipToSettings">Skip to settings</a>
 <div class="app" id="app">
   <aside>
     <div class="brand">
-      <a class="brand-row" href="/" style="text-decoration:none;" title="Back to dashboard">
+      <a class="brand-row" href="/" style="text-decoration:none;" title="Back to dashboard" data-i18n-attr="title:chrome.backToDashboard">
         <svg width="27" height="27" viewBox="0 0 512 512" style="flex:none;" fill="var(--accent)" aria-hidden="true"><path d="M256 474 C201 410 138 362 138 284 A118 118 0 0 1 374 284 C374 362 311 410 256 474 Z"></path><path d="M247 302 L265 302 L259 128 L253 128 Z"></path><circle cx="256" cy="110" r="16"></circle><g fill="none" stroke="var(--accent)" stroke-width="13" stroke-linecap="round"><path d="M216 80 Q188 110 216 140"></path><path d="M196 60 Q156 110 196 160"></path><path d="M296 80 Q324 110 296 140"></path><path d="M316 60 Q356 110 316 160"></path></g><circle cx="256" cy="288" r="46" fill="#0b0d12"></circle></svg>
         <div>
           <div class="brand-name">WAYPOINT</div>
-          <div class="brand-sub">HOTSPOT CONTROL</div>
+          <div class="brand-sub" data-i18n="sidebar.tagline">HOTSPOT CONTROL</div>
         </div>
       </a>
       <div class="callsign-chip">
         <div>
-          <div class="chip-k">CALLSIGN</div>
+          <div class="chip-k" data-i18n="sidebar.callsign">CALLSIGN</div>
           <div class="chip-v" id="side-callsign">—</div>
         </div>
-        <div class="online"><span class="led"></span><span class="txt">ONLINE</span></div>
+        <div class="online"><span class="led"></span><span class="txt" data-i18n="sidebar.online">ONLINE</span></div>
       </div>
     </div>
-    <nav id="nav" aria-label="Configuration sections">
-      <div class="nav-head">CONFIGURATION</div>
+    <nav id="nav" aria-label="Configuration sections" data-i18n-attr="aria-label:nav.configSections">
+      <div class="nav-head" data-i18n="nav.configuration">CONFIGURATION</div>
     </nav>
     <div class="theme-pick">
-      <div class="theme-head" id="theme-head">DISPLAY THEME</div>
+      <div class="theme-head" id="theme-head" data-i18n="chrome.theme">DISPLAY THEME</div>
       <div class="swatches" id="swatches" role="group" aria-labelledby="theme-head"></div>
+      <!-- Filled by i18n.js via settings.js; hidden while only one catalog ships. -->
+      <div class="lang-pick" id="lang-pick" hidden></div>
     </div>
   </aside>
 
   <main id="main">
     <div class="statusbar">
-      <div class="stat"><span class="k">DASHBOARD</span><span class="v" id="st-version">—</span></div>
-      <div class="stat"><span class="k">MODE</span><span class="v accent" id="st-mode">—</span></div>
-      <div class="stat"><span class="k">UPTIME</span><span class="v" id="st-uptime">—</span></div>
-      <div class="stat"><span class="k">FEED</span><span class="v" id="st-feed">—</span></div>
+      <div class="stat"><span class="k" data-i18n="status.dashboard">DASHBOARD</span><span class="v" id="st-version">—</span></div>
+      <div class="stat"><span class="k" data-i18n="status.mode">MODE</span><span class="v accent" id="st-mode">—</span></div>
+      <div class="stat"><span class="k" data-i18n="status.uptime">UPTIME</span><span class="v" id="st-uptime">—</span></div>
+      <div class="stat"><span class="k" data-i18n="status.feed">FEED</span><span class="v" id="st-feed">—</span></div>
       <div class="leds" id="leds"></div>
     </div>
 
@@ -518,13 +526,13 @@
       <div class="pagehead">
         <div>
           <div class="crumb" id="crumb">—</div>
-          <h1 id="title">Settings</h1>
+          <h1 id="title" data-i18n="settings.title">Settings</h1>
           <p id="desc"></p>
         </div>
         <div class="actions">
           <span class="ro-badge hide" id="ro-badge"></span>
-          <button class="btn ghost" id="btn-reset" disabled>RESET</button>
-          <button class="btn primary" id="btn-apply" disabled>APPLY CHANGES</button>
+          <button class="btn ghost" id="btn-reset" disabled data-i18n="common.reset">RESET</button>
+          <button class="btn primary" id="btn-apply" disabled data-i18n="common.apply">APPLY CHANGES</button>
         </div>
       </div>
       <div id="panels"></div>
@@ -532,8 +540,6 @@
   </main>
 </div>
 
-<!-- The catalogs load here too, so data-i18n markup and t() work on this page as
-     soon as its strings are externalized. No strings are moved yet. -->
 <script src="i18n.js"></script>
 <script src="settings.js"></script>
 </body>
