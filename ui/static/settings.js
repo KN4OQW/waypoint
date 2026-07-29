@@ -4,26 +4,31 @@
 // INIs and restarts them. Values are never hard-coded and never patched into
 // INIs — the store is authoritative (RFC-0001).
 
-// Every tab's `crumb` carries its taxonomy: the segment before the "/" is the nav
-// group, the segment after it is the section. renderNav derives the sidebar groups
-// straight from that prefix, so a tab is filed simply by giving it the right crumb
-// — there is no second list to keep in step.
+// A tab is an id and a two-letter glyph; every word an operator reads — label,
+// sidebar subtitle, breadcrumb, page title, description — is in the catalog under
+// "tab.<id>.*". Adding a tab is an entry here plus five catalog keys.
+//
+// The breadcrumb still carries the taxonomy: its prefix ("SYSTEM / GENERAL" ->
+// SYSTEM) is the nav group, so renderNav files a tab straight from tabCrumbKey's
+// English base. That lookup deliberately reads the base catalog rather than the
+// active one — a translated group name would not match NAV_GROUPS, and the
+// grouping is structure, not copy.
 //
 // The eight per-mode panels are not top-level tabs: they are sub-tabs of the single
 // "modes" entry below (see MODE_SUBS). Their old ids still resolve as deep links.
 const TABS = [
-  { id: "general",      tag: "RF", label: "General",      sub: "Radio & Station",     crumb: "SYSTEM / GENERAL",        title: "General Configuration", desc: "Station identity, operating frequencies and modem hardware for this hotspot node." },
-  { id: "hardware",     tag: "HW", label: "Hardware",     sub: "Modem & Board",       crumb: "SYSTEM / HARDWARE",       title: "Modem Hardware",        desc: "What modem is attached, what it says it is, and whether this node is configured to match. Detection asks the modem directly — it never guesses from the port it was found on." },
-  { id: "setup",        tag: "SU", label: "Setup",         sub: "Control & Display",    crumb: "SYSTEM / SETUP",          title: "Control Software & Display", desc: "TRX mode and the MMDVM-Host display driver. Waypoint runs display-free (status is served over MQTT); these fields are here for parity and for nodes driving a physical panel." },
-  { id: "lcd",          tag: "LC", label: "LCD",           sub: "HD44780 Panel",        crumb: "SYSTEM / LCD",            title: "LCD Display",           desc: "Drive a physical HD44780 character panel over I2C, with pages of live status that rotate. Disabled by default; the node stays headless until you turn it on." },
-  { id: "station",      tag: "ST", label: "Station",      sub: "History & ID",         crumb: "SYSTEM / STATION",        title: "Station Settings",      desc: "Node-wide operating policy: how long the persistent last-heard / event history is kept (pruned nightly), and how this node identifies itself on the air." },
-  { id: "modes",        tag: "MD", label: "Modes",        sub: "Enable & Configure",   crumb: "MODES / ALL MODES",       title: "Modes",                 desc: "Which digital voice / data modes MMDVM-Host handles, and the per-mode settings behind each one. Toggling a mode restarts the stack on Apply." },
-  { id: "brandmeister", tag: "BM", label: "BrandMeister", sub: "Network & Security",   crumb: "NETWORKS / BRANDMEISTER", title: "DMR Networks",          desc: "Master servers this node bridges DMR traffic to. Passwords are stored on the node and never shown." },
-  { id: "network",      tag: "NW", label: "Network",      sub: "Wi-Fi & IP",           crumb: "NETWORKS / HOST",         title: "Network & Wi-Fi",       desc: "Wireless credentials and IP configuration for the host device." },
-  { id: "gateways",     tag: "GW", label: "Gateways",     sub: "Cross-Mode Routing",   crumb: "NETWORKS / GATEWAYS",     title: "Cross-Mode Gateways",   desc: "Cross-mode routing is being redesigned as a bus system (RFC-0003)." },
-  { id: "profiles",     tag: "PF", label: "Profiles",     sub: "Saved Setups",         crumb: "ADMIN / PROFILES",        title: "Connection Profiles",   desc: "Named snapshots of your mode & network setup — save the current one, switch to another in a click, or carry a setup between nodes as a file. Callsign, frequencies and calibration are never part of a profile, so switching can't change your identity or detune the radio." },
-  { id: "updates",      tag: "UP", label: "Updates",       sub: "Version & Channel",    crumb: "ADMIN / UPDATES",         title: "Software Updates",      desc: "Installed versions, available updates from the signed Waypoint apt repo, and the update policy. Updates are applied on the node, health-checked, and rolled back automatically if the modem does not come back up." },
-  { id: "expert",       tag: "SY", label: "Expert",       sub: "System & Config",      crumb: "ADMIN / EXPERT",          title: "Expert & System",       desc: "Firmware versions and low-level configuration." },
+  { id: "general",      tag: "RF" },
+  { id: "hardware",     tag: "HW" },
+  { id: "setup",        tag: "SU" },
+  { id: "lcd",          tag: "LC" },
+  { id: "station",      tag: "ST" },
+  { id: "modes",        tag: "MD" },
+  { id: "brandmeister", tag: "BM" },
+  { id: "network",      tag: "NW" },
+  { id: "gateways",     tag: "GW" },
+  { id: "profiles",     tag: "PF" },
+  { id: "updates",      tag: "UP" },
+  { id: "expert",       tag: "SY" },
 ];
 
 // Sidebar group order. Anything whose crumb prefix is not listed here still renders,
@@ -44,169 +49,161 @@ const MODE_SUBS = [
   { id: "fm",     label: "FM",            crumb: "FM",            panel: () => panelFm() },
 ];
 
-// Inline help for individual settings (#135), keyed by the "section.field" pair
-// every control already carries in data-sec/data-key (or data-toggle). A field
-// with no entry simply renders without a help affordance, so the table can be
-// filled in over time without touching a panel.
+// Which settings have inline help (#135), keyed by the "section.field" pair every
+// control already carries in data-sec/data-key (or data-toggle). A field not
+// listed here simply renders without a help affordance, so the set can be filled
+// in over time without touching a panel.
+//
+// The help text itself is in the catalog under "help.<section>.<field>" — adding
+// help is a key here and a string there.
 //
 // House style: say what the setting does and when an operator would change it, and
 // name the INI key it renders to where that is the fastest way for an experienced
 // operator to orient. Don't restate the label.
-const HELP = {
+const HELP = new Set([
   // --- station identity + radio ---
-  "general.callsign": "Your licensed callsign. It identifies this node on every network it connects to, and is what other operators see in last-heard lists. Changing it re-registers the node with its gateways on Apply.",
-  "general.id": "Your DMR ID (sometimes called a CCS7 ID) — the numeric identity issued with your callsign by <b>radioid.net</b>. This is the node-wide default: DMR, and the YSF, P25, NXDN and M17 gateways, all log in with it unless a mode overrides it.",
-  "general.location": "Free text shown to other operators and on network dashboards, e.g. “Kansas City, MO”. Cosmetic — nothing routes on it.",
-  "general.url": "A link to this node's public dashboard, published to networks that show one. Leave blank if the node is not reachable from the internet.",
-  "general.power": "Transmit power in watts, as reported to the network. This is a <b>declaration, not a control</b> — it tells other operators what you are running, it does not change what the radio actually transmits.",
-  "general.duplex": "<b>Simplex</b> transmits and receives on one frequency, one at a time — the normal hotspot arrangement. <b>Duplex</b> uses separate RX and TX frequencies and needs hardware that supports it. Setting this wrong stops the node passing traffic.",
-
+  "general.callsign",
+  "general.id",
+  "general.location",
+  "general.url",
+  "general.power",
+  "general.duplex",
   // --- modem / RF ---
-  "modem.rx_freq_hz": "The frequency this node <b>listens</b> on — the frequency your radio transmits to. On a simplex hotspot it matches the TX frequency. Check your national band plan before choosing one.",
-  "modem.tx_freq_hz": "The frequency this node <b>transmits</b> on — the frequency your radio listens to. On a simplex hotspot it matches the RX frequency.",
-  "modem.port": "Serial device the MMDVM modem appears as — <code>/dev/ttyAMA0</code> for a GPIO hat, <code>/dev/ttyACM0</code> for most USB boards. Use <b>Detect</b> on the Hardware tab rather than typing it: detection asks each candidate port what is on the end of it, so a renumbered USB device is found rather than guessed at.",
-  "modem.board": "Which modem board is fitted. Detection reads the board <i>family</i> off the wire, but several products ship the same firmware — a JumboSpot reports as an <code>MMDVM_HS_Hat</code> — so where the identity string cannot tell them apart, this is where you say which one you have. It changes no generated config; it is what lets Waypoint refuse duplex on a board with one radio, and warn when a saved profile came from a differently-tuned board.",
-  "modem.tcxo_hz": "The modem's reference oscillator, in Hz — <b>12288000</b> (12.288 MHz) or <b>14745600</b> (14.7456 MHz). Firmware from the 1.5 era onwards reports it, and Detect fills this in from what the modem said. Get it wrong and the radio is detuned rather than broken, which is why nothing here ever guesses one.",
-  "modem.uart_speed": "Line speed between the host and the modem. 115200 is the MMDVM_HS family's default and is almost always right; Detect fills in whichever speed the modem actually answered on.",
-  "modem.rx_offset": "Correction in Hz applied to the receive frequency, compensating for crystal error in the modem. Leave at 0 until you have measured the error — this is calibration, not tuning.",
-  "modem.tx_offset": "Correction in Hz applied to the transmit frequency, compensating for crystal error in the modem. Leave at 0 until you have measured the error. On a hotspot one oscillator clocks both paths, so this is normally the same number as the RX offset.",
-  "modem.rx_level": "How hard the modem drives its own receive path, 0–100%. On a hotspot this does nothing — the firmware does not read it. On a repeater board it is set so the received waveform fills the range without clipping.",
-  "modem.tx_level": "Transmit level, 0–100%. On a hotspot this is the <b>deviation</b> of the 4FSK signal it generates; on a repeater board it drives the radio's audio input and is set for 2.75 kHz deviation with a deviation meter.",
-  "modem.rf_level": "RF output power of a hotspot's ADF7021, 0–100%. A hotspot is a milliwatt-class transmitter — this is the difference between reaching the far side of the house and the far side of the room, not a power amplifier control.",
-  "modem.rx_dc_offset": "DC bias on the receive path, −128 to 127, used to centre the waveform on a full-size MMDVM. <b>A hotspot ignores this entirely.</b>",
-  "modem.tx_dc_offset": "DC bias on the transmit path, −128 to 127. <b>A hotspot ignores this entirely.</b>",
-  "modem.rx_invert": "Whether the received signal arrives inverted. A full-size MMDVM can be asked directly — it reports inversion in its calibration replies — which is the one analog setting that does not need test equipment. <b>A hotspot ignores this.</b>",
-  "modem.tx_invert": "Whether the transmit signal is inverted before it reaches the radio. Depends on how the radio's modulator is wired. <b>A hotspot ignores this.</b>",
-  "modem.ptt_invert": "Whether the PTT line is active-low rather than active-high. Wrong, and the repeater either never keys or never stops. <b>A hotspot ignores this.</b>",
-  "modem.dmr_delay": "Fine timing adjustment for DMR slot alignment on a duplex repeater, in bits. Leave at 0 unless a repeater is losing slot sync.",
-  "modem.rssi_mapping_file": "Path to a file mapping the modem's raw RSSI counts to dBm, so received signal strengths are reported in real units. Producing one needs a calibrated signal generator; the default path is where the stack looks for it.",
-  "modem.dstar_tx_level": "Per-mode transmit level override for D-Star. Blank follows TX Level, which is what almost every node should do — these exist for a radio whose deviation differs between modes.",
-  "modem.dmr_tx_level": "Per-mode transmit level override for DMR. Blank follows TX Level.",
-  "modem.ysf_tx_level": "Per-mode transmit level override for System Fusion. Blank follows TX Level.",
-  "modem.p25_tx_level": "Per-mode transmit level override for P25. Blank follows TX Level.",
-  "modem.nxdn_tx_level": "Per-mode transmit level override for NXDN. Blank follows TX Level.",
-  "modem.pocsag_tx_level": "Per-mode transmit level override for POCSAG paging. Blank follows TX Level.",
-  "modem.fm_tx_level": "Per-mode transmit level override for analog FM. Blank follows TX Level.",
-
+  "modem.rx_freq_hz",
+  "modem.tx_freq_hz",
+  "modem.port",
+  "modem.board",
+  "modem.tcxo_hz",
+  "modem.uart_speed",
+  "modem.rx_offset",
+  "modem.tx_offset",
+  "modem.rx_level",
+  "modem.tx_level",
+  "modem.rf_level",
+  "modem.rx_dc_offset",
+  "modem.tx_dc_offset",
+  "modem.rx_invert",
+  "modem.tx_invert",
+  "modem.ptt_invert",
+  "modem.dmr_delay",
+  "modem.rssi_mapping_file",
+  "modem.dstar_tx_level",
+  "modem.dmr_tx_level",
+  "modem.ysf_tx_level",
+  "modem.p25_tx_level",
+  "modem.nxdn_tx_level",
+  "modem.pocsag_tx_level",
+  "modem.fm_tx_level",
   // --- DMR ---
-  "dmr.color_code": "DMR's equivalent of a CTCSS tone: a number <b>0–15</b> that must match at both ends before traffic is accepted. It keeps neighbouring systems on the same frequency from hearing each other. Most hotspots use 1.",
-  "dmr.id": "<b>Optional override.</b> Leave blank and the node uses the DMR ID from General → Station Identity. Set it only when this node must log in to DMR with a different ID from the one the other gateways use — a separate hotspot ID, for instance.",
-  "dmr.embedded_lc_only": "Sends only the Link Control data embedded in DMR voice bursts, leaving out the separate LC data burst. Some networks and repeaters expect this; leave it off unless yours has told you otherwise. Renders to <code>[DMR] EmbeddedLCOnly</code>.",
-  "dmr.self_only": "<b>Private</b> accepts traffic only from your own DMR ID, so nobody else can key the node. <b>Public</b> accepts any DMR ID. Private is the usual choice for a personal hotspot. Renders to <code>[DMR] SelfOnly</code>.",
-  "dmr.beacons": "Sends the DMR Roaming Beacon, which lets radios that support roaming discover this node and move to it automatically.",
-  "dmr.dump_ta_data": "Logs Talker Alias data — the sending operator's name and callsign carried alongside voice. Diagnostic; it adds noise to the log without changing what is transmitted.",
-  "dmrnet.slot1": "DMR carries two independent timeslots on one frequency. Turning slot 1 on lets it carry traffic. On a simplex hotspot both slots are usually enabled and the network decides which to use.",
-  "dmrnet.slot2": "The second DMR timeslot. Most talkgroup traffic on BrandMeister arrives on slot 2, so leaving this off will make the node look silent.",
-
+  "dmr.color_code",
+  "dmr.id",
+  "dmr.embedded_lc_only",
+  "dmr.self_only",
+  "dmr.beacons",
+  "dmr.dump_ta_data",
+  "dmrnet.slot1",
+  "dmrnet.slot2",
   // --- mode enables ---
-  "modes.dmr": "Digital Mobile Radio — the most widely used amateur digital mode, with talkgroups carried over networks like BrandMeister and TGIF.",
-  "modes.dstar": "Icom's D-Star, routing through reflectors and callsign-based gateways.",
-  "modes.ysf": "Yaesu System Fusion (C4FM), connecting to YSF reflectors and FCS rooms.",
-  "modes.p25": "APCO P25 Phase 1, connecting to P25 reflectors by talkgroup.",
-  "modes.nxdn": "NXDN, connecting to NXDN reflectors by talkgroup.",
-  "modes.m17": "M17 — a fully open, patent-free digital voice mode built on Codec2.",
-  "modes.pocsag": "POCSAG paging over DAPNET. Transmits pages rather than voice.",
-  "modes.fm": "Plain analog FM. It has no gateway of its own — the node simply repeats it.",
-
+  "modes.dmr",
+  "modes.dstar",
+  "modes.ysf",
+  "modes.p25",
+  "modes.nxdn",
+  "modes.m17",
+  "modes.pocsag",
+  "modes.fm",
   // --- D-Star ---
-  "dstar.module": "The single band letter this node identifies as, e.g. <b>B</b> for 70cm or <b>C</b> for 2m. It must match the module your radio calls, and the Band configured in the D-Star gateway.",
-  "dstar.self_only": "Accept traffic only from your own callsign, so nobody else can key the node.",
-  "dstar.remote_gateway": "Hands network control to a gateway running elsewhere. Leave this <b>off</b> when the node runs its own D-Star gateway, which is the normal setup.",
-  "dstargw.reflector": "The reflector this node links to when it starts, e.g. <code>REF001 C</code>. Leave blank to start unlinked.",
-  "dstargw.ircddb_hostname": "The ircDDB server that resolves callsigns to routes, e.g. <code>rr.openquad.net</code>. This is what makes callsign routing work.",
-  "dstargw.ircddb_username": "Your callsign as registered with the ircDDB network. It must be registered there before routing will work.",
-  "dstargw.ircddb_password": "Password issued when you registered with the ircDDB network. Stored on the node and never shown again.",
-  "dstargw.reflector_reconnect": "Whether the node returns to its startup reflector after a period of inactivity, and how long it waits. <b>Never</b> leaves it wherever the last user linked it.",
-  "dstargw.dplus": "Enable the DPlus reflector protocol (the REF reflectors). DPlus requires registration with a US Trust server.",
-  "dstargw.dplus_login": "Callsign used to authenticate to DPlus reflectors — normally your own, and it must be registered with the US Trust system.",
-  "dstargw.dextra": "Enable the DExtra reflector protocol (the XRF reflectors).",
-  "dstargw.dcs": "Enable the DCS reflector protocol (the DCS reflectors).",
-  "dstargw.xlx": "Enable XLX reflectors, which bridge D-Star with other modes.",
-
+  "dstar.module",
+  "dstar.self_only",
+  "dstar.remote_gateway",
+  "dstargw.reflector",
+  "dstargw.ircddb_hostname",
+  "dstargw.ircddb_username",
+  "dstargw.ircddb_password",
+  "dstargw.reflector_reconnect",
+  "dstargw.dplus",
+  "dstargw.dplus_login",
+  "dstargw.dextra",
+  "dstargw.dcs",
+  "dstargw.xlx",
   // --- System Fusion ---
-  "ysf.low_deviation": "Use narrow deviation, matching radios set to the narrow C4FM setting. Getting this wrong gives distorted or unreadable audio rather than silence.",
-  "ysf.self_only": "Accept traffic only from your own callsign.",
-  "ysf.remote_gateway": "Hands network control to a gateway running elsewhere. Leave off when the node runs its own YSF gateway.",
-  "ysf.tx_hang": "Seconds the transmitter stays keyed after a transmission ends, so a quick reply does not have to re-open the link.",
-  "ysf.mode_hang": "Seconds the node stays in YSF after traffic stops, before it will switch to another mode. Longer values favour continuing a YSF conversation over letting another mode in.",
-  "ysfgw.startup": "The YSF reflector or FCS room this node links to when it starts. Leave blank to start unlinked.",
-  "ysfgw.ysf_network": "Connect to the YSF reflector network.",
-  "ysfgw.fcs_network": "Connect to the FCS room network. FCS rooms are a separate system from YSF reflectors, and can be enabled alongside them.",
-  "ysfgw.ycs_network": "Connect to YCS servers, which add per-talkgroup routing on top of YSF.",
-  "ysfgw.wiresx_passthrough": "Pass Wires-X commands from the radio through to the network, so you can change reflectors from the radio's own menu instead of this page.",
-  "ysfgw.revert": "Return to the startup reflector after the inactivity timeout below.",
-  "ysfgw.inactivity_timeout": "Minutes of silence before the node reverts to its startup reflector. 0 disables the revert.",
-  "ysfgw.aprs": "Publish position and status to the APRS network.",
-  "ysfgw.suffix": "A short suffix appended to the callsign sent to the network, distinguishing several nodes running on one callsign.",
-  "ysfgw.enable_dgid": "Use DG-ID routing, which maps DG-ID numbers set on the radio to different reflectors.",
-  "ysfgw.upper_hostfiles": "Fetch reflector host lists from the alternate upstream source.",
-
+  "ysf.low_deviation",
+  "ysf.self_only",
+  "ysf.remote_gateway",
+  "ysf.tx_hang",
+  "ysf.mode_hang",
+  "ysfgw.startup",
+  "ysfgw.ysf_network",
+  "ysfgw.fcs_network",
+  "ysfgw.ycs_network",
+  "ysfgw.wiresx_passthrough",
+  "ysfgw.revert",
+  "ysfgw.inactivity_timeout",
+  "ysfgw.aprs",
+  "ysfgw.suffix",
+  "ysfgw.enable_dgid",
+  "ysfgw.upper_hostfiles",
   // --- P25 / NXDN / M17 ---
-  "p25.nac": "Network Access Code — P25's equivalent of a CTCSS tone, written in <b>hex</b>. It must match at both ends. <code>293</code> is the common default.",
-  "p25.self_only": "Accept traffic only from your own ID.",
-  "p25.override_uid_check": "Skip validation of the source ID on incoming traffic. Leave off unless a radio you trust is being rejected.",
-  "p25.remote_gateway": "Hands network control to a gateway running elsewhere. Leave off when the node runs its own P25 gateway.",
-  "p25gw.static": "Talkgroups the node links to at startup and stays on. Leave blank to start unlinked.",
-  "p25gw.voice": "Play spoken announcements when the node links or unlinks.",
-  "p25gw.rf_hang_time": "Seconds the node stays on a talkgroup after <b>you</b> stop transmitting.",
-  "p25gw.net_hang_time": "Seconds the node stays on a talkgroup after <b>network</b> traffic stops.",
-  "nxdn.ran": "Radio Access Number — NXDN's equivalent of a CTCSS tone, <b>0–63</b>. It must match at both ends. 1 is the common default.",
-  "nxdn.self_only": "Accept traffic only from your own ID.",
-  "nxdn.remote_gateway": "Hands network control to a gateway running elsewhere. Leave off when the node runs its own NXDN gateway.",
-  "nxdngw.static": "Talkgroups the node links to at startup and stays on. Leave blank to start unlinked.",
-  "nxdngw.voice": "Play spoken announcements when the node links or unlinks.",
-  "nxdngw.rf_hang_time": "Seconds the node stays on a talkgroup after you stop transmitting.",
-  "nxdngw.net_hang_time": "Seconds the node stays on a talkgroup after network traffic stops.",
-  "m17.can": "Channel Access Number — M17's equivalent of a CTCSS tone, <b>0–15</b>. It must match at both ends. 0 is the common default.",
-  "m17.self_only": "Accept traffic only from your own callsign.",
-  "m17.allow_encryption": "Pass encrypted M17 frames through the node. <b>Encrypted transmissions are prohibited on amateur bands in most countries</b> — leave this off unless you are certain of your local rules.",
-  "m17gw.startup": "The reflector and module this node links to when it starts, e.g. <code>M17-M17 C</code>. Leave blank to start unlinked.",
-  "m17gw.suffix": "A short suffix distinguishing several M17 nodes running on one callsign.",
-  "m17gw.voice": "Play spoken announcements when the node links or unlinks.",
-  "m17gw.revert": "Return to the startup reflector after the hang time below.",
-  "m17gw.hang_time": "Seconds of silence before the node reverts to its startup reflector.",
-
+  "p25.nac",
+  "p25.self_only",
+  "p25.override_uid_check",
+  "p25.remote_gateway",
+  "p25gw.static",
+  "p25gw.voice",
+  "p25gw.rf_hang_time",
+  "p25gw.net_hang_time",
+  "nxdn.ran",
+  "nxdn.self_only",
+  "nxdn.remote_gateway",
+  "nxdngw.static",
+  "nxdngw.voice",
+  "nxdngw.rf_hang_time",
+  "nxdngw.net_hang_time",
+  "m17.can",
+  "m17.self_only",
+  "m17.allow_encryption",
+  "m17gw.startup",
+  "m17gw.suffix",
+  "m17gw.voice",
+  "m17gw.revert",
+  "m17gw.hang_time",
   // --- FM ---
-  "fm.ctcss": "The sub-audible access tone in Hz, e.g. <code>88.5</code>. Your radio must send the same tone before the node will repeat you.",
-  "fm.timeout": "Maximum seconds of continuous transmission before the node stops keying — the classic repeater timer that stops a stuck mic holding the channel.",
-  "fm.kerchunk_time": "Seconds you must hold a transmission before the node responds, which stops brief “kerchunks” keying it. 0 turns it off.",
-  "fm.rf_audio_boost": "Gain applied to audio arriving over the air. Raise it if you sound quiet to the network.",
-  "fm.ext_audio_boost": "Gain applied to audio arriving from the network. Raise it if the network sounds quiet on the air.",
-  "fm.access_mode": "How a transmission is allowed to open the repeater — on carrier alone, or only with the correct CTCSS tone. Requiring the tone stops unrelated signals keying the node.",
-
+  "fm.ctcss",
+  "fm.timeout",
+  "fm.kerchunk_time",
+  "fm.rf_audio_boost",
+  "fm.ext_audio_boost",
+  "fm.access_mode",
   // --- POCSAG ---
-  "pocsag.frequency": "The paging transmit frequency in Hz. Amateur paging uses specific national allocations — check yours before transmitting.",
-  "pocsag.server": "DAPNET server this node fetches pages from, e.g. <code>dapnet.afu.rwth-aachen.de</code>.",
-  "pocsag.callsign": "The callsign this node authenticates to DAPNET with. It must be registered with DAPNET separately from your radio licence.",
-  "pocsag.auth_key": "The AuthKey issued by the DAPNET portal for your callsign. Stored on the node and never shown again.",
-  "pocsag.whitelist": "Only transmit pages for these RICs (pager addresses). Leave blank to transmit everything the server sends.",
-  "pocsag.blacklist": "Never transmit pages for these RICs, even when the server sends them.",
-
+  "pocsag.frequency",
+  "pocsag.server",
+  "pocsag.callsign",
+  "pocsag.auth_key",
+  "pocsag.whitelist",
+  "pocsag.blacklist",
   // --- station ID + history ---
-  "station_id.enable": "Keys your callsign in Morse at a fixed interval, so the node identifies itself without you doing anything. <b>Most licences require periodic identification</b> — in the US, every 10 minutes (§97.119).",
-  "station_id.time_mins": "Minutes between identifications. Set this to your licence's requirement or shorter — 10 minutes in the US. Identification is sent between transmissions, never during one.",
-  "station_id.callsign": "Identify with a different callsign from your station callsign. Leave blank to track General → Callsign automatically.",
-  "station_id.tx_level": "Loudness of the Morse identification, as a percentage of full deviation. Raise it if the ID is hard to copy, lower it if it is jarring next to voice traffic.",
-  "history.retention_days": "How many days of last-heard and event history the node keeps on disk. <b>0 keeps it forever.</b> Older events are pruned nightly; a longer window uses more SD-card space.",
-
+  "station_id.enable",
+  "station_id.time_mins",
+  "station_id.callsign",
+  "station_id.tx_level",
+  "history.retention_days",
   // --- updates ---
-  "update.check_enabled": "Check the signed Waypoint apt repository for new versions. Turning this off means the node never contacts the update server — you will need to check by hand.",
-  "update.auto_apply": "Install updates automatically when they are found. Updates are health-checked after installing, and roll themselves back if the modem does not come back up.",
-  "update.channel": "Which stream of releases this node follows. Stable is the tested one; the others get changes earlier and with more risk.",
-  "update.quiet_window": "A daily window during which updates are not installed, so a restart never lands in the middle of your regular operating time.",
-
+  "update.check_enabled",
+  "update.auto_apply",
+  "update.channel",
+  "update.quiet_window",
   // --- display / LCD ---
-  "display.port": "Where the display is attached — the modem's own pass-through, or a named serial device. <b>None</b> leaves the node headless, which is the normal Waypoint setup.",
-  "display.hd44780_rows": "Character rows on the panel — 2 and 4 are the common sizes.",
-  "display.hd44780_cols": "Characters per row — usually 16 or 20.",
-  "display.hd44780_i2c_addr": "I2C address of the panel's PCF8574 backpack, in hex. <code>0x27</code> and <code>0x3F</code> cover most modules.",
-  "lcd.enabled": "Drive a physically attached HD44780 character panel. Off by default — the node stays headless and reports status over MQTT instead.",
-  "lcd.activity_interrupt": "Let radio activity take over the panel as it happens, instead of waiting for the page rotation to come round.",
-  "lcd.i2c_bus": "I2C device the panel is wired to. <code>/dev/i2c-1</code> is the header bus on every Pi since the B+.",
-  "lcd.i2c_address": "I2C address of the panel's backpack, in hex — commonly <code>0x27</code> or <code>0x3F</code>.",
-  "lcd.scroll_speed": "How fast text longer than the panel scrolls across it.",
-  "lcd.linger_secs": "Seconds a page stays on the panel before the next one rotates in.",
-};
+  "display.port",
+  "display.hd44780_rows",
+  "display.hd44780_cols",
+  "display.hd44780_i2c_addr",
+  "lcd.enabled",
+  "lcd.activity_interrupt",
+  "lcd.i2c_bus",
+  "lcd.i2c_address",
+  "lcd.scroll_speed",
+  "lcd.linger_secs",
+]);
 
 const THEMES = [
   { key: "phosphor", color: "#35d07f", attr: "" },
@@ -261,6 +258,19 @@ const NAV_OPEN_KEY = "wp-nav-groups";   // persisted group expansion (D2)
 const MODE_SUB_KEY = "wp-mode-sub";     // persisted Modes sub-tab (D5)
 let navOpen = loadNavOpen();  // group name -> expanded?
 let navView = "panel";        // narrow-viewport view: "grid" (tiles) or "panel"
+
+// Message catalogs — see i18n.js. Named msg() rather than t() because `t` is
+// already this file's name for a tab object, a theme and an event target; a
+// global of that name would be shadowed exactly where translation is needed.
+const msg = (key, params) => WPI18n.t(key, params);
+
+// A tab's copy, by id. Kept as one-liners so call sites read like the field
+// access they replaced.
+const tabLabel = (tab) => msg("tab." + tab.id + ".label");
+const tabSub = (tab) => msg("tab." + tab.id + ".sub");
+const tabTitle = (tab) => msg("tab." + tab.id + ".title");
+const tabDesc = (tab) => msg("tab." + tab.id + ".desc");
+const tabCrumb = (tab) => msg("tab." + tab.id + ".crumb");
 
 const el = (t, cls, html) => { const e = document.createElement(t); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -3197,7 +3207,7 @@ function enhanceA11y() {
 // datalists, unit wrappers, bespoke rows like nodeLockRow — and every one of them
 // already carries data-sec/data-key or data-toggle. Walking the rendered DOM
 // therefore covers all of them uniformly, and any control added later gets help
-// for free just by appearing in the HELP table.
+// for free just by appearing in the HELP set.
 //
 // The body is .sr-only when collapsed rather than hidden: aria-describedby cannot
 // reach display:none content, and a screen-reader user should get the description
@@ -3209,8 +3219,8 @@ function helpId(key) { return "wp-help-" + key.replace(/[^A-Za-z0-9_-]/g, "-"); 
 function enhanceHelp(box) {
   box.querySelectorAll("[data-toggle], [data-sec][data-key]").forEach((ctrl) => {
     const key = ctrl.dataset.toggle || ctrl.dataset.sec + "." + ctrl.dataset.key;
-    const text = HELP[key];
-    if (!text) return;
+    if (!HELP.has(key)) return;
+    const text = msg("help." + key);
     const rowEl = ctrl.closest(".row, .toggle-row");
     // One help block per row: a row with several controls (an IPv4 editor, say)
     // would otherwise get one per field.
@@ -3227,7 +3237,7 @@ function enhanceHelp(box) {
     btn.dataset.help = id;
     btn.setAttribute("aria-expanded", String(open));
     btn.setAttribute("aria-controls", id);
-    btn.innerHTML = `<span aria-hidden="true">?</span><span class="sr-only">What is “${esc(label)}”?</span>`;
+    btn.innerHTML = `<span aria-hidden="true">?</span><span class="sr-only">${esc(msg("help.whatIs", { label }))}</span>`;
     host.appendChild(btn);
 
     const body = el("p", "row-help" + (open ? "" : " sr-only"), text);
@@ -3340,7 +3350,16 @@ function reset() {
 // --- chrome --------------------------------------------------------------
 // A tab's nav group is the crumb prefix (D1) — "SYSTEM / GENERAL" files General
 // under SYSTEM. Filing a new tab is therefore just a matter of its crumb.
-function groupOf(t) { return String(t.crumb || "").split("/")[0].trim().toUpperCase() || "OTHER"; }
+function groupOf(t) { return String(WPI18n.base("tab." + t.id + ".crumb")).split("/")[0].trim().toUpperCase() || "OTHER"; }
+
+// The sidebar heading for a group. A crumb prefix with no catalog entry falls
+// back to the prefix itself, so an unrecognised group still renders its tabs
+// rather than a bare key.
+function groupLabel(name) {
+  const key = "nav.group." + name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const s = msg(key);
+  return s === key ? name : s;
+}
 
 // Groups in NAV_GROUPS order, then any prefix not on that list in first-seen order,
 // so an unrecognised crumb can never silently drop its tab off the sidebar.
@@ -3422,8 +3441,8 @@ function navItem(t) {
   const item = el("button", "nav-item" + (on ? " on" : ""));
   item.type = "button";
   if (on) item.setAttribute("aria-current", "page");
-  item.setAttribute("aria-label", t.label + " — " + t.sub);
-  item.innerHTML = `<div class="bar" aria-hidden="true"></div><div class="tag" aria-hidden="true">${esc(t.tag)}</div><div><div class="label">${esc(t.label)}</div><div class="sub">${esc(t.sub)}</div></div>`;
+  item.setAttribute("aria-label", msg("nav.itemLabel", { label: tabLabel(t), sub: tabSub(t) }));
+  item.innerHTML = `<div class="bar" aria-hidden="true"></div><div class="tag" aria-hidden="true">${esc(t.tag)}</div><div><div class="label">${esc(tabLabel(t))}</div><div class="sub">${esc(tabSub(t))}</div></div>`;
   item.onclick = () => selectTab(t.id);
   return item;
 }
@@ -3435,7 +3454,7 @@ function navItem(t) {
 function buildNavTiles(body) {
   const back = el("button", "nav-back");
   back.type = "button";
-  back.innerHTML = `<span class="chev" aria-hidden="true">←</span><span>All settings</span>`;
+  back.innerHTML = `<span class="chev" aria-hidden="true">←</span><span>${esc(msg("nav.allSettings"))}</span>`;
   back.onclick = () => showNavGrid(true);
   body.appendChild(back);
 
@@ -3443,7 +3462,7 @@ function buildNavTiles(body) {
   navGroups().forEach((g) => {
     const head = el("h2", "tile-sec");
     head.id = "tile-" + g.id;
-    head.textContent = g.name;
+    head.textContent = groupLabel(g.name);
     grid.appendChild(head);
     const row = el("div", "tile-row");
     row.setAttribute("role", "group");
@@ -3453,7 +3472,7 @@ function buildNavTiles(body) {
       const tile = el("button", "nav-tile" + (on ? " on" : ""));
       tile.type = "button";
       if (on) tile.setAttribute("aria-current", "page");
-      tile.innerHTML = `<span class="tag" aria-hidden="true">${esc(t.tag)}</span><span class="label">${esc(t.label)}</span><span class="sub">${esc(t.sub)}</span>`;
+      tile.innerHTML = `<span class="tag" aria-hidden="true">${esc(t.tag)}</span><span class="label">${esc(tabLabel(t))}</span><span class="sub">${esc(tabSub(t))}</span>`;
       tile.onclick = () => selectTab(t.id);
       row.appendChild(tile);
     });
@@ -3472,9 +3491,9 @@ function setNavView(v) {
 // stranded behind the back button (D6).
 function showNavGrid(focus) {
   setNavView("grid");
-  document.getElementById("crumb").textContent = "SETTINGS";
-  document.getElementById("title").textContent = "Settings";
-  document.getElementById("desc").textContent = "Choose a section to configure this node.";
+  document.getElementById("crumb").textContent = msg("settings.crumb");
+  document.getElementById("title").textContent = msg("settings.title");
+  document.getElementById("desc").textContent = msg("settings.chooseSection");
   renderNav();
   if (!focus) return;
   const first = document.querySelector("#nav .nav-tile.on") || document.querySelector("#nav .nav-tile");
@@ -3516,9 +3535,11 @@ function resolveTarget(raw) {
 function safeDecode(s) { try { return decodeURIComponent(s || ""); } catch (e) { return String(s || ""); } }
 
 function crumbFor(t) {
-  if (t.id !== "modes") return t.crumb;
+  if (t.id !== "modes") return tabCrumb(t);
+  // The mode's own name is a protocol token and stays as it is; only the frame
+  // around it is translated.
   const m = MODE_SUBS.find((x) => x.id === currentModeSub()) || MODE_SUBS[0];
-  return "MODES / " + m.crumb;
+  return msg("tab.modes.crumbForMode", { mode: m.crumb });
 }
 
 function selectTab(id, sub) {
@@ -3539,8 +3560,8 @@ function selectTab(id, sub) {
   if (!groupExpanded(g)) { delete navOpen[g]; saveNavOpen(); }
   setNavView("panel");
   document.getElementById("crumb").textContent = crumbFor(t);
-  document.getElementById("title").textContent = t.title;
-  document.getElementById("desc").textContent = t.desc;
+  document.getElementById("title").textContent = tabTitle(t);
+  document.getElementById("desc").textContent = tabDesc(t);
   renderNav();
   renderPanel();
   // The Network tab shows live system state, fetched on demand (not part of the
@@ -3588,10 +3609,10 @@ function renderThemes() {
   // Dark/Light toggle first (RFC-0009), then the accent swatches.
   const toggle = el("button", "swatch mode-toggle" + (mode === "light" ? " light" : ""));
   toggle.type = "button";
-  toggle.title = mode === "light" ? "Switch to dark" : "Switch to light";
-  toggle.setAttribute("aria-label", "Toggle light mode");
+  toggle.title = mode === "light" ? msg("theme.switchToDark") : msg("theme.switchToLight");
+  toggle.setAttribute("aria-label", msg("theme.toggleLight"));
   toggle.setAttribute("aria-pressed", String(mode === "light"));
-  toggle.textContent = mode === "light" ? "☀ Light" : "☾ Dark";
+  toggle.textContent = mode === "light" ? msg("theme.light") : msg("theme.dark");
   toggle.onclick = () => {
     const next = currentMode() === "light" ? "dark" : "light";
     localStorage.setItem("wp-mode", next);
@@ -3602,8 +3623,9 @@ function renderThemes() {
   THEMES.forEach((th) => {
     const s = el("button", "swatch" + (th.key === cur ? " on" : ""));
     s.type = "button";
-    s.title = th.key;
-    s.setAttribute("aria-label", th.key + " theme");
+    const themeName = msg("theme." + th.key);
+    s.title = themeName;
+    s.setAttribute("aria-label", msg("theme.swatchLabel", { theme: themeName }));
     s.setAttribute("aria-pressed", String(th.key === cur));
     s.innerHTML = `<span class="dot" style="background:${th.color}; box-shadow:0 0 7px ${th.color};" aria-hidden="true"></span>`;
     s.onclick = () => { applyTheme(th.key); localStorage.setItem("wp-theme", th.key); renderThemes(); };
@@ -4306,25 +4328,48 @@ document.getElementById("panels").addEventListener("focusin", (e) => {
 document.getElementById("btn-apply").onclick = apply;
 document.getElementById("btn-reset").onclick = reset;
 
-renderNav();
-renderThemes();
-{
-  // A deep link opens straight onto its panel — including the retired per-mode ids.
-  // Without one, a narrow viewport opens on the tile grid (there is nothing to go
-  // "back" to yet); the sidebar layout has no grid view and just lands on the first
-  // tab, as before.
-  const target = (location.hash || "").slice(1);
-  selectTab(target || "general");
-  if (!target && NAV_NARROW.matches) showNavGrid(false);
-}
-load();
-initBusEvents(); // live bus_busy surfacing on the Buses tab (RFC-0003 §5)
-// LAN peering (RFC-0016): a modal overlay for the active pairing, and a poll so a
-// responder learns of an incoming pairing request while on the tab.
-(function initPeeringUI() {
-  const el = document.createElement("div");
-  el.id = "peer-modal";
-  el.hidden = true;
-  document.body.appendChild(el);
-  startPeeringPoll();
-})();
+// Every panel is built from template literals that re-read msg() on each render,
+// so a language change is a re-render of the chrome plus the open panel.
+function mountLanguagePicker() { WPI18n.renderPicker(document.getElementById("lang-pick")); }
+addEventListener("wp-lang-changed", () => {
+  mountLanguagePicker();
+  renderThemes();
+  renderNav();
+  const tab = TABS.find((x) => x.id === state.tab);
+  if (tab) {
+    document.getElementById("crumb").textContent = crumbFor(tab);
+    document.getElementById("title").textContent = tabTitle(tab);
+    document.getElementById("desc").textContent = tabDesc(tab);
+  }
+  renderPanel();
+});
+
+// Nothing below paints until the catalogs are in: msg() would answer with bare
+// keys, and i18n.js re-applying the static markup afterwards would overwrite what
+// had already rendered. WPI18n.ready never rejects — a missing catalog degrades
+// to English inside i18n.js.
+WPI18n.ready.then(() => {
+  renderNav();
+  renderThemes();
+  mountLanguagePicker();
+  {
+    // A deep link opens straight onto its panel — including the retired per-mode ids.
+    // Without one, a narrow viewport opens on the tile grid (there is nothing to go
+    // "back" to yet); the sidebar layout has no grid view and just lands on the first
+    // tab, as before.
+    const target = (location.hash || "").slice(1);
+    selectTab(target || "general");
+    if (!target && NAV_NARROW.matches) showNavGrid(false);
+  }
+  load();
+  initBusEvents(); // live bus_busy surfacing on the Buses tab (RFC-0003 §5)
+  // LAN peering (RFC-0016): a modal overlay for the active pairing, and a poll so a
+  // responder learns of an incoming pairing request while on the tab.
+  (function initPeeringUI() {
+    const el = document.createElement("div");
+    el.id = "peer-modal";
+    el.hidden = true;
+    document.body.appendChild(el);
+    startPeeringPoll();
+  })();
+});

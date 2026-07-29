@@ -147,6 +147,15 @@ const WPI18n = (function () {
     window.dispatchEvent(new CustomEvent("wp-lang-changed", { detail: { tag: activeTag } }));
   }
 
+  // base resolves a key against en-US only, ignoring the active language. It is
+  // for the few strings that are structure rather than copy — the settings page
+  // derives a tab's nav group from the English prefix of its breadcrumb, and a
+  // translated prefix would match nothing.
+  function base(key) {
+    const s = lookup(baseMsgs, key);
+    return s === null ? key : s;
+  }
+
   function currentLanguage() { return activeTag; }
   function availableLanguages() { return languages.slice(); }
 
@@ -209,5 +218,5 @@ const WPI18n = (function () {
     whenDOMReady(() => applyTranslations(document));
   })();
 
-  return { ready, t, setLanguage, currentLanguage, availableLanguages, applyTranslations, renderPicker };
+  return { ready, t, base, setLanguage, currentLanguage, availableLanguages, applyTranslations, renderPicker };
 })();

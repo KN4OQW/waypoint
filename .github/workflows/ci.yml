@@ -71,6 +71,18 @@ jobs:
             exit 1
           fi
 
+  # Advisory only (issue #23): flags user-visible English added to the frontend
+  # without a catalog key. A heuristic on added lines, deliberately not a gate —
+  # see the script header for what it cannot see.
+  i18n-strings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Warn on hardcoded UI strings
+        run: ./tools/ci/hardcoded-strings.sh origin/${{ github.base_ref || 'main' }}
+
   # Every unit the image ships is parsed by systemd itself. A directive that
   # systemd silently ignores — a misspelled hardening option, a stale unit name in
   # an After= — is invisible until the node it was meant to protect is in the
