@@ -26,7 +26,7 @@ Status: ✅ done · 🟡 partial · ⬜ pending
 | Area | Store section | Status | Notes |
 |---|---|---|---|
 | Station identity | `general` | ✅ | callsign, DMR ID, duplex, location, URL, timeout, mode-hangs |
-| Automatic identification | `station_id` | ✅ | `[CW Id]` Enable/Time/Callsign + `[Modem]` CWIdTXLevel; on by default. Blank callsign inherits `general.callsign`. Excluded from connection profiles. Identification *during* a transmission is host behavior, not config → [#131] |
+| Automatic identification | `station_id` | ✅ | `[CW Id]` Enable/Time/Callsign + `[Modem]` CWIdTXLevel; on by default. Blank callsign inherits `general.callsign`. Excluded from connection profiles. Identification *during* a transmission is host behavior, not config: fixed in the fork ([#131]) — the interval free-runs and an identification falling due mid-traffic is held pending until the transmitting station keys off, rather than being discarded |
 | Frequencies + modem port | `modem` | ✅ | RX/TX Hz, UART port/speed |
 | Modem board identity | `modem`, `hardware_state` | ✅ | Board + reference oscillator, detected by asking the modem ([RFC-0020](https://github.com/KN4OQW/waypoint/discussions/175) / [#18]). Drives no INI — it gates duplex, cross-checks mode enables against firmware capabilities, and fills the profile fingerprint. `hardware_state` is machine-written and outside the section map, so no operator PUT can assert a modem that is not there |
 | Modem calibration | `modem`, `calibration_state` | ✅ | offsets, invert flags, RX/TX/RF levels, per-mode TX levels, DC offsets, DMR delay, RSSI mapping path. Measured rather than typed: the guided sweep ([RFC-0021](https://github.com/KN4OQW/waypoint/discussions/177) / [#20]) drives the modem itself and writes the offset with provenance. `calibration_state` is machine-written and outside the section map, like `hardware_state`. Blank per-mode levels are omitted from the rendered INI, because the host reads an empty key as zero deviation |
@@ -175,8 +175,11 @@ pattern (`View`/`Set`), wired now ahead of the Wi-Fi surface.
 
 Log levels and MQTT partly wired; **updates lifecycle, auth/TLS (RFC-0002),
 service supervision ([#22])** pending. Of the station-ID / legal helpers ([#24]),
-automatic CW identification is now modeled (§1); the scheduled-operation windows,
-remote kill, and jurisdiction presets remain pending under RFC-0019.
+automatic CW identification is now modeled (§1) and the host actually keys it on
+a busy channel ([#131]): the fork's interval free-runs and holds an overdue
+identification until the transmitting station keys off, where it used to discard
+the expiry and rewind. The scheduled-operation windows, remote kill, and
+jurisdiction presets remain pending under RFC-0019.
 
 ## 6. Auxiliary services  → ⬜
 
