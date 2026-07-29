@@ -808,7 +808,17 @@ function panelDmr() {
     toggleRow("dmrnet", "slot2", msg("dmr.timeSlot2Enabled")) +
     toggleRow("dmr", "embedded_lc_only", msg("dmr.embeddedLcOnly")) +
     nodeLockRow());
-  return `<div class="grid2">${master}${slots}</div>`;
+  // Hang timers render into MMDVM-Host's [DMR] (call_hang/tx_hang/mode_hang) and
+  // [DMR Network] (the "dmrnet" store section's mode_hang). Left blank they emit
+  // no key at all, so the global mode hang on the General tab keeps governing —
+  // which is why there are no placeholder defaults shown here.
+  const timers = card(msg("common.hangTimers"),
+    input("dmr", "call_hang", { label: msg("dmr.callHold"), unit: "sec" }) +
+    input("dmr", "tx_hang", { label: msg("dmr.txHang"), unit: "sec" }) +
+    input("dmr", "mode_hang", { label: msg("dmr.modeHang"), unit: "sec" }) +
+    input("dmrnet", "mode_hang", { label: msg("dmr.netModeHang"), unit: "sec" }));
+  return `<div class="grid2">${master}<div class="stack">${slots}${timers}</div></div>` +
+    note(msg("dmr.hangTimerClamp"));
 }
 
 function panelModes() {

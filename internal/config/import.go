@@ -95,6 +95,12 @@ func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg, dpg *INI) *Model {
 			SelfOnly:       mm.Bool("DMR", "SelfOnly"),
 			DumpTAData:     mm.Bool("DMR", "DumpTAData"),
 			Beacons:        mm.Bool("DMR", "Beacons"),
+			// Bare Get, deliberately: these three carry no orDefault so a key the
+			// imported ini never set stays blank and keeps rendering as "no key",
+			// letting [General] govern exactly as it did on the source node.
+			CallHang: mm.Get("DMR", "CallHang"),
+			TXHang:   mm.Get("DMR", "TXHang"),
+			ModeHang: mm.Get("DMR", "ModeHang"),
 		},
 		DMRNet: DMRNet{
 			LocalPort:      orDefault(mm.Get("DMR Network", "LocalPort"), "62032"),
@@ -103,6 +109,7 @@ func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg, dpg *INI) *Model {
 			Slot1:          mm.Get("DMR Network", "Slot1") != "0",
 			Slot2:          mm.Get("DMR Network", "Slot2") != "0",
 			Jitter:         orDefault(mm.Get("DMR Network", "Jitter"), "360"),
+			ModeHang:       mm.Get("DMR Network", "ModeHang"), // bare Get, as above
 		},
 		Modes: Modes{
 			DStar:  mm.Bool("D-Star", "Enable"),

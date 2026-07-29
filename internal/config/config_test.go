@@ -41,9 +41,13 @@ func fixture() *Model {
 		// masked by a rendered default filling an empty field. This node drives an
 		// HD44780 over I2C (address 0x22), 4 rows × 20 cols.
 		Display: Display{Type: "HD44780", OLEDType: "6", Port: "/dev/ttyUSB0", NextionLayout: "3", HD44780Rows: "4", HD44780Cols: "20", HD44780I2CAddr: "0x22"},
-		DMR:     DMR{ColorCode: "1", ID: "3180202", EmbeddedLCOnly: true, SelfOnly: true, DumpTAData: true, Beacons: true},
-		DMRNet:  DMRNet{LocalPort: "62032", GatewayAddress: "127.0.0.1", GatewayPort: "62031", Slot1: true, Slot2: true, Jitter: "360"},
-		Modes:   Modes{DStar: false, DMR: true, YSF: true, P25: false, NXDN: true, M17: false, POCSAG: true, FM: true},
+		// The DMR hang timers are deliberately mixed, like the per-mode TX levels
+		// above: CallHang/TXHang/ModeHang set, the net-side ModeHang blank. That
+		// covers both an override and the "let [General] govern" case, which must
+		// NOT be rendered as an empty key.
+		DMR:    DMR{ColorCode: "1", ID: "3180202", EmbeddedLCOnly: true, SelfOnly: true, DumpTAData: true, Beacons: true, CallHang: "8", TXHang: "6", ModeHang: "30"},
+		DMRNet: DMRNet{LocalPort: "62032", GatewayAddress: "127.0.0.1", GatewayPort: "62031", Slot1: true, Slot2: true, Jitter: "360"},
+		Modes:  Modes{DStar: false, DMR: true, YSF: true, P25: false, NXDN: true, M17: false, POCSAG: true, FM: true},
 		// Routing round-trips through generated type templates, not verbatim
 		// rewrites: a primary BM (catch-all/PassAll, the TG9990 Parrot rides it),
 		// prefixed SystemX (prefix 4) and TGIF (prefix 5) alternates, and an XLX

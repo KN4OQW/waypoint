@@ -562,7 +562,14 @@ func (m *Model) RenderMMDVM() string {
 		kv("ErrorReply", "1"),
 		kb("RemoteGateway", m.DStar.RemoteGateway),
 	)
-	sect(&b, "DMR",
+	// The DMR hang timers are omitted when blank rather than written with a
+	// default. [General] RFModeHang/NetModeHang fan out to every per-mode hang
+	// variable (Conf.cpp:575-578) and the per-section keys are parsed later, so a
+	// rendered key always wins — even one that only restates the upstream default.
+	// Rendering "ModeHang=10" unconditionally would therefore sever the General
+	// fan-out for every existing config the moment this feature merged. Blank ⇒ no
+	// key ⇒ the operator's global mode hang keeps governing, as it does today.
+	dmrLines := []string{
 		kb("Enable", m.Modes.DMR),
 		kv("ColorCode", def(m.DMR.ColorCode, "1")),
 		kv("Id", firstNonEmpty(m.DMR.ID, m.General.ID)),
@@ -570,7 +577,13 @@ func (m *Model) RenderMMDVM() string {
 		kb("EmbeddedLCOnly", m.DMR.EmbeddedLCOnly),
 		kb("DumpTAData", m.DMR.DumpTAData),
 		kb("Beacons", m.DMR.Beacons),
+	}
+	dmrLines = appendIfSet(dmrLines,
+		kvPair{"CallHang", m.DMR.CallHang},
+		kvPair{"TXHang", m.DMR.TXHang},
+		kvPair{"ModeHang", m.DMR.ModeHang},
 	)
+	sect(&b, "DMR", dmrLines...)
 	sect(&b, "System Fusion",
 		kb("Enable", m.Modes.YSF),
 		kb("LowDeviation", m.YSF.LowDeviation),
@@ -624,7 +637,9 @@ func (m *Model) RenderMMDVM() string {
 		kv("ExtAudioBoost", def(m.FM.ExtAudioBoost, "1")),
 	)
 
-	sect(&b, "DMR Network",
+	// ModeHang here is the net-side counterpart of [DMR] ModeHang and omits when
+	// blank for the same reason (General fan-out, see the [DMR] comment above).
+	dmrNetLines := []string{
 		kb("Enable", m.Modes.DMR),
 		kv("LocalAddress", "127.0.0.1"),
 		kv("LocalPort", def(m.DMRNet.LocalPort, "62032")),
@@ -633,7 +648,9 @@ func (m *Model) RenderMMDVM() string {
 		kv("Jitter", def(m.DMRNet.Jitter, "360")),
 		kb("Slot1", m.DMRNet.Slot1),
 		kb("Slot2", m.DMRNet.Slot2),
-	)
+	}
+	dmrNetLines = appendIfSet(dmrNetLines, kvPair{"ModeHang", m.DMRNet.ModeHang})
+	sect(&b, "DMR Network", dmrNetLines...)
 	// The D-Star network talks to DStarGateway on the fixed 20010/20011 pair
 	// (MMDVM-Host [D-Star Network] already uses the modern GatewayAddress/
 	// GatewayPort/LocalPort names — no Address→GatewayAddress rename here).
@@ -1469,6 +1486,21 @@ func kb(k string, on bool) string {
 		return k + "=1"
 	}
 	return k + "=0"
+}
+
+// kvPair is a key and the model value that may or may not be set for it.
+type kvPair struct{ key, val string }
+
+// appendIfSet appends "key=val" for each pair whose value is non-blank, in the
+// order given, and skips the rest. It is the "omit, never write empty" rule the
+// per-mode TX levels already follow, factored out for the DMR hang timers.
+func appendIfSet(lines []string, pairs ...kvPair) []string {
+	for _, p := range pairs {
+		if strings.TrimSpace(p.val) != "" {
+			lines = append(lines, kv(p.key, p.val))
+		}
+	}
+	return lines
 }
 
 func def(v, d string) string {
