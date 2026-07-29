@@ -421,32 +421,34 @@ function lcdFrom(l) {
 // so the UI never offers a token the driver can't expand. `sample` feeds the live
 // preview (a representative "active DMR call" snapshot).
 const LCD_TOKEN_HELP = [
-  ["callsign", "Station callsign (config)", "KN4OQW"],
-  ["dmr_id", "DMR ID (config)", "3180202"],
-  ["ip", "Node's LAN IPv4 address", "192.168.1.50"],
-  ["hostname", "Node hostname", "waypoint"],
-  ["version", "Waypoint version", "1.0"],
-  ["freq_rx", "RX frequency, MHz (modem config)", "433.1250"],
-  ["freq_tx", "TX frequency, MHz (modem config)", "433.1250"],
-  ["time", "Clock, HH:MM", "15:04"],
-  ["date", "Date, YYYY-MM-DD", "2026-07-14"],
-  ["uptime", "Time since the daemon started", "1h30m"],
-  ["mode", "Active mode, else IDLE", "DMR"],
-  ["modes", "Enabled modes, space-joined", "DMR YSF"],
-  ["status", "Activity line, else Listening", "RX DMR TG91 W1ABC"],
-  ["source", "Caller now, else last heard", "W1ABC"],
-  ["tg", "Talkgroup now, else last heard", "TG91"],
-  ["rssi", "Signal of the last transmission", "-70"],
-  ["ber", "Bit-error rate of the last transmission", "0.5%"],
-  ["lh_call", "Last heard callsign", "W1ABC"],
-  ["lh_tg", "Last heard talkgroup", "TG91"],
-  ["lh_mode", "Last heard mode", "DMR"],
-  ["lh_ber", "Last heard bit-error rate", "0.5%"],
-  ["lh_rssi", "Last heard RSSI, dBm", "-70"],
-  ["lh_ago", "Time since the last transmission", "30s"],
+  ["callsign", "KN4OQW"],
+  ["dmr_id",   "3180202"],
+  ["ip",       "192.168.1.50"],
+  ["hostname", "waypoint"],
+  ["version",  "1.0"],
+  ["freq_rx",  "433.1250"],
+  ["freq_tx",  "433.1250"],
+  ["time",     "15:04"],
+  ["date",     "2026-07-14"],
+  ["uptime",   "1h30m"],
+  ["mode",     "DMR"],
+  ["modes",    "DMR YSF"],
+  ["status",   "RX DMR TG91 W1ABC"],
+  ["source",   "W1ABC"],
+  ["tg",       "TG91"],
+  ["rssi",     "-70"],
+  ["ber",      "0.5%"],
+  ["lh_call",  "W1ABC"],
+  ["lh_tg",    "TG91"],
+  ["lh_mode",  "DMR"],
+  ["lh_ber",   "0.5%"],
+  ["lh_rssi",  "-70"],
+  ["lh_ago",   "30s"],
 ];
 const LCD_TOKENS = LCD_TOKEN_HELP.map((t) => t[0]);
-const LCD_SAMPLE = LCD_TOKEN_HELP.reduce((m, t) => { m[t[0]] = t[2]; return m; }, {});
+const LCD_SAMPLE = LCD_TOKEN_HELP.reduce((m, t) => { m[t[0]] = t[1]; return m; }, {});
+// A token's human description, for the palette tooltips and the legend.
+const lcdTokenDesc = (tok) => msg("lcd.token." + tok);
 // unknownTokens returns the {tokens} in a line that aren't in LCD_TOKENS.
 function unknownTokens(line) {
   const bad = [];
@@ -638,31 +640,31 @@ function extLink(href, text) { return `<a class="ext" href="${esc(href)}" target
 // "allow other DMR IDs" fields are two framings of the same setting.
 function nodeLockRow() {
   const on = !!(edit.dmr || {}).self_only;
-  return `<div class="toggle-row"><span class="name">${msg("nodeLockRow.nodeLockPrivatePublic")}</span><button type="button" class="pill ${on ? "on" : "off"}" data-toggle="dmr.self_only" aria-pressed="${on}" aria-label="Node Lock (Private / Public)">${on ? "PRIVATE" : "PUBLIC"}</button></div>`;
+  return `<div class="toggle-row"><span class="name">${msg("nodeLockRow.nodeLockPrivatePublic")}</span><button type="button" class="pill ${on ? "on" : "off"}" data-toggle="dmr.self_only" aria-pressed="${on}" aria-label="${esc(msg("nodeLockRow.nodeLockPrivatePublic"))}">${esc(on ? msg("nodeLockRow.private") : msg("nodeLockRow.public"))}</button></div>`;
 }
 
 // --- panels --------------------------------------------------------------
 function panelGeneral() {
   const left = card(msg("general.stationIdentity"),
-    input("general", "callsign", { label: "Callsign" }) +
-    input("general", "id", { label: "DMR ID" }) +
-    input("general", "location", { label: "Location" }) +
-    input("general", "url", { label: "Dashboard URL" }));
+    input("general", "callsign", { label: msg("general.callsign") }) +
+    input("general", "id", { label: msg("general.dmrId") }) +
+    input("general", "location", { label: msg("general.location") }) +
+    input("general", "url", { label: msg("general.dashboardUrl") }));
   const radio = card(msg("general.radioFrequency"),
-    input("modem", "rx_freq_hz", { label: "RX Frequency", kind: "mhz", unit: "MHz", accent: true }) +
-    input("modem", "tx_freq_hz", { label: "TX Frequency", kind: "mhz", unit: "MHz", accent: true }) +
-    input("modem", "port", { label: "Modem Port" }) +
+    input("modem", "rx_freq_hz", { label: msg("general.rxFrequency"), kind: "mhz", unit: "MHz", accent: true }) +
+    input("modem", "tx_freq_hz", { label: msg("general.txFrequency"), kind: "mhz", unit: "MHz", accent: true }) +
+    input("modem", "port", { label: msg("general.modemPort") }) +
     boardRow() +
     baudRow() +
-    input("general", "power", { label: "RF Power", unit: "" }) +
+    input("general", "power", { label: msg("general.rfPower"), unit: "" }) +
     toggle("general", "duplex", msg("general.duplex"), msg("general.duplex2"), msg("general.simplex")) +
     note(msg("general.donTTypePort")));
   const cal = card(msg("general.calibration"),
-    input("modem", "rx_offset", { label: "RX Offset", unit: "Hz" }) +
-    input("modem", "tx_offset", { label: "TX Offset", unit: "Hz" }) +
-    input("modem", "rx_level", { label: "RX Level", unit: "%" }) +
-    input("modem", "tx_level", { label: "TX Level", unit: "%" }) +
-    input("modem", "rf_level", { label: "RF Power", unit: "%" }) +
+    input("modem", "rx_offset", { label: msg("general.rxOffset"), unit: "Hz" }) +
+    input("modem", "tx_offset", { label: msg("general.txOffset"), unit: "Hz" }) +
+    input("modem", "rx_level", { label: msg("general.rxLevel"), unit: "%" }) +
+    input("modem", "tx_level", { label: msg("general.txLevel"), unit: "%" }) +
+    input("modem", "rf_level", { label: msg("general.rfPower"), unit: "%" }) +
     note(msg("general.measureTheseRatherThan")));
   // The analog controls a full-size repeater board needs and a hotspot ignores
   // outright: MMDVM_HS's firmware does not read the invert flags or the DC
@@ -672,19 +674,19 @@ function panelGeneral() {
     toggle("modem", "rx_invert", msg("general.rxInvert"), msg("general.inverted"), msg("general.normal")) +
     toggle("modem", "tx_invert", msg("general.txInvert"), msg("general.inverted"), msg("general.normal")) +
     toggle("modem", "ptt_invert", msg("general.pttInvert"), msg("general.inverted"), msg("general.normal")) +
-    input("modem", "rx_dc_offset", { label: "RX DC Offset" }) +
-    input("modem", "tx_dc_offset", { label: "TX DC Offset" }) +
-    input("modem", "dmr_delay", { label: "DMR Delay" }) +
-    input("modem", "rssi_mapping_file", { label: "RSSI Map" }) +
+    input("modem", "rx_dc_offset", { label: msg("general.rxDcOffset") }) +
+    input("modem", "tx_dc_offset", { label: msg("general.txDcOffset") }) +
+    input("modem", "dmr_delay", { label: msg("general.dmrDelay") }) +
+    input("modem", "rssi_mapping_file", { label: msg("general.rssiMap") }) +
     note(msg("general.hotspotBoardIgnoresEvery")));
   const levels = card(msg("general.perModeTxLevels"),
-    input("modem", "dstar_tx_level", { label: "D-Star", unit: "%" }) +
-    input("modem", "dmr_tx_level", { label: "DMR", unit: "%" }) +
-    input("modem", "ysf_tx_level", { label: "System Fusion", unit: "%" }) +
+    input("modem", "dstar_tx_level", { label: msg("general.dStar"), unit: "%" }) +
+    input("modem", "dmr_tx_level", { label: msg("general.dmr"), unit: "%" }) +
+    input("modem", "ysf_tx_level", { label: msg("general.systemFusion"), unit: "%" }) +
     input("modem", "p25_tx_level", { label: "P25", unit: "%" }) +
-    input("modem", "nxdn_tx_level", { label: "NXDN", unit: "%" }) +
-    input("modem", "pocsag_tx_level", { label: "POCSAG", unit: "%" }) +
-    input("modem", "fm_tx_level", { label: "FM", unit: "%" }) +
+    input("modem", "nxdn_tx_level", { label: msg("general.nxdn"), unit: "%" }) +
+    input("modem", "pocsag_tx_level", { label: msg("general.pocsag"), unit: "%" }) +
+    input("modem", "fm_tx_level", { label: msg("general.fm"), unit: "%" }) +
     note(msg("general.leaveBlankFollowTx")));
   return `<div class="grid2">${left}<div class="stack">${radio}${cal}${levels}${analog}</div></div>`;
 }
@@ -738,8 +740,8 @@ function baudRow() {
 function panelDmr() {
   const master = card(msg("dmr.dmrMaster"),
     toggle("modes", "dmr", msg("dmr.enabled")) +
-    input("dmr", "color_code", { label: "Color Code", accent: true }) +
-    input("dmr", "id", { label: "DMR ID" }));
+    input("dmr", "color_code", { label: msg("dmr.colorCode"), accent: true }) +
+    input("dmr", "id", { label: msg("dmr.dmrId") }));
   const slots = card(msg("dmr.timeSlotsAdvanced"),
     toggleRow("dmrnet", "slot1", msg("dmr.timeSlot1Enabled")) +
     toggleRow("dmrnet", "slot2", msg("dmr.timeSlot2Enabled")) +
@@ -757,12 +759,12 @@ function panelModes() {
     // Tab and flips on Enter/Space. aria-pressed carries the enabled state; the
     // "ENABLED/DISABLED" text and the LED both back up the accent colour.
     return `
-    <button type="button" class="mode-card ${on ? "on" : ""}" data-toggle="modes.${k}" aria-pressed="${on}" aria-label="${esc(names[k])} mode">
+    <button type="button" class="mode-card ${on ? "on" : ""}" data-toggle="modes.${k}" aria-pressed="${on}" aria-label="${esc(msg("modes.cardLabel", { mode: names[k] }))}">
       <div class="mode-top">
         <div><div class="mode-name">${esc(names[k])}</div><div class="mode-desc">${esc(k.toUpperCase())}</div></div>
         <div class="track" aria-hidden="true"><div class="knob"></div></div>
       </div>
-      <div class="mode-foot"><span class="d" aria-hidden="true"></span><span class="s">${on ? "ENABLED" : "DISABLED"}</span></div>
+      <div class="mode-foot"><span class="d" aria-hidden="true"></span><span class="s">${esc(on ? msg("common.enabled") : msg("common.disabled"))}</span></div>
     </button>`;
   }).join("");
   return `<div class="modes-grid">${cards}</div>`;
@@ -781,14 +783,14 @@ function panelModesSection() {
     // the strip (WAI-ARIA tabs pattern).
     return `<button type="button" role="tab" class="msub${enabled ? " live" : ""}"
       id="msub-${esc(m.id)}" data-modesub="${esc(m.id)}" aria-selected="${on}"
-      aria-controls="mode-subpanel" tabindex="${on ? 0 : -1}">${esc(m.label)}<span class="msub-dot" aria-hidden="true"></span><span class="sr-only">${enabled ? " (enabled)" : " (disabled)"}</span></button>`;
+      aria-controls="mode-subpanel" tabindex="${on ? 0 : -1}">${esc(m.label)}<span class="msub-dot" aria-hidden="true"></span><span class="sr-only">${esc(enabled ? msg("modes.srEnabled") : msg("modes.srDisabled"))}</span></button>`;
   }).join("");
   return `
     <div class="mode-sec-t">${msg("modes.modeEnable")}</div>
     <p class="mode-sec-d">${msg("modes.turnModeHaveMmdvm")}</p>
     ${panelModes()}
     <div class="mode-sec-t mode-sec-gap">${msg("modes.modeSettings")}</div>
-    <div class="mode-subs" role="tablist" aria-label="Mode settings">${tabs}</div>
+    <div class="mode-subs" role="tablist" aria-label="${esc(msg("modesSection.modeSettings"))}">${tabs}</div>
     <div class="mode-subpanel" id="mode-subpanel" role="tabpanel" tabindex="0" aria-labelledby="msub-${esc(cur.id)}">${cur.panel()}</div>`;
 }
 
@@ -803,7 +805,7 @@ function panelDisplay() {
   const g = edit.general || (edit.general = {}), d = edit.display || (edit.display = {});
 
   const trxSel = `<select data-trxmode>` +
-    [["simplex", "Simplex Node"], ["duplex", "Duplex Repeater"]]
+    [["simplex", msg("display.simplexNode")], ["duplex", msg("display.duplexRepeater")]]
       .map(([v, l]) => `<option value="${v}"${(v === "duplex") === !!g.duplex ? " selected" : ""}>${l}</option>`).join("") + `</select>`;
   const control = card(msg("display.controlSoftware"),
     row(msg("display.radioControlSoftware"), `<input value="MMDVMHost" readonly>`) +
@@ -830,7 +832,7 @@ function panelDisplay() {
   // Nextion layout — only when a Nextion is selected.
   if (d.type === "Nextion") {
     const lay = d.nextion_layout || "0";
-    const layOpts = [["0", "G4KLX"], ["2", "ON7LDS L2"], ["3", "ON7LDS L3"], ["4", "ON7LDS L3 HS"]]
+    const layOpts = [["0", msg("display.g4klx")], ["2", msg("display.on7ldsL2")], ["3", msg("display.on7ldsL3")], ["4", msg("display.on7ldsL3Hs")]]
       .map(([v, l]) => `<option value="${v}"${v === lay ? " selected" : ""}>${l}</option>`).join("");
     displayRows += row(msg("display.nextionLayout"), `<select data-sec="display" data-key="nextion_layout">${layOpts}</select>`);
   }
@@ -840,9 +842,9 @@ function panelDisplay() {
   // no separate I2C-bus key in MMDVM-Host's [HD44780] section.
   if (d.type === "HD44780") {
     displayRows +=
-      input("display", "hd44780_rows", { label: "Rows" }) +
-      input("display", "hd44780_cols", { label: "Columns" }) +
-      input("display", "hd44780_i2c_addr", { label: "I2C Address", accent: true });
+      input("display", "hd44780_rows", { label: msg("display.rows") }) +
+      input("display", "hd44780_cols", { label: msg("display.columns") }) +
+      input("display", "hd44780_i2c_addr", { label: msg("display.i2cAddress"), accent: true });
   }
 
   const display = card(msg("display.display"), displayRows);
@@ -877,26 +879,26 @@ function pageCard(p, i, rows, cols, total) {
   for (let j = 0; j < rows; j++) {
     const v = p.lines[j] || "";
     unknownTokens(v).forEach((u) => { if (!bad.includes(u)) bad.push(u); });
-    lines += `<div class="lcd-line"><label class="lcd-linelabel" for="lcd-l-${i}-${j}">Row ${j + 1}</label>` +
-      `<input id="lcd-l-${i}-${j}" class="lcd-lineinput" data-lcdline="${i}" data-lcdrow="${j}" value="${esc(v)}" placeholder="text and {tokens}" aria-label="Page ${i + 1} row ${j + 1}"></div>`;
+    lines += `<div class="lcd-line"><label class="lcd-linelabel" for="lcd-l-${i}-${j}">${esc(msg("lcd.rowLabel", { row: j + 1 }))}</label>` +
+      `<input id="lcd-l-${i}-${j}" class="lcd-lineinput" data-lcdline="${i}" data-lcdrow="${j}" value="${esc(v)}" placeholder="${esc(msg("lcd.linePlaceholder"))}" aria-label="${esc(msg("lcd.rowAria", { page: i + 1, row: j + 1 }))}"></div>`;
   }
   const warn = `<div class="lcd-warn${bad.length ? "" : " hide"}" role="alert" data-lcdwarn="${i}">${warnText(bad)}</div>`;
-  const palette = `<div class="lcd-tokens" role="group" aria-label="Insert a token into page ${i + 1}">` +
-    LCD_TOKEN_HELP.map(([tk, desc]) => `<button type="button" class="lcd-tok" data-lcdtoken="${esc(tk)}" data-lcdpageidx="${i}" title="${esc(desc)} — inserts {${esc(tk)}}">{${esc(tk)}}</button>`).join("") + `</div>`;
+  const palette = `<div class="lcd-tokens" role="group" aria-label="${esc(msg("lcd.paletteAria", { page: i + 1 }))}">` +
+    LCD_TOKEN_HELP.map(([tk]) => `<button type="button" class="lcd-tok" data-lcdtoken="${esc(tk)}" data-lcdpageidx="${i}" title="${esc(msg("lcd.tokenPaletteTitle", { desc: lcdTokenDesc(tk), token: "{" + tk + "}" }))}">{${esc(tk)}}</button>`).join("") + `</div>`;
   const preview = `<div class="lcd-preview">` +
-    `<div class="lcd-preview-label" id="lcd-pv-label-${i}">Preview (${esc(cols)}×${esc(String(rows))})</div>` +
+    `<div class="lcd-preview-label" id="lcd-pv-label-${i}">${esc(msg("lcd.previewLabel", { cols, rows }))}</div>` +
     `<pre class="lcd-screen" data-lcdpreview="${i}" role="group" aria-labelledby="lcd-pv-label-${i}">${esc(lcdPreviewText(p, rows, parseInt(cols, 10) || 20))}</pre></div>`;
   const upDis = i === 0 ? " disabled aria-disabled=\"true\"" : "";
   const dnDis = i === total - 1 ? " disabled aria-disabled=\"true\"" : "";
   return `<section class="card lcd-page">
       <div class="card-head lcd-pagehead">
-        <button type="button" class="lcd-move" data-lcdmove="up" data-lcdpageidx="${i}" aria-label="Move page ${i + 1} up"${upDis}>▲</button>
-        <button type="button" class="lcd-move" data-lcdmove="down" data-lcdpageidx="${i}" aria-label="Move page ${i + 1} down"${dnDis}>▼</button>
-        <input class="lcd-pagename" data-lcdpage="${i}" data-lcdkey="name" value="${esc(p.name || "")}" placeholder="Page name" aria-label="Page ${i + 1} name">
-        <button type="button" class="pill ${p.enabled ? "on" : "off"}" data-lcdpageen="${i}" aria-pressed="${p.enabled ? "true" : "false"}" aria-label="Page ${i + 1} enabled">${p.enabled ? "ENABLED" : "DISABLED"}</button>
-        <button type="button" class="pill ${p.interrupt ? "on" : "off"}" data-lcdpageint="${i}" aria-pressed="${p.interrupt ? "true" : "false"}" aria-label="Page ${i + 1} interrupt on activity" title="Take over the panel on TX/RX, then resume rotation">${p.interrupt ? "INTERRUPT" : "ROTATE"}</button>
-        <span class="lcd-dur"><input class="mini" data-lcdpage="${i}" data-lcdkey="duration" value="${esc(p.duration || "")}" inputmode="numeric" aria-label="Page ${i + 1} hold seconds"> s</span>
-        <button type="button" class="netdel" data-lcdpagedel="${i}" aria-label="Remove page ${i + 1}">✕</button>
+        <button type="button" class="lcd-move" data-lcdmove="up" data-lcdpageidx="${i}" aria-label="${esc(msg("lcd.movePageUp", { page: i + 1 }))}"${upDis}>▲</button>
+        <button type="button" class="lcd-move" data-lcdmove="down" data-lcdpageidx="${i}" aria-label="${esc(msg("lcd.movePageDown", { page: i + 1 }))}"${dnDis}>▼</button>
+        <input class="lcd-pagename" data-lcdpage="${i}" data-lcdkey="name" value="${esc(p.name || "")}" placeholder="${esc(msg("lcd.pageNamePlaceholder"))}" aria-label="${esc(msg("lcd.pageNameAria", { page: i + 1 }))}">
+        <button type="button" class="pill ${p.enabled ? "on" : "off"}" data-lcdpageen="${i}" aria-pressed="${p.enabled ? "true" : "false"}" aria-label="${esc(msg("lcd.pageEnabledAria", { page: i + 1 }))}">${esc(p.enabled ? msg("common.enabled") : msg("common.disabled"))}</button>
+        <button type="button" class="pill ${p.interrupt ? "on" : "off"}" data-lcdpageint="${i}" aria-pressed="${p.interrupt ? "true" : "false"}" aria-label="${esc(msg("lcd.pageInterruptAria", { page: i + 1 }))}" title="${esc(msg("lcd.pageInterruptTitle"))}">${esc(p.interrupt ? msg("lcd.interrupt") : msg("lcd.rotate"))}</button>
+        <span class="lcd-dur"><input class="mini" data-lcdpage="${i}" data-lcdkey="duration" value="${esc(p.duration || "")}" inputmode="numeric" aria-label="${esc(msg("lcd.pageHoldAria", { page: i + 1 }))}"> ${esc(msg("lcd.secondsUnit"))}</span>
+        <button type="button" class="netdel" data-lcdpagedel="${i}" aria-label="${esc(msg("lcd.removePageAria", { page: i + 1 }))}">✕</button>
       </div>
       ${lines}${warn}${preview}${palette}
     </section>`;
@@ -904,7 +906,10 @@ function pageCard(p, i, rows, cols, total) {
 
 function warnText(bad) {
   if (!bad.length) return "";
-  return `⚠ Unknown token${bad.length > 1 ? "s" : ""}: ${bad.map((u) => esc("{" + u + "}")).join(", ")} — check spelling; unknown tokens render blank.`;
+  // Singular and plural are two keys chosen here rather than a plural library:
+  // the UI branches on exactly one count, in exactly one place.
+  const tokens = bad.map((u) => esc("{" + u + "}")).join(", ");
+  return msg(bad.length > 1 ? "lcd.warnUnknownTokens" : "lcd.warnUnknownToken", { tokens });
 }
 
 // updatePageWarning refreshes one page's unknown-token notice without a full
@@ -922,8 +927,8 @@ function updatePageWarning(i) {
 // It is generated from LCD_TOKEN_HELP so it can never drift from the palette or
 // the renderer. Rendered as a real <dl> inside <details> for accessible reading.
 function lcdLegend() {
-  const items = LCD_TOKEN_HELP.map(([tk, desc]) =>
-    `<dt>{${esc(tk)}}</dt><dd>${esc(desc)}</dd>`).join("");
+  const items = LCD_TOKEN_HELP.map(([tk]) =>
+    `<dt>{${esc(tk)}}</dt><dd>${esc(lcdTokenDesc(tk))}</dd>`).join("");
   return `<details class="lcd-legend"><summary>${msg("lcdLegend.tokenReference")}</summary><dl>${items}</dl></details>`;
 }
 
@@ -933,13 +938,13 @@ function panelLCD() {
   const cols = l.cols || "20";
   const panel = card(msg("lcd.panel"),
     lcdToggleRow("enabled", msg("lcd.driverEnabled"), msg("common.enabled"), msg("common.disabled")) +
-    input("lcd", "i2c_bus", { label: "I2C bus" }) +
-    input("lcd", "i2c_address", { label: "I2C address", accent: true }) +
-    row(msg("lcd.rows"), lcdSelect("rows", [["2", "2 rows"], ["4", "4 rows"]], l.rows)) +
-    row(msg("lcd.columns"), lcdSelect("cols", [["16", "16 columns"], ["20", "20 columns"]], l.cols)) +
-    input("lcd", "scroll_speed", { label: "Scroll speed", unit: "ms" }) +
+    input("lcd", "i2c_bus", { label: msg("lcd.i2cBus") }) +
+    input("lcd", "i2c_address", { label: msg("lcd.i2cAddress"), accent: true }) +
+    row(msg("lcd.rows"), lcdSelect("rows", [["2", msg("lcd.rowsOption", { n: 2 })], ["4", msg("lcd.rowsOption", { n: 4 })]], l.rows)) +
+    row(msg("lcd.columns"), lcdSelect("cols", [["16", msg("lcd.colsOption", { n: 16 })], ["20", msg("lcd.colsOption", { n: 20 })]], l.cols)) +
+    input("lcd", "scroll_speed", { label: msg("lcd.scrollSpeed"), unit: "ms" }) +
     lcdToggleRow("activity_interrupt", msg("lcd.interruptActivity"), "ON", "OFF") +
-    input("lcd", "linger_secs", { label: "Interrupt linger", unit: "s" }));
+    input("lcd", "linger_secs", { label: msg("lcd.interruptLinger"), unit: "s" }));
   const help = note(msg("lcd.linesFillTokensE"));
   const disabled = l.enabled ? "" : note(msg("lcd.driverDisabledPagesAre"));
   const pages = (l.pages || []).map((p, i) => pageCard(p, i, rows, cols, (l.pages || []).length)).join("");
@@ -1059,7 +1064,7 @@ function ensureNet(type) {
   return n;
 }
 
-const enPill = (type, n) => { const on = !!(n && n.enabled); return `<button type="button" class="pill ${on ? "on" : "off"}" data-neten="${type}" aria-pressed="${on}" aria-label="${esc(type)} network enabled">${on ? "ENABLED" : "DISABLED"}</button>`; };
+const enPill = (type, n) => { const on = !!(n && n.enabled); return `<button type="button" class="pill ${on ? "on" : "off"}" data-neten="${type}" aria-pressed="${on}" aria-label="${esc(msg("networks.enabledLabel", { network: type }))}">${esc(on ? msg("common.enabled") : msg("common.disabled"))}</button>`; };
 const netField = (type, key, n, ph, pw) =>
   `<input data-netf="${type}" data-nkey="${key}"${pw ? ' type="password"' : ""} value="${esc(n ? (n[key] || "") : "")}" placeholder="${esc(ph || "")}">`;
 
@@ -1068,10 +1073,10 @@ const netField = (type, key, n, ph, pw) =>
 function masterSelect(type, cat, n) {
   const list = dmrMasters.filter((m) => m.category === cat);
   const cur = (n && n.address) || "";
-  const opts = ['<option value="">— select master —</option>']
+  const opts = [`<option value="">${esc(msg("masterSelect.selectMaster"))}</option>`]
     .concat(list.map((m) => `<option value="${esc(m.address)}"${m.address === cur ? " selected" : ""}>${esc(m.name)}</option>`))
     .join("");
-  return `<select data-dmrmaster="${type}">${opts}</select>${list.length ? "" : " <small style='color:var(--dim)'>host list loading…</small>"}`;
+  return `<select data-dmrmaster="${type}">${opts}</select>${list.length ? "" : ` <small style='color:var(--dim)'>${esc(msg("masterSelect.hostListLoading2"))}</small>`}`;
 }
 
 // essidSelect: None / 01..99 extended-ID suffix, per Pi-Star.
@@ -1091,7 +1096,7 @@ function panelBrandmeister() {
   const supply = hostlistNote("dmr_hosts") + hostlistNote("dmr_talkgroups");
   const bm = netOf("brandmeister"), dp = netOf("dmrplus"), sx = netOf("systemx"), tg = netOf("tgif"), xl = netOf("xlx");
   const primaryType = ((edit.networks || []).find((n) => n.primary) || {}).type || "brandmeister";
-  const masterSel = [["brandmeister", "Brandmeister"], ["dmrplus", "DMR+ / FreeDMR / HBlink Network"], ["systemx", "SystemX"], ["tgif", "TGIF"]]
+  const masterSel = [["brandmeister", msg("bm.brandmeister")], ["dmrplus", msg("bm.dmrFreedmrHblinkNetwork2")], ["systemx", msg("bm.systemx")], ["tgif", msg("bm.tgif")]]
     .map(([v, l]) => `<option value="${v}"${v === primaryType ? " selected" : ""}>${l}</option>`).join("");
 
   const master = `<section class="card">
@@ -1109,7 +1114,7 @@ function panelBrandmeister() {
     </section>`;
 
   const dpSec = `<section class="card">
-      ${sectionHead(msg("bm.dmrFreedmrHblinkNetwork"), "dmrplus", dp)}
+      ${sectionHead(msg("bm.dmrFreedmrHblinkNetwork2"), "dmrplus", dp)}
       ${row(msg("bm.dmrMaster"), masterSelect("dmrplus", "dmrplus", dp))}
       ${row(msg("bm.networkOptions"), netField("dmrplus", "options", dp, ""))}
       ${row(msg("bm.essid"), essidSelect("dmrplus", dp))}
@@ -1143,10 +1148,10 @@ function panelBrandmeister() {
   for (let i = 0; i <= 15; i++) ccOpts += `<option value="${i}"${String(i) === String(cc) ? " selected" : ""}>${i}</option>`;
   const general = `<section class="card">
       <div class="card-head"><span class="sq"></span><span class="t">${msg("bm.generalDmrSettings")}</span></div>
-      <div class="toggle-row"><span class="name">${msg("bm.dmrRoamingBeacon")}</span><button type="button" class="pill ${d.beacons ? "on" : "off"}" data-toggle="dmr.beacons" aria-pressed="${!!d.beacons}" aria-label="DMR Roaming Beacon">${d.beacons ? "ON" : "OFF"}</button></div>
+      <div class="toggle-row"><span class="name">${msg("bm.dmrRoamingBeacon")}</span><button type="button" class="pill ${d.beacons ? "on" : "off"}" data-toggle="dmr.beacons" aria-pressed="${!!d.beacons}" aria-label="${esc(msg("bm.dmrRoamingBeacon"))}">${d.beacons ? "ON" : "OFF"}</button></div>
       ${row(msg("bm.dmrColorCode"), `<select data-sec="dmr" data-key="color_code">${ccOpts}</select>`)}
-      <div class="toggle-row"><span class="name">${msg("bm.dmrEmbeddedlconly")}</span><button type="button" class="pill ${d.embedded_lc_only ? "on" : "off"}" data-toggle="dmr.embedded_lc_only" aria-pressed="${!!d.embedded_lc_only}" aria-label="DMR EmbeddedLCOnly">${d.embedded_lc_only ? "ON" : "OFF"}</button></div>
-      <div class="toggle-row"><span class="name">${msg("bm.dmrDumptadata")}</span><button type="button" class="pill ${d.dump_ta_data ? "on" : "off"}" data-toggle="dmr.dump_ta_data" aria-pressed="${!!d.dump_ta_data}" aria-label="DMR DumpTAData">${d.dump_ta_data ? "ON" : "OFF"}</button></div>
+      <div class="toggle-row"><span class="name">${msg("bm.dmrEmbeddedlconly")}</span><button type="button" class="pill ${d.embedded_lc_only ? "on" : "off"}" data-toggle="dmr.embedded_lc_only" aria-pressed="${!!d.embedded_lc_only}" aria-label="${esc(msg("bm.dmrEmbeddedlconly"))}">${d.embedded_lc_only ? "ON" : "OFF"}</button></div>
+      <div class="toggle-row"><span class="name">${msg("bm.dmrDumptadata")}</span><button type="button" class="pill ${d.dump_ta_data ? "on" : "off"}" data-toggle="dmr.dump_ta_data" aria-pressed="${!!d.dump_ta_data}" aria-label="${esc(msg("bm.dmrDumptadata"))}">${d.dump_ta_data ? "ON" : "OFF"}</button></div>
       ${nodeLockRow()}
       ${note(msg("bm.privateLocksTxNode"))}
     </section>`;
@@ -1167,7 +1172,7 @@ function routingTable() {
   const rows = routes.map((r, j) => `
     <div class="route-row">
       ${slotSelect(r.slot, `data-rtslot="${j}" aria-label="Route ${j + 1} time slot"`)}
-      <input class="mini" list="dmr-tgs" data-rttg="${j}" value="${esc(tgDisplay(r.tg))}" placeholder="dialed TG — type a name or number" aria-label="Route ${j + 1} dialed talkgroup (type to search)">
+      <input class="mini" list="dmr-tgs" data-rttg="${j}" value="${esc(tgDisplay(r.tg))}" placeholder="${esc(msg("routingTable.dialedTgTypeName"))}" aria-label="Route ${j + 1} dialed talkgroup (type to search)">
       <span class="arr" aria-hidden="true">→</span>
       <select class="mini" data-rtnet="${j}" aria-label="Route ${j + 1} gateway">${netOpts(r.network)}</select>
       <button class="netdel" data-rtdel="${j}" aria-label="Remove route ${j + 1}">✕</button>
@@ -1213,7 +1218,7 @@ function panelImport() {
   const dis = importBusy ? " disabled" : "";
   const input = card(msg("import.importPiStarWpsd"), `
     <div class="row"><label>${msg("import.mountedCardPath")}</label>
-      <input id="import-dir" placeholder="/mnt/sdcard  (or /media/…)" aria-label="Mounted incumbent card path"></div>
+      <input id="import-dir" placeholder="${esc(msg("import.mntSdcardMedia"))}" aria-label="${esc(msg("import.mountedIncumbentCardPath"))}"></div>
     <div style="display:flex; gap:12px; align-items:center; margin-top:6px; flex-wrap:wrap;">
       <button type="button" id="import-scan-dir"${dis} style="padding:8px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:6px;">${msg("import.scanDirectory")}</button>
       <label class="import-upload" style="font-family:var(--mono); font-size:12px; cursor:pointer; text-decoration:underline;">
@@ -1254,7 +1259,12 @@ function importReport(s) {
 function panelOverrides() {
   const d = overridesData;
   if (!d) return card(msg("overrides.overrides"), note(msg("overrides.loadingOverrideLayer")));
-  const dirLine = note(`Override drop-ins live under <code>${esc(d.dir || "—")}/&lt;daemon&gt;.d/*.conf</code> ${msg("overrides.hostFileHooksUnder")} <code>${msg("overrides.ltHostfileGtPrepend")}</code> · <code>.append.d/</code>. They merge last into the generated files and are never touched by an update (<a href="https://github.com/KN4OQW/waypoint/issues/2">${msg("overrides.waypoint2")}</a>).`);
+  const dirLine = note(msg("overrides.dropInsLine", {
+    dir: `<code>${esc(d.dir || "—")}/&lt;daemon&gt;.d/*.conf</code>`,
+    prepend: "<code>&lt;hostfile&gt;.prepend.d/</code>",
+    append: "<code>.append.d/</code>",
+    issue: `<a href="https://github.com/KN4OQW/waypoint/issues/2">waypoint#2</a>`,
+  }));
   const warn = (d.warnings && d.warnings.length)
     ? note(`<b>${d.warnings.length} malformed override line(s) ignored:</b><br>${d.warnings.map(esc).join("<br>")}`)
     : "";
@@ -1291,7 +1301,7 @@ function panelProfiles() {
   const save = card(msg("profiles.saveCurrentSetup"), `
     <div class="row">
       <label>${msg("profiles.profileName")}</label>
-      <input id="prof-name" placeholder="e.g. BM DMR duplex" maxlength="64" aria-label="New profile name">
+      <input id="prof-name" placeholder="${esc(msg("profiles.bmDmrDuplex"))}" maxlength="64" aria-label="${esc(msg("profiles.newProfileName"))}">
     </div>
     <div style="display:flex; gap:12px; align-items:center; margin-top:6px;">
       <button type="button" id="prof-save"${profileBusy ? " disabled" : ""} style="padding:8px 18px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">${msg("profiles.saveProfile")}</button>
@@ -1504,7 +1514,7 @@ function ipv4Editor(ip, scope, label) {
   const dnsLabel = isStatic ? "DNS servers" : "DNS override (optional)";
   const dns = row(dnsLabel, `<input data-netdns="${esc(scope)}" value="${esc(listToText(ip.dns))}" placeholder="1.1.1.1, 8.8.8.8" aria-label="${esc(dnsLabel)} for ${esc(label)}">`) +
     (isStatic ? "" : note(msg("ipv4Editor.dhcpListingDnsServers")));
-  const search = row(msg("ipv4Editor.searchDomainsOptional"), `<input data-netsearch="${esc(scope)}" value="${esc(listToText(ip.search_domains))}" placeholder="lan, example.org" aria-label="DNS search domains for ${esc(label)}">`);
+  const search = row(msg("ipv4Editor.searchDomainsOptional"), `<input data-netsearch="${esc(scope)}" value="${esc(listToText(ip.search_domains))}" placeholder="${esc(msg("ipv4Editor.lanExampleOrg"))}" aria-label="DNS search domains for ${esc(label)}">`);
   return methodSel + staticFields + dns + search;
 }
 function netEthCard() {
@@ -1514,10 +1524,10 @@ function netEthCard() {
 function netWifiCard() {
   const c = netWifiConn();
   const creds =
-    row(msg("netWifiCard.ssidNetworkName"), `<input data-netwifi="wifi" data-wkey="ssid" value="${esc(c.ssid)}" placeholder="Your Wi-Fi name" aria-label="Wi-Fi SSID">`) +
-    row(msg("netWifiCard.passphrase"), `<input data-netpsk="wifi" type="password" value="${esc(c.psk)}" placeholder="${c.has_psk ? "•••••• unchanged" : "Wi-Fi passphrase"}" aria-label="Wi-Fi passphrase">`) +
+    row(msg("netWifiCard.ssidNetworkName"), `<input data-netwifi="wifi" data-wkey="ssid" value="${esc(c.ssid)}" placeholder="${esc(msg("netWifiCard.wiFiName"))}" aria-label="${esc(msg("netWifiCard.wiFiSsid"))}">`) +
+    row(msg("netWifiCard.passphrase"), `<input data-netpsk="wifi" type="password" value="${esc(c.psk)}" placeholder="${c.has_psk ? "•••••• unchanged" : "Wi-Fi passphrase"}" aria-label="${esc(msg("netWifiCard.wiFiPassphrase"))}">`) +
     switchRow(msg("netWifiCard.hiddenNetwork"), "nethidden", "wifi", c.hidden) +
-    row(msg("netWifiCard.regulatoryCountry"), `<input data-netwifi="wifi" data-wkey="country" value="${esc(c.country)}" maxlength="2" placeholder="US" aria-label="Regulatory country code">`);
+    row(msg("netWifiCard.regulatoryCountry"), `<input data-netwifi="wifi" data-wkey="country" value="${esc(c.country)}" maxlength="2" placeholder="US" aria-label="${esc(msg("netWifiCard.regulatoryCountryCode"))}">`);
   return card(msg("netWifiCard.wiFiWaypointWifi"), creds) + netScanSection() + card(msg("netWifiCard.wiFiIpv4"), ipv4Editor(c.ipv4, "conn:wifi", "Wi-Fi"));
 }
 
@@ -1537,10 +1547,10 @@ function netHostCard() {
   const tzOptions = (netTimezones || []).map((z) => `<option value="${esc(z)}"></option>`).join("");
   const liveTz = netStatus && netStatus.timezone ? ` <span class="note" style="margin:0">(now: ${esc(netStatus.timezone)})</span>` : "";
   const body =
-    row(msg("netHostCard.hostname"), `<input data-hostf="1" data-hkey="hostname" value="${esc(h.hostname)}" placeholder="${esc((netStatus && netStatus.hostname) || "waypoint")}" aria-label="Hostname">`) +
-    row(msg("netHostCard.timezone"), `<input list="tz-list" data-hostf="1" data-hkey="timezone" value="${esc(h.timezone)}" placeholder="Region/City" aria-label="Timezone (type to search)"><datalist id="tz-list">${tzOptions}</datalist>${liveTz}`) +
+    row(msg("netHostCard.hostname"), `<input data-hostf="1" data-hkey="hostname" value="${esc(h.hostname)}" placeholder="${esc((netStatus && netStatus.hostname) || "waypoint")}" aria-label="${esc(msg("netHostCard.hostname"))}">`) +
+    row(msg("netHostCard.timezone"), `<input list="tz-list" data-hostf="1" data-hkey="timezone" value="${esc(h.timezone)}" placeholder="${esc(msg("netHostCard.regionCity"))}" aria-label="${esc(msg("netHostCard.timezoneTypeSearch"))}"><datalist id="tz-list">${tzOptions}</datalist>${liveTz}`) +
     switchRow(msg("netHostCard.ntpTimeSync"), "netntp", "1", n.enabled) +
-    row(msg("netHostCard.ntpServersOptional"), `<input data-ntpservers="1" value="${esc(listToText(n.servers))}" placeholder="pool.ntp.org, time.cloudflare.com" aria-label="NTP servers">`) +
+    row(msg("netHostCard.ntpServersOptional"), `<input data-ntpservers="1" value="${esc(listToText(n.servers))}" placeholder="${esc(msg("netHostCard.poolNtpOrgTime"))}" aria-label="${esc(msg("netHostCard.ntpServers"))}">`) +
     `<div style="margin-top:10px;"><button type="button" id="host-apply"${netHostDirty ? "" : " disabled"} style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">${msg("netHostCard.applyHostSettings")}</button> <span class="note" style="margin:0;">${msg("netHostCard.appliesImmediatelyHostnameTimezone")}</span></div>`;
   return card(msg("netHostCard.hostTimeNtp"), body);
 }
@@ -1555,8 +1565,8 @@ function netVlanCard() {
       `<button type="button" class="pill off" data-vlandel="${i}" style="cursor:pointer;" aria-label="Remove VLAN ${esc(v.id || "")}">${msg("netVlanCard.remove")}</button></div>`;
     const fields =
       row(msg("netVlanCard.parentInterface"), `<input data-vlanf="${i}" data-vkey="parent" value="${esc(v.parent)}" placeholder="eth0" aria-label="VLAN ${esc(v.id || "")} parent interface">`) +
-      row(msg("netVlanCard.vlanId14094"), `<input data-vlanf="${i}" data-vkey="id" type="number" min="1" max="4094" value="${esc(v.id)}" placeholder="50" aria-label="VLAN id">`) +
-      row(msg("netVlanCard.labelOptional"), `<input data-vlanf="${i}" data-vkey="name" value="${esc(v.name)}" placeholder="iot" aria-label="VLAN label">`) +
+      row(msg("netVlanCard.vlanId14094"), `<input data-vlanf="${i}" data-vkey="id" type="number" min="1" max="4094" value="${esc(v.id)}" placeholder="50" aria-label="${esc(msg("netVlanCard.vlanId"))}">`) +
+      row(msg("netVlanCard.labelOptional"), `<input data-vlanf="${i}" data-vkey="name" value="${esc(v.name)}" placeholder="iot" aria-label="${esc(msg("netVlanCard.vlanLabel"))}">`) +
       ipv4Editor(v.ipv4, "vlan:" + i, "VLAN " + (v.id || (i + 1)));
     return `<div style="border-top:1px solid var(--line,rgba(128,128,128,0.25)); padding-top:8px; margin-top:8px;">${head}${fields}</div>`;
   }).join("");
@@ -1668,8 +1678,8 @@ async function confirmNetwork(token) {
 // tier); D-Star/P25/M17 are offered so the validator can explain why they can't
 // (transcode tier deferred), rather than hiding them.
 const BUS_MODES = [
-  { key: "dmr", label: "DMR" }, { key: "ysf", label: "YSF" }, { key: "nxdn", label: "NXDN" },
-  { key: "dstar", label: "D-Star" }, { key: "p25", label: "P25" }, { key: "m17", label: "M17" },
+  { key: "dmr", label: msg("confirmNetwork.dmr") }, { key: "ysf", label: msg("confirmNetwork.ysf") }, { key: "nxdn", label: msg("confirmNetwork.nxdn") },
+  { key: "dstar", label: msg("confirmNetwork.dStar") }, { key: "p25", label: "P25" }, { key: "m17", label: "M17" },
 ];
 const BUS_MODE_LABEL = Object.fromEntries(BUS_MODES.map((m) => [m.key, m.label]));
 
@@ -1729,10 +1739,10 @@ function busCard(bus) {
   const busy = busBusy[bus.name] || busBusy[bus.id];
   const busyBadge = busy
     ? `<span class="pill busy" title="Another source is talking; ${esc(busy.loser)} traffic is held off">busy: via ${esc(busy.winner)}${busy.node ? " @ " + esc(busy.node) : ""}</span>` : "";
-  const enPill = `<button type="button" class="pill ${bus.enabled ? "on" : "off"}" data-busen="${esc(bus.id)}" aria-pressed="${bus.enabled}" aria-label="Bus enabled">${bus.enabled ? "ENABLED" : "DISABLED"}</button>`;
+  const enPill = `<button type="button" class="pill ${bus.enabled ? "on" : "off"}" data-busen="${esc(bus.id)}" aria-pressed="${bus.enabled}" aria-label="${esc(msg("busCard.busEnabled"))}">${bus.enabled ? "ENABLED" : "DISABLED"}</button>`;
   const del = (atts.length === 0 && remotes.length === 0) ? `<button type="button" class="btn danger" data-busdel="${esc(bus.id)}">${msg("busCard.delete")}</button>` : "";
   const head = `<div class="card-head"><span class="sq"></span><span class="t">${esc(bus.name || bus.id)}</span>${busyBadge}<span class="bus-actions">${enPill}${del}</span></div>`;
-  const nameRow = row(msg("busCard.name"), `<input data-busname="${esc(bus.id)}" value="${esc(bus.name)}" placeholder="e.g. Local Bus A">`);
+  const nameRow = row(msg("busCard.name"), `<input data-busname="${esc(bus.id)}" value="${esc(bus.name)}" placeholder="${esc(msg("busCard.localBus"))}">`);
   // Owner-offline state on a member (RFC-0016 §4), self-clearing (no latch).
   const down = busDown[bus.name] || busDown[bus.id];
   const downNote = down ? `<div class="note bus-down"><b>Bus ${esc(bus.name || bus.id)} down</b> — owner ${esc(down)} offline</div>` : "";
@@ -1751,7 +1761,7 @@ function remoteAttachmentBlock(r) {
   const pname = peer ? (peer.name || peer.id) : r.peer_id;
   const dormant = !peer || peer.state !== "paired";
   const badge = dormant
-    ? `<span class="pill off" title="peer not paired — this edge is dormant until re-paired">${msg("remoteAttachmentBlock.dormant")}</span>`
+    ? `<span class="pill off" title="${esc(msg("remoteAttachmentBlock.peerNotPairedEdge"))}">${msg("remoteAttachmentBlock.dormant")}</span>`
     : `<span class="pill on">${msg("remoteAttachmentBlock.viaPeer")}</span>`;
   const key = `${r.bus_id}|${r.peer_id}|${r.mode}`;
   return `<div class="attach remote-attach"><div class="toggle-row"><span class="name">${esc(BUS_MODE_LABEL[r.mode] || r.mode)} @ ${esc(pname)} ${badge}</span><button type="button" class="btn" data-remotedel="${esc(key)}">${msg("remoteAttachmentBlock.detach")}</button></div></div>`;
@@ -1782,8 +1792,8 @@ function attachParams(a, idx) {
   }
   if (a.mode === "ysf") {
     const opts = ysfRefs.map((r) => `<option value="${esc(r.name)}">${esc([r.country, r.description].filter(Boolean).join(" · "))}</option>`).join("");
-    const target = row(msg("attachParams.reflectorDgId"), `<input data-attach="${idx}" data-akey="target" list="bus-ysf-refs" value="${esc(a.target || "")}" placeholder="e.g. FCS00290 or a YSF reflector"><datalist id="bus-ysf-refs">${opts}</datalist>`);
-    const wx = `<div class="toggle-row"><span class="name">${msg("attachParams.wiresXPassthrough")}</span><button type="button" class="pill ${a.wiresx_passthrough ? "on" : "off"}" data-attachbool="${idx}" data-abkey="wiresx_passthrough" aria-pressed="${a.wiresx_passthrough}" aria-label="Wires-X passthrough">${a.wiresx_passthrough ? "ON" : "OFF"}</button></div>`;
+    const target = row(msg("attachParams.reflectorDgId"), `<input data-attach="${idx}" data-akey="target" list="bus-ysf-refs" value="${esc(a.target || "")}" placeholder="${esc(msg("attachParams.fcs00290YsfReflector"))}"><datalist id="bus-ysf-refs">${opts}</datalist>`);
+    const wx = `<div class="toggle-row"><span class="name">${msg("attachParams.wiresXPassthrough")}</span><button type="button" class="pill ${a.wiresx_passthrough ? "on" : "off"}" data-attachbool="${idx}" data-abkey="wiresx_passthrough" aria-pressed="${a.wiresx_passthrough}" aria-label="${esc(msg("attachParams.wiresXPassthrough"))}">${a.wiresx_passthrough ? "ON" : "OFF"}</button></div>`;
     return target + wx;
   }
   if (a.mode === "nxdn") {
@@ -1799,7 +1809,7 @@ function attField(idx, key, label, ph) {
 
 function tgMapEditor(a, idx) {
   const rows = (a._tgrows || []).map((r, ri) =>
-    `<div class="row tgmap-row"><input data-tgmap="${idx}" data-tgi="${ri}" data-tgk="from" value="${esc(r.from)}" placeholder="source TG"><span class="arrow">→</span><input data-tgmap="${idx}" data-tgi="${ri}" data-tgk="to" value="${esc(r.to)}" placeholder="DMR TG"><button type="button" class="btn" data-tgdel="${idx}" data-tgi="${ri}" aria-label="Remove mapping">✕</button></div>`).join("");
+    `<div class="row tgmap-row"><input data-tgmap="${idx}" data-tgi="${ri}" data-tgk="from" value="${esc(r.from)}" placeholder="${esc(msg("tgMapEditor.sourceTg"))}"><span class="arrow">→</span><input data-tgmap="${idx}" data-tgi="${ri}" data-tgk="to" value="${esc(r.to)}" placeholder="${esc(msg("tgMapEditor.dmrTg"))}"><button type="button" class="btn" data-tgdel="${idx}" data-tgi="${ri}" aria-label="${esc(msg("tgMapEditor.removeMapping"))}">✕</button></div>`).join("");
   return `<div class="note">${msg("tgMapEditor.tgMapRewriteSource")}</div>${rows}<div class="row"><button type="button" class="btn" data-tgadd="${idx}">${msg("tgMapEditor.addMapping")}</button></div>`;
 }
 
@@ -2013,7 +2023,7 @@ function peersCard() {
   const other = peers.filter((p) => p.state !== "paired");
 
   const pairedRows = paired.length
-    ? paired.map((p) => `<div class="toggle-row peer-row"><span class="name">${esc(p.name || p.id)}<span class="peer-fp" title="certificate fingerprint">${esc(shortFp(p.fingerprint))}</span></span><span class="bus-actions"><span class="pill on">${msg("peersCard.paired")}</span><button type="button" class="btn danger" data-peerrevoke="${esc(p.id)}" data-peername="${esc(p.name || p.id)}">${msg("peersCard.revoke")}</button></span></div>`).join("")
+    ? paired.map((p) => `<div class="toggle-row peer-row"><span class="name">${esc(p.name || p.id)}<span class="peer-fp" title="${esc(msg("peersCard.certificateFingerprint"))}">${esc(shortFp(p.fingerprint))}</span></span><span class="bus-actions"><span class="pill on">${msg("peersCard.paired")}</span><button type="button" class="btn danger" data-peerrevoke="${esc(p.id)}" data-peername="${esc(p.name || p.id)}">${msg("peersCard.revoke")}</button></span></div>`).join("")
     : note(msg("peersCard.noPairedPeersYet"));
   const otherRows = other.map((p) => `<div class="toggle-row peer-row muted"><span class="name">${esc(p.name || p.id)}<span class="peer-fp">${esc(shortFp(p.fingerprint))}</span></span><span class="pill off">${esc((p.state || "").toUpperCase())}</span></div>`).join("");
 
@@ -2023,8 +2033,8 @@ function peersCard() {
       ? peering.discovered.map((d) => `<div class="row peer-disc"><label>${esc(d.instance || d.host)}<span class="peer-fp">${esc(d.host)}:${esc(String(d.port))}</span></label><button type="button" class="btn accent" data-peerpair="${esc(d.host)}:${esc(String(d.port))}">${msg("peersCard.pair")}</button></div>`).join("")
       : note(msg("peersCard.noPeersFoundLan"));
   }
-  const discBtn = `<button type="button" class="btn" id="peer-discover"${peering.busy ? " disabled" : ""}>${peering.busy ? "Scanning…" : "Discover peers (mDNS)"}</button>`;
-  const manual = `<div class="row"><input id="peer-manual" placeholder="host:port — e.g. 10.0.0.20:42501" aria-label="peer host and port"><button type="button" class="btn" id="peer-pair-manual">${msg("peersCard.pair")}</button></div>`;
+  const discBtn = `<button type="button" class="btn" id="peer-discover"${peering.busy ? " disabled" : ""}>${esc(peering.busy ? msg("peersCard.scanning") : msg("peersCard.discoverPeers"))}</button>`;
+  const manual = `<div class="row"><input id="peer-manual" placeholder="${esc(msg("peersCard.hostPort100"))}" aria-label="${esc(msg("peersCard.peerHostPort"))}"><button type="button" class="btn" id="peer-pair-manual">${msg("peersCard.pair")}</button></div>`;
 
   return card(msg("peersCard.lanPeersRfc0016"),
     note(msg("peersCard.pairWaypointNodesLan")) +
@@ -2057,12 +2067,12 @@ function renderPeerModal() {
   let body;
   if (s.role === "initiator") {
     body = `<p>${msg("peerModal.enterCode")} <b>${esc(peer)}</b>${msg("peerModal.sLanPeersScreen")}</p>
-      <div class="pair-code"><span class="mono" id="pair-code-val">${esc(s.code || "")}</span><button type="button" class="btn" data-paircopy="${esc(s.code || "")}" aria-label="copy code">${msg("peerModal.copy")}</button></div>
+      <div class="pair-code"><span class="mono" id="pair-code-val">${esc(s.code || "")}</span><button type="button" class="btn" data-paircopy="${esc(s.code || "")}" aria-label="${esc(msg("peerModal.copyCode"))}">${msg("peerModal.copy")}</button></div>
       ${fpRow}
       <div class="row pair-actions"><button type="button" class="btn accent" data-pairconfirm="${esc(s.sid)}">${msg("peerModal.confirmPairing")}</button><button type="button" class="btn" data-paircancel="${esc(s.sid)}">${msg("peerModal.cancel")}</button></div>`;
   } else {
     body = `<p>${msg("peerModal.incomingPairing")} <b>${esc(peer)}</b>. Enter the code shown on <b>${esc(peer)}</b>:</p>
-      <div class="pair-code"><input class="mono pair-input" id="pair-code-input" inputmode="numeric" maxlength="6" placeholder="000000" aria-label="pairing code"></div>
+      <div class="pair-code"><input class="mono pair-input" id="pair-code-input" inputmode="numeric" maxlength="6" placeholder="000000" aria-label="${esc(msg("peerModal.pairingCode"))}"></div>
       ${fpRow}
       <div class="row pair-actions"><button type="button" class="btn accent" data-pairenter="${esc(s.sid)}">${msg("peerModal.confirm")}</button><button type="button" class="btn" data-paircancel="${esc(s.sid)}">${msg("peerModal.cancel")}</button></div>`;
   }
@@ -2154,9 +2164,9 @@ function panelYSF() {
   const startup = (edit.ysfgw || {}).startup || "";
   const gateway = card(msg("common.gateway"),
     toggle("modes", "ysf", msg("ysf.systemFusion"), msg("common.enabled"), msg("common.disabled")) +
-    input("ysfgw", "suffix", { label: "Suffix (RPT/ND)" }) +
-    row(msg("common.startupReflector"), `<input data-sec="ysfgw" data-key="startup" list="ysf-refs" value="${esc(startup)}" placeholder="e.g. FCS00290 or a YSF reflector"><datalist id="ysf-refs">${opts}</datalist>`) +
-    input("ysfgw", "inactivity_timeout", { label: "Inactivity revert", unit: "min" }));
+    input("ysfgw", "suffix", { label: msg("ysf.suffixRptNd") }) +
+    row(msg("common.startupReflector"), `<input data-sec="ysfgw" data-key="startup" list="ysf-refs" value="${esc(startup)}" placeholder="${esc(msg("ysf.fcs00290YsfReflector"))}"><datalist id="ysf-refs">${opts}</datalist>`) +
+    input("ysfgw", "inactivity_timeout", { label: msg("ysf.inactivityRevert"), unit: "min" }));
   // Mode params render into MMDVM-Host's [System Fusion] (self_only, low_deviation,
   // remote_gateway, tx_hang, mode_hang) — the "ysf" store section, split from the
   // "ysfgw" gateway section like p25/p25gw and nxdn/nxdngw.
@@ -2167,8 +2177,8 @@ function panelYSF() {
     toggleRow("ysfgw", "wiresx_passthrough", msg("ysf.wiresXPassthroughAdvanced")) +
     toggleRow("ysfgw", "revert", msg("ysf.revertStartupInactivity")));
   const timers = card(msg("common.hangTimers"),
-    input("ysf", "tx_hang", { label: "TX hang", unit: "sec" }) +
-    input("ysf", "mode_hang", { label: "Mode hang", unit: "sec" }));
+    input("ysf", "tx_hang", { label: msg("ysf.txHang"), unit: "sec" }) +
+    input("ysf", "mode_hang", { label: msg("ysf.modeHang"), unit: "sec" }));
   const networks = card(msg("ysf.reflectorNetworks"),
     toggleRow("ysfgw", "ysf_network", msg("ysf.ysfReflectorNetwork")) +
     toggleRow("ysfgw", "fcs_network", msg("ysf.fcsRoomNetwork")) +
@@ -2192,16 +2202,16 @@ function panelP25() {
   const stat = (edit.p25gw || {}).static || "";
   const gateway = card(msg("common.gateway"),
     toggle("modes", "p25", "P25", msg("common.enabled"), msg("common.disabled")) +
-    input("p25", "nac", { label: "NAC (hex)", accent: true }) +
-    row(msg("p25.startupTalkgroups"), `<input data-sec="p25gw" data-key="static" list="p25-refs" value="${esc(stat)}" placeholder="comma-separated TGs, e.g. 10100,10200"><datalist id="p25-refs">${opts}</datalist>`) +
+    input("p25", "nac", { label: msg("p25.nacHex"), accent: true }) +
+    row(msg("p25.startupTalkgroups"), `<input data-sec="p25gw" data-key="static" list="p25-refs" value="${esc(stat)}" placeholder="${esc(msg("p25.commaSeparatedTgs10100"))}"><datalist id="p25-refs">${opts}</datalist>`) +
     toggleRow("p25gw", "voice", msg("common.voiceAnnouncements")));
   const behaviour = card(msg("common.behaviour"),
     toggleRow("p25", "self_only", msg("p25.selfOnlyAcceptOnly")) +
     toggleRow("p25", "override_uid_check", msg("p25.overrideUidCheck")) +
     toggleRow("p25", "remote_gateway", msg("common.remoteGatewayAdvancedLeave")));
   const timers = card(msg("common.hangTimers"),
-    input("p25gw", "rf_hang_time", { label: "RF hang", unit: "sec" }) +
-    input("p25gw", "net_hang_time", { label: "Network hang", unit: "sec" }));
+    input("p25gw", "rf_hang_time", { label: msg("p25.rfHang"), unit: "sec" }) +
+    input("p25gw", "net_hang_time", { label: msg("p25.networkHang"), unit: "sec" }));
   const hint = p25Refs.length ? "" : note(msg("p25.talkgroupListNotLoaded"));
   return `${supply}<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
 }
@@ -2214,15 +2224,15 @@ function panelNXDN() {
   const stat = (edit.nxdngw || {}).static || "";
   const gateway = card(msg("common.gateway"),
     toggle("modes", "nxdn", "NXDN", msg("common.enabled"), msg("common.disabled")) +
-    input("nxdn", "ran", { label: "RAN", accent: true }) +
-    row(msg("nxdn.startupTalkgroups"), `<input data-sec="nxdngw" data-key="static" list="nxdn-refs" value="${esc(stat)}" placeholder="comma-separated TGs, e.g. 10200,65000"><datalist id="nxdn-refs">${opts}</datalist>`) +
+    input("nxdn", "ran", { label: msg("nxdn.ran"), accent: true }) +
+    row(msg("nxdn.startupTalkgroups"), `<input data-sec="nxdngw" data-key="static" list="nxdn-refs" value="${esc(stat)}" placeholder="${esc(msg("nxdn.commaSeparatedTgs10200"))}"><datalist id="nxdn-refs">${opts}</datalist>`) +
     toggleRow("nxdngw", "voice", msg("common.voiceAnnouncements")));
   const behaviour = card(msg("common.behaviour"),
     toggleRow("nxdn", "self_only", msg("nxdn.selfOnlyAcceptOnly")) +
     toggleRow("nxdn", "remote_gateway", msg("common.remoteGatewayAdvancedLeave")));
   const timers = card(msg("common.hangTimers"),
-    input("nxdngw", "rf_hang_time", { label: "RF hang", unit: "sec" }) +
-    input("nxdngw", "net_hang_time", { label: "Network hang", unit: "sec" }));
+    input("nxdngw", "rf_hang_time", { label: msg("nxdn.rfHang"), unit: "sec" }) +
+    input("nxdngw", "net_hang_time", { label: msg("nxdn.networkHang"), unit: "sec" }));
   const hint = nxdnRefs.length ? "" : note(msg("nxdn.talkgroupListNotLoaded"));
   return `${supply}<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
 }
@@ -2238,20 +2248,20 @@ function panelDStar() {
   const reflector = gw.reflector || "";
   const gateway = card(msg("common.gateway"),
     toggle("modes", "dstar", "D-Star", msg("common.enabled"), msg("common.disabled")) +
-    input("dstar", "module", { label: "Module (band letter)", accent: true }) +
-    row(msg("common.startupReflector"), `<input data-sec="dstargw" data-key="reflector" list="dstar-refs" value="${esc(reflector)}" placeholder="e.g. REF001 C — blank for none"><datalist id="dstar-refs">${opts}</datalist>`) +
-    input("dstargw", "reflector_reconnect", { label: "Reflector reconnect (min / Never / Fixed)" }));
+    input("dstar", "module", { label: msg("dstar.moduleBandLetter"), accent: true }) +
+    row(msg("common.startupReflector"), `<input data-sec="dstargw" data-key="reflector" list="dstar-refs" value="${esc(reflector)}" placeholder="${esc(msg("dstar.ref001CBlankNone"))}"><datalist id="dstar-refs">${opts}</datalist>`) +
+    input("dstargw", "reflector_reconnect", { label: msg("dstar.reflectorReconnectMinNever") }));
   const ircddb = card(msg("dstar.ircddbCallsignRouting"),
-    input("dstargw", "ircddb_hostname", { label: "ircDDB host" }) +
-    input("dstargw", "ircddb_username", { label: "Username (blank = callsign)" }) +
-    row(msg("dstar.password"), `<input data-sec="dstargw" data-key="ircddb_password" type="password" value="${esc(gw.ircddb_password || "")}" placeholder="${gw.has_ircddb_password ? "•••••• unchanged" : "blank = anonymous"}">`));
+    input("dstargw", "ircddb_hostname", { label: msg("dstar.ircddbHost") }) +
+    input("dstargw", "ircddb_username", { label: msg("dstar.usernameBlankCallsign") }) +
+    row(msg("dstar.password"), `<input data-sec="dstargw" data-key="ircddb_password" type="password" value="${esc(gw.ircddb_password || "")}" placeholder="${gw.has_ircddb_password ? msg("common.passwordUnchanged") : msg("dstar.blankAnonymous")}">`));
   const behaviour = card(msg("dstar.rfBehaviour"),
     toggleRow("dstar", "self_only", msg("common.selfOnlyAcceptOnly")) +
     toggleRow("dstar", "remote_gateway", msg("common.remoteGatewayAdvancedLeave")));
   const protocols = card(msg("dstar.reflectorProtocols"),
     toggleRow("dstargw", "dextra", msg("dstar.dextraXrf")) +
     toggleRow("dstargw", "dplus", msg("dstar.dPlusRefNeeds")) +
-    row(msg("dstar.dPlusLogin"), `<input data-sec="dstargw" data-key="dplus_login" value="${esc(gw.dplus_login || "")}" placeholder="registered callsign (blank = station callsign)">`) +
+    row(msg("dstar.dPlusLogin"), `<input data-sec="dstargw" data-key="dplus_login" value="${esc(gw.dplus_login || "")}" placeholder="${esc(msg("dstar.registeredCallsignBlankStation"))}">`) +
     toggleRow("dstargw", "dcs", "DCS") +
     toggleRow("dstargw", "xlx", "XLX"));
   const hint = dstarRefs.length ? "" : note(msg("dstar.reflectorListNotLoaded"));
@@ -2264,11 +2274,11 @@ function panelM17() {
   const gw = edit.m17gw || {};
   const suffix = (gw.suffix || "H").toUpperCase();
   const suffixSel = `<select data-sec="m17gw" data-key="suffix">` +
-    ["H", "R"].map((v) => `<option value="${v}"${v === suffix ? " selected" : ""}>${v === "H" ? "H — hotspot" : "R — repeater"}</option>`).join("") + `</select>`;
+    ["H", "R"].map((v) => `<option value="${v}"${v === suffix ? " selected" : ""}>${esc(v === "H" ? msg("m17.suffixHotspot") : msg("m17.suffixRepeater"))}</option>`).join("") + `</select>`;
   const gateway = card(msg("common.gateway"),
     toggle("modes", "m17", "M17", msg("common.enabled"), msg("common.disabled")) +
-    input("m17", "can", { label: "CAN", accent: true }) +
-    row(msg("common.startupReflector"), `<input data-sec="m17gw" data-key="startup" list="m17-refs" value="${esc(gw.startup || "")}" placeholder="e.g. M17-M17 C — blank for none"><datalist id="m17-refs">${opts}</datalist>`) +
+    input("m17", "can", { label: msg("m17.can"), accent: true }) +
+    row(msg("common.startupReflector"), `<input data-sec="m17gw" data-key="startup" list="m17-refs" value="${esc(gw.startup || "")}" placeholder="${esc(msg("m17.m17M17CBlank"))}"><datalist id="m17-refs">${opts}</datalist>`) +
     row(msg("m17.nodeSuffix"), suffixSel) +
     toggleRow("m17gw", "voice", msg("common.voiceAnnouncements")));
   const behaviour = card(msg("common.behaviour"),
@@ -2276,7 +2286,7 @@ function panelM17() {
     toggleRow("m17", "allow_encryption", msg("m17.allowEncryptedM17Frames")) +
     toggleRow("m17gw", "revert", msg("m17.revertStartupReflectorAfter")));
   const timers = card(msg("m17.hangTimer"),
-    input("m17gw", "hang_time", { label: "Network hang", unit: "sec" }));
+    input("m17gw", "hang_time", { label: msg("m17.networkHang"), unit: "sec" }));
   const hint = m17Refs.length ? "" : note(msg("m17.reflectorListNotLoaded"));
   return `${supply}<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
 }
@@ -2289,14 +2299,14 @@ function panelPocsag() {
   const p = edit.pocsag || (edit.pocsag = {});
   const paging = card(msg("pocsag.pagingChannel"),
     toggle("modes", "pocsag", "POCSAG", msg("common.enabled"), msg("common.disabled")) +
-    input("pocsag", "frequency", { label: "Paging frequency", kind: "mhz", unit: "MHz", accent: true }));
+    input("pocsag", "frequency", { label: msg("pocsag.pagingFrequency"), kind: "mhz", unit: "MHz", accent: true }));
   const dapnet = card(msg("pocsag.dapnetLogin"),
-    input("pocsag", "server", { label: "DAPNET server" }) +
-    input("pocsag", "callsign", { label: "Callsign (blank = station callsign)" }) +
-    row(msg("pocsag.authkey"), `<input data-sec="pocsag" data-key="auth_key" type="password" value="${esc(p.auth_key || "")}" placeholder="${p.has_auth_key ? "•••••• unchanged" : "from the DAPNET portal"}">`));
+    input("pocsag", "server", { label: msg("pocsag.dapnetServer") }) +
+    input("pocsag", "callsign", { label: msg("pocsag.callsignBlankStationCallsign") }) +
+    row(msg("pocsag.authkey"), `<input data-sec="pocsag" data-key="auth_key" type="password" value="${esc(p.auth_key || "")}" placeholder="${p.has_auth_key ? msg("common.passwordUnchanged") : msg("pocsag.fromDapnetPortal")}">`));
   const filters = card(msg("pocsag.ricFiltersOptional"),
-    input("pocsag", "whitelist", { label: "Whitelist (comma-separated RICs)" }) +
-    input("pocsag", "blacklist", { label: "Blacklist (comma-separated RICs)" }));
+    input("pocsag", "whitelist", { label: msg("pocsag.whitelistCommaSeparatedRics") }) +
+    input("pocsag", "blacklist", { label: msg("pocsag.blacklistCommaSeparatedRics") }));
   const hint = note(msg("pocsag.dapnetgatewayWillNotConnect"));
   return `<div class="grid2"><div class="stack">${paging}${filters}</div>${dapnet}</div>${hint}`;
 }
@@ -2307,19 +2317,19 @@ function panelFm() {
   const f = edit.fm || (edit.fm = {});
   const amVal = f.access_mode || "1";
   const amSel = `<select data-sec="fm" data-key="access_mode">` +
-    [["0", "0 — Carrier access with COS"], ["1", "1 — CTCSS access, no COS"],
-     ["2", "2 — CTCSS access with COS"], ["3", "3 — CTCSS start, then carrier"]]
+    [["0", msg("fm.0CarrierAccessCos")], ["1", msg("fm.1CtcssAccessNo")],
+     ["2", msg("fm.2CtcssAccessCos")], ["3", msg("fm.3CtcssStartThen")]]
       .map(([v, l]) => `<option value="${v}"${v === amVal ? " selected" : ""}>${esc(l)}</option>`).join("") + `</select>`;
   const access = card(msg("fm.access"),
     toggle("modes", "fm", "FM", msg("common.enabled"), msg("common.disabled")) +
-    input("fm", "ctcss", { label: "CTCSS tone", unit: "Hz", accent: true }) +
+    input("fm", "ctcss", { label: msg("fm.ctcssTone"), unit: "Hz", accent: true }) +
     row(msg("fm.accessMode"), amSel));
   const timing = card(msg("fm.timing"),
-    input("fm", "timeout", { label: "Timeout", unit: "sec" }) +
-    input("fm", "kerchunk_time", { label: "Kerchunk time", unit: "sec" }));
+    input("fm", "timeout", { label: msg("fm.timeout"), unit: "sec" }) +
+    input("fm", "kerchunk_time", { label: msg("fm.kerchunkTime"), unit: "sec" }));
   const audio = card(msg("fm.audioLevels"),
-    input("fm", "rf_audio_boost", { label: "RF audio boost" }) +
-    input("fm", "ext_audio_boost", { label: "Network audio boost" }));
+    input("fm", "rf_audio_boost", { label: msg("fm.rfAudioBoost") }) +
+    input("fm", "ext_audio_boost", { label: msg("fm.networkAudioBoost") }));
   return `<div class="grid2">${access}<div class="stack">${timing}${audio}</div></div>`;
 }
 
@@ -2344,11 +2354,11 @@ function panelStation() {
     toggle("station_id", "enable", msg("station.identifyAutomatically"), "ON", "OFF") +
     row(msg("station.interval"),
       `<div class="unit"><input data-sec="station_id" data-key="time_mins" inputmode="numeric" value="${esc(sid.time_mins)}"><span class="u">minutes</span></div>`) +
-    input("station_id", "callsign", { label: "Callsign override" }) +
+    input("station_id", "callsign", { label: msg("station.callsignOverride") }) +
     row(msg("station.toneLevel"),
       `<div class="unit"><input data-sec="station_id" data-key="tx_level" inputmode="numeric" value="${esc(sid.tx_level)}"><span class="u">%</span></div>`);
   const idNote = sid.enable
-    ? note(`Your node keys <b>${effective}</b> ${msg("station.morseEvery")} <b>${esc(sid.time_mins)}</b> ${msg("station.minuteSWhileIdle")} <b>${msg("station.mostLicencesRequirePeriodic")}</b> — in the US, every 10 minutes (§97.119).`)
+    ? note(msg("station.idLine", { callsign: `<b>${effective}</b>`, minutes: `<b>${esc(sid.time_mins)}</b>` }))
     : note(msg("station.nodeWillNotIdentify"));
   // The host only keys CW between transmissions, so a long transmission is not
   // identified until after it ends. Say so here rather than let an operator infer a
@@ -2400,7 +2410,7 @@ function panelUpdates() {
       `<div class="row"><label></label><button type="button" id="stack-apply" class="btn primary">${msg("updates.updateNow")}</button></div>` +
       note(msg("updates.applyingStopsAffectedServices"));
   } else {
-    availInner = note(hasCheck(st) ? `Up to date. Last checked ${fmtWhen(st.last_check)}.` : "No update check has run yet.");
+    availInner = note(hasCheck(st) ? msg("updates.upToDateLastChecked", { when: fmtWhen(st.last_check) }) : msg("updates.noCheckYet"));
   }
   if (!bin.available && hasStamp(st.last_binary_check)) {
     availInner += note(`waypointd is up to date. Last checked ${fmtWhen(st.last_binary_check)}.`);
@@ -2420,7 +2430,7 @@ function panelUpdates() {
   const u = edit.update || (edit.update = { channel: "stable", check_enabled: true, auto_apply: false, quiet_window: "04:00" });
   const chan = u.channel || "stable";
   const chanSel = `<select data-sec="update" data-key="channel">` +
-    [["stable", "Stable"], ["beta", "Beta"]].map(([v, l]) => `<option value="${v}"${v === chan ? " selected" : ""}>${esc(l)}</option>`).join("") +
+    [["stable", msg("updates.channelStable")], ["beta", msg("updates.channelBeta")]].map(([v, l]) => `<option value="${v}"${v === chan ? " selected" : ""}>${esc(l)}</option>`).join("") +
     `</select>`;
   const policy = card(msg("updates.updatePolicy"),
     row(msg("updates.channel"), chanSel) +
@@ -2482,7 +2492,7 @@ function panelHardware() {
   if (det.bootloader) {
     idInner += note(`<b>${msg("hardware.boardSittingItsBootloader")}</b> on ${esc(det.bootloader)}. It cannot answer a version request in that state, but it is one firmware flash away from working.`);
   }
-  idInner += `<div class="row"><label></label><button type="button" id="hw-detect" class="btn primary"${hwBusy ? " disabled" : ""}>${hwBusy ? "DETECTING…" : "DETECT"}</button></div>`;
+  idInner += `<div class="row"><label></label><button type="button" id="hw-detect" class="btn primary"${hwBusy ? " disabled" : ""}>${esc(hwBusy ? msg("hardware.detecting") : msg("hardware.detect"))}</button></div>`;
   const identity = card(msg("hardware.attachedModem"), idInner);
 
   // --- adopt into the config ---
@@ -2514,7 +2524,7 @@ function panelHardware() {
   // to read and ambiguous to a screen reader.
   const configured = card(msg("hardware.nodeConfigured"),
     row(msg("hardware.port"), `<span>${esc(cfg.port || "—")}</span>`) +
-    row(msg("hardware.lineSpeed"), `<span>${esc(cfg.uart_speed || "115200 (default)")}</span>`) +
+    row(msg("hardware.lineSpeed"), `<span>${esc(cfg.uart_speed || msg("hardware.uartDefault"))}</span>`) +
     row(msg("hardware.board2"), `<span>${esc(cfg.board_name || cfg.board || "—")}</span>`) +
     row(msg("hardware.referenceOscillator"), `<span>${esc(cfg.tcxo_label || cfg.tcxo_hz || "—")}</span>`) +
     (det.adopted_description ? note(`Taken from a detected modem identifying as <b>${esc(det.adopted_description)}</b>${det.adopted_at ? ", " + esc(fmtWhen(det.adopted_at)) : ""}.`) : ""));
@@ -2587,7 +2597,7 @@ function panelCalibration() {
   if (c.rx_freq_hz) {
     inner += row(msg("cal.listening"), `<span class="accent">${esc(mhz(c.rx_freq_hz))} MHz</span>${c.band ? ` <span>· ${esc(c.band)}</span>` : ""}`);
   }
-  inner += row(msg("cal.offsetUseNow"), `<span>${esc(offsetText(c.current_rx_offset))} RX · ${esc(offsetText(c.current_tx_offset))} TX</span>`);
+  inner += row(msg("cal.offsetUseNow"), `<span>${esc(msg("cal.offsetPair", { rx: offsetText(c.current_rx_offset), tx: offsetText(c.current_tx_offset) }))}</span>`);
   if (last.ran_at && !running) {
     inner += row(msg("cal.lastSwept"), `<span>${esc(fmtWhen(last.ran_at))}${last.board_id ? " · " + esc(last.board_id) : ""}</span>`);
   }
@@ -2617,10 +2627,10 @@ function panelCalibration() {
 
   const btn = running
     ? `<button type="button" id="cal-cancel" class="btn">STOP</button>`
-    : `<button type="button" id="cal-sweep" class="btn primary"${c.available && !calBusy ? "" : " disabled"}>${calBusy ? "STARTING…" : "START SWEEP"}</button>`;
+    : `<button type="button" id="cal-sweep" class="btn primary"${c.available && !calBusy ? "" : " disabled"}>${esc(calBusy ? msg("cal.starting") : msg("cal.startSweep"))}</button>`;
   let actions = `<div class="row"><label></label>${btn}`;
   if (!running && result && result.best) {
-    actions += ` <button type="button" id="cal-apply" class="btn accent"${calBusy ? " disabled" : ""}>USE ${offsetText(String(result.best.offset_hz))}</button>`;
+    actions += ` <button type="button" id="cal-apply" class="btn accent"${calBusy ? " disabled" : ""}>${esc(msg("cal.useOffset", { offset: offsetText(String(result.best.offset_hz)) }))}</button>`;
   }
   actions += `</div>`;
   inner += actions;
@@ -2762,7 +2772,7 @@ function panelFirmware() {
   const canFlash = !!(fw.available && (fw.match || choices.length) && !running && !fwBusy);
   inner += `<div class="row"><label></label>` +
     `<button type="button" id="fw-flash" class="btn primary"${canFlash ? "" : " disabled"}>` +
-    `${running ? "FLASHING…" : "FLASH FIRMWARE"}</button>` +
+    `${esc(running ? msg("firmware.flashing") : msg("firmware.flashFirmware"))}</button>` +
     `<button type="button" id="fw-refresh" class="btn"${fwBusy || running ? " disabled" : ""}>${msg("firmware.checkFirmware")}</button></div>`;
 
   if (fw.from_config) {
@@ -2787,7 +2797,7 @@ function fwProgressHTML(job) {
   return `<div class="fw-prog">
     <div class="fw-prog-lab"><span>${esc(lab)}</span><span>${esc(job.detail || "")}</span></div>
     <div class="fw-bar${known ? "" : " indeterminate"}" role="progressbar"
-         aria-label="Firmware flash progress"
+         aria-label="${esc(msg("fwProgressHTML.firmwareFlashProgress"))}"
          ${known ? `aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"` : ""}
          aria-valuetext="${esc(lab)}"><i style="width:${known ? pct : 40}%"></i></div>
   </div>`;
@@ -3422,7 +3432,7 @@ function buildNavGroups(body) {
     btn.type = "button";
     btn.setAttribute("aria-expanded", String(open));
     btn.setAttribute("aria-controls", g.id);
-    btn.innerHTML = `<span class="chev" aria-hidden="true"></span><span class="gname">${esc(g.name)}</span><span class="gcount" aria-hidden="true">${g.items.length}</span>`;
+    btn.innerHTML = `<span class="chev" aria-hidden="true"></span><span class="gname">${esc(groupLabel(g.name))}</span><span class="gcount" aria-hidden="true">${g.items.length}</span>`;
     btn.onclick = () => toggleGroup(g.name);
     head.appendChild(btn);
     wrap.appendChild(head);
@@ -3659,8 +3669,9 @@ function renderStatus() {
   leds.innerHTML = "";
   (c.modes || []).forEach((m) => {
     const d = el("div", "led-mode" + (m.enabled ? " on" : ""));
-    d.title = m.name + (m.enabled ? " enabled" : " disabled");
-    d.setAttribute("aria-label", m.name + (m.enabled ? " enabled" : " disabled"));
+    const label = msg(m.enabled ? "leds.modeEnabled" : "leds.modeDisabled", { mode: m.name });
+    d.title = label;
+    d.setAttribute("aria-label", label);
     d.innerHTML = `<span class="d" aria-hidden="true"></span><span class="a">${esc(m.key.toUpperCase())}</span>`;
     leds.appendChild(d);
   });
