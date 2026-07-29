@@ -23,6 +23,17 @@ func testPolicy() Policy {
 	}
 }
 
+// act steps the monitor and closes the loop the way a caller with one attachment
+// on the unit would: a granted restart is reported back through Remediated, which
+// is what advances the schedule. Step itself only requests (see policy.go).
+func act(m *Monitor, o Observation) Decision {
+	d := m.Step(o)
+	if d.Action == ActRestart {
+		m.Remediated(o.Now)
+	}
+	return d
+}
+
 // healthy is an observation of an attachment that is working.
 func healthy(at time.Time) Observation {
 	return Observation{Now: at, WANUp: true, Unit: TriYes, Endpoint: TriYes, Login: TriYes}
@@ -67,13 +78,13 @@ func TestRestartsAfterGrace(t *testing.T) {
 	p := testPolicy()
 	m := NewMonitor(testAttachment(), p)
 
-	if d := m.Step(broken(t0)); d.Action != ActNone {
+	if d := act(m, broken(t0)); d.Action != ActNone {
 		t.Fatalf("restarted immediately on the first bad observation: %+v", d)
 	}
-	if d := m.Step(broken(t0.Add(p.Grace - time.Second))); d.Action != ActNone {
+	if d := act(m, broken(t0.Add(p.Grace-time.Second))); d.Action != ActNone {
 		t.Fatal("restarted inside the grace period")
 	}
-	d := m.Step(broken(t0.Add(p.Grace + time.Second)))
+	d := act(m, broken(t0.Add(p.Grace+time.Second)))
 	if d.Action != ActRestart {
 		t.Fatalf("did not restart after the grace period: %+v", d)
 	}
@@ -84,7 +95,7 @@ func TestRestartsAfterGrace(t *testing.T) {
 	// judged before it has had time to log back in.
 	at := t0.Add(p.Grace + time.Second)
 	for _, dt := range []time.Duration{time.Second, 30 * time.Second, p.Settle - time.Second} {
-		if d := m.Step(broken(at.Add(dt))); d.Action != ActNone {
+		if d := act(m, broken(at.Add(dt))); d.Action != ActNone {
 			t.Fatalf("restarted again %v later, inside the settle window: %+v", dt, d)
 		}
 	}
@@ -100,7 +111,7 @@ func TestRepeatedFailureBacksOff(t *testing.T) {
 	var gaps []time.Duration
 	var lastRestart time.Time
 	for i := 0; i < 400 && len(gaps) < 5; i++ {
-		d := m.Step(broken(now))
+		d := act(m, broken(now))
 		if d.Action == ActRestart {
 			if !lastRestart.IsZero() {
 				gaps = append(gaps, now.Sub(lastRestart))
@@ -224,7 +235,7 @@ func TestBackoffResetsOnlyWhenSustained(t *testing.T) {
 	// Fail enough to walk the schedule along.
 	now := t0
 	for i := 0; i < 200 && m.Attempt() < 3; i++ {
-		m.Step(broken(now))
+		act(m, broken(now))
 		now = now.Add(15 * time.Second)
 	}
 	advanced := m.Attempt()
@@ -233,20 +244,20 @@ func TestBackoffResetsOnlyWhenSustained(t *testing.T) {
 	}
 
 	// A brief flash of health — the flap — must not reset it.
-	m.Step(healthy(now))
-	m.Step(broken(now.Add(time.Second)))
+	act(m, healthy(now))
+	act(m, broken(now.Add(time.Second)))
 	if m.Attempt() != advanced {
 		t.Errorf("a momentary success reset the backoff: %d → %d", advanced, m.Attempt())
 	}
 
 	// Health that holds past SustainedOK does reset it.
 	base := now.Add(time.Minute)
-	m.Step(healthy(base))
-	m.Step(healthy(base.Add(p.SustainedOK - time.Second)))
+	act(m, healthy(base))
+	act(m, healthy(base.Add(p.SustainedOK-time.Second)))
 	if m.Attempt() != advanced {
 		t.Errorf("reset before the sustained window elapsed: %d", m.Attempt())
 	}
-	m.Step(healthy(base.Add(p.SustainedOK + time.Second)))
+	act(m, healthy(base.Add(p.SustainedOK+time.Second)))
 	if m.Attempt() != 0 {
 		t.Errorf("a sustained recovery should reset the backoff, attempt = %d", m.Attempt())
 	}

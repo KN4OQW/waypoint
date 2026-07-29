@@ -198,17 +198,42 @@ func (m *Monitor) Step(o Observation) Decision {
 		return Decision{Action: ActNone, Claim: claim, Reason: reason + "; deferred, a transmission is on the air"}
 	}
 
-	// Remediate. The cooldown covers both the settle window and the backoff, so a
-	// short early backoff can never mean judging a daemon before it has had time to
-	// log in. Clearing unhealthySince restarts the grace clock, so the next restart
-	// is at least a cooldown plus a grace away rather than following immediately.
+	// A restart is warranted and this attachment's own pacing allows it. Note that
+	// nothing is mutated here: Step is a request, not the act.
+	//
+	// The caller decides, because the caller is the only thing that knows what a
+	// restart actually costs. Several attachments commonly share one unit — every
+	// DMR master rides DMRGateway — so restarting "for" one of them restarts all of
+	// them, and a monitor that charged itself for a restart it did not cause, or
+	// that kept its own schedule while the unit was cycled on somebody else's
+	// behalf, would be reasoning about a machine it does not control. The caller
+	// reports back through Remediated or Settled.
+	return Decision{Action: ActRestart, Claim: claim, Reason: reason}
+}
+
+// Remediated tells the monitor that its unit was restarted on this attachment's
+// behalf. It advances the backoff and holds the attachment off for at least the
+// settle window, so a short early backoff can never mean judging a daemon before
+// it has had time to log back in. Clearing unhealthySince restarts the grace clock,
+// putting the next possible restart a cooldown plus a grace away rather than
+// immediately after.
+func (m *Monitor) Remediated(now time.Time) {
 	wait := m.bo.Next()
 	if wait < m.policy.Settle {
 		wait = m.policy.Settle
 	}
-	m.cooldownUntil = o.Now.Add(wait)
+	m.cooldownUntil = now.Add(wait)
 	m.unhealthySince = time.Time{}
-	return Decision{Action: ActRestart, Claim: claim, Reason: reason}
+}
+
+// Settled tells the monitor to stand by without charging it for a restart: either
+// its unit was cycled on another attachment's behalf, or its request was held off
+// by a rate limit. Either way this attachment did not cause anything, so its
+// backoff must not advance — but it does have to wait, because judging a daemon
+// that was just restarted underneath it would read the restart as a fault.
+func (m *Monitor) Settled(now time.Time) {
+	m.cooldownUntil = now.Add(m.policy.Settle)
+	m.unhealthySince = time.Time{}
 }
 
 // assess is the health verdict for one observation: unhealthy on positive bad

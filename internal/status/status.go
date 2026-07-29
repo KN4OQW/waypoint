@@ -93,6 +93,13 @@ const (
 	// a hub event so it persists and shows in the event log, where a "Failed login
 	// into DMR Network" line is exactly what an operator wants to see.
 	TypeGatewayStatus = "gateway_status"
+	// TypeSupervisorAction is something the resilience supervisor did, or declined
+	// to do, about a lost upstream link (#22). Unattended recovery has to be
+	// legible after the fact — an operator who was asleep when the ISP dropped
+	// should be able to read what happened from the event log — so a restart is an
+	// event, not just a line in the daemon's own log. The fold ignores it: it
+	// records an action, not a state.
+	TypeSupervisorAction = "supervisor_action"
 )
 
 // DefaultTxTTL is the stranded-transmission watchdog: a transmission not ended

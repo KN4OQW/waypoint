@@ -1822,7 +1822,9 @@ func main() {
 	probeInterval := flag.Duration("gateway-probe-interval", time.Second, "how often the supervisor probes gateway liveness (RFC-0008; keep < 2s for the #5 acceptance)")
 	linkTTL := flag.Duration("link-ttl", status.LinkTTLOff, "how long a network link stays claimed without re-confirmation; 0 disables (nothing re-confirms links until the resilience supervisor, #22)")
 	supervisorInterval := flag.Duration("supervisor-interval", supervisor.DefaultInterval, "how often the resilience supervisor evaluates each upstream attachment (#22)")
-	supervisorRemediate := flag.Bool("supervisor-remediate", false, "let the resilience supervisor restart a gateway that has lost its upstream link; off means it observes and reports only (#22)")
+	supervisorRemediate := flag.Bool("supervisor-remediate", true, "let the resilience supervisor restart a gateway that has lost its upstream link; false observes and reports only (#22)")
+	supervisorMaxRestarts := flag.Int("supervisor-max-restarts", supervisor.DefaultMaxRestarts, "global backstop: most gateway restarts the supervisor may perform inside -supervisor-restart-window")
+	supervisorRestartWindow := flag.Duration("supervisor-restart-window", supervisor.DefaultRestartWindow, "the window -supervisor-max-restarts is counted over")
 	mqttUser := flag.String("mqtt-user", "", "MQTT username (optional)")
 	mqttPass := flag.String("mqtt-pass", "", "MQTT password (optional)")
 	mmdvmINI := flag.String("mmdvm-ini", "/home/pi-star/waypoint/etc/MMDVM-Host.ini", "MMDVM-Host.ini render target (the file the daemon reads)")
@@ -2162,10 +2164,15 @@ func main() {
 		// from systemd state (not log scraping). Live mode only (a demo runs no gateways).
 		go s.runLivenessProbe(context.Background(), *probeInterval)
 		// Network resilience (#22): watch every upstream attachment the config
-		// declares and keep the node honest about them. Live mode only — a demo
-		// node has no masters to lose. Remediation is opt-in for now; the detection
-		// and reporting path runs either way.
-		go s.runSupervisor(context.Background(), *supervisorInterval, *supervisorRemediate)
+		// declares, keep the node honest about them, and restart a gateway that has
+		// lost one and cannot get it back on its own. Live mode only — a demo node
+		// has no masters to lose.
+		go s.runSupervisor(context.Background(), supervisorOptions{
+			Interval:      *supervisorInterval,
+			Remediate:     *supervisorRemediate,
+			MaxRestarts:   *supervisorMaxRestarts,
+			RestartWindow: *supervisorRestartWindow,
+		})
 		// Update poller (D2 / #15): periodically refresh the stack and waypointd
 		// available-update caches and drive opt-in quiet-window auto-apply. Live mode
 		// only. Ticks every 15 min so it reliably lands in the one-hour quiet window; a

@@ -100,6 +100,22 @@ in the path.
 | `dmr-gateway/json` | DMRGateway | Its own status plane: `{"status":{"message":"Logged into DMR Network: X"}}` and the failed-login/closing counterparts, published the moment a master accepts or refuses. |
 | `waypoint/bus/#` | Mode-bus daemons | Bus events, mapped 1:1 (below). |
 
+### Supervisor events
+
+Two event types come from the resilience supervisor and appear in the event log
+and the `/api/history` record like any other:
+
+| Type | Meaning |
+|---|---|
+| `link_up` / `link_down` | The supervisor's verdict about one upstream attachment, with the reason in `detail`. This is what drives `waypoint/status/network/<name>`. |
+| `supervisor_action` | Something it did, or declined to do, about a lost link — `restarted waypoint-dmrgateway.service — BM_3102: the endpoint is unreachable`. `source` is the unit. |
+
+Actions are events rather than log lines because unattended recovery has to be
+legible after the fact: an operator who was asleep when the ISP dropped should be
+able to read what happened. Declining is recorded too — a supervisor that hits its
+restart cap and goes quiet is otherwise indistinguishable from one that fixed the
+problem.
+
 A DMRGateway status message becomes a `gateway_status` hub event naming the
 network, so it persists and shows in the event log. It is **not** folded into link
 state on its own: the resilience supervisor

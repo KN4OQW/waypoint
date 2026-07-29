@@ -17,16 +17,27 @@ import (
 // state, the aggregator's transmission state, netwatch's route check — so this is
 // assembly, not new plumbing. The judgement is in internal/supervisor.
 
-// runSupervisor starts the supervisor for live mode. remediate arms restarts; with
+// supervisorOptions are the operator-facing knobs, all with defaults nobody should
+// need to touch.
+type supervisorOptions struct {
+	Interval      time.Duration
+	Remediate     bool
+	MaxRestarts   int
+	RestartWindow time.Duration
+}
+
+// runSupervisor starts the supervisor for live mode. Remediate arms restarts; with
 // it off the supervisor still probes, still publishes honest link state, and logs
 // what it would have done, which is the whole detection path exercised on a real
 // node with nothing acted upon.
-func (s *server) runSupervisor(ctx context.Context, interval time.Duration, remediate bool) {
+func (s *server) runSupervisor(ctx context.Context, opts supervisorOptions) {
 	sup := &supervisor.Supervisor{
-		Interval:  interval,
-		Remediate: remediate,
-		Hub:       s.hub,
-		Prober:    &supervisor.Prober{},
+		Interval:      opts.Interval,
+		Remediate:     opts.Remediate,
+		MaxRestarts:   opts.MaxRestarts,
+		RestartWindow: opts.RestartWindow,
+		Hub:           s.hub,
+		Prober:        &supervisor.Prober{},
 		// Jitter from the shared source: nodes that fail together must not retry
 		// together. Seeded per-process by the runtime, so two hotspots on one ISP
 		// do not share a schedule.
