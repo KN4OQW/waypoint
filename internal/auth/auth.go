@@ -37,12 +37,28 @@ type Auth struct {
 	secureCookie bool
 
 	// claimed is the cached claim state. The gate consults it on every request, so
-	// it is read far more than it changes; it is loaded once from the store and
+	// it is read far more than it changes; it is loaded from the store and
 	// invalidated on claim and on reset.
-	claimedMu sync.RWMutex
-	claimed   bool
-	claimedOK bool // whether the cache has been populated
+	//
+	// The cache EXPIRES, and that is not a performance decision. `waypointd
+	// reset-claim` is a separate process writing the same SQLite file, so it
+	// cannot invalidate anything in this one's memory: with a cache that never
+	// expired, the reset wiped the credential, printed success, and the running
+	// daemon carried on serving the login page to an operator whose password no
+	// longer existed anywhere. Re-reading a single indexed row every few seconds
+	// costs nothing next to being wrong about whether anyone can get in.
+	claimedMu  sync.RWMutex
+	claimed    bool
+	claimedOK  bool // whether the cache has been populated
+	claimedAt  time.Time
+	claimedTTL time.Duration
 }
+
+// claimCacheTTL bounds how long this process can be wrong about the claim state
+// after another process changes it. Short enough that `reset-claim` appears to
+// work immediately to a human reaching for the browser; long enough that the
+// query is nowhere near the request path's cost.
+const claimCacheTTL = 3 * time.Second
 
 // Options configures an Auth. The zero value is usable: Now/Sleep/Logf default to
 // the real clock, sleep, and the standard logger, and the windows to their
@@ -96,8 +112,9 @@ func New(s *Store, opts Options) *Auth {
 // closed here means an unreadable store serves only the claim allowlist rather
 // than exposing config surfaces on a boolean default.
 func (a *Auth) Claimed() bool {
+	now := a.now()
 	a.claimedMu.RLock()
-	if a.claimedOK {
+	if a.claimedOK && now.Sub(a.claimedAt) < a.ttl() {
 		v := a.claimed
 		a.claimedMu.RUnlock()
 		return v
@@ -106,7 +123,7 @@ func (a *Auth) Claimed() bool {
 
 	a.claimedMu.Lock()
 	defer a.claimedMu.Unlock()
-	if a.claimedOK { // filled while we waited for the write lock
+	if a.claimedOK && a.now().Sub(a.claimedAt) < a.ttl() { // refilled while we waited
 		return a.claimed
 	}
 	claimed, err := a.store.IsClaimed()
@@ -114,15 +131,23 @@ func (a *Auth) Claimed() bool {
 		a.logf("auth: claim-state query failed, treating device as unclaimed: %v", err)
 		return false // fail closed; leave the cache unpopulated so we retry next time
 	}
-	a.claimed, a.claimedOK = claimed, true
+	a.claimed, a.claimedOK, a.claimedAt = claimed, true, a.now()
 	return a.claimed
+}
+
+// ttl is the claim cache's lifetime, overridable so tests do not sleep.
+func (a *Auth) ttl() time.Duration {
+	if a.claimedTTL > 0 {
+		return a.claimedTTL
+	}
+	return claimCacheTTL
 }
 
 // invalidateClaimed drops the cached claim state so the next Claimed reloads it
 // from the store. Called after a claim and after a reset.
 func (a *Auth) invalidateClaimed() {
 	a.claimedMu.Lock()
-	a.claimed, a.claimedOK = false, false
+	a.claimed, a.claimedOK, a.claimedAt = false, false, time.Time{}
 	a.claimedMu.Unlock()
 }
 

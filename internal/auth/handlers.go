@@ -245,10 +245,42 @@ var claimPlaceholder = authScreen(
 	"Set an admin username and password. This is the only account until you add more — there are no default credentials.",
 	"/api/claim", "Claim device", true)
 
+// The login screen carries the lockout instructions, and it is the only place
+// they are any use: a forgotten password is discovered here, by someone who
+// cannot reach the settings, the docs directory or anything else this node
+// serves. A link to a wiki they cannot open on a node with no internet is not
+// an answer either, so the two routes are spelled out inline.
+//
+// Publishing them costs nothing. Both require something an attacker on the
+// network does not have — a shell on the box, or the SD card in their hand — so
+// the only person this helps is the one holding the hardware (RFC-0002).
 var loginPlaceholder = authScreen(
 	"login", "Log in",
 	"Enter your admin credentials to manage this Waypoint node.",
 	"/api/session", "Log in", false)
+
+// lockoutHelp is the "forgotten it?" disclosure, on the login screen only. The
+// claim screen does not need it: there is no password to have forgotten yet.
+func lockoutHelp(kind string) string {
+	if kind != "login" {
+		return ""
+	}
+	return `<details class="help">
+      <summary>Forgotten your password?</summary>
+      <p>It cannot be recovered — it is stored only as a hash. You can take the node
+      back if you have the hardware:</p>
+      <p><b>With an SSH shell on this node:</b></p>
+      <pre>sudo waypointd reset-claim</pre>
+      <p>The dashboard returns to its claim screen within a few seconds and you set a
+      new username and password. Nothing else changes — the node stays on the air.</p>
+      <p><b>With only the SD card:</b> power the node down, put the card in a reader,
+      and create an empty file named <code>waypoint-reset</code> on the small boot
+      partition (the one holding <code>config.txt</code>). On the next boot the node
+      resets fully and runs first-boot setup again.</p>
+      <p>Full instructions: <code>docs/recovery.md</code> in the Waypoint repository,
+      or the <b>Regaining access</b> page on the project wiki.</p>
+    </details>`
+}
 
 // authScreen builds a self-contained first-run page. withConfirm adds a
 // confirm-password field and the 8-char client-side check (the API enforces the
@@ -291,6 +323,14 @@ func authScreen(kind, heading, sub, endpoint, submit string, withConfirm bool) s
   button:focus-visible{outline:2px solid var(--ink-head);outline-offset:2px;}
   .err{margin:0 0 14px;color:var(--bad);font-size:13px;font-family:var(--mono);}
   a{color:var(--accent);}
+  .help{margin-top:20px;border-top:1px solid var(--panel-line);padding-top:14px;font-size:13px;line-height:1.55;color:var(--muted);}
+  .help summary{cursor:pointer;font-family:var(--mono);font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--accent);min-height:32px;display:flex;align-items:center;}
+  .help summary:focus-visible{outline:2px solid var(--ink-head);outline-offset:2px;}
+  .help p{margin:10px 0;}
+  .help b{color:var(--ink);font-weight:600;}
+  .help pre,.help code{font-family:var(--mono);font-size:12px;color:var(--ink);background:var(--field);border:1px solid var(--field-line);border-radius:6px;}
+  .help pre{padding:9px 10px;margin:8px 0;overflow-x:auto;}
+  .help code{padding:1px 5px;}
 </style></head>
 <body>
   <form id="f" class="card" autocomplete="on">
@@ -302,6 +342,7 @@ func authScreen(kind, heading, sub, endpoint, submit string, withConfirm bool) s
     <label>Password<input id="password" name="password" type="password" autocomplete="` + pwAutocomplete + `" required></label>
     ` + confirmField + `
     <button type="submit">` + submit + `</button>
+    ` + lockoutHelp(kind) + `
   </form>
 <script>
   var f=document.getElementById("f"),err=document.getElementById("err");
