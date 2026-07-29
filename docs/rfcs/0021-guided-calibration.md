@@ -1,6 +1,6 @@
 # RFC-0021: Guided Calibration
 
-- Status: **accepted** (2026-07-28)
+- Status: **accepted** (2026-07-28), **amended** (2026-07-29 — see Amendment 1: the sweep is demoted from the measurement to the verification)
 - Author: KN4OQW
 - Implements requirements: #20 (first-run wizard drives a guided RX/TX offset sweep with live BER for hotspot boards, a level/invert workflow for repeater boards, results in the config store with provenance)
 - Depends on: [RFC-0020](0020-board-identity-and-detection.md) / `internal/modem` — the board table, the raw-termios serial layer, the MMDVM frame codec and the port-ownership rule, all reused verbatim; [RFC-0019](0019-firmware-flashing.md) (the one-hardware-operation-at-a-time token, and the two-stream progress split); [RFC-0006](0006-connection-profiles.md) (calibration is never captured in a profile, and this RFC is why that exclusion matters); [RFC-0001](0001-config-store.md) (machine-written state outside the section map)
@@ -309,6 +309,9 @@ hardware would detune a working radio.
 
 ## Open questions
 
+*(Superseded in part by Amendment 1, below: the first two matter much less if the
+firmware reports the frequency error directly.)*
+
 - Whether the coarse span should narrow when detection reports a TCXO whose
   tolerance is known — a ±0.5 ppm part cannot plausibly be 4 kHz out, and a shorter
   sweep is a better experience. Needs a tolerance column in the board table.
@@ -317,3 +320,133 @@ hardware would detune a working radio.
 - Whether repeater `TXLevel` can be bounded usefully from the modem's own reply
   frames, which would turn part of §6's "not decidable" into "decidable within a
   range". Cannot be answered without a repeater board.
+
+---
+
+# Amendment 1 — the sweep is the wrong primary measurement
+
+**2026-07-29.** The engine was taken to the bench with a real radio. It works,
+and working revealed that the *procedure around it* costs more than the problem
+it solves for most of the people it was built for. This amendment records what
+the hardware said, why the design changes, and what replaces it.
+
+Nothing below invalidates the engine. It changes what the engine is FOR.
+
+## What the bench established
+
+A handheld into the reference Dual Hat, DMR simplex on 433.900 MHz, five offsets
+at eight seconds each:
+
+```
+-200 Hz  110 frames   1.238%
+-100 Hz  131 frames   1.305%
+  +0 Hz  131 frames   0.807%   ← minimum
++100 Hz  131 frames   1.299%
++200 Hz  131 frames   1.575%
+```
+
+A smooth curve with its minimum at the configured frequency. The measurement is
+sound — a separate 245-frame run produced per-frame error counts ranging from
+**0** to 21, and a frame with zero errors cannot come from misaligned bits.
+
+Four defects came out of that session and are fixed
+([docs/bench-calibration-run-log.md](../bench-calibration-run-log.md)); the one
+that matters here is the fourth, because it is about cost rather than
+correctness: a trustworthy point needs about **fifty frames**, three seconds of
+held PTT. A nine-point sweep is half a minute of continuous transmission, on a
+radio whose time-out timer interrupts it.
+
+## Why the procedure is too heavy
+
+§3 requires the operator's radio, and §2 requires that the sweep never transmit.
+Together they force a **simplex channel**, and that is the problem.
+
+The node this feature exists for is a hotspot whose owner cannot make it decode.
+A large share of those are duplex hotspots, whose owners have exactly one DMR
+channel programmed — the duplex one. On that channel the radio will not key at
+all: it waits for a downlink that a receive-only sweep never sends. Creating a
+simplex channel means CPS, a cable and a computer for many handhelds.
+
+So the wizard asks the least experienced operators for the most setup, precisely
+when their node is not working. That is backwards, and no amount of better copy
+fixes it.
+
+## What cannot be automated, and one dead end worth naming
+
+**A node cannot calibrate itself.** There is no frequency reference aboard, so
+something external has to be correct.
+
+**Duplex loopback does not work, and it fails silently.** Transmitting on one
+ADF7021 and receiving on the other looks like the obvious escape on a duplex
+board. Both radios are clocked by the SAME TCXO, so its error appears identically
+in the transmitted and received frequency and cancels exactly: the measurement
+reads zero error no matter how far off the board is. It is worth writing down
+because it is an appealing idea that produces a confident wrong answer.
+
+**But absolute accuracy is not what matters.** What a hotspot needs is to agree
+with the radios that use it. That is a RELATIVE measurement against traffic the
+node already receives — which is the opening for both options below.
+
+## Option A — measure passively, during ordinary use
+
+MMDVM-Host already computes a bit error rate for every transmission it receives
+in normal operation. Waypoint could observe that over days, adjust the offset by
+a small step, keep whichever scores better, and converge without the operator
+doing anything at all: no simplex channel, no held PTT, no time off the air.
+
+Slow, and only as good as the traffic the node happens to hear. Its virtue is
+that it costs the operator nothing, which is the opposite of the current design's
+problem.
+
+## Option B — ask the modem for the frequency error (preferred)
+
+The ADF7021 measures the frequency error of what it is receiving in its AFC
+block, and the value can be read back. **The firmware already has the readback
+plumbing**: `CIO::readRSSI()` (`ADF7021.cpp`) writes register 7 in readback mode
+`0x0147` — "readback enable, ADC RSSI mode" — and clocks the answer out on
+SREAD. An AFC readback is the same procedure with a different mode code and a
+different scaling.
+
+Exposed over the serial protocol, that collapses the entire feature:
+
+- one transmission, and the modem reports the error **in Hz**;
+- no sweep, no retuning, no re-acquisition artefacts, no fifty-frame samples;
+- no BER decode at all, so no dependence on the mode being DMR;
+- **it works on a duplex channel during ordinary operation**, because it does not
+  care what the traffic is or who sent it.
+
+Waypoint can already flash firmware (#19) and the MMDVM_HS fork is ours, so the
+path is open in a way it was not when this RFC was first written — §Alternatives
+listed it as "worth revisiting now that Waypoint can flash firmware", and this is
+that revisit.
+
+**Not yet verified:** the readback mode code for AFC and its scaling to Hz. That
+is datasheet work, and this amendment does not pretend it is done. AFC is also
+compile-time disabled for the 4FSK modes today (`ADF7021_ENABLE_4FSK_AFC`), which
+has to be reconciled — an AFC that is *correcting* the error is also hiding it.
+
+## The decision
+
+1. **The BER sweep stops being the measurement and becomes the VERIFICATION.**
+   Any offset — measured by firmware, converged passively, or typed in by an
+   operator following a wiki — still needs an answer to "is this actually
+   better?", and a curve of bit error rate against frequency is exactly that.
+   This is a demotion in prominence, not a deletion: nothing about the engine
+   changes.
+2. **Option B is the intended primary path**, pending the datasheet work and a
+   firmware change in the fork.
+3. **Option A is the fallback** for boards whose firmware does not carry the
+   readback, which includes every board in the field today.
+4. The wizard keeps the simplex requirement and says so plainly, because until
+   (2) lands the sweep is what exists.
+
+## What this does not change
+
+- The safety model (§2) is unaffected and is now confirmed on hardware: the board
+  refuses to key from the sweep's receive state.
+- The configuration surface half of #20 — per-mode TX levels, DC offsets, RSSI
+  mapping, DMR delay — is independent of all of this and stands as shipped.
+- The acceptance criterion is **still unproven**. The reference board turned out
+  to be correctly tuned, so the sweep had nothing to recover. Proving recovery
+  from an injected +400 Hz is still owed, and is worth doing against whichever
+  measurement path wins rather than twice.
