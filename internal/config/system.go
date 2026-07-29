@@ -40,7 +40,7 @@ import (
 const (
 	DefaultMQTTHost         = "127.0.0.1"
 	DefaultMQTTPort         = "1883"
-	DefaultMQTTName         = "mmdvm"        // MMDVM-Host [MQTT] Name — the status topic root
+	DefaultMQTTName         = "mmdvm" // MMDVM-Host [MQTT] Name — the status topic root
 	DefaultStatusPrefix     = "waypoint/status"
 	DefaultMQTTKeepaliveSec = "60"
 	// DefaultBusTopicPrefix lives in peering_render.go beside the BusMQTT type it

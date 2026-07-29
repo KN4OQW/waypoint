@@ -66,9 +66,9 @@ type server struct {
 	started   time.Time
 	store     *store.Store
 	storePath string
-	evStore   *events.Store      // persistent event history (RFC-0004); nil only in tests
-	auth      *auth.Auth         // first-boot claim state machine + sessions (RFC-0002)
-	paths     config.Paths       // where each daemon reads its generated INI (render targets)
+	evStore   *events.Store // persistent event history (RFC-0004); nil only in tests
+	auth      *auth.Auth    // first-boot claim state machine + sessions (RFC-0002)
+	paths     config.Paths  // where each daemon reads its generated INI (render targets)
 	// mqttFlags is the command-line MQTT surface plus which of those flags the
 	// operator typed explicitly. The store owns the data plane (#29), so this exists
 	// only to let an explicit flag shadow it with a logged warning (D1 / system.go).
@@ -82,8 +82,8 @@ type server struct {
 	// unit, and editing it live would move the UI out from under the browser doing
 	// the edit (#29 scope amendment).
 	listenAddr string
-	agg       *status.Aggregator // live-status fold served by /api/status + WS (RFC-0008); nil only in some tests
-	peering   *peering.Manager   // RFC-0016 LAN pairing manager (nil until initPeering runs / if it fails)
+	agg        *status.Aggregator // live-status fold served by /api/status + WS (RFC-0008); nil only in some tests
+	peering    *peering.Manager   // RFC-0016 LAN pairing manager (nil until initPeering runs / if it fails)
 	// wiz is the first-boot setup wizard (docs/provisioning.md). Nil disables it
 	// and the gate becomes a pass-through, which is what every test that builds a
 	// server directly relies on.
