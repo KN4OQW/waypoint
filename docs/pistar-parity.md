@@ -111,7 +111,7 @@ WPSD splits classic Pi-Star's single General panel into "General Configuration" 
 | NXDN ID | `[NXDN Network]` id | — | pending | separate NXDN radio ID not modeled. |
 | Radio Frequency (RX) | `[Info] RXFrequency` | `modem.rx_freq_hz` | done | Hz in store, MHz in UI. |
 | Radio Frequency (TX) | `[Info] TXFrequency` | `modem.tx_freq_hz` | done | |
-| Radio/Modem *(board type dropdown)* | `[Modem]` board defaults | `modem.board` | done | Board dropdown on the General tab, sourced from the daemon's board table. Waypoint goes past parity here: the Hardware tab asks the modem what it is rather than making the operator name it ([RFC-0020](rfcs/0020-board-identity-and-detection.md) / [#18](https://github.com/KN4OQW/waypoint/issues/18)). |
+| Radio/Modem *(board type dropdown)* | `[Modem]` board defaults | `modem.board` | done | Board dropdown on the General tab, sourced from the daemon's board table. Waypoint goes past parity here: the Hardware tab asks the modem what it is rather than making the operator name it ([RFC-0020](https://github.com/KN4OQW/waypoint/discussions/175) / [#18](https://github.com/KN4OQW/waypoint/issues/18)). |
 | Baudrate *(WPSD new)* | `[Modem] UARTSpeed` | `modem.uart_speed` | done | Dropdown on the General tab; detection fills in whichever speed the modem answered on. |
 | *(no Pi-Star/WPSD equivalent)* | — | `modem.tcxo_hz` | done | Reference oscillator, read off the wire. Pi-Star encodes it in the name of the flash script the operator is expected to pick ([#19](https://github.com/KN4OQW/waypoint/issues/19)); Waypoint stores what the modem reported. |
 | Gateway Latitude | `[Info] Latitude` | — | pending | not modeled (DStarGateway renders `0.0`). |
@@ -130,7 +130,7 @@ WPSD splits classic Pi-Star's single General panel into "General Configuration" 
 
 **Modem / calibration** (WPSD Expert → MMDVMHost → Modem). Everything in
 `[Modem]` is modeled, rendered and on the General tab — and the offsets are
-*measured* rather than typed: the guided sweep ([RFC-0021](rfcs/0021-guided-calibration.md) / [#20])
+*measured* rather than typed: the guided sweep ([RFC-0021](https://github.com/KN4OQW/waypoint/discussions/177) / [#20])
 drives the modem, scores each frequency by bit error rate against the operator's
 own radio, and writes the winner. No incumbent automates this.
 
