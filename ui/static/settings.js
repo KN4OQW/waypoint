@@ -421,7 +421,7 @@ function lcdFrom(l) {
 // so the UI never offers a token the driver can't expand. `sample` feeds the live
 // preview (a representative "active DMR call" snapshot).
 const LCD_TOKEN_HELP = [
-  ["callsign", msg("lcdFrom.kn4oqw")],
+  ["callsign", "KN4OQW"],
   ["dmr_id",   "3180202"],
   ["ip",       "192.168.1.50"],
   ["hostname", "waypoint"],
@@ -640,7 +640,7 @@ function extLink(href, text) { return `<a class="ext" href="${esc(href)}" target
 // "allow other DMR IDs" fields are two framings of the same setting.
 function nodeLockRow() {
   const on = !!(edit.dmr || {}).self_only;
-  return `<div class="toggle-row"><span class="name">${msg("nodeLockRow.nodeLockPrivatePublic")}</span><button type="button" class="pill ${on ? "on" : "off"}" data-toggle="dmr.self_only" aria-pressed="${on}" aria-label="${esc(msg("nodeLockRow.nodeLockPrivatePublic"))}">${on ? "PRIVATE" : "PUBLIC"}</button></div>`;
+  return `<div class="toggle-row"><span class="name">${msg("nodeLockRow.nodeLockPrivatePublic")}</span><button type="button" class="pill ${on ? "on" : "off"}" data-toggle="dmr.self_only" aria-pressed="${on}" aria-label="${esc(msg("nodeLockRow.nodeLockPrivatePublic"))}">${esc(on ? msg("nodeLockRow.private") : msg("nodeLockRow.public"))}</button></div>`;
 }
 
 // --- panels --------------------------------------------------------------
@@ -764,7 +764,7 @@ function panelModes() {
         <div><div class="mode-name">${esc(names[k])}</div><div class="mode-desc">${esc(k.toUpperCase())}</div></div>
         <div class="track" aria-hidden="true"><div class="knob"></div></div>
       </div>
-      <div class="mode-foot"><span class="d" aria-hidden="true"></span><span class="s">${on ? "ENABLED" : "DISABLED"}</span></div>
+      <div class="mode-foot"><span class="d" aria-hidden="true"></span><span class="s">${esc(on ? msg("common.enabled") : msg("common.disabled"))}</span></div>
     </button>`;
   }).join("");
   return `<div class="modes-grid">${cards}</div>`;
@@ -783,7 +783,7 @@ function panelModesSection() {
     // the strip (WAI-ARIA tabs pattern).
     return `<button type="button" role="tab" class="msub${enabled ? " live" : ""}"
       id="msub-${esc(m.id)}" data-modesub="${esc(m.id)}" aria-selected="${on}"
-      aria-controls="mode-subpanel" tabindex="${on ? 0 : -1}">${esc(m.label)}<span class="msub-dot" aria-hidden="true"></span><span class="sr-only">${enabled ? " (enabled)" : " (disabled)"}</span></button>`;
+      aria-controls="mode-subpanel" tabindex="${on ? 0 : -1}">${esc(m.label)}<span class="msub-dot" aria-hidden="true"></span><span class="sr-only">${esc(enabled ? msg("modes.srEnabled") : msg("modes.srDisabled"))}</span></button>`;
   }).join("");
   return `
     <div class="mode-sec-t">${msg("modes.modeEnable")}</div>
@@ -1064,7 +1064,7 @@ function ensureNet(type) {
   return n;
 }
 
-const enPill = (type, n) => { const on = !!(n && n.enabled); return `<button type="button" class="pill ${on ? "on" : "off"}" data-neten="${type}" aria-pressed="${on}" aria-label="${esc(msg("networks.enabledLabel", { network: type }))}">${on ? "ENABLED" : "DISABLED"}</button>`; };
+const enPill = (type, n) => { const on = !!(n && n.enabled); return `<button type="button" class="pill ${on ? "on" : "off"}" data-neten="${type}" aria-pressed="${on}" aria-label="${esc(msg("networks.enabledLabel", { network: type }))}">${esc(on ? msg("common.enabled") : msg("common.disabled"))}</button>`; };
 const netField = (type, key, n, ph, pw) =>
   `<input data-netf="${type}" data-nkey="${key}"${pw ? ' type="password"' : ""} value="${esc(n ? (n[key] || "") : "")}" placeholder="${esc(ph || "")}">`;
 
@@ -1073,10 +1073,10 @@ const netField = (type, key, n, ph, pw) =>
 function masterSelect(type, cat, n) {
   const list = dmrMasters.filter((m) => m.category === cat);
   const cur = (n && n.address) || "";
-  const opts = ['<option value="">— select master —</option>']
+  const opts = [`<option value="">${esc(msg("masterSelect.selectMaster"))}</option>`]
     .concat(list.map((m) => `<option value="${esc(m.address)}"${m.address === cur ? " selected" : ""}>${esc(m.name)}</option>`))
     .join("");
-  return `<select data-dmrmaster="${type}">${opts}</select>${list.length ? "" : " <small style='color:var(--dim)'>host list loading…</small>"}`;
+  return `<select data-dmrmaster="${type}">${opts}</select>${list.length ? "" : ` <small style='color:var(--dim)'>${esc(msg("masterSelect.hostListLoading2"))}</small>`}`;
 }
 
 // essidSelect: None / 01..99 extended-ID suffix, per Pi-Star.
@@ -1259,7 +1259,12 @@ function importReport(s) {
 function panelOverrides() {
   const d = overridesData;
   if (!d) return card(msg("overrides.overrides"), note(msg("overrides.loadingOverrideLayer")));
-  const dirLine = note(`Override drop-ins live under <code>${esc(d.dir || "—")}/&lt;daemon&gt;.d/*.conf</code> ${msg("overrides.hostFileHooksUnder")} <code>${msg("overrides.ltHostfileGtPrepend")}</code> · <code>.append.d/</code>. They merge last into the generated files and are never touched by an update (<a href="https://github.com/KN4OQW/waypoint/issues/2">${msg("overrides.waypoint2")}</a>).`);
+  const dirLine = note(msg("overrides.dropInsLine", {
+    dir: `<code>${esc(d.dir || "—")}/&lt;daemon&gt;.d/*.conf</code>`,
+    prepend: "<code>&lt;hostfile&gt;.prepend.d/</code>",
+    append: "<code>.append.d/</code>",
+    issue: `<a href="https://github.com/KN4OQW/waypoint/issues/2">waypoint#2</a>`,
+  }));
   const warn = (d.warnings && d.warnings.length)
     ? note(`<b>${d.warnings.length} malformed override line(s) ignored:</b><br>${d.warnings.map(esc).join("<br>")}`)
     : "";
@@ -2249,7 +2254,7 @@ function panelDStar() {
   const ircddb = card(msg("dstar.ircddbCallsignRouting"),
     input("dstargw", "ircddb_hostname", { label: msg("dstar.ircddbHost") }) +
     input("dstargw", "ircddb_username", { label: msg("dstar.usernameBlankCallsign") }) +
-    row(msg("dstar.password"), `<input data-sec="dstargw" data-key="ircddb_password" type="password" value="${esc(gw.ircddb_password || "")}" placeholder="${gw.has_ircddb_password ? "•••••• unchanged" : "blank = anonymous"}">`));
+    row(msg("dstar.password"), `<input data-sec="dstargw" data-key="ircddb_password" type="password" value="${esc(gw.ircddb_password || "")}" placeholder="${gw.has_ircddb_password ? msg("common.passwordUnchanged") : msg("dstar.blankAnonymous")}">`));
   const behaviour = card(msg("dstar.rfBehaviour"),
     toggleRow("dstar", "self_only", msg("common.selfOnlyAcceptOnly")) +
     toggleRow("dstar", "remote_gateway", msg("common.remoteGatewayAdvancedLeave")));
@@ -2269,7 +2274,7 @@ function panelM17() {
   const gw = edit.m17gw || {};
   const suffix = (gw.suffix || "H").toUpperCase();
   const suffixSel = `<select data-sec="m17gw" data-key="suffix">` +
-    ["H", "R"].map((v) => `<option value="${v}"${v === suffix ? " selected" : ""}>${v === "H" ? "H — hotspot" : "R — repeater"}</option>`).join("") + `</select>`;
+    ["H", "R"].map((v) => `<option value="${v}"${v === suffix ? " selected" : ""}>${esc(v === "H" ? msg("m17.suffixHotspot") : msg("m17.suffixRepeater"))}</option>`).join("") + `</select>`;
   const gateway = card(msg("common.gateway"),
     toggle("modes", "m17", "M17", msg("common.enabled"), msg("common.disabled")) +
     input("m17", "can", { label: msg("m17.can"), accent: true }) +
@@ -2298,7 +2303,7 @@ function panelPocsag() {
   const dapnet = card(msg("pocsag.dapnetLogin"),
     input("pocsag", "server", { label: msg("pocsag.dapnetServer") }) +
     input("pocsag", "callsign", { label: msg("pocsag.callsignBlankStationCallsign") }) +
-    row(msg("pocsag.authkey"), `<input data-sec="pocsag" data-key="auth_key" type="password" value="${esc(p.auth_key || "")}" placeholder="${p.has_auth_key ? "•••••• unchanged" : "from the DAPNET portal"}">`));
+    row(msg("pocsag.authkey"), `<input data-sec="pocsag" data-key="auth_key" type="password" value="${esc(p.auth_key || "")}" placeholder="${p.has_auth_key ? msg("common.passwordUnchanged") : msg("pocsag.fromDapnetPortal")}">`));
   const filters = card(msg("pocsag.ricFiltersOptional"),
     input("pocsag", "whitelist", { label: msg("pocsag.whitelistCommaSeparatedRics") }) +
     input("pocsag", "blacklist", { label: msg("pocsag.blacklistCommaSeparatedRics") }));
@@ -2353,7 +2358,7 @@ function panelStation() {
     row(msg("station.toneLevel"),
       `<div class="unit"><input data-sec="station_id" data-key="tx_level" inputmode="numeric" value="${esc(sid.tx_level)}"><span class="u">%</span></div>`);
   const idNote = sid.enable
-    ? note(`Your node keys <b>${effective}</b> ${msg("station.morseEvery")} <b>${esc(sid.time_mins)}</b> ${msg("station.minuteSWhileIdle")} <b>${msg("station.mostLicencesRequirePeriodic")}</b> — in the US, every 10 minutes (§97.119).`)
+    ? note(msg("station.idLine", { callsign: `<b>${effective}</b>`, minutes: `<b>${esc(sid.time_mins)}</b>` }))
     : note(msg("station.nodeWillNotIdentify"));
   // The host only keys CW between transmissions, so a long transmission is not
   // identified until after it ends. Say so here rather than let an operator infer a
@@ -2405,7 +2410,7 @@ function panelUpdates() {
       `<div class="row"><label></label><button type="button" id="stack-apply" class="btn primary">${msg("updates.updateNow")}</button></div>` +
       note(msg("updates.applyingStopsAffectedServices"));
   } else {
-    availInner = note(hasCheck(st) ? `Up to date. Last checked ${fmtWhen(st.last_check)}.` : "No update check has run yet.");
+    availInner = note(hasCheck(st) ? msg("updates.upToDateLastChecked", { when: fmtWhen(st.last_check) }) : msg("updates.noCheckYet"));
   }
   if (!bin.available && hasStamp(st.last_binary_check)) {
     availInner += note(`waypointd is up to date. Last checked ${fmtWhen(st.last_binary_check)}.`);
@@ -2425,7 +2430,7 @@ function panelUpdates() {
   const u = edit.update || (edit.update = { channel: "stable", check_enabled: true, auto_apply: false, quiet_window: "04:00" });
   const chan = u.channel || "stable";
   const chanSel = `<select data-sec="update" data-key="channel">` +
-    [["stable", "Stable"], ["beta", "Beta"]].map(([v, l]) => `<option value="${v}"${v === chan ? " selected" : ""}>${esc(l)}</option>`).join("") +
+    [["stable", msg("updates.channelStable")], ["beta", msg("updates.channelBeta")]].map(([v, l]) => `<option value="${v}"${v === chan ? " selected" : ""}>${esc(l)}</option>`).join("") +
     `</select>`;
   const policy = card(msg("updates.updatePolicy"),
     row(msg("updates.channel"), chanSel) +
@@ -2519,7 +2524,7 @@ function panelHardware() {
   // to read and ambiguous to a screen reader.
   const configured = card(msg("hardware.nodeConfigured"),
     row(msg("hardware.port"), `<span>${esc(cfg.port || "—")}</span>`) +
-    row(msg("hardware.lineSpeed"), `<span>${esc(cfg.uart_speed || "115200 (default)")}</span>`) +
+    row(msg("hardware.lineSpeed"), `<span>${esc(cfg.uart_speed || msg("hardware.uartDefault"))}</span>`) +
     row(msg("hardware.board2"), `<span>${esc(cfg.board_name || cfg.board || "—")}</span>`) +
     row(msg("hardware.referenceOscillator"), `<span>${esc(cfg.tcxo_label || cfg.tcxo_hz || "—")}</span>`) +
     (det.adopted_description ? note(`Taken from a detected modem identifying as <b>${esc(det.adopted_description)}</b>${det.adopted_at ? ", " + esc(fmtWhen(det.adopted_at)) : ""}.`) : ""));
@@ -2592,7 +2597,7 @@ function panelCalibration() {
   if (c.rx_freq_hz) {
     inner += row(msg("cal.listening"), `<span class="accent">${esc(mhz(c.rx_freq_hz))} MHz</span>${c.band ? ` <span>· ${esc(c.band)}</span>` : ""}`);
   }
-  inner += row(msg("cal.offsetUseNow"), `<span>${esc(offsetText(c.current_rx_offset))} RX · ${esc(offsetText(c.current_tx_offset))} TX</span>`);
+  inner += row(msg("cal.offsetUseNow"), `<span>${esc(msg("cal.offsetPair", { rx: offsetText(c.current_rx_offset), tx: offsetText(c.current_tx_offset) }))}</span>`);
   if (last.ran_at && !running) {
     inner += row(msg("cal.lastSwept"), `<span>${esc(fmtWhen(last.ran_at))}${last.board_id ? " · " + esc(last.board_id) : ""}</span>`);
   }
@@ -2622,10 +2627,10 @@ function panelCalibration() {
 
   const btn = running
     ? `<button type="button" id="cal-cancel" class="btn">STOP</button>`
-    : `<button type="button" id="cal-sweep" class="btn primary"${c.available && !calBusy ? "" : " disabled"}>${calBusy ? "STARTING…" : "START SWEEP"}</button>`;
+    : `<button type="button" id="cal-sweep" class="btn primary"${c.available && !calBusy ? "" : " disabled"}>${esc(calBusy ? msg("cal.starting") : msg("cal.startSweep"))}</button>`;
   let actions = `<div class="row"><label></label>${btn}`;
   if (!running && result && result.best) {
-    actions += ` <button type="button" id="cal-apply" class="btn accent"${calBusy ? " disabled" : ""}>USE ${offsetText(String(result.best.offset_hz))}</button>`;
+    actions += ` <button type="button" id="cal-apply" class="btn accent"${calBusy ? " disabled" : ""}>${esc(msg("cal.useOffset", { offset: offsetText(String(result.best.offset_hz)) }))}</button>`;
   }
   actions += `</div>`;
   inner += actions;
@@ -2767,7 +2772,7 @@ function panelFirmware() {
   const canFlash = !!(fw.available && (fw.match || choices.length) && !running && !fwBusy);
   inner += `<div class="row"><label></label>` +
     `<button type="button" id="fw-flash" class="btn primary"${canFlash ? "" : " disabled"}>` +
-    `${running ? "FLASHING…" : "FLASH FIRMWARE"}</button>` +
+    `${esc(running ? msg("firmware.flashing") : msg("firmware.flashFirmware"))}</button>` +
     `<button type="button" id="fw-refresh" class="btn"${fwBusy || running ? " disabled" : ""}>${msg("firmware.checkFirmware")}</button></div>`;
 
   if (fw.from_config) {
@@ -3427,7 +3432,7 @@ function buildNavGroups(body) {
     btn.type = "button";
     btn.setAttribute("aria-expanded", String(open));
     btn.setAttribute("aria-controls", g.id);
-    btn.innerHTML = `<span class="chev" aria-hidden="true"></span><span class="gname">${esc(g.name)}</span><span class="gcount" aria-hidden="true">${g.items.length}</span>`;
+    btn.innerHTML = `<span class="chev" aria-hidden="true"></span><span class="gname">${esc(groupLabel(g.name))}</span><span class="gcount" aria-hidden="true">${g.items.length}</span>`;
     btn.onclick = () => toggleGroup(g.name);
     head.appendChild(btn);
     wrap.appendChild(head);
