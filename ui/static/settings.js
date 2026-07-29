@@ -421,7 +421,7 @@ function lcdFrom(l) {
 // so the UI never offers a token the driver can't expand. `sample` feeds the live
 // preview (a representative "active DMR call" snapshot).
 const LCD_TOKEN_HELP = [
-  ["callsign", "KN4OQW"],
+  ["callsign", msg("lcdFrom.kn4oqw")],
   ["dmr_id",   "3180202"],
   ["ip",       "192.168.1.50"],
   ["hostname", "waypoint"],
@@ -640,7 +640,7 @@ function extLink(href, text) { return `<a class="ext" href="${esc(href)}" target
 // "allow other DMR IDs" fields are two framings of the same setting.
 function nodeLockRow() {
   const on = !!(edit.dmr || {}).self_only;
-  return `<div class="toggle-row"><span class="name">${msg("nodeLockRow.nodeLockPrivatePublic")}</span><button type="button" class="pill ${on ? "on" : "off"}" data-toggle="dmr.self_only" aria-pressed="${on}" aria-label="Node Lock (Private / Public)">${on ? "PRIVATE" : "PUBLIC"}</button></div>`;
+  return `<div class="toggle-row"><span class="name">${msg("nodeLockRow.nodeLockPrivatePublic")}</span><button type="button" class="pill ${on ? "on" : "off"}" data-toggle="dmr.self_only" aria-pressed="${on}" aria-label="${esc(msg("nodeLockRow.nodeLockPrivatePublic"))}">${on ? "PRIVATE" : "PUBLIC"}</button></div>`;
 }
 
 // --- panels --------------------------------------------------------------
@@ -790,7 +790,7 @@ function panelModesSection() {
     <p class="mode-sec-d">${msg("modes.turnModeHaveMmdvm")}</p>
     ${panelModes()}
     <div class="mode-sec-t mode-sec-gap">${msg("modes.modeSettings")}</div>
-    <div class="mode-subs" role="tablist" aria-label="Mode settings">${tabs}</div>
+    <div class="mode-subs" role="tablist" aria-label="${esc(msg("modesSection.modeSettings"))}">${tabs}</div>
     <div class="mode-subpanel" id="mode-subpanel" role="tabpanel" tabindex="0" aria-labelledby="msub-${esc(cur.id)}">${cur.panel()}</div>`;
 }
 
@@ -805,7 +805,7 @@ function panelDisplay() {
   const g = edit.general || (edit.general = {}), d = edit.display || (edit.display = {});
 
   const trxSel = `<select data-trxmode>` +
-    [["simplex", "Simplex Node"], ["duplex", "Duplex Repeater"]]
+    [["simplex", msg("display.simplexNode")], ["duplex", msg("display.duplexRepeater")]]
       .map(([v, l]) => `<option value="${v}"${(v === "duplex") === !!g.duplex ? " selected" : ""}>${l}</option>`).join("") + `</select>`;
   const control = card(msg("display.controlSoftware"),
     row(msg("display.radioControlSoftware"), `<input value="MMDVMHost" readonly>`) +
@@ -832,7 +832,7 @@ function panelDisplay() {
   // Nextion layout — only when a Nextion is selected.
   if (d.type === "Nextion") {
     const lay = d.nextion_layout || "0";
-    const layOpts = [["0", "G4KLX"], ["2", "ON7LDS L2"], ["3", "ON7LDS L3"], ["4", "ON7LDS L3 HS"]]
+    const layOpts = [["0", msg("display.g4klx")], ["2", msg("display.on7ldsL2")], ["3", msg("display.on7ldsL3")], ["4", msg("display.on7ldsL3Hs")]]
       .map(([v, l]) => `<option value="${v}"${v === lay ? " selected" : ""}>${l}</option>`).join("");
     displayRows += row(msg("display.nextionLayout"), `<select data-sec="display" data-key="nextion_layout">${layOpts}</select>`);
   }
@@ -1096,7 +1096,7 @@ function panelBrandmeister() {
   const supply = hostlistNote("dmr_hosts") + hostlistNote("dmr_talkgroups");
   const bm = netOf("brandmeister"), dp = netOf("dmrplus"), sx = netOf("systemx"), tg = netOf("tgif"), xl = netOf("xlx");
   const primaryType = ((edit.networks || []).find((n) => n.primary) || {}).type || "brandmeister";
-  const masterSel = [["brandmeister", "Brandmeister"], ["dmrplus", "DMR+ / FreeDMR / HBlink Network"], ["systemx", "SystemX"], ["tgif", "TGIF"]]
+  const masterSel = [["brandmeister", msg("bm.brandmeister")], ["dmrplus", msg("bm.dmrFreedmrHblinkNetwork2")], ["systemx", msg("bm.systemx")], ["tgif", msg("bm.tgif")]]
     .map(([v, l]) => `<option value="${v}"${v === primaryType ? " selected" : ""}>${l}</option>`).join("");
 
   const master = `<section class="card">
@@ -1114,7 +1114,7 @@ function panelBrandmeister() {
     </section>`;
 
   const dpSec = `<section class="card">
-      ${sectionHead(msg("bm.dmrFreedmrHblinkNetwork"), "dmrplus", dp)}
+      ${sectionHead(msg("bm.dmrFreedmrHblinkNetwork2"), "dmrplus", dp)}
       ${row(msg("bm.dmrMaster"), masterSelect("dmrplus", "dmrplus", dp))}
       ${row(msg("bm.networkOptions"), netField("dmrplus", "options", dp, ""))}
       ${row(msg("bm.essid"), essidSelect("dmrplus", dp))}
@@ -1148,10 +1148,10 @@ function panelBrandmeister() {
   for (let i = 0; i <= 15; i++) ccOpts += `<option value="${i}"${String(i) === String(cc) ? " selected" : ""}>${i}</option>`;
   const general = `<section class="card">
       <div class="card-head"><span class="sq"></span><span class="t">${msg("bm.generalDmrSettings")}</span></div>
-      <div class="toggle-row"><span class="name">${msg("bm.dmrRoamingBeacon")}</span><button type="button" class="pill ${d.beacons ? "on" : "off"}" data-toggle="dmr.beacons" aria-pressed="${!!d.beacons}" aria-label="DMR Roaming Beacon">${d.beacons ? "ON" : "OFF"}</button></div>
+      <div class="toggle-row"><span class="name">${msg("bm.dmrRoamingBeacon")}</span><button type="button" class="pill ${d.beacons ? "on" : "off"}" data-toggle="dmr.beacons" aria-pressed="${!!d.beacons}" aria-label="${esc(msg("bm.dmrRoamingBeacon"))}">${d.beacons ? "ON" : "OFF"}</button></div>
       ${row(msg("bm.dmrColorCode"), `<select data-sec="dmr" data-key="color_code">${ccOpts}</select>`)}
-      <div class="toggle-row"><span class="name">${msg("bm.dmrEmbeddedlconly")}</span><button type="button" class="pill ${d.embedded_lc_only ? "on" : "off"}" data-toggle="dmr.embedded_lc_only" aria-pressed="${!!d.embedded_lc_only}" aria-label="DMR EmbeddedLCOnly">${d.embedded_lc_only ? "ON" : "OFF"}</button></div>
-      <div class="toggle-row"><span class="name">${msg("bm.dmrDumptadata")}</span><button type="button" class="pill ${d.dump_ta_data ? "on" : "off"}" data-toggle="dmr.dump_ta_data" aria-pressed="${!!d.dump_ta_data}" aria-label="DMR DumpTAData">${d.dump_ta_data ? "ON" : "OFF"}</button></div>
+      <div class="toggle-row"><span class="name">${msg("bm.dmrEmbeddedlconly")}</span><button type="button" class="pill ${d.embedded_lc_only ? "on" : "off"}" data-toggle="dmr.embedded_lc_only" aria-pressed="${!!d.embedded_lc_only}" aria-label="${esc(msg("bm.dmrEmbeddedlconly"))}">${d.embedded_lc_only ? "ON" : "OFF"}</button></div>
+      <div class="toggle-row"><span class="name">${msg("bm.dmrDumptadata")}</span><button type="button" class="pill ${d.dump_ta_data ? "on" : "off"}" data-toggle="dmr.dump_ta_data" aria-pressed="${!!d.dump_ta_data}" aria-label="${esc(msg("bm.dmrDumptadata"))}">${d.dump_ta_data ? "ON" : "OFF"}</button></div>
       ${nodeLockRow()}
       ${note(msg("bm.privateLocksTxNode"))}
     </section>`;
@@ -1172,7 +1172,7 @@ function routingTable() {
   const rows = routes.map((r, j) => `
     <div class="route-row">
       ${slotSelect(r.slot, `data-rtslot="${j}" aria-label="Route ${j + 1} time slot"`)}
-      <input class="mini" list="dmr-tgs" data-rttg="${j}" value="${esc(tgDisplay(r.tg))}" placeholder="dialed TG — type a name or number" aria-label="Route ${j + 1} dialed talkgroup (type to search)">
+      <input class="mini" list="dmr-tgs" data-rttg="${j}" value="${esc(tgDisplay(r.tg))}" placeholder="${esc(msg("routingTable.dialedTgTypeName"))}" aria-label="Route ${j + 1} dialed talkgroup (type to search)">
       <span class="arr" aria-hidden="true">→</span>
       <select class="mini" data-rtnet="${j}" aria-label="Route ${j + 1} gateway">${netOpts(r.network)}</select>
       <button class="netdel" data-rtdel="${j}" aria-label="Remove route ${j + 1}">✕</button>
@@ -1218,7 +1218,7 @@ function panelImport() {
   const dis = importBusy ? " disabled" : "";
   const input = card(msg("import.importPiStarWpsd"), `
     <div class="row"><label>${msg("import.mountedCardPath")}</label>
-      <input id="import-dir" placeholder="/mnt/sdcard  (or /media/…)" aria-label="Mounted incumbent card path"></div>
+      <input id="import-dir" placeholder="${esc(msg("import.mntSdcardMedia"))}" aria-label="${esc(msg("import.mountedIncumbentCardPath"))}"></div>
     <div style="display:flex; gap:12px; align-items:center; margin-top:6px; flex-wrap:wrap;">
       <button type="button" id="import-scan-dir"${dis} style="padding:8px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:6px;">${msg("import.scanDirectory")}</button>
       <label class="import-upload" style="font-family:var(--mono); font-size:12px; cursor:pointer; text-decoration:underline;">
@@ -1296,7 +1296,7 @@ function panelProfiles() {
   const save = card(msg("profiles.saveCurrentSetup"), `
     <div class="row">
       <label>${msg("profiles.profileName")}</label>
-      <input id="prof-name" placeholder="e.g. BM DMR duplex" maxlength="64" aria-label="New profile name">
+      <input id="prof-name" placeholder="${esc(msg("profiles.bmDmrDuplex"))}" maxlength="64" aria-label="${esc(msg("profiles.newProfileName"))}">
     </div>
     <div style="display:flex; gap:12px; align-items:center; margin-top:6px;">
       <button type="button" id="prof-save"${profileBusy ? " disabled" : ""} style="padding:8px 18px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">${msg("profiles.saveProfile")}</button>
@@ -1509,7 +1509,7 @@ function ipv4Editor(ip, scope, label) {
   const dnsLabel = isStatic ? "DNS servers" : "DNS override (optional)";
   const dns = row(dnsLabel, `<input data-netdns="${esc(scope)}" value="${esc(listToText(ip.dns))}" placeholder="1.1.1.1, 8.8.8.8" aria-label="${esc(dnsLabel)} for ${esc(label)}">`) +
     (isStatic ? "" : note(msg("ipv4Editor.dhcpListingDnsServers")));
-  const search = row(msg("ipv4Editor.searchDomainsOptional"), `<input data-netsearch="${esc(scope)}" value="${esc(listToText(ip.search_domains))}" placeholder="lan, example.org" aria-label="DNS search domains for ${esc(label)}">`);
+  const search = row(msg("ipv4Editor.searchDomainsOptional"), `<input data-netsearch="${esc(scope)}" value="${esc(listToText(ip.search_domains))}" placeholder="${esc(msg("ipv4Editor.lanExampleOrg"))}" aria-label="DNS search domains for ${esc(label)}">`);
   return methodSel + staticFields + dns + search;
 }
 function netEthCard() {
@@ -1519,10 +1519,10 @@ function netEthCard() {
 function netWifiCard() {
   const c = netWifiConn();
   const creds =
-    row(msg("netWifiCard.ssidNetworkName"), `<input data-netwifi="wifi" data-wkey="ssid" value="${esc(c.ssid)}" placeholder="Your Wi-Fi name" aria-label="Wi-Fi SSID">`) +
-    row(msg("netWifiCard.passphrase"), `<input data-netpsk="wifi" type="password" value="${esc(c.psk)}" placeholder="${c.has_psk ? "•••••• unchanged" : "Wi-Fi passphrase"}" aria-label="Wi-Fi passphrase">`) +
+    row(msg("netWifiCard.ssidNetworkName"), `<input data-netwifi="wifi" data-wkey="ssid" value="${esc(c.ssid)}" placeholder="${esc(msg("netWifiCard.wiFiName"))}" aria-label="${esc(msg("netWifiCard.wiFiSsid"))}">`) +
+    row(msg("netWifiCard.passphrase"), `<input data-netpsk="wifi" type="password" value="${esc(c.psk)}" placeholder="${c.has_psk ? "•••••• unchanged" : "Wi-Fi passphrase"}" aria-label="${esc(msg("netWifiCard.wiFiPassphrase"))}">`) +
     switchRow(msg("netWifiCard.hiddenNetwork"), "nethidden", "wifi", c.hidden) +
-    row(msg("netWifiCard.regulatoryCountry"), `<input data-netwifi="wifi" data-wkey="country" value="${esc(c.country)}" maxlength="2" placeholder="US" aria-label="Regulatory country code">`);
+    row(msg("netWifiCard.regulatoryCountry"), `<input data-netwifi="wifi" data-wkey="country" value="${esc(c.country)}" maxlength="2" placeholder="US" aria-label="${esc(msg("netWifiCard.regulatoryCountryCode"))}">`);
   return card(msg("netWifiCard.wiFiWaypointWifi"), creds) + netScanSection() + card(msg("netWifiCard.wiFiIpv4"), ipv4Editor(c.ipv4, "conn:wifi", "Wi-Fi"));
 }
 
@@ -1542,10 +1542,10 @@ function netHostCard() {
   const tzOptions = (netTimezones || []).map((z) => `<option value="${esc(z)}"></option>`).join("");
   const liveTz = netStatus && netStatus.timezone ? ` <span class="note" style="margin:0">(now: ${esc(netStatus.timezone)})</span>` : "";
   const body =
-    row(msg("netHostCard.hostname"), `<input data-hostf="1" data-hkey="hostname" value="${esc(h.hostname)}" placeholder="${esc((netStatus && netStatus.hostname) || "waypoint")}" aria-label="Hostname">`) +
-    row(msg("netHostCard.timezone"), `<input list="tz-list" data-hostf="1" data-hkey="timezone" value="${esc(h.timezone)}" placeholder="Region/City" aria-label="Timezone (type to search)"><datalist id="tz-list">${tzOptions}</datalist>${liveTz}`) +
+    row(msg("netHostCard.hostname"), `<input data-hostf="1" data-hkey="hostname" value="${esc(h.hostname)}" placeholder="${esc((netStatus && netStatus.hostname) || "waypoint")}" aria-label="${esc(msg("netHostCard.hostname"))}">`) +
+    row(msg("netHostCard.timezone"), `<input list="tz-list" data-hostf="1" data-hkey="timezone" value="${esc(h.timezone)}" placeholder="${esc(msg("netHostCard.regionCity"))}" aria-label="${esc(msg("netHostCard.timezoneTypeSearch"))}"><datalist id="tz-list">${tzOptions}</datalist>${liveTz}`) +
     switchRow(msg("netHostCard.ntpTimeSync"), "netntp", "1", n.enabled) +
-    row(msg("netHostCard.ntpServersOptional"), `<input data-ntpservers="1" value="${esc(listToText(n.servers))}" placeholder="pool.ntp.org, time.cloudflare.com" aria-label="NTP servers">`) +
+    row(msg("netHostCard.ntpServersOptional"), `<input data-ntpservers="1" value="${esc(listToText(n.servers))}" placeholder="${esc(msg("netHostCard.poolNtpOrgTime"))}" aria-label="${esc(msg("netHostCard.ntpServers"))}">`) +
     `<div style="margin-top:10px;"><button type="button" id="host-apply"${netHostDirty ? "" : " disabled"} style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">${msg("netHostCard.applyHostSettings")}</button> <span class="note" style="margin:0;">${msg("netHostCard.appliesImmediatelyHostnameTimezone")}</span></div>`;
   return card(msg("netHostCard.hostTimeNtp"), body);
 }
@@ -1560,8 +1560,8 @@ function netVlanCard() {
       `<button type="button" class="pill off" data-vlandel="${i}" style="cursor:pointer;" aria-label="Remove VLAN ${esc(v.id || "")}">${msg("netVlanCard.remove")}</button></div>`;
     const fields =
       row(msg("netVlanCard.parentInterface"), `<input data-vlanf="${i}" data-vkey="parent" value="${esc(v.parent)}" placeholder="eth0" aria-label="VLAN ${esc(v.id || "")} parent interface">`) +
-      row(msg("netVlanCard.vlanId14094"), `<input data-vlanf="${i}" data-vkey="id" type="number" min="1" max="4094" value="${esc(v.id)}" placeholder="50" aria-label="VLAN id">`) +
-      row(msg("netVlanCard.labelOptional"), `<input data-vlanf="${i}" data-vkey="name" value="${esc(v.name)}" placeholder="iot" aria-label="VLAN label">`) +
+      row(msg("netVlanCard.vlanId14094"), `<input data-vlanf="${i}" data-vkey="id" type="number" min="1" max="4094" value="${esc(v.id)}" placeholder="50" aria-label="${esc(msg("netVlanCard.vlanId"))}">`) +
+      row(msg("netVlanCard.labelOptional"), `<input data-vlanf="${i}" data-vkey="name" value="${esc(v.name)}" placeholder="iot" aria-label="${esc(msg("netVlanCard.vlanLabel"))}">`) +
       ipv4Editor(v.ipv4, "vlan:" + i, "VLAN " + (v.id || (i + 1)));
     return `<div style="border-top:1px solid var(--line,rgba(128,128,128,0.25)); padding-top:8px; margin-top:8px;">${head}${fields}</div>`;
   }).join("");
@@ -1734,10 +1734,10 @@ function busCard(bus) {
   const busy = busBusy[bus.name] || busBusy[bus.id];
   const busyBadge = busy
     ? `<span class="pill busy" title="Another source is talking; ${esc(busy.loser)} traffic is held off">busy: via ${esc(busy.winner)}${busy.node ? " @ " + esc(busy.node) : ""}</span>` : "";
-  const enPill = `<button type="button" class="pill ${bus.enabled ? "on" : "off"}" data-busen="${esc(bus.id)}" aria-pressed="${bus.enabled}" aria-label="Bus enabled">${bus.enabled ? "ENABLED" : "DISABLED"}</button>`;
+  const enPill = `<button type="button" class="pill ${bus.enabled ? "on" : "off"}" data-busen="${esc(bus.id)}" aria-pressed="${bus.enabled}" aria-label="${esc(msg("busCard.busEnabled"))}">${bus.enabled ? "ENABLED" : "DISABLED"}</button>`;
   const del = (atts.length === 0 && remotes.length === 0) ? `<button type="button" class="btn danger" data-busdel="${esc(bus.id)}">${msg("busCard.delete")}</button>` : "";
   const head = `<div class="card-head"><span class="sq"></span><span class="t">${esc(bus.name || bus.id)}</span>${busyBadge}<span class="bus-actions">${enPill}${del}</span></div>`;
-  const nameRow = row(msg("busCard.name"), `<input data-busname="${esc(bus.id)}" value="${esc(bus.name)}" placeholder="e.g. Local Bus A">`);
+  const nameRow = row(msg("busCard.name"), `<input data-busname="${esc(bus.id)}" value="${esc(bus.name)}" placeholder="${esc(msg("busCard.localBus"))}">`);
   // Owner-offline state on a member (RFC-0016 §4), self-clearing (no latch).
   const down = busDown[bus.name] || busDown[bus.id];
   const downNote = down ? `<div class="note bus-down"><b>Bus ${esc(bus.name || bus.id)} down</b> — owner ${esc(down)} offline</div>` : "";
@@ -1756,7 +1756,7 @@ function remoteAttachmentBlock(r) {
   const pname = peer ? (peer.name || peer.id) : r.peer_id;
   const dormant = !peer || peer.state !== "paired";
   const badge = dormant
-    ? `<span class="pill off" title="peer not paired — this edge is dormant until re-paired">${msg("remoteAttachmentBlock.dormant")}</span>`
+    ? `<span class="pill off" title="${esc(msg("remoteAttachmentBlock.peerNotPairedEdge"))}">${msg("remoteAttachmentBlock.dormant")}</span>`
     : `<span class="pill on">${msg("remoteAttachmentBlock.viaPeer")}</span>`;
   const key = `${r.bus_id}|${r.peer_id}|${r.mode}`;
   return `<div class="attach remote-attach"><div class="toggle-row"><span class="name">${esc(BUS_MODE_LABEL[r.mode] || r.mode)} @ ${esc(pname)} ${badge}</span><button type="button" class="btn" data-remotedel="${esc(key)}">${msg("remoteAttachmentBlock.detach")}</button></div></div>`;
@@ -1787,8 +1787,8 @@ function attachParams(a, idx) {
   }
   if (a.mode === "ysf") {
     const opts = ysfRefs.map((r) => `<option value="${esc(r.name)}">${esc([r.country, r.description].filter(Boolean).join(" · "))}</option>`).join("");
-    const target = row(msg("attachParams.reflectorDgId"), `<input data-attach="${idx}" data-akey="target" list="bus-ysf-refs" value="${esc(a.target || "")}" placeholder="e.g. FCS00290 or a YSF reflector"><datalist id="bus-ysf-refs">${opts}</datalist>`);
-    const wx = `<div class="toggle-row"><span class="name">${msg("attachParams.wiresXPassthrough")}</span><button type="button" class="pill ${a.wiresx_passthrough ? "on" : "off"}" data-attachbool="${idx}" data-abkey="wiresx_passthrough" aria-pressed="${a.wiresx_passthrough}" aria-label="Wires-X passthrough">${a.wiresx_passthrough ? "ON" : "OFF"}</button></div>`;
+    const target = row(msg("attachParams.reflectorDgId"), `<input data-attach="${idx}" data-akey="target" list="bus-ysf-refs" value="${esc(a.target || "")}" placeholder="${esc(msg("attachParams.fcs00290YsfReflector"))}"><datalist id="bus-ysf-refs">${opts}</datalist>`);
+    const wx = `<div class="toggle-row"><span class="name">${msg("attachParams.wiresXPassthrough")}</span><button type="button" class="pill ${a.wiresx_passthrough ? "on" : "off"}" data-attachbool="${idx}" data-abkey="wiresx_passthrough" aria-pressed="${a.wiresx_passthrough}" aria-label="${esc(msg("attachParams.wiresXPassthrough"))}">${a.wiresx_passthrough ? "ON" : "OFF"}</button></div>`;
     return target + wx;
   }
   if (a.mode === "nxdn") {
@@ -1804,7 +1804,7 @@ function attField(idx, key, label, ph) {
 
 function tgMapEditor(a, idx) {
   const rows = (a._tgrows || []).map((r, ri) =>
-    `<div class="row tgmap-row"><input data-tgmap="${idx}" data-tgi="${ri}" data-tgk="from" value="${esc(r.from)}" placeholder="source TG"><span class="arrow">→</span><input data-tgmap="${idx}" data-tgi="${ri}" data-tgk="to" value="${esc(r.to)}" placeholder="DMR TG"><button type="button" class="btn" data-tgdel="${idx}" data-tgi="${ri}" aria-label="Remove mapping">✕</button></div>`).join("");
+    `<div class="row tgmap-row"><input data-tgmap="${idx}" data-tgi="${ri}" data-tgk="from" value="${esc(r.from)}" placeholder="${esc(msg("tgMapEditor.sourceTg"))}"><span class="arrow">→</span><input data-tgmap="${idx}" data-tgi="${ri}" data-tgk="to" value="${esc(r.to)}" placeholder="${esc(msg("tgMapEditor.dmrTg"))}"><button type="button" class="btn" data-tgdel="${idx}" data-tgi="${ri}" aria-label="${esc(msg("tgMapEditor.removeMapping"))}">✕</button></div>`).join("");
   return `<div class="note">${msg("tgMapEditor.tgMapRewriteSource")}</div>${rows}<div class="row"><button type="button" class="btn" data-tgadd="${idx}">${msg("tgMapEditor.addMapping")}</button></div>`;
 }
 
@@ -2018,7 +2018,7 @@ function peersCard() {
   const other = peers.filter((p) => p.state !== "paired");
 
   const pairedRows = paired.length
-    ? paired.map((p) => `<div class="toggle-row peer-row"><span class="name">${esc(p.name || p.id)}<span class="peer-fp" title="certificate fingerprint">${esc(shortFp(p.fingerprint))}</span></span><span class="bus-actions"><span class="pill on">${msg("peersCard.paired")}</span><button type="button" class="btn danger" data-peerrevoke="${esc(p.id)}" data-peername="${esc(p.name || p.id)}">${msg("peersCard.revoke")}</button></span></div>`).join("")
+    ? paired.map((p) => `<div class="toggle-row peer-row"><span class="name">${esc(p.name || p.id)}<span class="peer-fp" title="${esc(msg("peersCard.certificateFingerprint"))}">${esc(shortFp(p.fingerprint))}</span></span><span class="bus-actions"><span class="pill on">${msg("peersCard.paired")}</span><button type="button" class="btn danger" data-peerrevoke="${esc(p.id)}" data-peername="${esc(p.name || p.id)}">${msg("peersCard.revoke")}</button></span></div>`).join("")
     : note(msg("peersCard.noPairedPeersYet"));
   const otherRows = other.map((p) => `<div class="toggle-row peer-row muted"><span class="name">${esc(p.name || p.id)}<span class="peer-fp">${esc(shortFp(p.fingerprint))}</span></span><span class="pill off">${esc((p.state || "").toUpperCase())}</span></div>`).join("");
 
@@ -2029,7 +2029,7 @@ function peersCard() {
       : note(msg("peersCard.noPeersFoundLan"));
   }
   const discBtn = `<button type="button" class="btn" id="peer-discover"${peering.busy ? " disabled" : ""}>${esc(peering.busy ? msg("peersCard.scanning") : msg("peersCard.discoverPeers"))}</button>`;
-  const manual = `<div class="row"><input id="peer-manual" placeholder="host:port — e.g. 10.0.0.20:42501" aria-label="peer host and port"><button type="button" class="btn" id="peer-pair-manual">${msg("peersCard.pair")}</button></div>`;
+  const manual = `<div class="row"><input id="peer-manual" placeholder="${esc(msg("peersCard.hostPort100"))}" aria-label="${esc(msg("peersCard.peerHostPort"))}"><button type="button" class="btn" id="peer-pair-manual">${msg("peersCard.pair")}</button></div>`;
 
   return card(msg("peersCard.lanPeersRfc0016"),
     note(msg("peersCard.pairWaypointNodesLan")) +
@@ -2062,12 +2062,12 @@ function renderPeerModal() {
   let body;
   if (s.role === "initiator") {
     body = `<p>${msg("peerModal.enterCode")} <b>${esc(peer)}</b>${msg("peerModal.sLanPeersScreen")}</p>
-      <div class="pair-code"><span class="mono" id="pair-code-val">${esc(s.code || "")}</span><button type="button" class="btn" data-paircopy="${esc(s.code || "")}" aria-label="copy code">${msg("peerModal.copy")}</button></div>
+      <div class="pair-code"><span class="mono" id="pair-code-val">${esc(s.code || "")}</span><button type="button" class="btn" data-paircopy="${esc(s.code || "")}" aria-label="${esc(msg("peerModal.copyCode"))}">${msg("peerModal.copy")}</button></div>
       ${fpRow}
       <div class="row pair-actions"><button type="button" class="btn accent" data-pairconfirm="${esc(s.sid)}">${msg("peerModal.confirmPairing")}</button><button type="button" class="btn" data-paircancel="${esc(s.sid)}">${msg("peerModal.cancel")}</button></div>`;
   } else {
     body = `<p>${msg("peerModal.incomingPairing")} <b>${esc(peer)}</b>. Enter the code shown on <b>${esc(peer)}</b>:</p>
-      <div class="pair-code"><input class="mono pair-input" id="pair-code-input" inputmode="numeric" maxlength="6" placeholder="000000" aria-label="pairing code"></div>
+      <div class="pair-code"><input class="mono pair-input" id="pair-code-input" inputmode="numeric" maxlength="6" placeholder="000000" aria-label="${esc(msg("peerModal.pairingCode"))}"></div>
       ${fpRow}
       <div class="row pair-actions"><button type="button" class="btn accent" data-pairenter="${esc(s.sid)}">${msg("peerModal.confirm")}</button><button type="button" class="btn" data-paircancel="${esc(s.sid)}">${msg("peerModal.cancel")}</button></div>`;
   }
@@ -2160,7 +2160,7 @@ function panelYSF() {
   const gateway = card(msg("common.gateway"),
     toggle("modes", "ysf", msg("ysf.systemFusion"), msg("common.enabled"), msg("common.disabled")) +
     input("ysfgw", "suffix", { label: msg("ysf.suffixRptNd") }) +
-    row(msg("common.startupReflector"), `<input data-sec="ysfgw" data-key="startup" list="ysf-refs" value="${esc(startup)}" placeholder="e.g. FCS00290 or a YSF reflector"><datalist id="ysf-refs">${opts}</datalist>`) +
+    row(msg("common.startupReflector"), `<input data-sec="ysfgw" data-key="startup" list="ysf-refs" value="${esc(startup)}" placeholder="${esc(msg("ysf.fcs00290YsfReflector"))}"><datalist id="ysf-refs">${opts}</datalist>`) +
     input("ysfgw", "inactivity_timeout", { label: msg("ysf.inactivityRevert"), unit: "min" }));
   // Mode params render into MMDVM-Host's [System Fusion] (self_only, low_deviation,
   // remote_gateway, tx_hang, mode_hang) — the "ysf" store section, split from the
@@ -2198,7 +2198,7 @@ function panelP25() {
   const gateway = card(msg("common.gateway"),
     toggle("modes", "p25", "P25", msg("common.enabled"), msg("common.disabled")) +
     input("p25", "nac", { label: msg("p25.nacHex"), accent: true }) +
-    row(msg("p25.startupTalkgroups"), `<input data-sec="p25gw" data-key="static" list="p25-refs" value="${esc(stat)}" placeholder="comma-separated TGs, e.g. 10100,10200"><datalist id="p25-refs">${opts}</datalist>`) +
+    row(msg("p25.startupTalkgroups"), `<input data-sec="p25gw" data-key="static" list="p25-refs" value="${esc(stat)}" placeholder="${esc(msg("p25.commaSeparatedTgs10100"))}"><datalist id="p25-refs">${opts}</datalist>`) +
     toggleRow("p25gw", "voice", msg("common.voiceAnnouncements")));
   const behaviour = card(msg("common.behaviour"),
     toggleRow("p25", "self_only", msg("p25.selfOnlyAcceptOnly")) +
@@ -2220,7 +2220,7 @@ function panelNXDN() {
   const gateway = card(msg("common.gateway"),
     toggle("modes", "nxdn", "NXDN", msg("common.enabled"), msg("common.disabled")) +
     input("nxdn", "ran", { label: msg("nxdn.ran"), accent: true }) +
-    row(msg("nxdn.startupTalkgroups"), `<input data-sec="nxdngw" data-key="static" list="nxdn-refs" value="${esc(stat)}" placeholder="comma-separated TGs, e.g. 10200,65000"><datalist id="nxdn-refs">${opts}</datalist>`) +
+    row(msg("nxdn.startupTalkgroups"), `<input data-sec="nxdngw" data-key="static" list="nxdn-refs" value="${esc(stat)}" placeholder="${esc(msg("nxdn.commaSeparatedTgs10200"))}"><datalist id="nxdn-refs">${opts}</datalist>`) +
     toggleRow("nxdngw", "voice", msg("common.voiceAnnouncements")));
   const behaviour = card(msg("common.behaviour"),
     toggleRow("nxdn", "self_only", msg("nxdn.selfOnlyAcceptOnly")) +
@@ -2244,7 +2244,7 @@ function panelDStar() {
   const gateway = card(msg("common.gateway"),
     toggle("modes", "dstar", "D-Star", msg("common.enabled"), msg("common.disabled")) +
     input("dstar", "module", { label: msg("dstar.moduleBandLetter"), accent: true }) +
-    row(msg("common.startupReflector"), `<input data-sec="dstargw" data-key="reflector" list="dstar-refs" value="${esc(reflector)}" placeholder="e.g. REF001 C — blank for none"><datalist id="dstar-refs">${opts}</datalist>`) +
+    row(msg("common.startupReflector"), `<input data-sec="dstargw" data-key="reflector" list="dstar-refs" value="${esc(reflector)}" placeholder="${esc(msg("dstar.ref001CBlankNone"))}"><datalist id="dstar-refs">${opts}</datalist>`) +
     input("dstargw", "reflector_reconnect", { label: msg("dstar.reflectorReconnectMinNever") }));
   const ircddb = card(msg("dstar.ircddbCallsignRouting"),
     input("dstargw", "ircddb_hostname", { label: msg("dstar.ircddbHost") }) +
@@ -2256,7 +2256,7 @@ function panelDStar() {
   const protocols = card(msg("dstar.reflectorProtocols"),
     toggleRow("dstargw", "dextra", msg("dstar.dextraXrf")) +
     toggleRow("dstargw", "dplus", msg("dstar.dPlusRefNeeds")) +
-    row(msg("dstar.dPlusLogin"), `<input data-sec="dstargw" data-key="dplus_login" value="${esc(gw.dplus_login || "")}" placeholder="registered callsign (blank = station callsign)">`) +
+    row(msg("dstar.dPlusLogin"), `<input data-sec="dstargw" data-key="dplus_login" value="${esc(gw.dplus_login || "")}" placeholder="${esc(msg("dstar.registeredCallsignBlankStation"))}">`) +
     toggleRow("dstargw", "dcs", "DCS") +
     toggleRow("dstargw", "xlx", "XLX"));
   const hint = dstarRefs.length ? "" : note(msg("dstar.reflectorListNotLoaded"));
@@ -2273,7 +2273,7 @@ function panelM17() {
   const gateway = card(msg("common.gateway"),
     toggle("modes", "m17", "M17", msg("common.enabled"), msg("common.disabled")) +
     input("m17", "can", { label: msg("m17.can"), accent: true }) +
-    row(msg("common.startupReflector"), `<input data-sec="m17gw" data-key="startup" list="m17-refs" value="${esc(gw.startup || "")}" placeholder="e.g. M17-M17 C — blank for none"><datalist id="m17-refs">${opts}</datalist>`) +
+    row(msg("common.startupReflector"), `<input data-sec="m17gw" data-key="startup" list="m17-refs" value="${esc(gw.startup || "")}" placeholder="${esc(msg("m17.m17M17CBlank"))}"><datalist id="m17-refs">${opts}</datalist>`) +
     row(msg("m17.nodeSuffix"), suffixSel) +
     toggleRow("m17gw", "voice", msg("common.voiceAnnouncements")));
   const behaviour = card(msg("common.behaviour"),
@@ -2312,8 +2312,8 @@ function panelFm() {
   const f = edit.fm || (edit.fm = {});
   const amVal = f.access_mode || "1";
   const amSel = `<select data-sec="fm" data-key="access_mode">` +
-    [["0", "0 — Carrier access with COS"], ["1", "1 — CTCSS access, no COS"],
-     ["2", "2 — CTCSS access with COS"], ["3", "3 — CTCSS start, then carrier"]]
+    [["0", msg("fm.0CarrierAccessCos")], ["1", msg("fm.1CtcssAccessNo")],
+     ["2", msg("fm.2CtcssAccessCos")], ["3", msg("fm.3CtcssStartThen")]]
       .map(([v, l]) => `<option value="${v}"${v === amVal ? " selected" : ""}>${esc(l)}</option>`).join("") + `</select>`;
   const access = card(msg("fm.access"),
     toggle("modes", "fm", "FM", msg("common.enabled"), msg("common.disabled")) +
@@ -2792,7 +2792,7 @@ function fwProgressHTML(job) {
   return `<div class="fw-prog">
     <div class="fw-prog-lab"><span>${esc(lab)}</span><span>${esc(job.detail || "")}</span></div>
     <div class="fw-bar${known ? "" : " indeterminate"}" role="progressbar"
-         aria-label="Firmware flash progress"
+         aria-label="${esc(msg("fwProgressHTML.firmwareFlashProgress"))}"
          ${known ? `aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"` : ""}
          aria-valuetext="${esc(lab)}"><i style="width:${known ? pct : 40}%"></i></div>
   </div>`;

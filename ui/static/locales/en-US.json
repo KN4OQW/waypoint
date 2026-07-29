@@ -13,6 +13,7 @@
   "attachParams.credentialsDmrNetwork": "Credentials (DMR network)",
   "attachParams.defaultId": "Default ID",
   "attachParams.defaultTg": "Default TG",
+  "attachParams.fcs00290YsfReflector": "e.g. FCS00290 or a YSF reflector",
   "attachParams.modeCannotAttachCommitted": "This mode cannot attach in the committed reframe tier.",
   "attachParams.networkId": "network id",
   "attachParams.noneRidesLocalDmrgateway": "(none — rides local DMRGateway)",
@@ -32,6 +33,7 @@
   "baudRow.baudrate": "Baudrate",
 
   "bm.bmHotspotSecurity": "BM Hotspot Security",
+  "bm.brandmeister": "Brandmeister",
   "bm.brandmeisterDashboards": "BrandMeister Dashboards",
   "bm.brandmeisterManager": "BrandMeister Manager",
   "bm.brandmeisterMaster": "BrandMeister Master",
@@ -43,6 +45,7 @@
   "bm.dmrDumptadata": "DMR DumpTAData",
   "bm.dmrEmbeddedlconly": "DMR EmbeddedLCOnly",
   "bm.dmrFreedmrHblinkNetwork": "DMR+ / FreeDMR / HBlink Network Settings",
+  "bm.dmrFreedmrHblinkNetwork2": "DMR+ / FreeDMR / HBlink Network",
   "bm.dmrMaster": "DMR Master",
   "bm.dmrRoamingBeacon": "DMR Roaming Beacon",
   "bm.essid": "ESSID",
@@ -51,8 +54,10 @@
   "bm.networkOptions": "Network Options",
   "bm.openDashboard": "Open dashboard",
   "bm.privateLocksTxNode": "<b>Private</b> locks TX to this node's own DMR ID; <b>Public</b> allows other DMR IDs through the hotspot.",
+  "bm.systemx": "SystemX",
   "bm.systemxMaster": "SystemX Master",
   "bm.systemxNetworkSettings": "SystemX Network Settings",
+  "bm.tgif": "TGIF",
   "bm.tgifDashboards": "TGIF Dashboards",
   "bm.tgifNetworkSettings": "TGIF Network Settings",
   "bm.tgifSecurityKey": "TGIF Security Key",
@@ -64,9 +69,11 @@
   "boardRow.notSet": "Not set",
   "boardRow.radioModem": "Radio / Modem",
 
+  "busCard.busEnabled": "Bus enabled",
   "busCard.busNeedsLeastTwo": "A bus needs at least two attachments to hub traffic; add another mode before applying.",
   "busCard.delete": "Delete",
   "busCard.disabledItsAttachmentsAre": "Disabled — its attachments are kept and return when you re-enable it.",
+  "busCard.localBus": "e.g. Local Bus A",
   "busCard.name": "Name",
 
   "cal.applyingWritesSameNumber": "Applying writes the same number to <b>both</b> RX and TX offset. A hotspot has one reference oscillator clocking both paths, so an error measured on receive is the same error transmitting — and the sweep can only measure the receive side without test equipment.",
@@ -161,12 +168,18 @@
   "display.controlSoftware": "CONTROL SOFTWARE",
   "display.display": "DISPLAY",
   "display.displayType": "Display Type",
+  "display.duplexRepeater": "Duplex Repeater",
+  "display.g4klx": "G4KLX",
   "display.i2cAddress": "I2C Address",
   "display.mmdvmHostBuildDisplay": "This MMDVM-Host build is <b>display-free</b> — it renders status over MQTT and ignores these keys. They are carried for WPSD parity and for a clone running stock MMDVM-Host or driving a physical panel.",
   "display.nextionLayout": "Nextion Layout",
+  "display.on7ldsL2": "ON7LDS L2",
+  "display.on7ldsL3": "ON7LDS L3",
+  "display.on7ldsL3Hs": "ON7LDS L3 HS",
   "display.port": "Port",
   "display.radioControlSoftware": "Radio Control Software",
   "display.rows": "Rows",
+  "display.simplexNode": "Simplex Node",
   "display.trxMode": "TRX Mode",
 
   "dmr.colorCode": "Color Code",
@@ -185,9 +198,11 @@
   "dstar.ircddbHost": "ircDDB host",
   "dstar.moduleBandLetter": "Module (band letter)",
   "dstar.password": "Password",
+  "dstar.ref001CBlankNone": "e.g. REF001 C — blank for none",
   "dstar.reflectorListNotLoaded": "Reflector list not loaded yet (fetched from the pinned D-Star register on a schedule). You can still type a reflector above.",
   "dstar.reflectorProtocols": "REFLECTOR PROTOCOLS",
   "dstar.reflectorReconnectMinNever": "Reflector reconnect (min / Never / Fixed)",
+  "dstar.registeredCallsignBlankStation": "registered callsign (blank = station callsign)",
   "dstar.rfBehaviour": "RF BEHAVIOUR",
   "dstar.usernameBlankCallsign": "Username (blank = callsign)",
 
@@ -219,6 +234,10 @@
 
   "flashFirmware.flashingDoNotPower": "Flashing — do not power the node off.",
 
+  "fm.0CarrierAccessCos": "0 — Carrier access with COS",
+  "fm.1CtcssAccessNo": "1 — CTCSS access, no COS",
+  "fm.2CtcssAccessCos": "2 — CTCSS access with COS",
+  "fm.3CtcssStartThen": "3 — CTCSS start, then carrier",
   "fm.access": "ACCESS",
   "fm.accessMode": "Access mode",
   "fm.audioLevels": "AUDIO LEVELS",
@@ -231,6 +250,8 @@
 
   "foot.source": "source",
   "foot.version": "waypointd {version}",
+
+  "fwProgressHTML.firmwareFlashProgress": "Firmware flash progress",
 
   "gateways.createBus": "＋ Create bus",
   "gateways.migrateBridgesBus": "Migrate bridges → bus",
@@ -451,7 +472,9 @@
 
   "import.copyIncumbentSEtc": "Copy the incumbent's <code>/etc/mmdvmhost</code>, <code>/etc/dmrgateway</code> and other gateway config files off the old card, or mount the card and give its path. Nothing is written until you press <b>Import</b>.",
   "import.importPiStarWpsd": "IMPORT FROM PI-STAR / WPSD",
+  "import.mntSdcardMedia": "/mnt/sdcard  (or /media/…)",
   "import.mountedCardPath": "Mounted card path",
+  "import.mountedIncumbentCardPath": "Mounted incumbent card path",
   "import.scanDirectory": "SCAN DIRECTORY",
   "import.uploadConfigFiles": "…or upload config files",
 
@@ -475,6 +498,7 @@
   "ipv4Editor.gateway": "Gateway",
   "ipv4Editor.ipAddress": "IP address",
   "ipv4Editor.ipv4Method": "IPv4 method",
+  "ipv4Editor.lanExampleOrg": "lan, example.org",
   "ipv4Editor.prefixCidr": "Prefix (CIDR)",
   "ipv4Editor.searchDomainsOptional": "Search domains (optional)",
   "ipv4Editor.static": "Static",
@@ -538,6 +562,8 @@
   "lcd.warnUnknownToken": "⚠ Unknown token: {tokens} — check spelling; unknown tokens render blank.",
   "lcd.warnUnknownTokens": "⚠ Unknown tokens: {tokens} — check spelling; unknown tokens render blank.",
 
+  "lcdFrom.kn4oqw": "KN4OQW",
+
   "lcdLegend.tokenReference": "TOKEN REFERENCE",
 
   "leds.modeDisabled": "{mode} disabled",
@@ -555,6 +581,7 @@
   "m17.allowEncryptedM17Frames": "Allow encrypted M17 frames",
   "m17.can": "CAN",
   "m17.hangTimer": "HANG TIMER",
+  "m17.m17M17CBlank": "e.g. M17-M17 C — blank for none",
   "m17.networkHang": "Network hang",
   "m17.nodeSuffix": "Node suffix",
   "m17.reflectorListNotLoaded": "Reflector list not loaded yet (fetched from the M17 register on a schedule). You can still type a reflector above.",
@@ -564,6 +591,8 @@
   "modes.modeEnable": "MODE ENABLE",
   "modes.modeSettings": "MODE SETTINGS",
   "modes.turnModeHaveMmdvm": "Turn a mode on to have MMDVM-Host handle it. Toggling one restarts the stack on Apply.",
+
+  "modesSection.modeSettings": "Mode settings",
 
   "nav.allSettings": "All settings",
   "nav.configSections": "Configuration sections",
@@ -586,9 +615,13 @@
   "netHostCard.applyHostSettings": "APPLY HOST SETTINGS",
   "netHostCard.hostTimeNtp": "HOST · TIME · NTP",
   "netHostCard.hostname": "Hostname",
+  "netHostCard.ntpServers": "NTP servers",
   "netHostCard.ntpServersOptional": "NTP servers (optional)",
   "netHostCard.ntpTimeSync": "NTP time sync",
+  "netHostCard.poolNtpOrgTime": "pool.ntp.org, time.cloudflare.com",
+  "netHostCard.regionCity": "Region/City",
   "netHostCard.timezone": "Timezone",
+  "netHostCard.timezoneTypeSearch": "Timezone (type to search)",
 
   "netScanSection.nearbyNetworks": "NEARBY NETWORKS",
   "netScanSection.noNetworksFoundYet": "No networks found yet — press Rescan, or enter an SSID above for a hidden network.",
@@ -606,14 +639,20 @@
   "netVlanCard.noVlansAddOne": "No VLANs. Add one to put a tagged interface on a parent device.",
   "netVlanCard.parentInterface": "Parent interface",
   "netVlanCard.remove": "REMOVE",
+  "netVlanCard.vlanId": "VLAN id",
   "netVlanCard.vlanId14094": "VLAN id (1–4094)",
+  "netVlanCard.vlanLabel": "VLAN label",
   "netVlanCard.vlans": "VLANs",
 
   "netWifiCard.hiddenNetwork": "Hidden network",
   "netWifiCard.passphrase": "Passphrase",
   "netWifiCard.regulatoryCountry": "Regulatory country",
+  "netWifiCard.regulatoryCountryCode": "Regulatory country code",
   "netWifiCard.ssidNetworkName": "SSID (network name)",
   "netWifiCard.wiFiIpv4": "WI-FI IPv4",
+  "netWifiCard.wiFiName": "Your Wi-Fi name",
+  "netWifiCard.wiFiPassphrase": "Wi-Fi passphrase",
+  "netWifiCard.wiFiSsid": "Wi-Fi SSID",
   "netWifiCard.wiFiWaypointWifi": "WI-FI (waypoint-wifi)",
 
   "network.appliesThroughConfirmRevert": "Applies through confirm-or-revert — you'll get a countdown to keep the change before it auto-reverts.",
@@ -625,6 +664,7 @@
 
   "nodeLockRow.nodeLockPrivatePublic": "Node Lock (Private / Public)",
 
+  "nxdn.commaSeparatedTgs10200": "comma-separated TGs, e.g. 10200,65000",
   "nxdn.networkHang": "Network hang",
   "nxdn.ran": "RAN",
   "nxdn.rfHang": "RF hang",
@@ -642,6 +682,7 @@
   "overrides.overrides": "OVERRIDES",
   "overrides.waypoint2": "waypoint#2",
 
+  "p25.commaSeparatedTgs10100": "comma-separated TGs, e.g. 10100,10200",
   "p25.nacHex": "NAC (hex)",
   "p25.networkHang": "Network hang",
   "p25.overrideUidCheck": "Override UID check",
@@ -654,13 +695,17 @@
   "peerModal.confirm": "Confirm",
   "peerModal.confirmPairing": "Confirm pairing",
   "peerModal.copy": "Copy",
+  "peerModal.copyCode": "copy code",
   "peerModal.enterCode": "Enter this code on",
   "peerModal.exchangingCertificate": "exchanging certificate…",
   "peerModal.incomingPairing": "Incoming pairing from",
   "peerModal.pairing": "PAIRING",
+  "peerModal.pairingCode": "pairing code",
   "peerModal.sLanPeersScreen": "'s LAN Peers screen, then confirm here.",
 
+  "peersCard.certificateFingerprint": "certificate fingerprint",
   "peersCard.discoverPeers": "Discover peers (mDNS)",
+  "peersCard.hostPort100": "host:port — e.g. 10.0.0.20:42501",
   "peersCard.lanPeersRfc0016": "LAN PEERS (RFC-0016)",
   "peersCard.noPairedPeersYet": "No paired peers yet. Discover a node or add one by host:port, then pair.",
   "peersCard.noPeersFoundLan": "No peers found on the LAN. Add one by host:port below (mDNS may be filtered on your network).",
@@ -668,6 +713,7 @@
   "peersCard.pairWaypointNodesLan": "Pair Waypoint nodes on your LAN so a bus can span them. Pairing shows a short code on <b>both</b> screens — enter it to confirm; the certificate fingerprint is shown for out-of-band verification.",
   "peersCard.paired": "PAIRED",
   "peersCard.pairedPeers": "Paired peers",
+  "peersCard.peerHostPort": "peer host and port",
   "peersCard.revoke": "Revoke",
   "peersCard.scanning": "Scanning…",
 
@@ -692,8 +738,10 @@
   "profileCard.export": "EXPORT",
 
   "profiles.activatingProfileWritesIts": "Activating a profile writes its saved modes & networks and restarts the stack — the same as an Apply. Exported files have <b>passwords removed</b>; on import you re-enter any that are needed (or the target node keeps its own). Identity and calibration are never in a profile (<a href='https://github.com/KN4OQW/waypoint/blob/main/docs/rfcs/0006-connection-profiles.md'>RFC-0006</a>).",
+  "profiles.bmDmrDuplex": "e.g. BM DMR duplex",
   "profiles.importFile": "Import from file…",
   "profiles.loadingProfiles": "Loading profiles…",
+  "profiles.newProfileName": "New profile name",
   "profiles.noProfilesYetConfigure": "No profiles yet. Configure your modes and networks, then <b>Save current setup</b> to capture this configuration as a profile you can switch back to.",
   "profiles.profileName": "Profile name",
   "profiles.saveCurrentSetup": "SAVE CURRENT SETUP",
@@ -701,10 +749,12 @@
 
   "remoteAttachmentBlock.detach": "Detach",
   "remoteAttachmentBlock.dormant": "DORMANT",
+  "remoteAttachmentBlock.peerNotPairedEdge": "peer not paired — this edge is dormant until re-paired",
   "remoteAttachmentBlock.viaPeer": "VIA PEER",
 
   "routingTable.addRoute": "+ ADD ROUTE",
   "routingTable.dialedTg": "Dialed TG",
+  "routingTable.dialedTgTypeName": "dialed TG — type a name or number",
   "routingTable.gateway": "Gateway",
   "routingTable.noOverridesEveryTalkgroup": "No overrides — every talkgroup follows its network's prefix, and anything unrouted goes to the primary.",
   "routingTable.slot": "Slot",
@@ -818,6 +868,9 @@
   "tab.updates.title": "Software Updates",
 
   "tgMapEditor.addMapping": "＋ Add mapping",
+  "tgMapEditor.dmrTg": "DMR TG",
+  "tgMapEditor.removeMapping": "Remove mapping",
+  "tgMapEditor.sourceTg": "source TG",
   "tgMapEditor.tgMapRewriteSource": "TG map — rewrite a source-side talkgroup to a DMR TG (optional)",
 
   "theme.amber": "amber",
@@ -858,6 +911,7 @@
 
   "ysf.aprsPositionBeacon": "APRS position beacon",
   "ysf.dgIdGateway": "DG-ID GATEWAY",
+  "ysf.fcs00290YsfReflector": "e.g. FCS00290 or a YSF reflector",
   "ysf.fcsRoomNetwork": "FCS room network",
   "ysf.inactivityRevert": "Inactivity revert",
   "ysf.linkStartupReflectorDg": "Link the startup reflector as a DG-ID network (YCS)",
