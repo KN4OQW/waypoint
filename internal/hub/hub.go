@@ -14,7 +14,7 @@ import (
 // written against the demo feed keeps working against real hardware.
 type Event struct {
 	Time    time.Time `json:"time"`
-	Type    string    `json:"type"`              // rf_voice_start, rf_voice_end, net_voice_start, net_voice_end, link, mode
+	Type    string    `json:"type"`              // rf_voice_start, rf_voice_end, net_voice_start, net_voice_end, link_up, link_down, mode
 	Mode    string    `json:"mode,omitempty"`    // DMR, YSF, ...
 	Slot    int       `json:"slot,omitempty"`    // DMR slot, 0 otherwise
 	Source  string    `json:"source,omitempty"`  // callsign or network name

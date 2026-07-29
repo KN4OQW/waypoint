@@ -8,7 +8,7 @@ const $ = (sel) => document.querySelector(sel);
 const state = {
   active: null,          // current *_start event, if any
   lastheard: new Map(),  // callsign -> latest end event
-  networks: new Map(),   // network name -> state string
+  // No networks map: link state comes from /api/status, not a client-side fold.
 };
 
 // DMR talkgroup number -> name, for resolving "TG 3112" to "TG 3112 · Texas
@@ -170,11 +170,18 @@ function renderLastHeard() {
   ).join("");
 }
 
-function renderNetworks() {
-  const items = [...state.networks.entries()];
+// Network links render from the server's computed status, exactly like gateways —
+// NOT from a client-side fold of the event stream. The old fold could only ever
+// add a network and always drew it with a ✓, so a link that dropped stayed green
+// forever and a reloaded tab replayed an ancient "link" event out of history and
+// believed it. One server-side truth, self-healing, is the whole point of the
+// status pipeline (RFC-0008); the event stream's job here is the log, not state.
+function renderNetworks(nets) {
+  const items = Object.entries(nets || {}).sort((a, b) => a[0].localeCompare(b[0]));
   $("#networks-empty").hidden = items.length > 0;
-  $("#networks").innerHTML = items.map(([name, st]) =>
-    `<li><span class="dot" aria-hidden="true"></span>${esc(name)}<span class="state">${esc(st)} ✓</span></li>`
+  $("#networks").innerHTML = items.map(([name, l]) =>
+    `<li class="${l.up ? "" : "down"}"><span class="dot" aria-hidden="true"></span>${esc(name)}` +
+    `<span class="state">${esc(l.detail || (l.up ? "linked" : "not linked"))} ${l.up ? "✓" : "✗"}</span></li>`
   ).join("");
 }
 
@@ -188,7 +195,9 @@ function logEvent(e) {
     case "rf_voice_end":   text = `${e.source} → ${dest}, ${e.seconds}s, BER ${e.ber}%, RSSI ${e.rssi} dBm`; break;
     case "net_voice_start":text = `${e.source} → ${dest} from ${e.network}`; break;
     case "net_voice_end":  text = `${e.source} → ${dest}, ${e.seconds}s (network)`; break;
-    case "link":           text = `${e.network}: ${e.detail}`; break;
+    case "link":
+    case "link_up":        text = `${e.network} linked${e.detail ? " — " + e.detail : ""}`; break;
+    case "link_down":      text = `${e.network} link lost${e.detail ? " — " + e.detail : ""}`; break;
     case "mode":           text = `mode ${e.mode}${e.detail ? " — " + e.detail : ""}`; break;
     default:               text = e.detail || e.type;
   }
@@ -208,14 +217,11 @@ function handle(e) {
       state.active = null;
       state.lastheard.set(e.source, e);
       break;
-    case "link":
-      state.networks.set(e.network, e.detail || "linked"); break;
     case "mode":
       setMode(e.mode); break;
   }
   renderOnAir();
   renderLastHeard();
-  renderNetworks();
   logEvent(e);
 }
 
@@ -236,8 +242,9 @@ async function loadHistory() {
     const events = await r.json();
     if (!Array.isArray(events)) return;
     // The server returns newest-first; replay oldest-first so the event log prepends
-    // into newest-first order and lastheard/networks settle on their latest values,
-    // exactly as the live stream would have built them.
+    // into newest-first order and lastheard settles on its latest value, exactly as
+    // the live stream would have built it. Link state is deliberately NOT rebuilt
+    // from here — a link event in the record is history, not a claim about now.
     for (let i = events.length - 1; i >= 0; i--) handle(events[i]);
     // History must not imply a live transmission: a trailing voice_start in the
     // record doesn't mean someone is keyed up right now. Clear on-air and let the
@@ -291,6 +298,7 @@ async function loadStatus() {
   }
   renderOnAir();
   renderGateways(s.gateways);
+  renderNetworks(s.networks);
 }
 
 applyMode(currentMode());

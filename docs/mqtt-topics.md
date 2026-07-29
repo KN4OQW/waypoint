@@ -19,7 +19,7 @@ The status prefix defaults to `waypoint/status` (`-status-topic-prefix`).
 | `waypoint/status/mode` | string, e.g. `DMR` | Current active mode, or `IDLE`. |
 | `waypoint/status/tx` | JSON `{mode,slot,source,dest,network,direction,started_at}` or empty | The transmission on the air; empty payload when idle. |
 | `waypoint/status/feed` | JSON `{connected,detail,since}` | Health of the MMDVM-Host MQTT feed everything derives from. |
-| `waypoint/status/network/<name>` | JSON `{up,detail,since}` | Per network/reflector link state. `<name>` is topic-sanitized. |
+| `waypoint/status/network/<name>` | JSON `{up,detail,since}` | Per network/reflector link state. `<name>` is topic-sanitized. `up` moves in **both** directions — see below. |
 | `waypoint/status/gateway/<name>` | JSON `{up,detail,since}` | Per gateway-daemon liveness (from the supervisor probe). |
 | `waypoint/status/availability` | `online` / `offline` | Device availability. `offline` is the connection's MQTT Last-Will, so it flips the moment the node drops. |
 
@@ -29,6 +29,27 @@ safe topic levels.
 Status is **self-healing** (RFC-0008): a stranded transmission clears on a
 watchdog and a killed gateway shows down within the supervisor probe interval, so
 these topics reflect truth rather than a latched last value — no log scraping.
+
+### Network links go down as well as up
+
+`network/<name>` reports `up: false` when a link is lost, not just `up: true`
+when one is made. A link stops being claimed on any of three signals:
+
+- an explicit **`link_down`** event naming the network (its `detail` says why);
+- **loss of the MMDVM-Host feed** — nothing can re-assert a link with the feed
+  gone, and `detail` reads `unconfirmed — MMDVM-Host feed down`;
+- the **confirmation watchdog**, when armed: a link nothing has re-confirmed
+  within `-link-ttl` reports `unconfirmed for <window>`.
+
+The watchdog is **off by default** (`-link-ttl=0`) because nothing re-confirms a
+link yet; the resilience supervisor ([#22](https://github.com/KN4OQW/waypoint/issues/22))
+is what arms it. `since` is when the link entered its *current* state, so a
+re-confirmation of an already-up link neither moves `since` nor republishes the
+topic.
+
+The event stream carries `link_up`/`link_down` for this; the original `link`
+spelling still means "up" and is still accepted, because `events.db` holds rows
+written before the pair existed and `GET /api/history` replays them.
 
 ## Home Assistant discovery (`homeassistant/#`)
 

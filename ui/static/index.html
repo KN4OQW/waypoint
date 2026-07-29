@@ -217,6 +217,10 @@
   .netlist li:last-child { border-bottom: 0; }
   .netlist .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 7px var(--accent-glow); flex: none; }
   .netlist .state { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--muted); letter-spacing: .5px; }
+  /* A down link must not read as an up one at a glance: colour AND the ✗ glyph,
+     never colour alone (the ✓/✗ is what carries it without colour vision). */
+  .netlist li.down { color: var(--muted); }
+  .netlist li.down .dot { background: var(--bad); box-shadow: 0 0 7px rgba(255,107,107,.5); }
 
   .foot { padding: 18px 34px 30px; font-family: var(--mono); font-size: 10px; color: var(--faint); letter-spacing: .3px; }
   .foot code { color: var(--dim); }

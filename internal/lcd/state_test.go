@@ -24,6 +24,18 @@ func TestStateFolding(t *testing.T) {
 		t.Fatalf("link event not folded: %+v", s.links)
 	}
 
+	// A link must be able to come back down (#22), including via the legacy "link"
+	// spelling's replacement pair — otherwise the panel latches on the last good
+	// state exactly like the dashboards this project exists to replace.
+	s.handle(hub.Event{Type: "link_down", Network: "BM_3102", Detail: "master closed the connection"})
+	if s.links["BM_3102"] {
+		t.Fatalf("link_down not folded: %+v", s.links)
+	}
+	s.handle(hub.Event{Type: "link_up", Network: "BM_3102"})
+	if !s.links["BM_3102"] {
+		t.Fatalf("link_up not folded: %+v", s.links)
+	}
+
 	// RF voice: Source=callsign, Dest=talkgroup.
 	s.handle(hub.Event{Type: "rf_voice_start", Mode: "YSF", Source: "W1ABC", Dest: "TG5"})
 	if !s.active || s.actDir != "RX" || s.actMode != "YSF" || s.actCall != "W1ABC" || s.actTG != "TG5" {
