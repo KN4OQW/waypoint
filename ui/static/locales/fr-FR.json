@@ -110,6 +110,7 @@
   "common.disabled": "DÉSACTIVÉ",
   "common.enabled": "ACTIVÉ",
   "common.gateway": "PASSERELLE",
+  "common.gatewayNotRunning": "PASSERELLE NON DÉMARRÉE",
   "common.hangTimers": "TEMPORISATEURS DE MAINTIEN",
   "common.passwordUnchanged": "•••••• inchangé",
   "common.remoteGatewayAdvancedLeave": "Passerelle distante (avancé — laisser désactivé pour un contrôle local)",
@@ -117,6 +118,7 @@
   "common.selfOnlyAcceptOnly": "Soi-même uniquement (accepter uniquement mon indicatif)",
   "common.startupReflector": "Réflecteur de démarrage",
   "common.voiceAnnouncements": "Annonces vocales",
+  "common.willNotStart": "Ne démarrera pas",
 
   "confirmNetwork.browserDoesnTHold": "Ce navigateur ne détient pas le jeton de confirmation pour la modification en attente — confirmez depuis l'onglet qui l'a appliquée ou laissez-la être annulée.",
   "confirmNetwork.dStar": "D-Star",
@@ -762,6 +764,7 @@
   "pocsag.dapnetServer": "Serveur DAPNET",
   "pocsag.dapnetgatewayWillNotConnect": "DAPNETGateway ne se connectera pas tant qu'une clé AuthKey valide n'est pas définie (obtenez-en une sur le portail web DAPNET). Laissez les listes blanche/noire vides pour autoriser tous les RIC.",
   "pocsag.fromDapnetPortal": "depuis le portail DAPNET",
+  "pocsag.gatewayBlockedAuthKey": "POCSAG est activé mais aucune clé AuthKey DAPNET n'est définie, donc DAPNETGateway n'est pas démarré — il s'arrêterait immédiatement et redémarrerait en boucle. Obtenez une clé AuthKey sur le portail web DAPNET, saisissez-la ci-dessus, puis appliquez. Tout le reste de la configuration POCSAG est déjà en place ; rien d'autre ne pose problème.",
   "pocsag.pagingChannel": "CANAL DE PAGING",
   "pocsag.pagingFrequency": "Fréquence de paging",
   "pocsag.ricFiltersOptional": "FILTRES RIC (OPTIONNEL)",

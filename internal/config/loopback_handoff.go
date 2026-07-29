@@ -141,8 +141,12 @@ func (m *Model) BootEnableUnits() []string {
 	return out
 }
 
+// A gateway blocked by an unmet requirement joins the boot-disable set for the
+// same reason a displaced one does: it is not in the rendered target set, so
+// leaving it enabled means a reboot starts a daemon that is guaranteed to exit.
 func (m *Model) BootDisableUnits() []string {
-	return append(m.DisabledBusUnits(), m.DisplacedGatewayUnits()...)
+	out := append(m.DisabledBusUnits(), m.DisplacedGatewayUnits()...)
+	return append(out, m.BlockedGatewayUnits()...)
 }
 
 // busLoopbacksFor is the per-mode loopback OVERRIDE carried into a bus's rendered

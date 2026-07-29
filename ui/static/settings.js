@@ -2477,7 +2477,25 @@ function panelPocsag() {
     input("pocsag", "whitelist", { label: msg("pocsag.whitelistCommaSeparatedRics") }) +
     input("pocsag", "blacklist", { label: msg("pocsag.blacklistCommaSeparatedRics") }));
   const hint = note(msg("pocsag.dapnetgatewayWillNotConnect"));
-  return `<div class="grid2"><div class="stack">${paging}${filters}</div>${dapnet}</div>${hint}`;
+  return `<div class="grid2"><div class="stack">${paging}${filters}${blockedGatewayCard("pocsag")}</div>${dapnet}</div>${hint}`;
+}
+
+// blockedGatewayCard explains a gateway apply deliberately did not start. A daemon
+// that reads a required value at startup and exits when it is unset would only
+// crash-loop, so apply withholds it (config.UnmetGatewayRequirements) — and
+// without this card the sole evidence would be a daemon that is not running for no
+// visible reason. Severity is carried by the "Will not start" text as well as the
+// colour, matching the hardware warnings, so it survives for anyone who cannot see
+// the hue. Returns "" when nothing is blocked, so a panel can concatenate it
+// unconditionally.
+function blockedGatewayCard(mode) {
+  const blocked = ((state.config || {}).blocked_gateways || []).filter((b) => b.mode === mode);
+  if (!blocked.length) return "";
+  const items = blocked.map((b) => {
+    const fields = (b.missing || []).map((f) => `<span class="hw-warn-f">${esc(f)}</span>`).join(" ");
+    return `<li class="hw-warn bad"><span class="hw-warn-k">${esc(msg("common.willNotStart"))}</span> ${fields}<div>${esc(msg("pocsag.gatewayBlockedAuthKey"))}</div></li>`;
+  }).join("");
+  return card(msg("common.gatewayNotRunning"), `<ul class="hw-warns">${items}</ul>`);
 }
 
 // FM (analog) has no gateway daemon — the panel edits the "modes" enable + the

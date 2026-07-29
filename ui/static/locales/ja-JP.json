@@ -110,6 +110,7 @@
   "common.disabled": "無効",
   "common.enabled": "有効",
   "common.gateway": "ゲートウェイ",
+  "common.gatewayNotRunning": "ゲートウェイ未起動",
   "common.hangTimers": "ハングタイマー",
   "common.passwordUnchanged": "•••••• 変更なし",
   "common.remoteGatewayAdvancedLeave": "リモートゲートウェイ (上級者向け — ローカル制御の場合はオフ)",
@@ -117,6 +118,7 @@
   "common.selfOnlyAcceptOnly": "自分のみ (自分のコールサインのみ許可)",
   "common.startupReflector": "スタートアップリフレクター",
   "common.voiceAnnouncements": "音声アナウンス",
+  "common.willNotStart": "起動しません",
 
   "confirmNetwork.browserDoesnTHold": "このブラウザには保留中の変更トークンが保持されていません。適用したタブから確認するか、変更が復元されるのを待ってください。",
   "confirmNetwork.dStar": "D-Star",
@@ -762,6 +764,7 @@
   "pocsag.dapnetServer": "DAPNET サーバー",
   "pocsag.dapnetgatewayWillNotConnect": "有効な AuthKey が設定されるまで DAPNETGateway は接続しません (DAPNET ポータルから取得してください)。すべての RIC を通過させるにはリストを空欄にします。",
   "pocsag.fromDapnetPortal": "DAPNET ポータルから取得",
+  "pocsag.gatewayBlockedAuthKey": "POCSAG は有効ですが DAPNET の AuthKey が設定されていないため、DAPNETGateway は起動されません — 起動しても即座に終了し、再起動を繰り返すだけです。DAPNET のウェブポータルで AuthKey を取得し、上の欄に入力して適用してください。POCSAG の他の設定はすべて完了しており、他に問題はありません。",
   "pocsag.pagingChannel": "ページングチャンネル",
   "pocsag.pagingFrequency": "ページング周波数",
   "pocsag.ricFiltersOptional": "RIC フィルター (任意)",

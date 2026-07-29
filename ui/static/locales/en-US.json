@@ -110,6 +110,7 @@
   "common.disabled": "DISABLED",
   "common.enabled": "ENABLED",
   "common.gateway": "GATEWAY",
+  "common.gatewayNotRunning": "GATEWAY NOT RUNNING",
   "common.hangTimers": "HANG TIMERS",
   "common.passwordUnchanged": "•••••• unchanged",
   "common.remoteGatewayAdvancedLeave": "Remote gateway (advanced — leave off for local control)",
@@ -117,6 +118,7 @@
   "common.selfOnlyAcceptOnly": "Self only (accept only my callsign)",
   "common.startupReflector": "Startup reflector",
   "common.voiceAnnouncements": "Voice announcements",
+  "common.willNotStart": "Will not start",
 
   "confirmNetwork.browserDoesnTHold": "This browser doesn't hold the confirm token for the pending change — confirm from the tab that applied it, or let it revert.",
   "confirmNetwork.dStar": "D-Star",
@@ -762,6 +764,7 @@
   "pocsag.dapnetServer": "DAPNET server",
   "pocsag.dapnetgatewayWillNotConnect": "DAPNETGateway will not connect until a valid AuthKey is set (get one from the DAPNET web portal). Leave whitelist/blacklist blank to pass all RICs.",
   "pocsag.fromDapnetPortal": "from the DAPNET portal",
+  "pocsag.gatewayBlockedAuthKey": "POCSAG is enabled but no DAPNET AuthKey is set, so DAPNETGateway is not started — it would exit immediately and restart in a loop. Get an AuthKey from the DAPNET web portal, set it above, and apply. Everything else about POCSAG is already configured; nothing else is wrong.",
   "pocsag.pagingChannel": "PAGING CHANNEL",
   "pocsag.pagingFrequency": "Paging frequency",
   "pocsag.ricFiltersOptional": "RIC FILTERS (OPTIONAL)",
