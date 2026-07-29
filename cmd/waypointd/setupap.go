@@ -268,8 +268,11 @@ func (s *server) initSetupAP(ctx context.Context, opts apOptions) {
 	// — the node stays provisioned, stays claimed, and keeps its configuration.
 	go func() {
 		w := &netwatch.Watcher{
-			AP:          sess,
-			APInterface: opts.Interface,
+			AP: sess,
+			// Resolved per check, from the AP itself: opts.Interface is empty on any
+			// node whose operator did not name a wireless device, which is nearly all
+			// of them, so the exclusion would otherwise never fire.
+			APInterface: ctrl.APInterface,
 			Grace:       opts.NetwatchGrace,
 			Logf:        log.Printf,
 		}

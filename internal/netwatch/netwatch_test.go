@@ -309,3 +309,46 @@ func TestWatcherHoldsNoProvisioningState(t *testing.T) {
 		t.Error("the zero watcher has an AP")
 	}
 }
+
+// The AP's own interface must be excluded even when the operator named none — the
+// normal case. Before the accessor, APInterface was captured from a flag that is
+// empty on any node with one wireless device, so the exclusion silently did nothing
+// exactly where it was needed: a node that raised its AP during an outage would
+// read the AP's own route as a way out, take the AP back down, and do it again.
+func TestExcludesTheAPInterfaceTheHelperChose(t *testing.T) {
+	dir := t.TempDir()
+	// A route table whose ONLY default route is the AP's.
+	path := filepath.Join(dir, "route")
+	const apOnly = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n" +
+		"wlan0\t00000000\t0100A8C0\t0003\t0\t0\t600\t00000000\n"
+	if err := os.WriteFile(path, []byte(apOnly), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing excluded (the old behaviour): the AP looks like connectivity.
+	if !HasDefaultRoute(path, "") {
+		t.Fatal("fixture is wrong — it should report a default route when nothing is excluded")
+	}
+	// The AP's interface excluded: no way out, which is the truth.
+	if HasDefaultRoute(path, "wlan0") {
+		t.Error("the AP's own route was counted as a way out")
+	}
+}
+
+// A Watcher resolves the interface at each check, so an AP raised after the watcher
+// was constructed is still excluded.
+func TestWatcherResolvesTheAPInterfaceLate(t *testing.T) {
+	var raised string // empty until the AP goes up, as on a real node
+	w := &Watcher{APInterface: func() string { return raised }}
+	if got := w.apInterface(); got != "" {
+		t.Errorf("before the AP is up the exclusion should be empty, got %q", got)
+	}
+	raised = "wlan0"
+	if got := w.apInterface(); got != "wlan0" {
+		t.Errorf("after the AP is up the exclusion should follow it, got %q", got)
+	}
+	// A nil accessor is tolerated.
+	if got := (&Watcher{}).apInterface(); got != "" {
+		t.Errorf("a nil accessor should exclude nothing, got %q", got)
+	}
+}

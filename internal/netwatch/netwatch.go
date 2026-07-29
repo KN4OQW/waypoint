@@ -60,10 +60,16 @@ type Watcher struct {
 	// route table, ignoring the AP's own interface.
 	Online func() bool
 
-	// APInterface is excluded from the route check. Without it the access point's
-	// own route would count as connectivity, and a node that raised the AP would
+	// APInterface names the interface to exclude from the route check, resolved at
+	// each check rather than captured. Without the exclusion the access point's own
+	// route would count as connectivity, and a node that raised the AP would
 	// immediately conclude it was back online.
-	APInterface string
+	//
+	// It is a function because the interface is not known until the AP is raised:
+	// the operator usually names none and the privileged helper picks the device, so
+	// a value captured at construction is empty precisely when it matters. Nil, or a
+	// function returning "", excludes nothing.
+	APInterface func() string
 
 	// Grace and Interval default to the constants above.
 	Grace    time.Duration
@@ -101,11 +107,19 @@ func (w *Watcher) logf(format string, args ...any) {
 	}
 }
 
+// apInterface resolves the interface to exclude, tolerating a nil accessor.
+func (w *Watcher) apInterface() string {
+	if w.APInterface == nil {
+		return ""
+	}
+	return w.APInterface()
+}
+
 func (w *Watcher) online() bool {
 	if w.Online != nil {
 		return w.Online()
 	}
-	return HasDefaultRoute(RoutePath, w.APInterface)
+	return HasDefaultRoute(RoutePath, w.apInterface())
 }
 
 // Check runs one evaluation. It is separate from Run so the whole state machine
