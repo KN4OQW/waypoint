@@ -338,6 +338,15 @@ type ViewDMR struct {
 	// multi-ID allowlist), so Waypoint models one field and never a dead key.
 	SelfOnly bool   `json:"self_only"`
 	ID       string `json:"id"`
+	// The hang timers, surfaced on the one DMR tab the way YSF surfaces its pair.
+	// CallHang/TXHang/ModeHang are [DMR]; NetModeHang is [DMR Network] ModeHang,
+	// which lives on the dmrnet store section but belongs on this tab beside the
+	// RF timer it is clamped against. All four are blank unless the operator sets
+	// them — blank means "no key rendered", so [General] keeps governing.
+	CallHang    string `json:"call_hang"`
+	TXHang      string `json:"tx_hang"`
+	ModeHang    string `json:"mode_hang"`
+	NetModeHang string `json:"net_mode_hang"`
 }
 
 type ViewMode struct {
@@ -457,6 +466,10 @@ func (m *Model) View(src Sources) *View {
 			Beacons:        m.DMR.Beacons,
 			SelfOnly:       m.DMR.SelfOnly,
 			ID:             m.DMR.ID,
+			CallHang:       m.DMR.CallHang,
+			TXHang:         m.DMR.TXHang,
+			ModeHang:       m.DMR.ModeHang,
+			NetModeHang:    m.DMRNet.ModeHang,
 		},
 	}
 	v.Display = ViewDisplay{

@@ -578,6 +578,16 @@ type DMR struct {
 	SelfOnly       bool   `json:"self_only"`
 	DumpTAData     bool   `json:"dump_ta_data"`
 	Beacons        bool   `json:"beacons"` // DMR Roaming Beacon (MMDVM-Host [DMR Network] Beacons)
+
+	// The three [DMR] hang timers, in seconds. CallHang is "TG hold": how long
+	// the just-heard talkgroup stays latched so a reply keys back to it — the
+	// feature belongs to MMDVM-Host, not DMRGateway (Conf.cpp:858-863). TXHang
+	// holds the transmitter up between bursts, ModeHang holds DMR as the active
+	// mode. All three are blank by default so [General] RFModeHang/NetModeHang
+	// keep governing; see render.go for why blank means "omit the key".
+	CallHang string `json:"call_hang"`
+	TXHang   string `json:"tx_hang"`
+	ModeHang string `json:"mode_hang"`
 }
 
 // DMRNet is MMDVM-Host's link to the local DMRGateway.
@@ -588,6 +598,11 @@ type DMRNet struct {
 	Slot1          bool   `json:"slot1"`
 	Slot2          bool   `json:"slot2"`
 	Jitter         string `json:"jitter"`
+
+	// ModeHang is [DMR Network] ModeHang (Conf.cpp:1097-1099): how long DMR stays
+	// the active mode after network traffic, as opposed to DMR.ModeHang's RF side.
+	// Blank omits the key, same as the RF timers.
+	ModeHang string `json:"mode_hang"`
 }
 
 // Modes carries the per-mode enable flags.
