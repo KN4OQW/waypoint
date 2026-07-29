@@ -646,25 +646,25 @@ function nodeLockRow() {
 // --- panels --------------------------------------------------------------
 function panelGeneral() {
   const left = card(msg("general.stationIdentity"),
-    input("general", "callsign", { label: "Callsign" }) +
-    input("general", "id", { label: "DMR ID" }) +
-    input("general", "location", { label: "Location" }) +
-    input("general", "url", { label: "Dashboard URL" }));
+    input("general", "callsign", { label: msg("general.callsign") }) +
+    input("general", "id", { label: msg("general.dmrId") }) +
+    input("general", "location", { label: msg("general.location") }) +
+    input("general", "url", { label: msg("general.dashboardUrl") }));
   const radio = card(msg("general.radioFrequency"),
-    input("modem", "rx_freq_hz", { label: "RX Frequency", kind: "mhz", unit: "MHz", accent: true }) +
-    input("modem", "tx_freq_hz", { label: "TX Frequency", kind: "mhz", unit: "MHz", accent: true }) +
-    input("modem", "port", { label: "Modem Port" }) +
+    input("modem", "rx_freq_hz", { label: msg("general.rxFrequency"), kind: "mhz", unit: "MHz", accent: true }) +
+    input("modem", "tx_freq_hz", { label: msg("general.txFrequency"), kind: "mhz", unit: "MHz", accent: true }) +
+    input("modem", "port", { label: msg("general.modemPort") }) +
     boardRow() +
     baudRow() +
-    input("general", "power", { label: "RF Power", unit: "" }) +
+    input("general", "power", { label: msg("general.rfPower"), unit: "" }) +
     toggle("general", "duplex", msg("general.duplex"), msg("general.duplex2"), msg("general.simplex")) +
     note(msg("general.donTTypePort")));
   const cal = card(msg("general.calibration"),
-    input("modem", "rx_offset", { label: "RX Offset", unit: "Hz" }) +
-    input("modem", "tx_offset", { label: "TX Offset", unit: "Hz" }) +
-    input("modem", "rx_level", { label: "RX Level", unit: "%" }) +
-    input("modem", "tx_level", { label: "TX Level", unit: "%" }) +
-    input("modem", "rf_level", { label: "RF Power", unit: "%" }) +
+    input("modem", "rx_offset", { label: msg("general.rxOffset"), unit: "Hz" }) +
+    input("modem", "tx_offset", { label: msg("general.txOffset"), unit: "Hz" }) +
+    input("modem", "rx_level", { label: msg("general.rxLevel"), unit: "%" }) +
+    input("modem", "tx_level", { label: msg("general.txLevel"), unit: "%" }) +
+    input("modem", "rf_level", { label: msg("general.rfPower"), unit: "%" }) +
     note(msg("general.measureTheseRatherThan")));
   // The analog controls a full-size repeater board needs and a hotspot ignores
   // outright: MMDVM_HS's firmware does not read the invert flags or the DC
@@ -674,19 +674,19 @@ function panelGeneral() {
     toggle("modem", "rx_invert", msg("general.rxInvert"), msg("general.inverted"), msg("general.normal")) +
     toggle("modem", "tx_invert", msg("general.txInvert"), msg("general.inverted"), msg("general.normal")) +
     toggle("modem", "ptt_invert", msg("general.pttInvert"), msg("general.inverted"), msg("general.normal")) +
-    input("modem", "rx_dc_offset", { label: "RX DC Offset" }) +
-    input("modem", "tx_dc_offset", { label: "TX DC Offset" }) +
-    input("modem", "dmr_delay", { label: "DMR Delay" }) +
-    input("modem", "rssi_mapping_file", { label: "RSSI Map" }) +
+    input("modem", "rx_dc_offset", { label: msg("general.rxDcOffset") }) +
+    input("modem", "tx_dc_offset", { label: msg("general.txDcOffset") }) +
+    input("modem", "dmr_delay", { label: msg("general.dmrDelay") }) +
+    input("modem", "rssi_mapping_file", { label: msg("general.rssiMap") }) +
     note(msg("general.hotspotBoardIgnoresEvery")));
   const levels = card(msg("general.perModeTxLevels"),
-    input("modem", "dstar_tx_level", { label: "D-Star", unit: "%" }) +
-    input("modem", "dmr_tx_level", { label: "DMR", unit: "%" }) +
-    input("modem", "ysf_tx_level", { label: "System Fusion", unit: "%" }) +
+    input("modem", "dstar_tx_level", { label: msg("general.dStar"), unit: "%" }) +
+    input("modem", "dmr_tx_level", { label: msg("general.dmr"), unit: "%" }) +
+    input("modem", "ysf_tx_level", { label: msg("general.systemFusion"), unit: "%" }) +
     input("modem", "p25_tx_level", { label: "P25", unit: "%" }) +
-    input("modem", "nxdn_tx_level", { label: "NXDN", unit: "%" }) +
-    input("modem", "pocsag_tx_level", { label: "POCSAG", unit: "%" }) +
-    input("modem", "fm_tx_level", { label: "FM", unit: "%" }) +
+    input("modem", "nxdn_tx_level", { label: msg("general.nxdn"), unit: "%" }) +
+    input("modem", "pocsag_tx_level", { label: msg("general.pocsag"), unit: "%" }) +
+    input("modem", "fm_tx_level", { label: msg("general.fm"), unit: "%" }) +
     note(msg("general.leaveBlankFollowTx")));
   return `<div class="grid2">${left}<div class="stack">${radio}${cal}${levels}${analog}</div></div>`;
 }
@@ -740,8 +740,8 @@ function baudRow() {
 function panelDmr() {
   const master = card(msg("dmr.dmrMaster"),
     toggle("modes", "dmr", msg("dmr.enabled")) +
-    input("dmr", "color_code", { label: "Color Code", accent: true }) +
-    input("dmr", "id", { label: "DMR ID" }));
+    input("dmr", "color_code", { label: msg("dmr.colorCode"), accent: true }) +
+    input("dmr", "id", { label: msg("dmr.dmrId") }));
   const slots = card(msg("dmr.timeSlotsAdvanced"),
     toggleRow("dmrnet", "slot1", msg("dmr.timeSlot1Enabled")) +
     toggleRow("dmrnet", "slot2", msg("dmr.timeSlot2Enabled")) +
@@ -842,9 +842,9 @@ function panelDisplay() {
   // no separate I2C-bus key in MMDVM-Host's [HD44780] section.
   if (d.type === "HD44780") {
     displayRows +=
-      input("display", "hd44780_rows", { label: "Rows" }) +
-      input("display", "hd44780_cols", { label: "Columns" }) +
-      input("display", "hd44780_i2c_addr", { label: "I2C Address", accent: true });
+      input("display", "hd44780_rows", { label: msg("display.rows") }) +
+      input("display", "hd44780_cols", { label: msg("display.columns") }) +
+      input("display", "hd44780_i2c_addr", { label: msg("display.i2cAddress"), accent: true });
   }
 
   const display = card(msg("display.display"), displayRows);
@@ -879,26 +879,26 @@ function pageCard(p, i, rows, cols, total) {
   for (let j = 0; j < rows; j++) {
     const v = p.lines[j] || "";
     unknownTokens(v).forEach((u) => { if (!bad.includes(u)) bad.push(u); });
-    lines += `<div class="lcd-line"><label class="lcd-linelabel" for="lcd-l-${i}-${j}">Row ${j + 1}</label>` +
-      `<input id="lcd-l-${i}-${j}" class="lcd-lineinput" data-lcdline="${i}" data-lcdrow="${j}" value="${esc(v)}" placeholder="text and {tokens}" aria-label="Page ${i + 1} row ${j + 1}"></div>`;
+    lines += `<div class="lcd-line"><label class="lcd-linelabel" for="lcd-l-${i}-${j}">${esc(msg("lcd.rowLabel", { row: j + 1 }))}</label>` +
+      `<input id="lcd-l-${i}-${j}" class="lcd-lineinput" data-lcdline="${i}" data-lcdrow="${j}" value="${esc(v)}" placeholder="${esc(msg("lcd.linePlaceholder"))}" aria-label="${esc(msg("lcd.rowAria", { page: i + 1, row: j + 1 }))}"></div>`;
   }
   const warn = `<div class="lcd-warn${bad.length ? "" : " hide"}" role="alert" data-lcdwarn="${i}">${warnText(bad)}</div>`;
-  const palette = `<div class="lcd-tokens" role="group" aria-label="Insert a token into page ${i + 1}">` +
+  const palette = `<div class="lcd-tokens" role="group" aria-label="${esc(msg("lcd.paletteAria", { page: i + 1 }))}">` +
     LCD_TOKEN_HELP.map(([tk]) => `<button type="button" class="lcd-tok" data-lcdtoken="${esc(tk)}" data-lcdpageidx="${i}" title="${esc(msg("lcd.tokenPaletteTitle", { desc: lcdTokenDesc(tk), token: "{" + tk + "}" }))}">{${esc(tk)}}</button>`).join("") + `</div>`;
   const preview = `<div class="lcd-preview">` +
-    `<div class="lcd-preview-label" id="lcd-pv-label-${i}">Preview (${esc(cols)}×${esc(String(rows))})</div>` +
+    `<div class="lcd-preview-label" id="lcd-pv-label-${i}">${esc(msg("lcd.previewLabel", { cols, rows }))}</div>` +
     `<pre class="lcd-screen" data-lcdpreview="${i}" role="group" aria-labelledby="lcd-pv-label-${i}">${esc(lcdPreviewText(p, rows, parseInt(cols, 10) || 20))}</pre></div>`;
   const upDis = i === 0 ? " disabled aria-disabled=\"true\"" : "";
   const dnDis = i === total - 1 ? " disabled aria-disabled=\"true\"" : "";
   return `<section class="card lcd-page">
       <div class="card-head lcd-pagehead">
-        <button type="button" class="lcd-move" data-lcdmove="up" data-lcdpageidx="${i}" aria-label="Move page ${i + 1} up"${upDis}>▲</button>
-        <button type="button" class="lcd-move" data-lcdmove="down" data-lcdpageidx="${i}" aria-label="Move page ${i + 1} down"${dnDis}>▼</button>
-        <input class="lcd-pagename" data-lcdpage="${i}" data-lcdkey="name" value="${esc(p.name || "")}" placeholder="Page name" aria-label="Page ${i + 1} name">
-        <button type="button" class="pill ${p.enabled ? "on" : "off"}" data-lcdpageen="${i}" aria-pressed="${p.enabled ? "true" : "false"}" aria-label="Page ${i + 1} enabled">${p.enabled ? "ENABLED" : "DISABLED"}</button>
-        <button type="button" class="pill ${p.interrupt ? "on" : "off"}" data-lcdpageint="${i}" aria-pressed="${p.interrupt ? "true" : "false"}" aria-label="Page ${i + 1} interrupt on activity" title="Take over the panel on TX/RX, then resume rotation">${p.interrupt ? "INTERRUPT" : "ROTATE"}</button>
-        <span class="lcd-dur"><input class="mini" data-lcdpage="${i}" data-lcdkey="duration" value="${esc(p.duration || "")}" inputmode="numeric" aria-label="Page ${i + 1} hold seconds"> s</span>
-        <button type="button" class="netdel" data-lcdpagedel="${i}" aria-label="Remove page ${i + 1}">✕</button>
+        <button type="button" class="lcd-move" data-lcdmove="up" data-lcdpageidx="${i}" aria-label="${esc(msg("lcd.movePageUp", { page: i + 1 }))}"${upDis}>▲</button>
+        <button type="button" class="lcd-move" data-lcdmove="down" data-lcdpageidx="${i}" aria-label="${esc(msg("lcd.movePageDown", { page: i + 1 }))}"${dnDis}>▼</button>
+        <input class="lcd-pagename" data-lcdpage="${i}" data-lcdkey="name" value="${esc(p.name || "")}" placeholder="${esc(msg("lcd.pageNamePlaceholder"))}" aria-label="${esc(msg("lcd.pageNameAria", { page: i + 1 }))}">
+        <button type="button" class="pill ${p.enabled ? "on" : "off"}" data-lcdpageen="${i}" aria-pressed="${p.enabled ? "true" : "false"}" aria-label="${esc(msg("lcd.pageEnabledAria", { page: i + 1 }))}">${esc(p.enabled ? msg("common.enabled") : msg("common.disabled"))}</button>
+        <button type="button" class="pill ${p.interrupt ? "on" : "off"}" data-lcdpageint="${i}" aria-pressed="${p.interrupt ? "true" : "false"}" aria-label="${esc(msg("lcd.pageInterruptAria", { page: i + 1 }))}" title="${esc(msg("lcd.pageInterruptTitle"))}">${esc(p.interrupt ? msg("lcd.interrupt") : msg("lcd.rotate"))}</button>
+        <span class="lcd-dur"><input class="mini" data-lcdpage="${i}" data-lcdkey="duration" value="${esc(p.duration || "")}" inputmode="numeric" aria-label="${esc(msg("lcd.pageHoldAria", { page: i + 1 }))}"> ${esc(msg("lcd.secondsUnit"))}</span>
+        <button type="button" class="netdel" data-lcdpagedel="${i}" aria-label="${esc(msg("lcd.removePageAria", { page: i + 1 }))}">✕</button>
       </div>
       ${lines}${warn}${preview}${palette}
     </section>`;
@@ -906,7 +906,10 @@ function pageCard(p, i, rows, cols, total) {
 
 function warnText(bad) {
   if (!bad.length) return "";
-  return `⚠ Unknown token${bad.length > 1 ? "s" : ""}: ${bad.map((u) => esc("{" + u + "}")).join(", ")} — check spelling; unknown tokens render blank.`;
+  // Singular and plural are two keys chosen here rather than a plural library:
+  // the UI branches on exactly one count, in exactly one place.
+  const tokens = bad.map((u) => esc("{" + u + "}")).join(", ");
+  return msg(bad.length > 1 ? "lcd.warnUnknownTokens" : "lcd.warnUnknownToken", { tokens });
 }
 
 // updatePageWarning refreshes one page's unknown-token notice without a full
@@ -935,13 +938,13 @@ function panelLCD() {
   const cols = l.cols || "20";
   const panel = card(msg("lcd.panel"),
     lcdToggleRow("enabled", msg("lcd.driverEnabled"), msg("common.enabled"), msg("common.disabled")) +
-    input("lcd", "i2c_bus", { label: "I2C bus" }) +
-    input("lcd", "i2c_address", { label: "I2C address", accent: true }) +
-    row(msg("lcd.rows"), lcdSelect("rows", [["2", "2 rows"], ["4", "4 rows"]], l.rows)) +
-    row(msg("lcd.columns"), lcdSelect("cols", [["16", "16 columns"], ["20", "20 columns"]], l.cols)) +
-    input("lcd", "scroll_speed", { label: "Scroll speed", unit: "ms" }) +
+    input("lcd", "i2c_bus", { label: msg("lcd.i2cBus") }) +
+    input("lcd", "i2c_address", { label: msg("lcd.i2cAddress"), accent: true }) +
+    row(msg("lcd.rows"), lcdSelect("rows", [["2", msg("lcd.rowsOption", { n: 2 })], ["4", msg("lcd.rowsOption", { n: 4 })]], l.rows)) +
+    row(msg("lcd.columns"), lcdSelect("cols", [["16", msg("lcd.colsOption", { n: 16 })], ["20", msg("lcd.colsOption", { n: 20 })]], l.cols)) +
+    input("lcd", "scroll_speed", { label: msg("lcd.scrollSpeed"), unit: "ms" }) +
     lcdToggleRow("activity_interrupt", msg("lcd.interruptActivity"), "ON", "OFF") +
-    input("lcd", "linger_secs", { label: "Interrupt linger", unit: "s" }));
+    input("lcd", "linger_secs", { label: msg("lcd.interruptLinger"), unit: "s" }));
   const help = note(msg("lcd.linesFillTokensE"));
   const disabled = l.enabled ? "" : note(msg("lcd.driverDisabledPagesAre"));
   const pages = (l.pages || []).map((p, i) => pageCard(p, i, rows, cols, (l.pages || []).length)).join("");
@@ -1670,8 +1673,8 @@ async function confirmNetwork(token) {
 // tier); D-Star/P25/M17 are offered so the validator can explain why they can't
 // (transcode tier deferred), rather than hiding them.
 const BUS_MODES = [
-  { key: "dmr", label: "DMR" }, { key: "ysf", label: "YSF" }, { key: "nxdn", label: "NXDN" },
-  { key: "dstar", label: "D-Star" }, { key: "p25", label: "P25" }, { key: "m17", label: "M17" },
+  { key: "dmr", label: msg("confirmNetwork.dmr") }, { key: "ysf", label: msg("confirmNetwork.ysf") }, { key: "nxdn", label: msg("confirmNetwork.nxdn") },
+  { key: "dstar", label: msg("confirmNetwork.dStar") }, { key: "p25", label: "P25" }, { key: "m17", label: "M17" },
 ];
 const BUS_MODE_LABEL = Object.fromEntries(BUS_MODES.map((m) => [m.key, m.label]));
 
@@ -2156,9 +2159,9 @@ function panelYSF() {
   const startup = (edit.ysfgw || {}).startup || "";
   const gateway = card(msg("common.gateway"),
     toggle("modes", "ysf", msg("ysf.systemFusion"), msg("common.enabled"), msg("common.disabled")) +
-    input("ysfgw", "suffix", { label: "Suffix (RPT/ND)" }) +
+    input("ysfgw", "suffix", { label: msg("ysf.suffixRptNd") }) +
     row(msg("common.startupReflector"), `<input data-sec="ysfgw" data-key="startup" list="ysf-refs" value="${esc(startup)}" placeholder="e.g. FCS00290 or a YSF reflector"><datalist id="ysf-refs">${opts}</datalist>`) +
-    input("ysfgw", "inactivity_timeout", { label: "Inactivity revert", unit: "min" }));
+    input("ysfgw", "inactivity_timeout", { label: msg("ysf.inactivityRevert"), unit: "min" }));
   // Mode params render into MMDVM-Host's [System Fusion] (self_only, low_deviation,
   // remote_gateway, tx_hang, mode_hang) — the "ysf" store section, split from the
   // "ysfgw" gateway section like p25/p25gw and nxdn/nxdngw.
@@ -2169,8 +2172,8 @@ function panelYSF() {
     toggleRow("ysfgw", "wiresx_passthrough", msg("ysf.wiresXPassthroughAdvanced")) +
     toggleRow("ysfgw", "revert", msg("ysf.revertStartupInactivity")));
   const timers = card(msg("common.hangTimers"),
-    input("ysf", "tx_hang", { label: "TX hang", unit: "sec" }) +
-    input("ysf", "mode_hang", { label: "Mode hang", unit: "sec" }));
+    input("ysf", "tx_hang", { label: msg("ysf.txHang"), unit: "sec" }) +
+    input("ysf", "mode_hang", { label: msg("ysf.modeHang"), unit: "sec" }));
   const networks = card(msg("ysf.reflectorNetworks"),
     toggleRow("ysfgw", "ysf_network", msg("ysf.ysfReflectorNetwork")) +
     toggleRow("ysfgw", "fcs_network", msg("ysf.fcsRoomNetwork")) +
@@ -2194,7 +2197,7 @@ function panelP25() {
   const stat = (edit.p25gw || {}).static || "";
   const gateway = card(msg("common.gateway"),
     toggle("modes", "p25", "P25", msg("common.enabled"), msg("common.disabled")) +
-    input("p25", "nac", { label: "NAC (hex)", accent: true }) +
+    input("p25", "nac", { label: msg("p25.nacHex"), accent: true }) +
     row(msg("p25.startupTalkgroups"), `<input data-sec="p25gw" data-key="static" list="p25-refs" value="${esc(stat)}" placeholder="comma-separated TGs, e.g. 10100,10200"><datalist id="p25-refs">${opts}</datalist>`) +
     toggleRow("p25gw", "voice", msg("common.voiceAnnouncements")));
   const behaviour = card(msg("common.behaviour"),
@@ -2202,8 +2205,8 @@ function panelP25() {
     toggleRow("p25", "override_uid_check", msg("p25.overrideUidCheck")) +
     toggleRow("p25", "remote_gateway", msg("common.remoteGatewayAdvancedLeave")));
   const timers = card(msg("common.hangTimers"),
-    input("p25gw", "rf_hang_time", { label: "RF hang", unit: "sec" }) +
-    input("p25gw", "net_hang_time", { label: "Network hang", unit: "sec" }));
+    input("p25gw", "rf_hang_time", { label: msg("p25.rfHang"), unit: "sec" }) +
+    input("p25gw", "net_hang_time", { label: msg("p25.networkHang"), unit: "sec" }));
   const hint = p25Refs.length ? "" : note(msg("p25.talkgroupListNotLoaded"));
   return `${supply}<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
 }
@@ -2216,15 +2219,15 @@ function panelNXDN() {
   const stat = (edit.nxdngw || {}).static || "";
   const gateway = card(msg("common.gateway"),
     toggle("modes", "nxdn", "NXDN", msg("common.enabled"), msg("common.disabled")) +
-    input("nxdn", "ran", { label: "RAN", accent: true }) +
+    input("nxdn", "ran", { label: msg("nxdn.ran"), accent: true }) +
     row(msg("nxdn.startupTalkgroups"), `<input data-sec="nxdngw" data-key="static" list="nxdn-refs" value="${esc(stat)}" placeholder="comma-separated TGs, e.g. 10200,65000"><datalist id="nxdn-refs">${opts}</datalist>`) +
     toggleRow("nxdngw", "voice", msg("common.voiceAnnouncements")));
   const behaviour = card(msg("common.behaviour"),
     toggleRow("nxdn", "self_only", msg("nxdn.selfOnlyAcceptOnly")) +
     toggleRow("nxdn", "remote_gateway", msg("common.remoteGatewayAdvancedLeave")));
   const timers = card(msg("common.hangTimers"),
-    input("nxdngw", "rf_hang_time", { label: "RF hang", unit: "sec" }) +
-    input("nxdngw", "net_hang_time", { label: "Network hang", unit: "sec" }));
+    input("nxdngw", "rf_hang_time", { label: msg("nxdn.rfHang"), unit: "sec" }) +
+    input("nxdngw", "net_hang_time", { label: msg("nxdn.networkHang"), unit: "sec" }));
   const hint = nxdnRefs.length ? "" : note(msg("nxdn.talkgroupListNotLoaded"));
   return `${supply}<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
 }
@@ -2240,12 +2243,12 @@ function panelDStar() {
   const reflector = gw.reflector || "";
   const gateway = card(msg("common.gateway"),
     toggle("modes", "dstar", "D-Star", msg("common.enabled"), msg("common.disabled")) +
-    input("dstar", "module", { label: "Module (band letter)", accent: true }) +
+    input("dstar", "module", { label: msg("dstar.moduleBandLetter"), accent: true }) +
     row(msg("common.startupReflector"), `<input data-sec="dstargw" data-key="reflector" list="dstar-refs" value="${esc(reflector)}" placeholder="e.g. REF001 C — blank for none"><datalist id="dstar-refs">${opts}</datalist>`) +
-    input("dstargw", "reflector_reconnect", { label: "Reflector reconnect (min / Never / Fixed)" }));
+    input("dstargw", "reflector_reconnect", { label: msg("dstar.reflectorReconnectMinNever") }));
   const ircddb = card(msg("dstar.ircddbCallsignRouting"),
-    input("dstargw", "ircddb_hostname", { label: "ircDDB host" }) +
-    input("dstargw", "ircddb_username", { label: "Username (blank = callsign)" }) +
+    input("dstargw", "ircddb_hostname", { label: msg("dstar.ircddbHost") }) +
+    input("dstargw", "ircddb_username", { label: msg("dstar.usernameBlankCallsign") }) +
     row(msg("dstar.password"), `<input data-sec="dstargw" data-key="ircddb_password" type="password" value="${esc(gw.ircddb_password || "")}" placeholder="${gw.has_ircddb_password ? "•••••• unchanged" : "blank = anonymous"}">`));
   const behaviour = card(msg("dstar.rfBehaviour"),
     toggleRow("dstar", "self_only", msg("common.selfOnlyAcceptOnly")) +
@@ -2269,7 +2272,7 @@ function panelM17() {
     ["H", "R"].map((v) => `<option value="${v}"${v === suffix ? " selected" : ""}>${v === "H" ? "H — hotspot" : "R — repeater"}</option>`).join("") + `</select>`;
   const gateway = card(msg("common.gateway"),
     toggle("modes", "m17", "M17", msg("common.enabled"), msg("common.disabled")) +
-    input("m17", "can", { label: "CAN", accent: true }) +
+    input("m17", "can", { label: msg("m17.can"), accent: true }) +
     row(msg("common.startupReflector"), `<input data-sec="m17gw" data-key="startup" list="m17-refs" value="${esc(gw.startup || "")}" placeholder="e.g. M17-M17 C — blank for none"><datalist id="m17-refs">${opts}</datalist>`) +
     row(msg("m17.nodeSuffix"), suffixSel) +
     toggleRow("m17gw", "voice", msg("common.voiceAnnouncements")));
@@ -2278,7 +2281,7 @@ function panelM17() {
     toggleRow("m17", "allow_encryption", msg("m17.allowEncryptedM17Frames")) +
     toggleRow("m17gw", "revert", msg("m17.revertStartupReflectorAfter")));
   const timers = card(msg("m17.hangTimer"),
-    input("m17gw", "hang_time", { label: "Network hang", unit: "sec" }));
+    input("m17gw", "hang_time", { label: msg("m17.networkHang"), unit: "sec" }));
   const hint = m17Refs.length ? "" : note(msg("m17.reflectorListNotLoaded"));
   return `${supply}<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}</div></div>${hint}`;
 }
@@ -2291,14 +2294,14 @@ function panelPocsag() {
   const p = edit.pocsag || (edit.pocsag = {});
   const paging = card(msg("pocsag.pagingChannel"),
     toggle("modes", "pocsag", "POCSAG", msg("common.enabled"), msg("common.disabled")) +
-    input("pocsag", "frequency", { label: "Paging frequency", kind: "mhz", unit: "MHz", accent: true }));
+    input("pocsag", "frequency", { label: msg("pocsag.pagingFrequency"), kind: "mhz", unit: "MHz", accent: true }));
   const dapnet = card(msg("pocsag.dapnetLogin"),
-    input("pocsag", "server", { label: "DAPNET server" }) +
-    input("pocsag", "callsign", { label: "Callsign (blank = station callsign)" }) +
+    input("pocsag", "server", { label: msg("pocsag.dapnetServer") }) +
+    input("pocsag", "callsign", { label: msg("pocsag.callsignBlankStationCallsign") }) +
     row(msg("pocsag.authkey"), `<input data-sec="pocsag" data-key="auth_key" type="password" value="${esc(p.auth_key || "")}" placeholder="${p.has_auth_key ? "•••••• unchanged" : "from the DAPNET portal"}">`));
   const filters = card(msg("pocsag.ricFiltersOptional"),
-    input("pocsag", "whitelist", { label: "Whitelist (comma-separated RICs)" }) +
-    input("pocsag", "blacklist", { label: "Blacklist (comma-separated RICs)" }));
+    input("pocsag", "whitelist", { label: msg("pocsag.whitelistCommaSeparatedRics") }) +
+    input("pocsag", "blacklist", { label: msg("pocsag.blacklistCommaSeparatedRics") }));
   const hint = note(msg("pocsag.dapnetgatewayWillNotConnect"));
   return `<div class="grid2"><div class="stack">${paging}${filters}</div>${dapnet}</div>${hint}`;
 }
@@ -2314,14 +2317,14 @@ function panelFm() {
       .map(([v, l]) => `<option value="${v}"${v === amVal ? " selected" : ""}>${esc(l)}</option>`).join("") + `</select>`;
   const access = card(msg("fm.access"),
     toggle("modes", "fm", "FM", msg("common.enabled"), msg("common.disabled")) +
-    input("fm", "ctcss", { label: "CTCSS tone", unit: "Hz", accent: true }) +
+    input("fm", "ctcss", { label: msg("fm.ctcssTone"), unit: "Hz", accent: true }) +
     row(msg("fm.accessMode"), amSel));
   const timing = card(msg("fm.timing"),
-    input("fm", "timeout", { label: "Timeout", unit: "sec" }) +
-    input("fm", "kerchunk_time", { label: "Kerchunk time", unit: "sec" }));
+    input("fm", "timeout", { label: msg("fm.timeout"), unit: "sec" }) +
+    input("fm", "kerchunk_time", { label: msg("fm.kerchunkTime"), unit: "sec" }));
   const audio = card(msg("fm.audioLevels"),
-    input("fm", "rf_audio_boost", { label: "RF audio boost" }) +
-    input("fm", "ext_audio_boost", { label: "Network audio boost" }));
+    input("fm", "rf_audio_boost", { label: msg("fm.rfAudioBoost") }) +
+    input("fm", "ext_audio_boost", { label: msg("fm.networkAudioBoost") }));
   return `<div class="grid2">${access}<div class="stack">${timing}${audio}</div></div>`;
 }
 
@@ -2346,7 +2349,7 @@ function panelStation() {
     toggle("station_id", "enable", msg("station.identifyAutomatically"), "ON", "OFF") +
     row(msg("station.interval"),
       `<div class="unit"><input data-sec="station_id" data-key="time_mins" inputmode="numeric" value="${esc(sid.time_mins)}"><span class="u">minutes</span></div>`) +
-    input("station_id", "callsign", { label: "Callsign override" }) +
+    input("station_id", "callsign", { label: msg("station.callsignOverride") }) +
     row(msg("station.toneLevel"),
       `<div class="unit"><input data-sec="station_id" data-key="tx_level" inputmode="numeric" value="${esc(sid.tx_level)}"><span class="u">%</span></div>`);
   const idNote = sid.enable
