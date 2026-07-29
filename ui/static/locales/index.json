@@ -2,9 +2,29 @@
   "_note": "Generated from each catalog's _meta block by tools/genlocaleindex. Do not edit by hand — run `go generate ./...`.",
   "languages": [
     {
+      "tag": "de-DE",
+      "name": "Deutsch",
+      "reviewed": false
+    },
+    {
       "tag": "en-US",
       "name": "English (US)",
       "reviewed": true
+    },
+    {
+      "tag": "es-ES",
+      "name": "Español",
+      "reviewed": false
+    },
+    {
+      "tag": "fr-FR",
+      "name": "Français",
+      "reviewed": false
+    },
+    {
+      "tag": "ja-JP",
+      "name": "日本語",
+      "reviewed": false
     }
   ]
 }

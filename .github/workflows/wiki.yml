@@ -6,9 +6,10 @@ name: wiki
 # exactly and blames themselves when the command has changed — and a wiki nobody
 # can review is where that drift happens.
 #
-# So docs/recovery.md is the single source, versioned and reviewed with the code
-# that implements it, and this job mirrors it onto the wiki whenever it changes.
-# Edits made in the wiki UI are overwritten on the next push; the page says so.
+# So the files under docs/ are the single source, versioned and reviewed with the
+# code they describe, and this job mirrors them onto the wiki whenever they
+# change. Edits made in the wiki UI are overwritten on the next push; each page
+# says so.
 #
 # ONE MANUAL STEP IS REQUIRED FIRST. GitHub does not create a repository's wiki
 # until a page has been saved through the web UI at least once, and there is no
@@ -20,6 +21,7 @@ on:
     branches: [main]
     paths:
       - docs/recovery.md
+      - docs/translations.md
       - .github/workflows/wiki.yml
   workflow_dispatch:
 
@@ -32,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Publish docs/recovery.md to the wiki
+      - name: Publish docs/ to the wiki
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -44,23 +46,32 @@ jobs:
             exit 0
           fi
 
-          # The wiki page name is its filename. "Regaining-access" renders as
-          # "Regaining access" and gives a URL somebody can be told over the air.
-          {
-            echo "> **This page is generated from [\`docs/recovery.md\`](https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/recovery.md) in the Waypoint repository.**"
-            echo "> Edits made here are overwritten the next time that file changes — send a pull request instead."
-            echo
-            cat docs/recovery.md
-          } > wiki/Regaining-access.md
+          # source-file:wiki-page-name. The page name is its filename, so
+          # "Regaining-access" renders as "Regaining access" and gives a URL
+          # somebody can be told over the air.
+          PAGES="docs/recovery.md:Regaining-access docs/translations.md:Translating-Waypoint"
+
+          for entry in $PAGES; do
+            src="${entry%%:*}"
+            page="${entry##*:}"
+            {
+              echo "> **This page is generated from [\`${src}\`](https://github.com/${GITHUB_REPOSITORY}/blob/main/${src}) in the Waypoint repository.**"
+              echo "> Edits made here are overwritten the next time that file changes — send a pull request instead."
+              echo
+              cat "$src"
+            } > "wiki/${page}.md"
+          done
 
           cd wiki
           git config user.name  "waypoint-docs[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet -- Regaining-access.md; then
-            echo "Wiki already matches docs/recovery.md; nothing to publish."
+          if git diff --quiet; then
+            echo "Wiki already matches docs/; nothing to publish."
             exit 0
           fi
-          git add Regaining-access.md
-          git commit -q -m "Publish docs/recovery.md (${GITHUB_SHA:0:7})"
+          git add -A
+          git commit -q -m "Publish docs/ to the wiki (${GITHUB_SHA:0:7})"
           git push -q origin HEAD
-          echo "Published to https://github.com/${GITHUB_REPOSITORY}/wiki/Regaining-access"
+          for entry in $PAGES; do
+            echo "Published https://github.com/${GITHUB_REPOSITORY}/wiki/${entry##*:}"
+          done

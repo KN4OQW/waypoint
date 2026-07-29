@@ -53,10 +53,43 @@ blanked, so a mistake is visible rather than silent.
 Some strings carry inline markup (`<b>`, `<code>`) because the emphasis falls
 inside the sentence. Keep the tags and translate around them.
 
-## Adding a language
+## Translating on Weblate (the normal path)
 
-Platform-driven translation is the intended path — see the Weblate section once
-it lands. This PR flow remains the offline fallback:
+The project lives at **<https://hosted.weblate.org/projects/waypoint/>**. No
+GitHub account is needed, and nothing you do there touches source code.
+
+1. Sign in to Weblate and open the **Web UI** component.
+2. Pick your language, or use *Start new translation* if it is not listed.
+3. Translate. The platform enforces the placeholder rule below as you type, and
+   flags strings that are unchanged from English.
+4. Weblate commits to the `weblate` branch of the repository and a pull request
+   is opened from it. The maintainer reviews the catalog diff — that is the
+   whole review.
+
+Commits carry a `Signed-off-by` line built from your Weblate account, which
+satisfies the project's DCO requirement. The contributor agreement shown before
+you translate spells that out; if you would rather your name were not recorded
+that way, use the pull-request path below instead.
+
+`_meta.tag` and `_meta.reviewed` are filtered out of the Weblate view — they are
+bookkeeping, not copy. `_meta.name` is translatable, because it is your
+language's name for itself.
+
+### Amateur-radio terminology
+
+Waypoint's users are licensed operators reading the screen with a radio manual
+open beside it. Where a string contains a domain term — *talkgroup*,
+*reflector*, *hotspot*, *simplex*, *duplex*, *color code*, *callsign* — use the
+word your country's amateur community actually uses, not a literal translation.
+If Pi-Star, WPSD or the BrandMeister wiki already render it in your language,
+follow them.
+
+Screen space is tight: the sidebar and status bar are narrow, so where a string
+is an ALL-CAPS label, prefer the shorter of two correct options.
+
+## Adding a language by pull request
+
+The offline fallback, for anyone who would rather work in a text editor:
 
 1. Copy `ui/static/locales/en-US.json` to `<tag>.json` (BCP-47, e.g. `pt-BR`).
 2. Set `_meta` — native name, matching tag, `"reviewed": false`.
