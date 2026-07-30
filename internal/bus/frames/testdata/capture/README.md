@@ -85,3 +85,49 @@ there. Unlike `ysf_bench_from_dmr.bin` (a single-node reframe), these frames
 crossed a real LAN peer link end to end. `TestRealCapturePeerYSFFromDMR` parses
 them. Same operator Parrot audio + KN4OQW public RadioID as the other captures
 (see the sanitization note above).
+
+## `dmr_peer_from_ysf.bin`
+
+The mirror of the file above, and the reason it exists: `ysf_peer_from_dmr.bin`
+only proves **owner -> member**. This one is **member -> owner**, closing issue
+#65 acceptance 3's "voice works both ways" on hardware
+(`docs/on-hardware-report.md`, 2026-07-29).
+
+Same two-node topology (owner = bench Pi `172.16.50.13` with a local DMR
+attachment on Bus A; member = an x86 host contributing YSF over a pinned-mTLS LAN
+peer link), driven the other way: the committed `ysf_peer_from_dmr.bin` was
+replayed into the **member's** YSF loopback (`127.0.0.1:4200`) at the real 100 ms
+YSF cadence; the member requested and was granted the cluster-wide token, streamed
+over the peer link, and the owner reframed YSF->DMR. These are the `DMRD` bytes the
+**owner** emitted at its own DMR loopback (`127.0.0.1:62032 -> :62031`), recorded
+there. `TestRealCapturePeerDMRFromYSF` parses them.
+
+Layout: `[0]` voice header, `[1..20]` twenty voice frames, `[21]` terminator —
+22 × 55 = 1210 bytes, one whole transmission, the same shape as
+`dmr_parrot_9990.bin` (and the same 60-codeword LCM property, so it reframes
+across all three modes without padding).
+
+What only this capture can show:
+
+- **Callsign -> id resolution.** YSF is callsign-addressed, DMR is id-addressed, so
+  the owner had to resolve **KN4OQW -> 3180202** through the shared `DMRIds.dat`
+  to build these frames at all. The other captures exercise id -> callsign.
+- **The codec bits survive the whole round trip.** These 60 codewords are
+  byte-identical to `dmr_parrot_9990.bin`'s, which is where the audio started:
+  real DMR capture -> reframed to YSF -> replayed at the member -> across the peer
+  link -> reframed back to DMR here. The test asserts it.
+
+Two things to know before reusing it:
+
+- **`dst` is `9`, a group call** (the DMR attachment's `default_tg`), unlike
+  `dmr_parrot_9990.bin`'s private call to 9990 — so a `TGRewrite` *does* apply to
+  this one.
+- **The stream id is `0`**, legitimately: `ParseYSF` synthesizes no stream id, so a
+  YSF-origin transmission carries 0 through the reframe. Do not "fix" a test that
+  sees zero here.
+
+The header is present because this was the **second** transmission of the run,
+inside the owner's 3 s voice hang. A *cold* member key-up loses its header: the
+member drops the very frame that triggers its token request, because the grant has
+not arrived yet (finding F-65-1 in the hardware report). Same operator Parrot audio
+and KN4OQW public RadioID as every other capture here (sanitization note above).
