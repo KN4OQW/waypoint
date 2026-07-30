@@ -254,6 +254,17 @@ let netDirty = false;        // unsaved connection/VLAN edits (guarded Apply Net
 let netHostDirty = false;    // unsaved host/NTP edits (direct Apply Host Settings)
 let netScanResults = [];     // cached /api/network/wifi/scan for the join picker
 let netTimezones = [];       // cached /api/network/timezones for the tz datalist
+// Browser-timezone suggestion (issue #139). Detection is client-side only and
+// only ever suggests — it never writes silently. netTzConfigured is the zone the
+// store had at load (empty => setup/no prior value, the D3 prefill case);
+// netTzHintDismissed is the page-session-only dismissal of the D4 hint (never
+// persisted); netTzPrefilled guards the one-time D3 prefill; netTzHandle is the
+// live createTzPicker handle so the D4 accept can commit through it.
+let netTzDetected = undefined; // undefined = not yet detected; then string | null
+let netTzConfigured = "";
+let netTzHintDismissed = false;
+let netTzPrefilled = false;
+let netTzHandle = null;
 let netCountdown = null;     // interval handle for the confirm-or-revert countdown bar
 let netApplying = false;     // an Apply Network is in flight
 let netApplyingHost = false; // an Apply Host Settings is in flight
@@ -1601,6 +1612,10 @@ function buildNetEdit(cfg) {
   netEthConn(); netWifiConn();
   netDirty = false;
   netHostDirty = false;
+  // Remember the zone the STORE had at load: empty means "no prior value" (the
+  // D3 prefill case), a value means the D4 hint may apply. Captured before any
+  // suggestion mutates netEdit.host.timezone (see maybeSuggestTimezone).
+  netTzConfigured = netEdit.host.timezone || "";
 }
 function netConn(type, mk) {
   let c = netEdit.connections.find((x) => x.type === type);
@@ -1715,9 +1730,28 @@ function netHostCard() {
   const h = netEdit.host, n = netEdit.ntp;
   const tzOptions = (netTimezones || []).map((z) => `<option value="${esc(z)}"></option>`).join("");
   const liveTz = netStatus && netStatus.timezone ? ` <span class="note" style="margin:0">(now: ${esc(netStatus.timezone)})</span>` : "";
+  // Browser-timezone suggestion (issue #139), all gated on a case-sensitive match
+  // in the fetched list (D2). The detected label (D3) shows only when there was
+  // no prior configured zone and the picker still holds the detected value; the
+  // "use it?" hint (D4) shows only when a configured zone DIFFERS from the
+  // detected one and the operator has neither accepted nor dismissed it.
+  const matched = (typeof WPTz !== "undefined") ? WPTz.matchDetectedZone(netTzDetected, netTimezones) : null;
+  const showDetected = !!matched && !netTzConfigured && h.timezone === matched;
+  const showHint = !!matched && !!netTzConfigured && matched !== netTzConfigured && h.timezone !== matched && !netTzHintDismissed;
+  // The native <input list> + datalist stays as the D7 fallback: enhanceTzPickers
+  // upgrades the [data-tzpicker] mount to the filterable combobox at render time,
+  // and if that throws this control still filters and submits a valid zone.
+  const tzNative = `<input class="tz-native" list="tz-list" data-hostf="1" data-hkey="timezone" value="${esc(h.timezone)}" placeholder="${esc(msg("netHostCard.regionCity"))}" aria-label="${esc(msg("netHostCard.timezoneTypeSearch"))}"><datalist id="tz-list">${tzOptions}</datalist>`;
+  const tzDetected = showDetected ? ` <span class="tz-detected">${esc(msg("netHostCard.tzDetected"))}</span>` : "";
+  const tzHint = showHint
+    ? `<div class="tz-hint" role="status"><span>${msg("netHostCard.tzHint", { zone: "<code>" + esc(matched) + "</code>" })}</span>` +
+      `<span class="tz-hint-actions"><button type="button" class="tz-hint-use" data-tzaccept="1">${esc(msg("netHostCard.tzHintUse"))}</button>` +
+      `<button type="button" class="tz-hint-dismiss" data-tzdismiss="1">${esc(msg("netHostCard.tzHintDismiss"))}</button></span></div>`
+    : "";
+  const tzInner = `<div><div class="tz-field" data-tzpicker>${tzNative}</div>${tzDetected}${liveTz}</div>${tzHint}`;
   const body =
     row(msg("netHostCard.hostname"), `<input data-hostf="1" data-hkey="hostname" value="${esc(h.hostname)}" placeholder="${esc((netStatus && netStatus.hostname) || "waypoint")}" aria-label="${esc(msg("netHostCard.hostname"))}">`) +
-    row(msg("netHostCard.timezone"), `<input list="tz-list" data-hostf="1" data-hkey="timezone" value="${esc(h.timezone)}" placeholder="${esc(msg("netHostCard.regionCity"))}" aria-label="${esc(msg("netHostCard.timezoneTypeSearch"))}"><datalist id="tz-list">${tzOptions}</datalist>${liveTz}`) +
+    row(msg("netHostCard.timezone"), tzInner) +
     switchRow(msg("netHostCard.ntpTimeSync"), "netntp", "1", n.enabled) +
     row(msg("netHostCard.ntpServersOptional"), `<input data-ntpservers="1" value="${esc(listToText(n.servers))}" placeholder="${esc(msg("netHostCard.poolNtpOrgTime"))}" aria-label="${esc(msg("netHostCard.ntpServers"))}">`) +
     `<div style="margin-top:10px;"><button type="button" id="host-apply"${netHostDirty ? "" : " disabled"} style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">${msg("netHostCard.applyHostSettings")}</button> <span class="note" style="margin:0;">${msg("netHostCard.appliesImmediatelyHostnameTimezone")}</span></div>`;
@@ -3475,6 +3509,43 @@ function renderPanel() {
   // After enhanceA11y, so a help button appended to a <label> cannot be picked up
   // as that label's control when it assigns for/id pairs.
   enhanceHelp(box);
+  enhanceTzPickers(box);
+}
+
+// enhanceTzPickers upgrades every [data-tzpicker] mount in the freshly rendered
+// panel to the filterable combobox (tzpicker.js). It runs after each render
+// because the panel is rebuilt wholesale; the committed value lives in
+// netEdit.host.timezone, so a re-render simply rebuilds the closed picker from
+// the model (only the transient open dropdown is lost, which is fine). Wrapped in
+// try/catch and guarded on WPTz: if the component is missing or init throws, the
+// native <input list>/datalist stays in place and still submits a valid zone (D7).
+function enhanceTzPickers(box) {
+  if (typeof WPTz === "undefined" || !WPTz.createTzPicker) return;
+  netTzHandle = null;
+  box.querySelectorAll("[data-tzpicker]").forEach((mount, i) => {
+    const native = mount.querySelector("input.tz-native");
+    if (!native) return;
+    try {
+      const handle = WPTz.createTzPicker(mount, {
+        zones: netTimezones || [],
+        value: (netEdit && netEdit.host.timezone) || native.value || "",
+        ariaLabel: native.getAttribute("aria-label") || msg("netHostCard.timezoneTypeSearch"),
+        placeholder: native.getAttribute("placeholder") || "",
+        noMatchText: msg("netHostCard.tzNoMatch"),
+        idBase: "tzpick-" + i,
+        onSelect: (zone) => {
+          if (!netEdit) return;
+          netEdit.host.timezone = zone;
+          native.value = zone; // keep the fallback control in sync with the model
+          netMarkHostDirty();
+        },
+      });
+      netTzHandle = handle;
+    } catch (e) {
+      // D7: leave the native control visible and working.
+      netTzHandle = null;
+    }
+  });
 }
 
 // --- apply / reset -------------------------------------------------------
@@ -3947,7 +4018,29 @@ async function loadNetwork() {
   if (!netTimezones.length) {
     try { netTimezones = (await fetch("/api/network/timezones").then((r) => r.json())) || []; } catch { /* picker still accepts a typed zone */ }
   }
+  maybeSuggestTimezone();
   if (state.tab === "network") renderPanel();
+}
+
+// maybeSuggestTimezone runs the D2/D3 half of the browser-timezone suggestion:
+// detect once, validate against the fetched list, and — only when there is no
+// prior configured zone — prefill the picker with the detected zone (D3). The
+// prefill is staged in netEdit, not written; it is persisted only when the
+// operator applies host settings, exactly like a manual edit. The D4 hint (an
+// existing zone that differs from the detected one) is rendered by netHostCard,
+// not here, since it must not touch the value. If detection is null or the zone
+// is not in the list (alias drift, old browser, truncated list) there is no
+// suggestion at all (D2 fallback) — the filterable picker still works.
+function maybeSuggestTimezone() {
+  if (typeof WPTz === "undefined") return;
+  if (netTzDetected === undefined) netTzDetected = WPTz.detectTimezone();
+  if (!netEdit) return;
+  const s = WPTz.tzSuggestion(netTzDetected, netTimezones, netTzConfigured);
+  if (s.kind === "prefill" && !netTzPrefilled && !netEdit.host.timezone) {
+    netEdit.host.timezone = s.zone;
+    netTzPrefilled = true;
+    netMarkHostDirty();
+  }
 }
 
 // loadOverrides fetches the read-only override-layer view (RFC-0005) for the
@@ -4358,6 +4451,22 @@ document.getElementById("panels").addEventListener("click", (e) => {
   const vd = e.target.closest("[data-vlandel]");
   if (vd) { netEdit.vlans.splice(+vd.dataset.vlandel, 1); netMarkDirty(); renderPanel(); return; }
   if (e.target.id === "host-apply") { applyHost(); return; }
+  // --- browser-timezone suggestion (issue #139) ---
+  // Accept the D4 hint: commit the detected zone through the picker's setValue,
+  // i.e. the SAME code path as a manual selection (updates netEdit + marks the
+  // host card dirty). Nothing is persisted until Apply Host Settings. Re-render
+  // so the now-satisfied hint disappears.
+  if (e.target.closest("[data-tzaccept]")) {
+    const matched = (typeof WPTz !== "undefined") ? WPTz.matchDetectedZone(netTzDetected, netTimezones) : null;
+    if (matched) {
+      if (netTzHandle) netTzHandle.setValue(matched);
+      else { netEdit.host.timezone = matched; netMarkHostDirty(); }
+    }
+    renderPanel();
+    return;
+  }
+  // Dismiss the D4 hint for this page session only — never persisted server-side.
+  if (e.target.closest("[data-tzdismiss]")) { netTzHintDismissed = true; renderPanel(); return; }
   // --- connection profiles (RFC-0006) ---
   if (e.target.id === "prof-save") { saveProfile(); return; }
   const pa = e.target.closest("[data-prof-activate]");

@@ -659,6 +659,11 @@
   "netHostCard.regionCity": "Region/City",
   "netHostCard.timezone": "Timezone",
   "netHostCard.timezoneTypeSearch": "Timezone (type to search)",
+  "netHostCard.tzDetected": "Detected from your browser",
+  "netHostCard.tzHint": "Your browser reports {zone} — use it?",
+  "netHostCard.tzHintDismiss": "Dismiss",
+  "netHostCard.tzHintUse": "Use it",
+  "netHostCard.tzNoMatch": "No matching timezones",
 
   "netScanSection.nearbyNetworks": "NEARBY NETWORKS",
   "netScanSection.noNetworksFoundYet": "No networks found yet — press Rescan, or enter an SSID above for a hidden network.",

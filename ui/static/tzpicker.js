@@ -1,0 +1,289 @@
+/* Waypoint timezone picker: a shared, dependency-free component plus the pure
+   logic behind the browser-timezone suggestion (issue #139).
+
+   Two responsibilities, deliberately separated so the logic is testable without
+   a DOM (ui/tests/tzpicker.test.js drives the pure functions directly):
+
+     - Pure functions — detectTimezone / matchDetectedZone / tzSuggestion (the
+       detect-and-validate flow, D1/D2/D3/D4) and filterZones / tzKeyAction (the
+       filter + keyboard-navigation logic, D6). No DOM, no globals.
+     - createTzPicker — the vanilla-JS combobox that renders those functions as a
+       type-ahead, keyboard-navigable list. It ENHANCES an existing native
+       control rather than replacing it outright, so if init throws the underlying
+       <input>/<select> keeps working (progressive enhancement, D7).
+
+   Plain script in the same no-build style as app.js/settings.js: it attaches a
+   WPTz global for the browser and also exports for CommonJS so the Node test
+   runner can require it. */
+"use strict";
+
+(function (root, factory) {
+  const api = factory();
+  if (typeof module !== "undefined" && module.exports) module.exports = api; // node --test
+  if (root) root.WPTz = api;                                                 // browser
+})(typeof window !== "undefined" ? window : null, function () {
+  // detectTimezone returns the browser's IANA zone
+  // (Intl.DateTimeFormat().resolvedOptions().timeZone) or null on any exception
+  // or when the runtime returns nothing usable (old browsers can return "" or
+  // undefined). Client-side only — there is no server round-trip (D1/D5).
+  function detectTimezone() {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      return typeof tz === "string" && tz ? tz : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // matchDetectedZone returns `detected` only if it appears in `zones` by a
+  // CASE-SENSITIVE EXACT match, else null. The fetched list is the sole authority
+  // on valid zones (D2): alias drift (Asia/Calcutta vs Asia/Kolkata), an
+  // undefined detection, or a truncated list all fall through to null, and the
+  // caller shows no suggestion UI. No fuzzy matching, no alias table in v1.
+  function matchDetectedZone(detected, zones) {
+    if (typeof detected !== "string" || !detected) return null;
+    const list = Array.isArray(zones) ? zones : [];
+    return list.indexOf(detected) !== -1 ? detected : null;
+  }
+
+  // tzSuggestion decides what, if anything, to offer given the detected zone, the
+  // authoritative list, and the currently CONFIGURED zone. It encodes the gating
+  // for D2/D3/D4 in one testable place:
+  //   - {kind:"none"}    — nothing valid to suggest, OR the configured zone already
+  //                        equals the detected one (D2 fallback / D4 no-op).
+  //   - {kind:"prefill"} — no configured zone yet: prefill the picker, labelled (D3).
+  //   - {kind:"hint"}    — a configured zone that DIFFERS from the detected one:
+  //                        offer a dismissible "use it?" hint, never a silent write (D4).
+  function tzSuggestion(detected, zones, configured) {
+    const matched = matchDetectedZone(detected, zones);
+    if (!matched) return { kind: "none", zone: null };
+    const cfg = typeof configured === "string" ? configured.trim() : "";
+    if (!cfg) return { kind: "prefill", zone: matched };
+    if (cfg === matched) return { kind: "none", zone: matched };
+    return { kind: "hint", zone: matched };
+  }
+
+  // tzNormalize lowercases and treats '_' as a space so a query typed with either
+  // spaces or underscores matches the IANA name, which uses underscores
+  // ("new york" and "new_york" both hit America/New_York) — D6.
+  function tzNormalize(s) {
+    return String(s == null ? "" : s).toLowerCase().replace(/_/g, " ");
+  }
+
+  // filterZones returns every zone whose normalized name contains the normalized
+  // query as a substring (case-insensitive, underscore-as-space). An empty query
+  // returns the whole list so opening the picker shows everything (D6).
+  function filterZones(query, zones) {
+    const list = Array.isArray(zones) ? zones : [];
+    const q = tzNormalize(query).trim();
+    if (!q) return list.slice();
+    return list.filter((z) => tzNormalize(z).indexOf(q) !== -1);
+  }
+
+  // tzKeyAction is the keyboard-navigation reducer for the combobox listbox: a
+  // pure (state, key) -> next mapping so arrow/Enter/Escape behaviour is unit
+  // testable without a DOM. state = {count, active, open}; it returns the next
+  // {active, open} plus `commit` — the index to select, or -1 for none. Enter with
+  // no active option commits nothing, which is how "free text that matches nothing
+  // selects nothing" (D6) is enforced.
+  function tzKeyAction(state, key) {
+    const count = (state && state.count) | 0;
+    let active = state && typeof state.active === "number" ? state.active : -1;
+    let open = !!(state && state.open);
+    let commit = -1;
+    switch (key) {
+      case "ArrowDown":
+        if (!count) break;
+        if (!open) { open = true; active = 0; }
+        else active = Math.min(active < 0 ? 0 : active + 1, count - 1);
+        break;
+      case "ArrowUp":
+        if (!count) break;
+        if (!open) { open = true; active = count - 1; }
+        else active = Math.max(active - 1, 0);
+        break;
+      case "Home":
+        if (open && count) active = 0;
+        break;
+      case "End":
+        if (open && count) active = count - 1;
+        break;
+      case "Enter":
+        if (open && active >= 0 && active < count) { commit = active; open = false; }
+        break;
+      case "Escape":
+        open = false;
+        active = -1;
+        break;
+      default:
+        break;
+    }
+    return { active: active, open: open, commit: commit };
+  }
+
+  const NAV_KEYS = ["ArrowDown", "ArrowUp", "Home", "End", "Enter", "Escape"];
+
+  // createTzPicker enhances `mount` (a container that already holds a working
+  // native control — the D7 fallback) into a type-ahead combobox. It hides the
+  // native control, inserts a role="combobox" input + role="listbox", and drives
+  // both from filterZones/tzKeyAction. Returns a handle:
+  //   setValue(zone) — commit a value through the SAME path as a manual selection,
+  //                    firing onSelect (used by the D4 "use it" accept action).
+  //   getValue()     — the committed value.
+  //   destroy()      — remove the combobox and un-hide the native control.
+  // Callers wrap this in try/catch: if it throws, the native control is untouched
+  // and still submits (D7).
+  function createTzPicker(mount, opts) {
+    opts = opts || {};
+    const doc = mount.ownerDocument;
+    const zones = Array.isArray(opts.zones) ? opts.zones : [];
+    let value = typeof opts.value === "string" ? opts.value : "";
+    let matches = [];
+    let active = -1;
+    let open = false;
+
+    // Hide whatever native control already lives in the mount (the progressive-
+    // enhancement fallback), keeping it in the DOM so destroy() can restore it.
+    const natives = Array.prototype.slice.call(mount.children);
+    natives.forEach((ch) => { ch.hidden = true; });
+
+    const idBase = opts.idBase || "tzpick";
+    const listId = idBase + "-list";
+
+    const wrap = doc.createElement("div");
+    wrap.className = "tz-combo";
+
+    const input = doc.createElement("input");
+    input.type = "text";
+    input.className = "tz-input";
+    input.setAttribute("role", "combobox");
+    input.setAttribute("aria-expanded", "false");
+    input.setAttribute("aria-autocomplete", "list");
+    input.setAttribute("aria-controls", listId);
+    input.setAttribute("autocomplete", "off");
+    input.setAttribute("autocapitalize", "none");
+    input.setAttribute("spellcheck", "false");
+    if (opts.ariaLabel) input.setAttribute("aria-label", opts.ariaLabel);
+    if (opts.placeholder) input.placeholder = opts.placeholder;
+    input.value = value;
+
+    const list = doc.createElement("ul");
+    list.className = "tz-list";
+    list.id = listId;
+    list.setAttribute("role", "listbox");
+    list.hidden = true;
+
+    wrap.appendChild(input);
+    wrap.appendChild(list);
+    mount.appendChild(wrap);
+
+    function optId(i) { return listId + "-opt-" + i; }
+
+    function renderList() {
+      list.innerHTML = "";
+      if (!open) {
+        list.hidden = true;
+        input.setAttribute("aria-expanded", "false");
+        input.removeAttribute("aria-activedescendant");
+        return;
+      }
+      list.hidden = false;
+      input.setAttribute("aria-expanded", "true");
+      if (!matches.length) {
+        const li = doc.createElement("li");
+        li.className = "tz-empty";
+        li.setAttribute("role", "presentation");
+        li.textContent = opts.noMatchText || "No matches";
+        list.appendChild(li);
+        input.removeAttribute("aria-activedescendant");
+        return;
+      }
+      matches.forEach((z, i) => {
+        const li = doc.createElement("li");
+        li.className = "tz-opt" + (i === active ? " active" : "");
+        li.id = optId(i);
+        li.setAttribute("role", "option");
+        li.setAttribute("aria-selected", i === active ? "true" : "false");
+        li.textContent = z;
+        // mousedown (not click) + preventDefault: commit before the input blurs,
+        // so the blur handler's revert-to-committed-value never eats the pick.
+        li.addEventListener("mousedown", (e) => { e.preventDefault(); commit(z); });
+        list.appendChild(li);
+      });
+      if (active >= 0) input.setAttribute("aria-activedescendant", optId(active));
+      else input.removeAttribute("aria-activedescendant");
+    }
+
+    function refilter() {
+      matches = filterZones(input.value, zones);
+      open = true;
+      active = matches.length ? 0 : -1;
+      renderList();
+    }
+
+    function openForFocus() {
+      matches = filterZones(input.value, zones);
+      open = true;
+      const at = matches.indexOf(value);
+      active = at >= 0 ? at : (matches.length ? 0 : -1);
+      renderList();
+    }
+
+    function close() {
+      open = false;
+      active = -1;
+      renderList();
+    }
+
+    // commit is the single point that changes the value — a click, an Enter, or
+    // an external setValue() all land here, so D4's accept action is genuinely
+    // "the same code path as a manual selection".
+    function commit(v) {
+      value = v;
+      input.value = v;
+      close();
+      if (typeof opts.onSelect === "function") opts.onSelect(v);
+    }
+
+    input.addEventListener("input", refilter);
+    input.addEventListener("focus", () => { if (!open) openForFocus(); });
+    input.addEventListener("keydown", (e) => {
+      if (NAV_KEYS.indexOf(e.key) === -1) return;
+      const res = tzKeyAction({ count: matches.length, active: active, open: open }, e.key);
+      // Escape when already closed should let the event through (e.g. close a
+      // parent overlay); every other handled key is ours to consume.
+      if (!(e.key === "Escape" && !open)) e.preventDefault();
+      if (e.key === "Escape") input.value = value; // discard un-selected filter text
+      if (res.commit >= 0 && matches[res.commit] != null) { commit(matches[res.commit]); return; }
+      active = res.active;
+      open = res.open;
+      renderList();
+    });
+    input.addEventListener("blur", () => {
+      // Free text that matched nothing selects nothing: on blur, drop the filter
+      // text and show the last committed value again (D6).
+      input.value = value;
+      close();
+    });
+
+    return {
+      el: wrap,
+      getValue: () => value,
+      setValue: (v) => commit(v),
+      destroy: () => {
+        wrap.remove();
+        natives.forEach((ch) => { ch.hidden = false; });
+      },
+    };
+  }
+
+  return {
+    detectTimezone: detectTimezone,
+    matchDetectedZone: matchDetectedZone,
+    tzSuggestion: tzSuggestion,
+    tzNormalize: tzNormalize,
+    filterZones: filterZones,
+    tzKeyAction: tzKeyAction,
+    createTzPicker: createTzPicker,
+  };
+});

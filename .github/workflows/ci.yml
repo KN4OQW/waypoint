@@ -98,6 +98,20 @@ jobs:
       - name: Warn on hardcoded UI strings
         run: ./tools/ci/hardcoded-strings.sh origin/${{ github.base_ref || 'main' }}
 
+  # Dashboard JS unit tests (issue #139): the pure logic behind the timezone
+  # picker (detect/match/filter/keyboard). Uses the Node built-in test runner, so
+  # there is no framework to install — matching the UI's no-build-step convention.
+  ui-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test dashboard JS
+        run: node --test
+        working-directory: ui/tests
+
   # Every unit the image ships is parsed by systemd itself. A directive that
   # systemd silently ignores — a misspelled hardening option, a stale unit name in
   # an After= — is invisible until the node it was meant to protect is in the

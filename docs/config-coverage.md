@@ -155,6 +155,20 @@ refuses an empty static config and a gateway outside the subnet (a
 lock-yourself-out mistake); VLAN validation enforces the 802.1Q id range (1–4094)
 and unique ids.
 
+**Timezone picker.** The Timezone field filters the full IANA list as you type —
+type a fragment of a city or region ("new york", "kolkata") and pick from the
+narrowed, keyboard-navigable list instead of scrolling, which matters on a phone.
+The browser knows its own zone, so the picker suggests it: on a node with no
+timezone set yet the field is prefilled with the detected zone and labelled
+"Detected from your browser", and on a node that already has one configured a
+differing detection surfaces only as a dismissible "use it?" hint. The suggestion
+**never overrides a configured zone** and nothing is written until you apply — a
+suggestion, whether prefilled or accepted, is just a staged value until then.
+Detection is entirely in the browser (no geolocation, no IP lookup) and is only
+ever offered when it matches a zone in the server's list exactly; if it doesn't
+(an old browser, an alias like `Asia/Calcutta`), no suggestion appears and the
+filter still works.
+
 **Three apply mechanisms, by safety class.** VLAN and connection changes go
 through the confirm-or-revert **guard** (a bad one can cut the uplink). NTP and
 hostname/timezone **apply directly** — they cannot strand the node, so they skip

@@ -659,6 +659,11 @@
   "netHostCard.regionCity": "地域/都市",
   "netHostCard.timezone": "タイムゾーン",
   "netHostCard.timezoneTypeSearch": "タイムゾーン (入力して検索)",
+  "netHostCard.tzDetected": "ブラウザから検出",
+  "netHostCard.tzHint": "ブラウザは {zone} を報告しています — 使用しますか？",
+  "netHostCard.tzHintDismiss": "閉じる",
+  "netHostCard.tzHintUse": "使用する",
+  "netHostCard.tzNoMatch": "一致するタイムゾーンがありません",
 
   "netScanSection.nearbyNetworks": "周辺のネットワーク",
   "netScanSection.noNetworksFoundYet": "ネットワークが見つかりません — [再スキャン] を押すか、非公開ネットワークの SSID を上に入力してください。",

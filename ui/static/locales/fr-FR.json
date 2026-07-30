@@ -659,6 +659,11 @@
   "netHostCard.regionCity": "Région/Ville",
   "netHostCard.timezone": "Fuseau horaire",
   "netHostCard.timezoneTypeSearch": "Fuseau horaire (taper pour chercher)",
+  "netHostCard.tzDetected": "Détecté depuis votre navigateur",
+  "netHostCard.tzHint": "Votre navigateur indique {zone} — l'utiliser ?",
+  "netHostCard.tzHintDismiss": "Ignorer",
+  "netHostCard.tzHintUse": "Utiliser",
+  "netHostCard.tzNoMatch": "Aucun fuseau horaire correspondant",
 
   "netScanSection.nearbyNetworks": "RÉSEAUX À PROXIMITÉ",
   "netScanSection.noNetworksFoundYet": "Aucun réseau trouvé pour l'instant — appuyez sur Rebalayer ou entrez un SSID ci-dessus pour un réseau masqué.",
