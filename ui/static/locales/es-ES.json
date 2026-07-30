@@ -652,6 +652,11 @@
   "netHostCard.regionCity": "Región/Ciudad",
   "netHostCard.timezone": "Zona horaria",
   "netHostCard.timezoneTypeSearch": "Zona horaria (escribe para buscar)",
+  "netHostCard.tzDetected": "Detectada desde tu navegador",
+  "netHostCard.tzHint": "Tu navegador indica {zone} — ¿usarla?",
+  "netHostCard.tzHintDismiss": "Descartar",
+  "netHostCard.tzHintUse": "Usar",
+  "netHostCard.tzNoMatch": "No hay zonas horarias coincidentes",
 
   "netScanSection.nearbyNetworks": "REDES CERCANAS",
   "netScanSection.noNetworksFoundYet": "Aún no se encontraron redes — pulsa Reescaneear, o introduce un SSID arriba para una red oculta.",
