@@ -683,3 +683,159 @@ BrandMeister, and the mode gateways) ran **uninterrupted except for apply's own
 restarts** throughout. Store restored to its bus-free state; the pre-session backup
 is at `pre-bus-rf-e2e-…db` (mirrored). New binaries (with the three fixes) left
 deployed; prior binaries saved as `waypointd.bak.prereorder` / `waypoint-bus.bak.premaster`.
+
+## Issue #65 close-out — the last four acceptance items on hardware (2026-07-29)
+
+Issue #65 shipped as RFC-0003 Phase 1 (+ Addendum A) and RFC-0016 Phase 2, and the
+sessions above cover most of its acceptance list on real hardware. Four items were
+still simulation-only: acceptance 3's **reverse** voice direction and its **cable
+pull**, acceptance 5's **doubling with the roles swapped**, and acceptance 7's
+**measured added latency of the implemented path** (the report carried the transport
+spike numbers, not the buffer-inclusive figure). This run gathers those four. No
+product code changed; three code-level gaps it surfaced are recorded as findings
+below rather than patched here.
+
+### Topology
+
+| | Node A — "shack" (owner) | Node B — "garage" (member) |
+|---|---|---|
+| Host | bench Pi 3 `172.16.50.13`, armhf (reimaged 2026-07-27) | x86_64 laptop `10.10.0.141` |
+| Role | owns **Bus A**, local **DMR** attachment (slot 2, `default_tg` 9) | contributes **YSF** over the peer link |
+| Loopback | stock `62032` -> `62031` | stock `4200` -> `3200` |
+| Peering | listens `0.0.0.0:42500`, `jitter_buffer_ms` **40**, `deadline_ms` **60**, hang **3 s** | dials the owner, same depths |
+| Link | — | **WiFi-routed, not same-switch**: one-way ≈ **1.5 ms** (min-RTT 2.96–3.11 ms / 2) vs Phase-2's 0.287 ms |
+
+**Pairing re-provisioned, on persistent storage.** The 2026-07-20 pairing did not
+survive the reimage, and the same-switch x86 host used then was down, so the pair was
+rebuilt: the Pi's own first-boot peering keypair
+(`/home/pi-star/waypoint/peering/node.{key,crt}`) is the owner identity, a fresh
+ECDSA P-256 self-signed keypair was minted for the member, and each side pinned the
+other by path (`peer-b465352f26f1df48.crt` / `owner-busA.crt`). Both live in
+persistent directories, **not `/tmp`** — D-RF3. Certs were provisioned directly
+again; the interactive short-code ceremony remains unit-test-covered.
+
+**Owner ran under the shipped unit.** The image ships no bus unit (D2), so
+waypoint-stack's `waypoint-bus@.service` template was installed verbatim and the
+owner ran as `waypoint-bus@busA` — so the "no crash, no restart loop" claims below are
+`systemctl` facts, not process-watching. Media rows ran in **isolation** on node A
+(`waypoint-mmdvm` stopped to free `62032`); `waypointd`'s supervisor kept
+`waypoint-dmrgateway` up, so the owner's reframed DMR went to the **real
+DMRGateway** on `62031`.
+
+**Capture method.** Neither box has `tcpdump` — the Pi's apt is limited to the signed
+Waypoint source (D2) and the laptop had none — so loopback captures were taken with a
+small `AF_PACKET` sniffer using **`SO_TIMESTAMPNS` kernel timestamps**, filtering
+`PACKET_OUTGOING` (loopback presents every datagram twice; an unfiltered capture
+double-counts). Media was driven by replaying the committed captures at the real
+cadence, as in Phase 1/2.
+
+### Matrix
+
+| # | Test | Result |
+|---|---|---|
+| **1** | Acceptance 3 — member -> owner voice (the direction no capture proved) | **PASS.** The committed `ysf_peer_from_dmr.bin` replayed into the member's `4200` at 100 ms: the member requested and was granted the cluster-wide token, streamed over the peer link, and the owner reframed YSF->DMR and emitted **43 `DMRD` frames** on `62031` for the 28 replayed YSF frames. Addressing **src 3180202 / dst 9** — the owner resolved **KN4OQW -> 3180202** through the shared `DMRIds.dat`, the callsign->id direction no other capture exercises. One whole transmission is committed as `testdata/capture/dmr_peer_from_ysf.bin` (`TestRealCapturePeerDMRFromYSF`), and its 60 codewords are **byte-identical to `dmr_parrot_9990.bin`'s** — the audio survived DMR->YSF, a LAN hop, and YSF->DMR unaltered. See **F-65-1** for the header. |
+| **2** | Acceptance 3 — LAN path pulled mid-transmission | **Owner PASS, member gap (F-65-2).** Two variants, both mid-transmission. *(a) Silent blackhole* (both directions of the peer link dropped at the owner with `nft`, the real TCP half-open case): drop effective **19:37:28.670548**, owner `voice end` **19:37:31.805636** — **Δ 3.14 s**, the **3 s voice hang**, not the 5 s `TokenReclaimTimeout` (that path needs an observed *disconnect*, which a silent loss never produces). `NRestarts=0`, `ActiveState=active`, `MainPID` unchanged, and the bus was **free for a local key-up during the outage** (DMR 3180202 -> 9990, 1.3 s). *(b) Genuine link down* (`ip link set wlp2s0 down` on the member, 19:34:46.0 -> 19:35:01.1): identical owner behaviour — released on the hang, `NRestarts=0`. **The member surfaced no `bus_down` in either variant** (≈110 s of full blackhole, and a 15 s real link loss); its TCP session survived and simply resumed, flushing buffered voice as a 0.0 s transmission, after which a fresh key-up worked normally. |
+| **2b** | The member's `bus_down` / no-latching path, via the trigger that *does* reach it | **PASS.** Stopping `waypoint-bus@busA` (a FIN the member sees at once): member logged `owner link dropped mid-transmission` then `bus down: busA (owner offline)`, and **`waypoint/busmember/busA/bus_down` was published retained** at 19:38:24.781. Owner restarted 19:38:58.055; the member **reconnected unattended** at 19:39:25.941 (reconnect backoff), published **`bus_up` "owner online"** at 19:39:25.911, and the retained `bus_down` was **cleared to an empty payload** — RFC-0008 no-latching, end to end on the broker. A fresh key-up then succeeded (1.2 s). |
+| **3a** | Acceptance 5 — doubling, **owner-local DMR first**, member YSF inside the hang | **PASS on arbitration, gap on surfacing (F-65-3).** Owner held the token (`voice start: DMR 3180202 -> 9990`, `voice end (1.26s)`); the member was **denied** (`token denied (bus busy) — local voice dropped`) and its YSF never reached the owner — **exactly one holder**. But **no `bus_busy` event was published by either node**: the owner's deny answers the token request without going through the router's `Inbound` path, and the member only logs. The loss is logged, **not surfaced** — no UI badge for this direction. |
+| **3b** | Acceptance 5 — roles swapped, **member YSF first**, owner-local DMR second | **PASS.** The member kept the token (`voice start: YSF KN4OQW -> ALL`, `voice end (1.20s)`) — **a member holder is not preempted by a local source** — and the owner logged `busy: DMR dropped, bus held via YSF` with **exactly one** `bus_busy` for the 22 losing DMR frames: `{"mode":"DMR","source":"YSF","detail":"busy: via YSF"}`. |
+| **3c** | Acceptance 5 — the UI string, verified against the shipped UI | **Verified, with a dead branch (F-65-4).** `ui/static/settings.js:1910` renders the badge as **`busy: via <winner>`**, plus **` @ <node>`** when the event carries a node — matching the daemon's `Detail`. The `busy: via DMR` spelling is already evidenced on hardware by the 2026-07-21/22 run (row 2). The `@ <node>` variant is **unreachable**: `router.publishBusy` never sets `Node`, so RFC-0016's "busy: via YSF @ garage" cannot render today. |
+| **4** | Acceptance 7 — **measured** added latency of the implemented path, buffer included | **PASS, and buffer-bounded as predicted.** 200 DMR voice frames replayed at the owner at 60 ms (12.061 s); the member played out **100 voice frames** (+ header + terminator) at a median **100.16 ms** cadence — the correct YSF period. Added latency over **100 matched frames**: **mean 25.9 ms, median 23.2 ms, p95 43.5 ms, p99 43.8 ms, min 3.1 ms, max 44.0 ms (σ 15.8 ms)** against the configured **40 ms buffer / 60 ms deadline**. Nothing exceeds the buffer: the ceiling is buffer + transport, and the 3–44 ms spread is the reframe-fill phase sliding (60 ms DMR in, 100 ms YSF out). **20 of 120** frames were dropped late past the 60 ms deadline on the WiFi link (`play-out delivered 116, dropped 20`) — the RFC-0016 §5 policy, as on 2026-07-21. |
+
+**How row 4 was measured, and why it is trustworthy.** A peered bus puts ingest and
+egress on *different hosts* by construction, so there is no single-clock framing
+available and the cross-host offset had to be measured, not assumed: an NTP-style
+four-timestamp exchange (over TCP — the bench segments route TCP but drop UDP
+between them) bracketing the run gave **+7.787 ms before and +9.004 ms after** (Pi
+ahead of laptop), so the run used **+8.8 ms** with roughly **±3 ms** residual from
+path asymmetry and drift. Recomputing at both bracket ends moves the answer very
+little — mean **24.9–26.1 ms**, p95 **42.5–43.7 ms** — so the conclusion does not
+rest on the offset. Frames were aligned **by codeword content, never by position**:
+codewords cross the reframe 1:1 and byte-exact, and the play-out buffer legitimately
+drops late frames, so positional matching read each of the 20 drops as ~100 ms of
+phantom latency (a first pass produced a bogus 1 s mean ramping to 2 s until the
+alignment was fixed). All 100 egress frames matched. Each egress frame is timed
+against the ingest frame that delivered the **last codeword it needed** — the honest
+"time from having all the audio to putting it on the wire".
+
+### Deviations & findings
+
+- **F-65-1 — a cold member key-up loses its first frame.** `onLocal` calls
+  `LocalKeyup`, which moves the token client to *Requesting* and returns "send the
+  request"; `CanStream()` is then false, so the function **returns and drops that
+  very frame**. The grant arrives a round trip later and the next frame streams. On a
+  YSF member that is the header plus up to 100 ms of audio, every cold key-up, and
+  the destination sees a header-less transmission (the router tolerates it —
+  "first audio after a header-less key-up"). Reproduced deliberately: a single
+  replayed transmission yielded 20 voice frames + terminator and **no** DMR header,
+  while the second transmission inside the 3 s hang (token already held) passed its
+  header through. A one-frame key-up buffer would fix it; not changed here.
+- **F-65-2 — the member never notices a lost LAN path.** There is no
+  application-level liveness deadline on the receive side: `Session` **sends**
+  keepalives but never **expects** them, and nothing sets a read deadline. Detection
+  therefore waits on the kernel giving up on TCP retransmission (`tcp_retries2`,
+  ~15 minutes by default). Measured: no `bus_down` after ≈110 s of a full
+  bidirectional blackhole, and none after a genuine 15 s interface-down. Every
+  earlier report row that showed `bus_down` working used a peer **process** death
+  (`kill -9`, or `systemctl stop` in row 2b above), which sends a FIN and is noticed
+  instantly — so this gap could not have been caught by those runs. The owner side is
+  unaffected and degrades correctly. This is the one acceptance-3 behaviour that does
+  **not** hold for a real cable pull.
+- **F-65-3 — a denied member's loss is logged but never surfaced.** When the owner
+  holds the token and a member keys up, the owner answers `MsgTokenDeny` from
+  `answerToken`, which never reaches `router.Inbound` and so publishes no
+  `bus_busy`; the member's `onOwner` logs the deny and publishes nothing either. No
+  event, no MQTT, no badge on either dashboard. Acceptance 5's "surfaced in the UI"
+  holds only for the direction where a **local** source loses.
+- **F-65-4 — the "@ node" half of the busy badge is unreachable.** The UI renders
+  ` @ <node>` when a `bus_busy` event carries `node`, but `router.publishBusy` sets
+  no `Node` field and nothing else adds one, so RFC-0016's "busy: via YSF @ garage"
+  cannot appear. Cosmetic, but it is a documented behaviour that does not exist.
+- **F-65-5 — the play-out buffer resets only on a stream-id change.**
+  `playoutScheduler.schedule` starts a fresh `JitterBuffer` when `streamID` differs
+  from the current one, so a **second transmission reusing a stream id inherits the
+  first's play-out baseline**: `expected` is far in the past and every frame is
+  dropped as late. Observed directly — a repeat run reusing one stream id ingested
+  200 frames and played out **zero**. Harmless for DMR-origin voice (stream ids are
+  random per transmission), but **`ParseYSF` synthesizes no stream id at all**, so
+  every YSF-origin transmission carries 0: a member playing out YSF-origin voice
+  would drop every transmission after the first. Bracketing by header/terminator, or
+  a time-gap reset, would close it.
+- **The unit passes the hostname as the node id.** `waypoint-bus@.service` runs with
+  `-node %H`, so the owner's envelope origin is `KN4OQW` while its pairing identity
+  is `node.id` (`72a7567b9d4661a0`). Self-consistent and harmless in a two-node
+  topology — a member is matched by the id **it** presents — but the two identities
+  are not the same string, which will matter to anyone debugging loop prevention.
+- **Member host is WiFi-routed, not same-switch** (the Phase-2 x86 host was down).
+  One-way ≈ 1.5 ms instead of 0.287 ms, and it is why 20 of 120 play-out frames
+  missed the 60 ms deadline. Topology note, not a defect — the same observation as
+  2026-07-21/22.
+- **Two packages were installed on the member host** (`tcpdump`, `mosquitto` +
+  clients) to give it a capture tool and a local event broker. `mosquitto` was
+  stopped and disabled again afterwards.
+
+### Not covered
+
+- **`busy: via DMR` in the peered topology.** Producing that exact string needs a
+  **local** loser while DMR holds, i.e. a second local mode on the bus; this
+  topology has one local mode and one member, and the member-loses direction
+  publishes nothing at all (F-65-3). The string itself is evidenced by the
+  2026-07-21/22 local DMR+YSF run.
+- **Keyed RF in either direction.** Media was replay-driven throughout, as in Phase
+  1/2; the real-RF boundary is already proven on the DMR side both ways by the
+  2026-07-21/22 session.
+- **Interactive mDNS + short-code pairing through two dashboards.** Certs were
+  provisioned directly again; the ceremony stays unit-test-covered and its
+  *outcome* (pinned mTLS trust) carried every row here.
+
+### Exit state
+
+Bench restored: `waypoint-bus@busA` stopped, the rendered bus config, the pinned
+member cert and the installed `waypoint-bus@.service` template all removed, the
+peering directory back to its three first-boot files, and `waypoint-mmdvm` restarted
+(`NRestarts=0`). The stock loopbacks are back with their real owners — MMDVM-Host on
+`62032`, DMRGateway on `62031`, YSFGateway on `4200` — and `waypointd`,
+`waypoint-dmrgateway`, `waypoint-ysfgateway` are all active. The `nft` table used for
+the blackhole is **deleted** (`0` rules remain) and the member host's interface is up
+with its address. The store was backed up first to
+`/root/config.db.pre-65closeout-20260729` and never written — the bus was
+hand-rendered, exactly as in Phase 2.
