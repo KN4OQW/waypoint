@@ -211,3 +211,111 @@ func TestRealCapturePeerYSFFromDMR(t *testing.T) {
 		t.Fatalf("expected >=1 voice frame from the peered playout, got %d", nVoice)
 	}
 }
+
+// TestRealCapturePeerDMRFromYSF parses the issue #65 close-out capture: DMRD frames
+// the OWNER daemon (the bench Pi) emitted at its local DMR loopback
+// (127.0.0.1:62032 -> :62031) after a MEMBER node's YSF transmission crossed the
+// pinned-mTLS LAN peer link and was reframed YSF->DMR. It is the mirror of
+// ysf_peer_from_dmr.bin, which only proved owner->member: together they close
+// acceptance 3's "voice works both ways" on real hardware
+// (docs/on-hardware-report.md, 2026-07-29).
+//
+// Two properties matter here and nowhere else:
+//
+//   - CALLSIGN->ID resolution, the direction the other captures cannot show. YSF is
+//     callsign-addressed and DMR is id-addressed, so the owner had to turn KN4OQW
+//     into 3180202 through the shared DMRIds.dat to build these frames at all.
+//   - The codec bits survive the WHOLE round trip. These 60 codewords are
+//     byte-identical to dmr_parrot_9990.bin's, which is where the audio started:
+//     real DMR capture -> reframed to YSF -> replayed at the member -> over the peer
+//     link -> reframed back to DMR here. Two reframes and a LAN hop, no vocoder,
+//     nothing altered (RFC-0003 §2).
+//
+// Unlike the Parrot fixture the stream id is ZERO, and legitimately so: ParseYSF
+// synthesizes no stream id, so a YSF-origin transmission carries 0 through the
+// reframe. Asserting non-zero here would be asserting a bug.
+func TestRealCapturePeerDMRFromYSF(t *testing.T) {
+	path := filepath.Join("testdata", "capture", "dmr_peer_from_ysf.bin")
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blob) == 0 || len(blob)%dmrdLen != 0 {
+		t.Fatalf("capture is not a whole number of %d-byte DMRD frames: %d bytes", dmrdLen, len(blob))
+	}
+
+	const (
+		wantSrc   = 3180202 // KN4OQW, resolved from the YSF callsign on the owner
+		wantDst   = 9       // the DMR attachment's default_tg
+		wantVoice = 20      // 20 voice frames -> 60 codewords, one whole transmission
+	)
+
+	var voiceCWs [][]byte
+	var nHeader, nVoice, nTerm int
+	for off := 0; off+dmrdLen <= len(blob); off += dmrdLen {
+		f, err := ParseDMR(blob[off : off+dmrdLen])
+		if err != nil {
+			t.Fatalf("real peered DMRD frame at %d failed to parse: %v", off, err)
+		}
+		if f.Mode != ModeDMR {
+			t.Fatalf("frame at %d: mode %v, want DMR", off, f.Mode)
+		}
+		if f.SrcID != wantSrc || f.DstID != wantDst {
+			t.Fatalf("frame at %d: addressing src=%d dst=%d, want %d/%d (callsign->id via DMRIds.dat)",
+				off, f.SrcID, f.DstID, wantSrc, wantDst)
+		}
+		switch f.Kind {
+		case KindHeader:
+			nHeader++
+		case KindTerminator:
+			nTerm++
+		case KindVoice:
+			nVoice++
+			if len(f.AMBE) != dmrAMBEPerFrm {
+				t.Fatalf("voice frame at %d carried %d codewords, want %d", off, len(f.AMBE), dmrAMBEPerFrm)
+			}
+			for i, cw := range f.AMBE {
+				if len(cw) != AMBEBytes {
+					t.Fatalf("voice frame at %d codeword %d is %d bytes, want %d", off, i, len(cw), AMBEBytes)
+				}
+			}
+			voiceCWs = append(voiceCWs, f.AMBE...)
+		default:
+			t.Fatalf("frame at %d has unexpected kind %v", off, f.Kind)
+		}
+	}
+	if nHeader != 1 || nVoice != wantVoice || nTerm != 1 {
+		t.Fatalf("capture shape header/voice/term = %d/%d/%d, want 1/%d/1",
+			nHeader, nVoice, nTerm, wantVoice)
+	}
+
+	// The audio is the operator's own Parrot transmission, and it must have come
+	// back byte-exact after DMR->YSF->(peer link)->DMR.
+	origin := dmrCaptureCodewords(t, filepath.Join("testdata", "capture", "dmr_parrot_9990.bin"))
+	if len(voiceCWs) != len(origin) {
+		t.Fatalf("peered capture yielded %d codewords, the source capture %d", len(voiceCWs), len(origin))
+	}
+	if !equalCodewords(voiceCWs, origin) {
+		t.Fatal("the round trip DMR->YSF->peer link->DMR did not preserve the real captured AMBE byte-exactly")
+	}
+}
+
+// dmrCaptureCodewords extracts the voice codewords of a DMRD capture, in order.
+func dmrCaptureCodewords(t *testing.T, path string) [][]byte {
+	t.Helper()
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out [][]byte
+	for off := 0; off+dmrdLen <= len(blob); off += dmrdLen {
+		f, err := ParseDMR(blob[off : off+dmrdLen])
+		if err != nil {
+			t.Fatalf("%s: frame at %d failed to parse: %v", path, off, err)
+		}
+		if f.Kind == KindVoice {
+			out = append(out, f.AMBE...)
+		}
+	}
+	return out
+}
