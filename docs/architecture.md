@@ -1,6 +1,6 @@
 # Waypoint Architecture
 
-*Status: accepted for Phase 0/1. Architecture-level changes go through the RFC process.*
+*Status: accepted for Phase 0/1. Architecture-level changes go through an issue and a PR — the RFC process is dormant until v1 ([GOVERNANCE.md](../GOVERNANCE.md#rfcs)) — and land here and in the code comment that implements them.*
 
 ## Layers
 

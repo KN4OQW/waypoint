@@ -15,4 +15,4 @@ body:
       label: Proposed behavior
   - type: markdown
     attributes:
-      value: Architecture-scale ideas go through the lightweight RFC process — see GOVERNANCE.md. Opening here first is always fine.
+      value: Architecture-scale ideas belong here too — the RFC process is dormant until v1 (see GOVERNANCE.md), so an issue is the right place to start whatever the scale.
