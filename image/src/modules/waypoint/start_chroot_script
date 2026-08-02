@@ -131,12 +131,16 @@ install -d -m 0755 "${WAYPOINT_HOME}" "${WAYPOINT_HOME}/etc" "${WAYPOINT_HOME}/p
 echo "=== holding waypoint-* packages"
 # unattended-upgrades must never move the stack; waypointd's health-gated updater
 # does (RFC-0014). apt-mark hold blocks unattended-upgrades AND a bare apt upgrade.
-# NOTE for the Prompt-3 updater: `apt-get install <pkg>=<version>` on a held
-# package still proceeds (an explicit versioned install overrides the hold's
-# "don't AUTO-change" intent), which is exactly what the stack updater does — it
-# installs exact versions. So the updater needs no unhold/re-hold dance; verified
-# on the bench. A bare `apt-get upgrade`/unattended-upgrades, by contrast, respects
-# the hold and leaves the stack alone.
+# NOTE for the stack updater: a hold DOES block `apt-get install <pkg>=<version>`.
+# An earlier version of this note claimed the opposite — that an explicit versioned
+# install overrides the hold, so the updater needed no unhold/re-hold dance. That
+# was wrong, and it cost every imaged node its stack updates: apt refuses any -y
+# transaction touching a held package with "Held packages were changed and -y was
+# used without --allow-change-held-packages", so each update failed and reverted.
+# internal/stackupdate now passes that flag and re-holds afterwards (the flag
+# CLEARS the hold on whatever it changed, and pulls new dependencies in unheld).
+# Do not remove either half. A bare `apt-get upgrade`/unattended-upgrades still
+# respects the hold and leaves the stack alone, which is the point of holding.
 for pkg in $(dpkg-query -W -f='${Package}\n' 'waypoint-*'); do
   apt-mark hold "$pkg"
 done

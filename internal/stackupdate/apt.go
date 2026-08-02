@@ -22,6 +22,17 @@ type OSSystem struct {
 	// systemctl. Both default to exec.CommandContext and are replaced in tests.
 	Run       func(ctx context.Context, name string, args ...string) ([]byte, error)
 	Systemctl func(ctx context.Context, args ...string) ([]byte, error)
+
+	// Logf reports the one condition this layer can hit that is worth surfacing but
+	// not worth failing an otherwise-good install over (see Install/holdAll). Nil is
+	// silent.
+	Logf func(format string, args ...any)
+}
+
+func (s *OSSystem) logf(format string, args ...any) {
+	if s.Logf != nil {
+		s.Logf(format, args...)
+	}
 }
 
 // aptEnv forces non-interactive apt so an install never blocks on a prompt.
@@ -103,16 +114,66 @@ func (s *OSSystem) InstalledVersions(ctx context.Context, pkgs []string) (map[st
 // Install installs exactly the given package=version pairs. --allow-downgrades so
 // the revert path can move to an older pool/ version; the exact pins mean apt
 // touches only these packages, never a dist-upgrade (D2).
+//
+// --allow-change-held-packages is mandatory, not defensive. The image apt-mark
+// holds every waypoint-* package (RFC-0014: a hold blocks unattended-upgrades and a
+// bare `apt upgrade`), and apt refuses ANY transaction that changes a held package
+// when -y is given:
+//
+//	E: Held packages were changed and -y was used without --allow-change-held-packages
+//
+// so without the flag every stack update on an imaged node fails and reverts.
+// Contrary to the note this updater was built against (image start_chroot_script),
+// naming an explicit version does NOT override a hold — verified on the bench Pi,
+// where `apt-get install waypoint-stack=0.2.0` failed identically whether or not
+// the pulled-in dependency was also named. The flag has a sting: apt clears the
+// hold on whatever it was thereby allowed to change, so holdAll restores it.
 func (s *OSSystem) Install(ctx context.Context, pkgs []PkgVer) error {
 	if len(pkgs) == 0 {
 		return nil
 	}
-	args := []string{"install", "-y", "--allow-downgrades", "--no-install-recommends"}
+	args := []string{"install", "-y", "--allow-downgrades", "--allow-change-held-packages", "--no-install-recommends"}
 	for _, p := range pkgs {
 		args = append(args, p.Package+"="+p.Version)
 	}
 	if out, err := s.run(ctx, "apt-get", args...); err != nil {
 		return fmt.Errorf("%v: %s", err, lastLines(out, 4))
+	}
+	// Best effort by design: the packages are installed and the stack is correct at
+	// this point. A failed re-hold leaves them exposed to unattended-upgrades, which
+	// is worth a loud log but not worth reverting a good install over.
+	if err := s.holdAll(ctx); err != nil {
+		s.logf("stackupdate: WARNING: restoring apt-mark hold failed — stack packages are unprotected from unattended upgrades: %v", err)
+	}
+	return nil
+}
+
+// holdAll restores the apt-mark hold on every installed stack package, re-asserting
+// the invariant the image establishes: an installed waypoint-* package is a held
+// one. It runs after each Install — including the revert path, which changes held
+// packages too.
+//
+// It holds every tracked package rather than just the transaction's, because the
+// two sets differ: apt pulls NEW dependencies in unheld and unnamed. That is not
+// hypothetical — waypoint-stack 0.2.0 added a dependency on waypoint-dapnetgateway,
+// so the package that arrived was precisely the one no caller could have named.
+func (s *OSSystem) holdAll(ctx context.Context) error {
+	installed, err := s.InstalledVersions(ctx, allPackages)
+	if err != nil {
+		return fmt.Errorf("read installed versions: %w", err)
+	}
+	// allPackages order, so the command is deterministic and testable.
+	names := make([]string, 0, len(allPackages))
+	for _, p := range allPackages {
+		if installed[p] != "" {
+			names = append(names, p)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	if out, err := s.run(ctx, "apt-mark", append([]string{"hold"}, names...)...); err != nil {
+		return fmt.Errorf("apt-mark hold: %v: %s", err, lastLines(out, 2))
 	}
 	return nil
 }
