@@ -91,7 +91,16 @@ func BuildNode(m *config.Model, set Settings, live *status.Status, links []Link,
 		n.TXFrequency = m.Modem.TXFreqHz
 	}
 	if m != nil && set.ShowCCTS {
-		n.ColorCode = m.DMR.ColorCode
+		// The EFFECTIVE colour code, not the stored one. A blank store value
+		// renders as config.DefaultDMRColorCode in MMDVM-Host.ini, so that is what
+		// the radio is running and what someone programming a codeplug needs. This
+		// was found on hardware: a node happily operating on CC 1 published a reach
+		// card with no colour code at all, which is not a smaller answer than the
+		// truth — it is an instruction that does not work.
+		n.ColorCode = strings.TrimSpace(m.DMR.ColorCode)
+		if n.ColorCode == "" {
+			n.ColorCode = config.DefaultDMRColorCode
+		}
 		n.Slots = slots(m)
 	}
 	if m != nil && set.ShowMode {

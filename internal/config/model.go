@@ -571,6 +571,16 @@ type Modem struct {
 
 // DMR holds DMR parameters; its enable flag lives in Modes so all modes toggle
 // uniformly.
+// DefaultDMRColorCode is what a blank [DMR] ColorCode renders as, and therefore
+// what the radio is actually running when an operator has never set one.
+//
+// It is exported because the value has two readers now. render.go writes it into
+// MMDVM-Host.ini, and the public reach card has to report the same thing — a page
+// that read the store directly would show no colour code for a node that is
+// demonstrably operating on CC 1, which is worse than showing nothing at all: it
+// is an instruction that will not work. Hardware validation found exactly that.
+const DefaultDMRColorCode = "1"
+
 type DMR struct {
 	ColorCode      string `json:"color_code"`
 	ID             string `json:"id"`

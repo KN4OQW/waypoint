@@ -577,7 +577,7 @@ func (m *Model) RenderMMDVM() string {
 	// key ⇒ the operator's global mode hang keeps governing, as it does today.
 	dmrLines := []string{
 		kb("Enable", m.Modes.DMR),
-		kv("ColorCode", def(m.DMR.ColorCode, "1")),
+		kv("ColorCode", def(m.DMR.ColorCode, DefaultDMRColorCode)),
 		kv("Id", firstNonEmpty(m.DMR.ID, m.General.ID)),
 		kb("SelfOnly", m.DMR.SelfOnly),
 		kb("EmbeddedLCOnly", m.DMR.EmbeddedLCOnly),
