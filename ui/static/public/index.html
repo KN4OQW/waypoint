@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Node · Waypoint</title>
+<link rel="icon" type="image/svg+xml" href="/public/assets/icon.svg">
+<link rel="stylesheet" href="/public/public.css">
+</head>
+<!--
+  The public node page (D2/D7), design 1A "map hero".
+
+  This page is deliberately standalone. It does not load the authenticated
+  dashboard's bundle, does not import its modules, and does not reference its
+  routes — an anonymous visitor should learn nothing about the shape of the admin
+  application from reading this document's source. That costs some duplication of
+  the theme tokens, which is the right trade: the alternative is a shared bundle
+  whose growth quietly widens what the public page discloses.
+
+  Everything renders from the four public API endpoints and nothing else. The page
+  has no list of what a node "should" have — if a field is absent from the API
+  because its toggle is off, the element is simply never created. That is what
+  keeps the disclosure decision server-side (D2) rather than restated here where it
+  could drift.
+
+  No inline script and no inline event handlers: the CSP forbids both, so a stored
+  XSS in operator-authored text has no way to execute even if one were introduced.
+-->
+<body>
+<noscript>
+  <div class="noscript">
+    This page renders live node status, so it needs JavaScript. Everything it
+    shows is also available as JSON at <code>/api/public/node</code>.
+  </div>
+</noscript>
+
+<!-- Operator notice (placeholder module — see public.js). -->
+<div id="notice" class="notice" hidden>
+  <span class="notice-dot" aria-hidden="true"></span>
+  <span id="notice-label" class="notice-label"></span>
+  <span id="notice-text" class="notice-text"></span>
+</div>
+
+<header class="topbar">
+  <img id="logo" class="logo" alt="" hidden>
+  <div id="logo-ph" class="logo-ph" aria-hidden="true">NODE<br>LOGO</div>
+  <div class="topbar-id">
+    <div id="brand" class="brand"></div>
+    <div id="brand-sub" class="brand-sub"></div>
+  </div>
+  <div id="callsign-chip" class="chip" hidden>
+    <span class="chip-k">CALLSIGN</span>
+    <span id="callsign" class="chip-v"></span>
+  </div>
+  <div class="topbar-right">
+    <div id="live" class="live" hidden>
+      <span class="live-dot" aria-hidden="true"></span>
+      <span id="live-text" class="live-text"></span>
+    </div>
+    <a id="signin" class="signin" href="/index.html" title="Node admin sign-in">
+      <svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M208 80h-32V56a48 48 0 0 0-96 0v24H48a16 16 0 0 0-16 16v112a16 16 0 0 0 16 16h160a16 16 0 0 0 16-16V96a16 16 0 0 0-16-16ZM96 56a32 32 0 0 1 64 0v24H96Zm112 152H48V96h160v112Zm-68-56a12 12 0 1 1-12-12 12 12 0 0 1 12 12Z"></path></svg>
+    </a>
+  </div>
+</header>
+
+<!-- HERO. The map layer itself lands with the position store; until then the
+     hero carries the identity and on-air overlays that make the layout read. -->
+<section class="hero">
+  <div id="map" class="map" aria-hidden="true">
+    <div id="map-ph" class="map-ph">
+      <span class="map-ph-title">COVERAGE MAP</span>
+      <span class="map-ph-sub">Locally-heard positions appear here once a mesh transport is attached.</span>
+    </div>
+  </div>
+
+  <div class="hero-left">
+    <div class="card identity">
+      <div id="band" class="band"></div>
+      <div id="freq-big" class="freq-big"></div>
+      <div id="freq-line" class="freq-line"></div>
+      <div id="tags" class="tags"></div>
+      <p id="narrative" class="narrative" hidden></p>
+      <div id="purpose-text" class="purpose-text" hidden></div>
+    </div>
+
+    <div id="onair" class="card onair" hidden>
+      <div class="card-h"><span class="card-tick" aria-hidden="true"></span><span class="card-t">ON AIR</span></div>
+      <div class="onair-body">
+        <span id="onair-badge" class="onair-badge"></span>
+        <span id="onair-text" class="onair-text"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="hero-right">
+    <div id="counters" class="card counters" hidden>
+      <div class="card-sub" id="counters-h"></div>
+      <div id="counters-body" class="counters-body"></div>
+    </div>
+  </div>
+</section>
+
+<main class="body">
+  <div class="col-main">
+
+    <section id="reach" class="panel" hidden>
+      <div class="panel-h">
+        <span class="card-tick" aria-hidden="true"></span>
+        <span class="card-t">HOW TO REACH THIS NODE</span>
+        <span class="panel-note">TAP ANY VALUE TO COPY</span>
+      </div>
+      <div id="reach-grid" class="stat-grid"></div>
+      <div id="modes-row" class="modes-row" hidden></div>
+    </section>
+
+    <!-- Codeplug downloads (placeholder module). -->
+    <section id="codeplug" class="panel" hidden>
+      <div class="panel-h">
+        <span class="card-tick" aria-hidden="true"></span>
+        <span class="card-t">CODEPLUGS</span>
+        <span class="panel-note">NOT YET AVAILABLE</span>
+      </div>
+      <div class="ph-row">
+        <span class="ph-chip">ANYTONE (.CSV)</span>
+        <span class="ph-chip">TYT / RETEVIS (.CSV)</span>
+        <span class="ph-chip">CHIRP (.CSV)</span>
+      </div>
+      <p class="ph-note">Generated codeplugs are not built yet. When they are, they
+        will be regenerated from this node's live configuration, so the file always
+        matches the machine.</p>
+    </section>
+
+    <section id="nets" class="panel" hidden>
+      <div class="panel-h">
+        <span class="card-tick" aria-hidden="true"></span>
+        <span class="card-t">SCHEDULED NETS</span>
+      </div>
+      <div id="nets-list" class="nets-list"></div>
+    </section>
+
+    <section id="lastheard" class="panel" hidden>
+      <div class="panel-h">
+        <span class="card-tick" aria-hidden="true"></span>
+        <span class="card-t">LAST HEARD</span>
+        <span id="lastheard-note" class="panel-note"></span>
+      </div>
+      <div class="table-scroll">
+        <table class="lh">
+          <thead><tr><th scope="col">Station</th><th scope="col">Mode</th><th scope="col">When</th></tr></thead>
+          <tbody id="lh-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="col-rail">
+    <section id="qr" class="panel" hidden>
+      <div class="panel-h"><span class="card-tick" aria-hidden="true"></span><span class="card-t">TAKE IT WITH YOU</span></div>
+      <div class="qr-body">
+        <div id="qr-code" class="qr-code"></div>
+        <div>
+          <p class="qr-text">Scan for this page on your phone — live status and how
+            to reach the node, in the car park.</p>
+          <div id="qr-url" class="qr-url"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Sibling nodes (placeholder module). -->
+    <section id="nodes" class="panel" hidden>
+      <div class="panel-h">
+        <span class="card-tick" aria-hidden="true"></span>
+        <span class="card-t">OTHER NODES</span>
+        <span class="panel-note">NOT YET AVAILABLE</span>
+      </div>
+      <p class="ph-note">This node does not yet know about its siblings. Multi-node
+        status needs the shared-identity work before one node can vouch for another.</p>
+    </section>
+
+    <section id="power" class="panel" hidden>
+      <div class="panel-h"><span class="card-tick" aria-hidden="true"></span><span class="card-t">POWER &amp; ANTENNA</span></div>
+      <p id="power-line" class="power-line"></p>
+    </section>
+
+    <section id="links" class="panel" hidden>
+      <div class="panel-h"><span class="card-tick" aria-hidden="true"></span><span class="card-t">ELSEWHERE</span></div>
+      <div id="links-grid" class="links-grid"></div>
+    </section>
+
+    <section class="panel signin-panel">
+      <div class="panel-h"><span class="card-tick" aria-hidden="true"></span><span class="card-t">NODE ADMIN</span></div>
+      <p class="ph-note">Keeper access is on the node's own dashboard. This page is
+        read-only and has no sign-in form.</p>
+      <a class="signin-btn" href="/index.html">SIGN IN</a>
+    </section>
+  </div>
+</main>
+
+<footer class="foot">
+  <span id="foot-id"></span>
+  <span id="foot-served" class="foot-dim">served by Waypoint</span>
+</footer>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="/public/vendor/qrcode.js"></script>
+<script src="/public/public.js"></script>
+</body>
+</html>

@@ -185,6 +185,18 @@ func (a *Auth) Gate(next http.Handler) http.Handler {
 // Passing nil, or never calling this, leaves the gate default-deny as before.
 func (a *Auth) AllowAnonymous(fn func(*http.Request) bool) { a.allowAnon = fn }
 
+// HasSession reports whether a request carries a valid session.
+//
+// It exists for the one route whose content depends on being signed in rather
+// than on being allowed through: with the public view enabled, "/" serves the
+// public page to a stranger and the dashboard to a keeper (D7). Everything else
+// is decided by the gate, and no handler should be re-deriving auth — this is a
+// read of the same session the gate reads, not a second way to be authorized.
+func (a *Auth) HasSession(r *http.Request) bool {
+	_, ok := a.authenticate(r)
+	return ok
+}
+
 func (a *Auth) gateUnclaimed(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/api/health":

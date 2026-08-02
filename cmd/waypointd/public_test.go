@@ -515,31 +515,266 @@ func TestPublicResponsesAreNotCached(t *testing.T) {
 //
 // IsPublicRoute exempts /public/ and /embed/ from the session wall so the page and
 // the widget can be anonymous. If nothing claims those prefixes on the mux they
-// fall through to "/", the embedded static file server — and the first asset added
-// under a public/ directory in the UI bundle would be served to anyone, whether or
-// not the operator ever turned the feature on.
+// fall through to "/", the embedded static file server — and every asset under
+// them would be served to anyone, whether or not the operator turned the feature
+// on, with no gate and no CSP.
+//
+// What is asserted is provenance, not status code: a path under these prefixes
+// either 404s or is answered by the gated page handler, which is identifiable by
+// the Content-Security-Policy the file server does not set. That keeps the test
+// meaningful as the page grows, where pinning 404 would only have meant "not
+// implemented yet".
 func TestReservedNamespacesNeverReachTheFileServer(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		s, _ := newPublicServer(t, enabled)
 		mux := s.newMux()
 		for _, p := range []string{
-			"/public/", "/public/index.html", "/public/assets/logo",
+			"/public/", "/public/index.html", "/public/public.js", "/public/assets/logo",
+			"/public/settings.js", "/public/app.js",
 			"/embed/lastheard", "/embed/anything.js",
 		} {
 			r := httptest.NewRequest(http.MethodGet, p, nil)
 			r.RemoteAddr = "203.0.113.9:1234"
 			w := httptest.NewRecorder()
 			mux.ServeHTTP(w, r)
-			// Until the page and widget land these are 404 in both states. What
-			// matters is that the answer comes from the gated handler rather than
-			// from the file server, which is what the next assertion pins.
-			if w.Code != http.StatusNotFound {
-				t.Errorf("enabled=%v: %s = %d, want 404 from the gated handler", enabled, p, w.Code)
+
+			if !enabled && w.Code != http.StatusNotFound {
+				t.Errorf("disabled: %s = %d, want 404", p, w.Code)
+				continue
 			}
-			if ct := w.Header().Get("Content-Type"); strings.HasPrefix(ct, "text/html") && w.Body.Len() > 0 &&
-				!strings.Contains(w.Body.String(), "404") {
-				t.Errorf("enabled=%v: %s was served content by the file server: %q", enabled, p, ct)
+			if w.Code == http.StatusNotFound {
+				continue // refused, which is always a safe answer here
+			}
+			if w.Header().Get("Content-Security-Policy") == "" {
+				t.Errorf("enabled=%v: %s answered %d without a CSP — it came from the file "+
+					"server rather than the gated public handler", enabled, p, w.Code)
 			}
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The public page (D7)
+// ---------------------------------------------------------------------------
+
+func TestPublicPageServesAndGates(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		s, _ := newPublicServer(t, enabled)
+		w := do(t, s, http.MethodGet, "/public/", "203.0.113.9:1234")
+		want := http.StatusNotFound
+		if enabled {
+			want = http.StatusOK
+		}
+		if w.Code != want {
+			t.Errorf("enabled=%v: /public/ = %d, want %d", enabled, w.Code, want)
+		}
+		if !enabled {
+			continue
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+			t.Errorf("/public/ Content-Type = %q", ct)
+		}
+		if !strings.Contains(w.Body.String(), "public.js") {
+			t.Error("/public/ did not serve the page shell")
+		}
+	}
+}
+
+// TestPublicPageCSP pins the policy. The no-inline-script rule is the second line
+// of defence behind sanitising operator-authored text, and the one that does not
+// depend on getting the sanitising right.
+func TestPublicPageCSP(t *testing.T) {
+	s, _ := newPublicServer(t, true)
+	w := do(t, s, http.MethodGet, "/public/", "203.0.113.9:1234")
+	csp := w.Header().Get("Content-Security-Policy")
+	if csp == "" {
+		t.Fatal("the public page has no Content-Security-Policy")
+	}
+	for _, want := range []string{
+		"default-src 'self'", "script-src 'self'", "object-src 'none'",
+		"base-uri 'none'", "form-action 'none'", "frame-ancestors 'self'",
+	} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP is missing %q: %s", want, csp)
+		}
+	}
+	// 'unsafe-inline' and 'unsafe-eval' must never reach script-src, and no CDN
+	// may be allow-listed — the whole point of vendoring.
+	scriptSrc := ""
+	for _, part := range strings.Split(csp, ";") {
+		if strings.Contains(part, "script-src") {
+			scriptSrc = part
+		}
+	}
+	for _, bad := range []string{"unsafe-inline", "unsafe-eval", "http:", "https:", "*"} {
+		if strings.Contains(scriptSrc, bad) {
+			t.Errorf("script-src permits %q: %q", bad, scriptSrc)
+		}
+	}
+	if got := w.Header().Get("Referrer-Policy"); got != "no-referrer" {
+		t.Errorf("Referrer-Policy = %q, want no-referrer", got)
+	}
+}
+
+// TestPageHasNoInlineScript is what makes the CSP above enforceable rather than
+// aspirational: a page with an inline handler simply would not work under it, and
+// the failure would be silent in any browser nobody tested.
+func TestPageHasNoInlineScript(t *testing.T) {
+	s, _ := newPublicServer(t, true)
+	body := do(t, s, http.MethodGet, "/public/", "203.0.113.9:1234").Body.String()
+
+	// Every <script> must carry a src; none may have a body.
+	for _, chunk := range strings.Split(body, "<script")[1:] {
+		head := chunk
+		if i := strings.Index(chunk, ">"); i >= 0 {
+			head = chunk[:i]
+		}
+		if !strings.Contains(head, "src=") {
+			t.Errorf("inline <script> found: <script%s>", head)
+		}
+	}
+	for _, attr := range []string{"onclick=", "onload=", "onerror=", "onsubmit=", "javascript:"} {
+		if strings.Contains(strings.ToLower(body), attr) {
+			t.Errorf("the page carries %q, which the CSP forbids", attr)
+		}
+	}
+}
+
+// TestPublicPageAssetsAreAllowListed: a directory handler would serve whatever
+// landed in the directory, and this directory lives inside the bundle the
+// authenticated app is in.
+func TestPublicPageAssetsAreAllowListed(t *testing.T) {
+	s, _ := newPublicServer(t, true)
+	for _, p := range []string{
+		"/public/", "/public/index.html", "/public/public.css",
+		"/public/public.js", "/public/vendor/qrcode.js", "/public/assets/icon.svg",
+	} {
+		if w := do(t, s, http.MethodGet, p, "203.0.113.9:1234"); w.Code != http.StatusOK {
+			t.Errorf("%s = %d, want 200", p, w.Code)
+		}
+	}
+	// Anything not on the list is a 404, including real files elsewhere in the
+	// bundle and the traversal that would reach them.
+	for _, p := range []string{
+		"/public/app.js", "/public/settings.html", "/public/settings.js",
+		"/public/index.html.bak", "/public/../index.html", "/public/../settings.js",
+		"/public/locales/en-US.json", "/public/nope",
+	} {
+		if w := do(t, s, http.MethodGet, p, "203.0.113.9:1234"); w.Code == http.StatusOK {
+			t.Errorf("%s was served — the asset allow-list has a hole", p)
+		}
+	}
+}
+
+// TestVendoredQRIsServedAndIntact guards the offline promise: the page's QR module
+// must not need a CDN, and the vendored file must be the library rather than a
+// stub someone left behind.
+func TestVendoredQRIsServedAndIntact(t *testing.T) {
+	s, _ := newPublicServer(t, true)
+	w := do(t, s, http.MethodGet, "/public/vendor/qrcode.js", "203.0.113.9:1234")
+	if w.Code != http.StatusOK {
+		t.Fatalf("vendored qrcode.js = %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Kazuhiko Arase") || !strings.Contains(body, "MIT license") {
+		t.Error("the vendored QR library lost its copyright and licence header")
+	}
+	if !strings.Contains(body, "createSvgTag") {
+		t.Error("the vendored QR library does not provide createSvgTag, which the page calls")
+	}
+}
+
+func TestPageReferencesNoExternalOrigins(t *testing.T) {
+	s, _ := newPublicServer(t, true)
+	for _, p := range []string{"/public/", "/public/public.css", "/public/public.js"} {
+		body := do(t, s, http.MethodGet, p, "203.0.113.9:1234").Body.String()
+		for _, bad := range []string{
+			"https://", "http://", "//unpkg.com", "//cdn.", "fonts.googleapis", "fonts.gstatic",
+		} {
+			if strings.Contains(body, bad) {
+				t.Errorf("%s references an external origin (%q) — a hotspot has no internet", p, bad)
+			}
+		}
+	}
+}
+
+// TestPageDoesNotLeakTheAdminApp. An anonymous visitor should learn nothing about
+// the shape of the authenticated application from this document.
+func TestPageDoesNotLeakTheAdminApp(t *testing.T) {
+	s, _ := newPublicServer(t, true)
+	body := do(t, s, http.MethodGet, "/public/", "203.0.113.9:1234").Body.String()
+	for _, bad := range []string{
+		"/app.js", "/settings.js", "/settings.html", "/i18n.js", "/tzpicker.js",
+		"/api/config", "/api/events", "/api/status", "/api/ws", "/api/history",
+	} {
+		if strings.Contains(body, bad) {
+			t.Errorf("the public page references the admin app: %q", bad)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The D7 root switch
+// ---------------------------------------------------------------------------
+
+// TestRootIsUnchangedWhenDisabled: the default must be exactly today's behaviour.
+func TestRootIsUnchangedWhenDisabled(t *testing.T) {
+	s, _ := newPublicServer(t, false)
+	if s.publicRootEnabled() {
+		t.Fatal("publicRootEnabled with the feature off")
+	}
+	w := httptest.NewRecorder()
+	s.rootHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("the admin app"))
+	})).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !strings.Contains(w.Body.String(), "the admin app") {
+		t.Errorf("/ did not reach the app with the public view off: %q", w.Body.String())
+	}
+}
+
+// TestRootServesPublicPageWhenEnabled: the address on a QR code should reach the
+// node's public page, not a password prompt.
+func TestRootServesPublicPageWhenEnabled(t *testing.T) {
+	s, _ := newPublicServer(t, true)
+	w := httptest.NewRecorder()
+	s.rootHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("the admin app"))
+	})).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if strings.Contains(w.Body.String(), "the admin app") {
+		t.Fatal("/ served the admin app to an anonymous visitor with the public view on")
+	}
+	if !strings.Contains(w.Body.String(), "public.js") {
+		t.Errorf("/ did not serve the public page: %q", w.Body.String())
+	}
+	if w.Header().Get("Content-Security-Policy") == "" {
+		t.Error("the public page served at / lost its CSP")
+	}
+}
+
+// TestIndexHTMLIsNeverSwapped is the anti-lockout guarantee, and the reason the
+// "/" vs "/index.html" asymmetry exists at all. Without a path that always
+// reaches the admin entry, enabling the public view would be a lockout with extra
+// steps.
+func TestIndexHTMLIsNeverSwapped(t *testing.T) {
+	s, _ := newPublicServer(t, true)
+	for _, p := range []string{"/index.html", "/settings.html", "/app.js"} {
+		w := httptest.NewRecorder()
+		s.rootHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("the admin app"))
+		})).ServeHTTP(w, httptest.NewRequest(http.MethodGet, p, nil))
+		if !strings.Contains(w.Body.String(), "the admin app") {
+			t.Errorf("%s was diverted to the public page — the admin entry must never be swapped", p)
+		}
+	}
+}
+
+// TestSignInLinkReachesTheAdminEntry closes the loop the previous test opens: the
+// page's own escape hatch has to point at the path that is never swapped.
+func TestSignInLinkReachesTheAdminEntry(t *testing.T) {
+	s, _ := newPublicServer(t, true)
+	body := do(t, s, http.MethodGet, "/public/", "203.0.113.9:1234").Body.String()
+	if !strings.Contains(body, `href="/index.html"`) {
+		t.Error("the public page has no sign-in link to /index.html, so a keeper reaching it via / cannot get to their own login screen")
 	}
 }

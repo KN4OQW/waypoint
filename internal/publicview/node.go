@@ -82,11 +82,14 @@ func BuildNode(m *config.Model, set Settings, live *status.Status, links []Link,
 		n.Modes = enabledModes(m.Modes)
 	}
 	if set.ShowTalkgroup && live != nil && live.TX != nil {
-		// Only what is on the air right now, and only its destination. The
-		// transmission also carries the source callsign, the network and the slot;
-		// the reach card is about the node, not about who is using it, and the
-		// last-heard list is where station identity belongs.
-		n.Talkgroup = live.TX.Dest
+		// Only what is on the air right now, and only its destination — and only
+		// when that destination is a group. The transmission also carries the
+		// source callsign, the network and the slot; the reach card is about the
+		// node, not about who is using it, and the last-heard list is where station
+		// identity belongs.
+		if tg, ok := publishableTalkgroup(live.TX.Dest); ok {
+			n.Talkgroup = tg
+		}
 	}
 	if set.ShowGrid {
 		n.Grid = set.GridOverride
@@ -144,4 +147,38 @@ func enabledModes(m config.Modes) []string {
 		}
 	}
 	return out
+}
+
+// publishableTalkgroup decides whether a transmission's destination may appear on
+// the reach card, and it is a narrower question than it looks.
+//
+// hub.Event.Dest is whatever the mode's destination is, and only some of those are
+// groups. internal/mqtt's destination() renders it as:
+//
+//   - "TG 31123" for a DMR/P25/NXDN group call — a talkgroup, which is exactly
+//     what the reach card is advertising and is safe to publish.
+//   - a bare decimal ID ("3112345") for a DMR PRIVATE call — the callee's radio
+//     ID, which identifies one person and is resolvable to a name and address
+//     through the public ID databases.
+//   - dst_callsign for D-Star, YSF and M17 — a callsign, either a station being
+//     called directly or a reflector/DG-ID label, and the two are not reliably
+//     distinguishable from the string.
+//
+// The last two are the reason this function exists. Publishing them would put a
+// third party's identity on an anonymous page as a side effect of them being
+// called, which no toggle covers and no suppress list catches — the suppressed
+// party is the *source*, and this is the destination. So the rule is a positive
+// one again: publish group destinations, decline everything else. The cost is a
+// blank "active now" during a private call or a direct D-Star contact, which is
+// the correct amount to say about someone else's QSO.
+func publishableTalkgroup(dest string) (string, bool) {
+	d := strings.TrimSpace(dest)
+	if d == "" {
+		return "", false
+	}
+	// The one shape the bridge marks unambiguously as a group call.
+	if strings.HasPrefix(strings.ToUpper(d), "TG ") {
+		return d, true
+	}
+	return "", false
 }

@@ -1805,8 +1805,29 @@ func (s *server) newMux() *http.ServeMux {
 	// besides the two above; each 404s unless the operator enabled the feature, so
 	// registering them costs a disabled node nothing but a not-found.
 	s.registerPublicRoutes(mux)
-	mux.Handle("/", http.FileServerFS(ui.FS()))
+	mux.Handle("/", s.rootHandler(http.FileServerFS(ui.FS())))
 	return mux
+}
+
+// rootHandler decides what a bare "/" is (D7).
+//
+// With the public view enabled it is the node's public page for a visitor with no
+// session, and the dashboard for a keeper who has one. With it disabled — the
+// default — it is the dashboard, and an unauthenticated request never reaches
+// here at all because the gate answered it with the login screen.
+//
+// "/index.html" is deliberately not covered: it is the admin entry that is never
+// swapped, so enabling the public view can never leave an operator without a URL
+// that reaches their own login screen. See serveRootPublicly.
+func (s *server) rootHandler(app http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" && s.publicRootEnabled() &&
+			(s.auth == nil || !s.auth.HasSession(r)) {
+			s.serveRootPublicly(w, r)
+			return
+		}
+		app.ServeHTTP(w, r)
+	})
 }
 
 // runWatchdog answers systemd's watchdog for as long as the daemon is healthy.
@@ -2177,7 +2198,17 @@ func main() {
 		WithIDDatabase(publicview.DMRIDsProbe(*dmrIDs))
 	// Anonymous by design, and the only routes that are. What they reach still
 	// 404s unless the operator opted in (public.go).
-	s.auth.AllowAnonymous(func(r *http.Request) bool { return IsPublicRoute(r.URL.Path) })
+	//
+	// "/" joins them only while the public view is on, so the gate stops turning it
+	// into a login screen and rootHandler can answer it per-request. "/index.html"
+	// is never on this list: it is the admin entry that must keep reaching the
+	// login screen whatever the public toggle says.
+	s.auth.AllowAnonymous(func(r *http.Request) bool {
+		if IsPublicRoute(r.URL.Path) {
+			return true
+		}
+		return r.URL.Path == "/" && r.Method == http.MethodGet && s.publicRootEnabled()
+	})
 
 	// Native LCD driver: paints a physical HD44780 from the live status plane when
 	// the operator has enabled it. Disabled by default, so this is a no-op on a
