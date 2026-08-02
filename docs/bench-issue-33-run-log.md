@@ -203,5 +203,195 @@ architectures.
 - Store backup at `/root/config.db.issue33-20260729-175830`.
 - `sqlite3` was installed to take that backup (it was absent post-reimage).
 
+---
+
+# Tier 2 — DAPNET with a real AuthKey, 2026-08-02
+
+[#196] tracked the one thing tier 1 could not reach: an authenticated DAPNET
+session. The operator's credential arrived and the remaining checks were run.
+
+**The bench is not the machine described above.** It was reimaged between the two
+runs — new `/usr/local/lib/waypoint/bin` layout, a fresh `config.db` (claimed
+2026-08-02 05:51Z), hostname now `kn4oqw`. Nothing hand-installed on 2026-07-29
+survived, including the store backup and the DAPNETGateway .deb. Treat the "bench
+state left behind" list above as history, not as the current box.
+
+## Results
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 12 | `waypoint-dapnetgateway` present after reimage | **FAIL** | Not installed at all; see finding 2 |
+| 13 | Authenticated connect to DAPNET | **PASS** | §6 — the tier 2 item #196 existed for |
+| 14 | Test page delivered over the air | **NOT FEASIBLE** | No pager available to receive one |
+| 15 | WhiteList / BlackList render and parse | **PASS (contract)** | §7 — not exercised with live traffic |
+| 16 | Blank filters omit the keys | **PASS** | §7 |
+
+## 6. Logged into DAPNET
+
+`DisplayLevel=0` again, so the session was read by the §4 technique — a copy of
+the rendered ini with `DisplayLevel=2`, run in the foreground with the unit
+stopped:
+
+```
+M: Opening DAPNET connection
+M: Logging into DAPNET
+M: Logged into the DAPNET network
+M: Schedule information received: 048C
+M: Loaded new schedule: *---*---*---*---
+```
+
+A transmitter schedule is only issued to an authenticated, registered
+transmitter, so that is a real session and not merely an open socket. Under the
+unit the gateway then held `ESTAB` to `137.226.79.100:43434` with `NRestarts=0`
+across every subsequent check. **Tier reached: 2.**
+
+The rendered ini was correct as generated: `Callsign=KN4OQW`, the DAPNET address
+and the fixed transmitter port 43434, and a non-empty `AuthKey`. The AuthKey is
+the operator's secret and is deliberately absent from this log.
+
+### DAPNET's server drops most connection attempts
+
+Worth recording because it looks like a Waypoint defect and is not. Measured from
+the bench with `nc`:
+
+| Pattern | Result |
+|---|---|
+| 20 attempts, back to back | 2 succeeded, 18 timed out |
+| 8 attempts, 25s apart | 3 succeeded, 5 timed out |
+
+Failures are SYN with no reply — `ss` shows `SYN-SENT` with the retransmit
+counter climbing to 10 — not a refusal. DAPNETGateway makes one attempt per
+process lifetime and exits when it times out, so `Restart=on-failure` gives it
+roughly one attempt every two minutes and it connects within a few restarts. An
+operator watching the first minutes of a POCSAG enable will see restarts that are
+nothing to do with their configuration.
+
+## 7. RIC filters
+
+`PUT /api/config/pocsag {"whitelist":"1234567,7654321","blacklist":"9999999"}`,
+then apply → 204/200, `waypoint-dapnetgateway.service` in the restart set and
+`stopped: null`. Rendered:
+
+```ini
+[General]
+Callsign=KN4OQW
+WhiteList=1234567,7654321
+BlackList=9999999
+RptAddress=127.0.0.1
+```
+
+Blanking both and re-applying removed the two keys and left the rest of
+`[General]` intact — the blank-omit path, the same result §3 justified for the
+hang timers.
+
+Live paging traffic never arrived during the observation windows, and with no
+pager on hand none could be originated, so the filters were confirmed against the
+pinned daemon's source rather than over the air (`g4klx/DAPNETGateway` @
+`5527546`):
+
+- `Conf.cpp:130-145` parses `WhiteList` / `BlackList` with `strtok(value, ",\r\n")`
+  and `atoi`, keeping RICs `> 0` — exactly the comma-separated form Waypoint
+  renders, in the `[General]` section Waypoint writes it to.
+- `DAPNETGateway.cpp:363-405` applies them per inbound message: `found` starts
+  `true` and is narrowed only when the whitelist is non-empty; a blacklist hit
+  drops the message.
+
+So the config contract holds end to end. What remains unproven is only the last
+hop — an actual page matching a filter — which needs a receiver.
+
+**Correction to the renderer's comment.** `RenderDAPNETGateway` omits blank
+filters "(an empty value would filter everything)". Per the source above that
+rationale is inverted: `WhiteList=` with an empty value yields no tokens, leaves
+the list empty, and therefore allows everything. Omitting blank keys is still the
+right behaviour — it is simply equivalent to the empty value, not a guard against
+it. The comment should be corrected; the code should not.
+
+## 8. What tier 2 did not re-verify
+
+The AuthKey gate from `981c56e` (`gateway_requirements.go`) was **not** exercised
+on hardware. Doing so means clearing `pocsag.auth_key`, and the store treats a
+blank AuthKey on write as "keep the stored one" — the secret is write-only, so
+clearing it would destroy the operator's credential with no way to restore it
+from this side. Unit tests cover the gate; hardware confirmation is deliberately
+left undone rather than bought at that price.
+
+Indirect evidence is still on record: the pre-fix box crash-looped 35,517 times
+with a blank key, and the post-fix box renders the ini and starts the daemon
+cleanly with the key set.
+
+## Findings
+
+### Finding 2 — the DAPNET package reaches no image
+
+`waypoint-dapnetgateway` was absent after the reimage: the unit shipped, the
+binary did not, and the service failed `203/EXEC` 524 times. The other eleven
+stack packages were all present.
+
+Cause: **[waypoint-stack#15] is still open.** The daemon is pinned, built and
+packaged only on that branch, so it is in neither the published apt repository
+nor the `waypoint-stack` metapackage's `Depends`. The 2026-07-29 bench only had
+it because the CI .deb was installed by hand, which the reimage undid. Tier 2 was
+unblocked the same way — artifact `waypoint-stack-debs-armhf` from run
+`30497462651`, `dpkg -i`.
+
+Until #15 merges, no image has ever contained this daemon and every reimage will
+lose it again.
+
+### Finding 3 — YSFGateway has a startup guard the survey says it does not
+
+Filed as [#215].
+
+`gateway_requirements.go` records a survey of daemons that exit before opening
+anything, and concludes that only DAPNETGateway has such a guard — YSFGateway
+among those whose `return 1` paths "are all runtime conditions (an unresolvable
+host, a port already bound), not missing configuration."
+
+On this box `waypoint-ysfgateway` is crash-looping 2,127 times on:
+
+```
+YSFGateway: WiresX.cpp:103: void CWiresX::setInfo(const std::string&, unsigned int, unsigned int): Assertion `txFrequency > 0U' failed.
+```
+
+An assert on an unset TX frequency is missing configuration, not a runtime
+condition, and it is the same non-converging `Restart=on-failure` loop finding 1
+described. It is a candidate for the same registry, keyed on the RF frequency
+rather than a credential.
+
+### Finding 4 — MMDVM-Host will not start without a frequency
+
+Filed as [#216].
+
+Same root cause, different daemon. `waypoint-mmdvm` exits `status=1` in a loop;
+raising `DisplayLevel` shows the modem itself rejecting the setup:
+
+```
+I:     TX Frequency: 0Hz (0Hz)
+I:     RX Frequency: 0Hz (0Hz)
+M: Opening the MMDVM
+I: MMDVM protocol version: 1, description: MMDVM_HS_Dual_Hat-v1.6.1 ...
+E: Received a NAK to the SET_FREQ command from the modem
+```
+
+This is why the over-the-air page was unreachable independently of the missing
+pager: the node has no RF frequency configured, so nothing can transmit. Both
+loops predate this run and were not caused by it.
+
+## Bench state left behind (2026-08-02)
+
+- `waypoint-dapnetgateway 0~git5527546+wp1` installed **by hand** from the CI
+  artifact — it will not survive the next reimage until [waypoint-stack#15]
+  merges.
+- POCSAG **enabled**, AuthKey **set**, gateway `active` and logged into DAPNET
+  with `NRestarts=0`.
+- POCSAG whitelist and blacklist returned to **blank**.
+- `waypoint-mmdvm` and `waypoint-ysfgateway` still crash-looping on the unset RF
+  frequency (findings 3 and 4) — pre-existing, untouched.
+- The dashboard was re-claimed by the operator after an unrelated process had
+  taken the admin account; `waypointd reset-claim` was used to release it.
+
 [#33]: https://github.com/KN4OQW/waypoint/issues/33
 [#193]: https://github.com/KN4OQW/waypoint/pull/193
+[#196]: https://github.com/KN4OQW/waypoint/issues/196
+[#215]: https://github.com/KN4OQW/waypoint/issues/215
+[#216]: https://github.com/KN4OQW/waypoint/issues/216
+[waypoint-stack#15]: https://github.com/KN4OQW/waypoint-stack/pull/15

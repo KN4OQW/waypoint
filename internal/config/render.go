@@ -1301,7 +1301,11 @@ func (m *Model) RenderM17Gateway() string {
 // station callsign; the DAPNET server and AuthKey come from the POCSAG section.
 // AuthKey is the secret — it renders verbatim (empty until the operator sets one,
 // and DAPNETGateway will not start with an unconfigured key). WhiteList/BlackList
-// are RIC filters, omitted when blank (an empty value would filter everything).
+// are RIC filters, omitted when blank. Omitting is equivalent to writing the key
+// empty rather than a guard against it: Conf.cpp splits the value on commas and
+// keeps RICs > 0, so an empty value parses to an empty list, and
+// DAPNETGateway.cpp only narrows the allowed set when the list is non-empty. The
+// key is left out because a filter nobody configured does not belong in the file.
 func (m *Model) RenderDAPNETGateway() string {
 	var b strings.Builder
 	b.WriteString(generatedHeader)
