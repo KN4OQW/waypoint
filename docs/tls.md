@@ -31,7 +31,7 @@ reused across restarts, so a reboot never re-prompts.
 ## Certificate location
 
 The self-signed cert and key live in `-tls-dir` (default
-`/home/pi-star/waypoint/tls`): `cert.pem` (public, `0644`) and `key.pem` (private,
+`/var/lib/waypoint/tls`): `cert.pem` (public, `0644`) and `key.pem` (private,
 `0600`). Delete both and restart to mint a fresh cert (you will re-trust it once).
 
 ## Behind a reverse proxy

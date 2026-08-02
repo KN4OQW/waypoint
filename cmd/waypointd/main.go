@@ -42,6 +42,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/netwatch"
 	"github.com/KN4OQW/waypoint/internal/nxdnhosts"
 	"github.com/KN4OQW/waypoint/internal/p25hosts"
+	"github.com/KN4OQW/waypoint/internal/paths"
 	"github.com/KN4OQW/waypoint/internal/peering"
 	"github.com/KN4OQW/waypoint/internal/privhelper"
 	"github.com/KN4OQW/waypoint/internal/provision"
@@ -1948,11 +1949,11 @@ func main() {
 
 	addr := flag.String("addr", "127.0.0.1:8073", "HTTPS listen address for the API and UI (plaintext when -tls=false)")
 	useTLS := flag.Bool("tls", true, "serve HTTPS with a self-signed device cert (RFC-0012); set false only behind a TLS-terminating proxy")
-	tlsDir := flag.String("tls-dir", "/home/pi-star/waypoint/tls", "directory holding the self-signed device cert/key (minted on first start)")
+	tlsDir := flag.String("tls-dir", paths.TLSDir, "directory holding the self-signed device cert/key (minted on first start)")
 	httpRedirectAddr := flag.String("http-redirect-addr", "", "optional HTTP listener that 301-redirects to HTTPS, e.g. :80 (empty disables it)")
 	acmeDomain := flag.String("acme-domain", "", "public hostname for a Let's Encrypt cert instead of self-signed (requires :80 + :443 reachable)")
 	acmeEmail := flag.String("acme-email", "", "contact email for the Let's Encrypt account (optional)")
-	acmeDir := flag.String("acme-dir", "/home/pi-star/waypoint/acme", "cache directory for Let's Encrypt certificates")
+	acmeDir := flag.String("acme-dir", paths.ACMEDir, "cache directory for Let's Encrypt certificates")
 	demoMode := flag.Bool("demo", false, "publish synthetic traffic (no radio required); always labeled in /api/health")
 	broker := flag.String("mqtt-broker", "127.0.0.1:1883", "MMDVM-Host MQTT broker host:port (live mode)")
 	mqttName := flag.String("mqtt-name", "mmdvm", "MMDVM-Host [MQTT] Name (topic prefix)")
@@ -1970,34 +1971,34 @@ func main() {
 	supervisorRestartWindow := flag.Duration("supervisor-restart-window", supervisor.DefaultRestartWindow, "the window -supervisor-max-restarts is counted over")
 	mqttUser := flag.String("mqtt-user", "", "MQTT username (optional)")
 	mqttPass := flag.String("mqtt-pass", "", "MQTT password (optional)")
-	mmdvmINI := flag.String("mmdvm-ini", "/home/pi-star/waypoint/etc/MMDVM-Host.ini", "MMDVM-Host.ini render target (the file the daemon reads)")
-	dmrgwINI := flag.String("dmrgateway-ini", "/home/pi-star/waypoint/etc/DMRGateway.ini", "DMRGateway.ini render target")
-	ysfgwINI := flag.String("ysfgateway-ini", "/home/pi-star/waypoint/etc/YSFGateway.ini", "YSFGateway.ini render target")
-	dgidgwINI := flag.String("dgidgateway-ini", "/home/pi-star/waypoint/etc/DGIdGateway.ini", "DGIdGateway.ini render target (used when DG-ID gateway is enabled)")
-	p25gwINI := flag.String("p25gateway-ini", "/home/pi-star/waypoint/etc/P25Gateway.ini", "P25Gateway.ini render target")
-	nxdngwINI := flag.String("nxdngateway-ini", "/home/pi-star/waypoint/etc/NXDNGateway.ini", "NXDNGateway.ini render target")
-	dstargwINI := flag.String("dstargateway-ini", "/home/pi-star/waypoint/etc/dstargateway.cfg", "dstargateway.cfg render target")
-	m17gwINI := flag.String("m17gateway-ini", "/home/pi-star/waypoint/etc/M17Gateway.ini", "M17Gateway.ini render target")
-	dapnetgwINI := flag.String("dapnetgateway-ini", "/home/pi-star/waypoint/etc/DAPNETGateway.ini", "DAPNETGateway.ini render target (POCSAG paging gateway)")
-	overridesDir := flag.String("overrides-dir", "/home/pi-star/waypoint/overrides.d", "root of operator override drop-ins: <dir>/<daemon>.d/*.conf merge last into each rendered INI (RFC-0005 / issue #2)")
+	mmdvmINI := flag.String("mmdvm-ini", paths.EtcDir+"/MMDVM-Host.ini", "MMDVM-Host.ini render target (the file the daemon reads)")
+	dmrgwINI := flag.String("dmrgateway-ini", paths.EtcDir+"/DMRGateway.ini", "DMRGateway.ini render target")
+	ysfgwINI := flag.String("ysfgateway-ini", paths.EtcDir+"/YSFGateway.ini", "YSFGateway.ini render target")
+	dgidgwINI := flag.String("dgidgateway-ini", paths.EtcDir+"/DGIdGateway.ini", "DGIdGateway.ini render target (used when DG-ID gateway is enabled)")
+	p25gwINI := flag.String("p25gateway-ini", paths.EtcDir+"/P25Gateway.ini", "P25Gateway.ini render target")
+	nxdngwINI := flag.String("nxdngateway-ini", paths.EtcDir+"/NXDNGateway.ini", "NXDNGateway.ini render target")
+	dstargwINI := flag.String("dstargateway-ini", paths.EtcDir+"/dstargateway.cfg", "dstargateway.cfg render target")
+	m17gwINI := flag.String("m17gateway-ini", paths.EtcDir+"/M17Gateway.ini", "M17Gateway.ini render target")
+	dapnetgwINI := flag.String("dapnetgateway-ini", paths.EtcDir+"/DAPNETGateway.ini", "DAPNETGateway.ini render target (POCSAG paging gateway)")
+	overridesDir := flag.String("overrides-dir", paths.OverridesDir, "root of operator override drop-ins: <dir>/<daemon>.d/*.conf merge last into each rendered INI (RFC-0005 / issue #2)")
 	// The cross-mode bridge render-target flags (ysf2dmr-ini … nxdn2dmr-ini) are
 	// retired with the per-bridge-daemon model (RFC-0003 bus architecture). No bridge
 	// INI is rendered any more; apply stops any bridge daemon still running instead.
-	ysfHosts := flag.String("ysf-hosts", "/home/pi-star/waypoint/etc/YSFHosts.json", "cached YSF reflector hostlist path")
+	ysfHosts := flag.String("ysf-hosts", paths.EtcDir+"/YSFHosts.json", "cached YSF reflector hostlist path")
 	ysfHostsURL := flag.String("ysf-hosts-url", ysfhosts.DefaultURL, "YSF reflector hostlist source URL (comma-separated; tried in order)")
-	p25Hosts := flag.String("p25-hosts", "/home/pi-star/waypoint/etc/P25Hosts.json", "cached P25 reflector hostlist path")
+	p25Hosts := flag.String("p25-hosts", paths.EtcDir+"/P25Hosts.json", "cached P25 reflector hostlist path")
 	p25HostsURL := flag.String("p25-hosts-url", p25hosts.DefaultURL, "P25 reflector hostlist source URL (comma-separated; tried in order)")
-	nxdnHosts := flag.String("nxdn-hosts", "/home/pi-star/waypoint/etc/NXDNHosts.json", "cached NXDN reflector hostlist path")
+	nxdnHosts := flag.String("nxdn-hosts", paths.EtcDir+"/NXDNHosts.json", "cached NXDN reflector hostlist path")
 	nxdnHostsURL := flag.String("nxdn-hosts-url", nxdnhosts.DefaultURL, "NXDN reflector hostlist source URL (comma-separated; tried in order)")
 	// The D-Star cache path is the DStar_Hosts.json inside the gateway's HostsFiles
 	// directory — the gateway reads it there directly (no separate copy).
-	dstarHosts := flag.String("dstar-hosts", "/home/pi-star/waypoint/etc/DStar_Hosts.json", "cached D-Star reflector hostlist path")
+	dstarHosts := flag.String("dstar-hosts", paths.EtcDir+"/DStar_Hosts.json", "cached D-Star reflector hostlist path")
 	dstarHostsURL := flag.String("dstar-hosts-url", dstarhosts.DefaultURL, "D-Star reflector hostlist source URL (comma-separated; tried in order)")
-	m17Hosts := flag.String("m17-hosts", "/home/pi-star/waypoint/etc/M17Hosts.txt", "cached M17 reflector hostlist path")
+	m17Hosts := flag.String("m17-hosts", paths.EtcDir+"/M17Hosts.txt", "cached M17 reflector hostlist path")
 	m17HostsURL := flag.String("m17-hosts-url", m17hosts.DefaultURL, "M17 reflector hostlist source URL (comma-separated; tried in order)")
 	dmrHosts := flag.String("dmr-hosts", "/usr/local/etc/DMR_Hosts.txt", "cached DMR master hostlist path (DMR_Hosts.txt)")
 	dmrHostsURL := flag.String("dmr-hosts-url", dmrhosts.DefaultURL, "DMR master hostlist source URL (comma-separated; tried in order)")
-	dmrTGs := flag.String("dmr-talkgroups", "/home/pi-star/waypoint/etc/TGList.txt", "cached DMR talkgroup-name list path (RFC-0010)")
+	dmrTGs := flag.String("dmr-talkgroups", paths.EtcDir+"/TGList.txt", "cached DMR talkgroup-name list path (RFC-0010)")
 	dmrTGsURL := flag.String("dmr-talkgroups-url", dmrtg.DefaultURL, "DMR talkgroup-name list source URL (comma-separated; tried in order)")
 	dmrIDs := flag.String("dmr-ids", dmrids.DefaultPath, "cached DMR/NXDN id<->callsign table (DMRIds.dat); the path every rendered gateway config points at")
 	dmrIDsURL := flag.String("dmr-ids-url", dmrids.DefaultURL, "DMR id<->callsign table source URL (comma-separated; tried in order)")
@@ -2015,17 +2016,17 @@ func main() {
 	releasePubkey := flag.String("release-pubkey", "", "minisign public key (file path) that signs the update manifest and artifacts (RFC-0013); empty = unverified (not recommended)")
 	firmwareURL := flag.String("firmware-url", defaultFirmwareURL, "signed modem-firmware catalog URL (RFC-0019)")
 	firmwareCache := flag.String("firmware-cache", "", "directory for verified firmware images; empty = alongside the store")
-	updateBinary := flag.String("update-binary", "/home/pi-star/waypoint/bin/waypointd", "path to the live waypointd binary the update swaps atomically")
+	updateBinary := flag.String("update-binary", paths.Binary, "path to the live waypointd binary the update swaps atomically")
 	updateUnit := flag.String("update-unit", "waypointd.service", "systemd unit the updater restarts")
-	updateMarker := flag.String("update-marker", "/home/pi-star/waypoint/update.marker", "in-flight-update marker path (power-loss recovery)")
+	updateMarker := flag.String("update-marker", paths.UpdateMarker, "in-flight-update marker path (power-loss recovery)")
 	stackApplyMode := flag.Bool("update-stack", false, "apply available waypoint-stack .deb updates (health-gated, auto-revert) and exit (RFC-0014 / D2)")
 	stackCheckMode := flag.Bool("update-stack-check", false, "report available waypoint-stack .deb updates and exit; changes nothing")
 	aptSourceFile := flag.String("apt-source-file", "/etc/apt/sources.list.d/waypoint.sources", "deb822 source for the signed Waypoint apt repo; the stack check limits apt to it (D2)")
 	updatePollInterval := flag.Duration("update-poll-interval", 6*time.Hour, "how often waypointd checks for stack/binary updates and evaluates quiet-window auto-apply (RFC-0014)")
-	busConfigDir := flag.String("bus-config-dir", "/home/pi-star/waypoint/etc", "directory for rendered mode-bus configs (waypoint-bus-<id>.json), consumed by waypoint-bus@<id>.service (RFC-0003)")
-	peeringDir := flag.String("peering-dir", "/home/pi-star/waypoint/peering", "directory holding LAN-peering cert/key files (node.key, peer-*.crt) referenced by rendered bus peering blocks (RFC-0016)")
+	busConfigDir := flag.String("bus-config-dir", paths.EtcDir, "directory for rendered mode-bus configs (waypoint-bus-<id>.json), consumed by waypoint-bus@<id>.service (RFC-0003)")
+	peeringDir := flag.String("peering-dir", paths.PeeringDir, "directory holding LAN-peering cert/key files (node.key, peer-*.crt) referenced by rendered bus peering blocks (RFC-0016)")
 	peeringBootstrapAddr := flag.String("peering-bootstrap-addr", "0.0.0.0:42501", "listen address for the RFC-0016 pairing bootstrap channel (plain TCP; the short code authenticates the exchange)")
-	storePath := flag.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
+	storePath := flag.String("store", paths.StorePath, "path to the SQLite configuration store")
 	// First-boot setup (docs/provisioning.md). The wizard is on by default: a node
 	// flashed with dd has no hostname the operator chose, no account, and an
 	// unlocked root, and Raspberry Pi Imager 2.x no longer offers to seed any of
@@ -2053,7 +2054,7 @@ func main() {
 	// touches no provisioning state.
 	netwatchGrace := flag.Duration("netwatch-grace", netwatch.DefaultGrace, "how long the node tolerates having no route out before the setup access point comes back")
 	netwatchInterval := flag.Duration("netwatch-interval", netwatch.DefaultInterval, "how often the route table is checked for a way out")
-	eventsPath := flag.String("events-store", "/home/pi-star/waypoint/events.db", "path to the SQLite event-history store (RFC-0004); a config.db sibling")
+	eventsPath := flag.String("events-store", paths.EventsPath, "path to the SQLite event-history store (RFC-0004); a config.db sibling")
 	nmKeyfileDir := flag.String("nm-keyfile-dir", "/etc/NetworkManager/system-connections", "directory for rendered NetworkManager keyfiles (waypoint-*.nmconnection)")
 	netConfirmTimeout := flag.Duration("network-confirm-timeout", netconfig.DefaultConfirmTimeout, "confirm-or-revert rollback window for a network apply")
 	netBackend := flag.String("network-backend", "composite", "network rollback backend: composite (NM D-Bus checkpoint + keyfile snapshot) or keyfile (fallback, no live-device rollback)")
@@ -2077,6 +2078,25 @@ func main() {
 	// exits, before any daemon startup (RFC-0013).
 	if *verifyFile != "" {
 		runVerify(*verifyFile, *verifySig, *verifyPubkey)
+	}
+
+	// Relocate a pre-0.3 state tree before anything opens a path under it. This
+	// runs on every invocation, including the ExecStartPre boot check, because
+	// waypointd is the only component that reaches an installed node — its units
+	// still name the old location and nothing can rewrite them (see
+	// paths.Migrate). It is a no-op on an already-migrated or freshly flashed
+	// node.
+	//
+	// Fatal on failure, and deliberately so: the failure modes are a conflict
+	// nothing Waypoint does can produce, or a filesystem that would not let the
+	// tree move. Carrying on would mean opening the compiled-in paths while the
+	// operator's configuration sits somewhere else — a configured node silently
+	// coming up on an empty store. Failing here puts the reason in the journal
+	// with the node's data untouched.
+	if mig, err := paths.Migrate(); err != nil {
+		log.Fatalf("state migration: %v", err)
+	} else if mig.Performed {
+		log.Printf("state migration: %s", mig)
 	}
 
 	// The update modes (RFC-0014) each run as a standalone invocation and exit,

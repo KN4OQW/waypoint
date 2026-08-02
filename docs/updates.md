@@ -117,16 +117,43 @@ Two hooks make the guarantee hold across a reboot. The boot check must run
 # Power-loss revert: an update swapped but never confirmed is rolled back here,
 # so the unit then starts the prior version. Non-fatal (leading '-') — a
 # boot-check hiccup must never wedge startup.
-ExecStartPre=-/home/pi-star/waypoint/bin/waypointd -update-boot-check \
-  -update-binary /home/pi-star/waypoint/bin/waypointd \
-  -update-marker /home/pi-star/waypoint/update.marker
-ExecStart=/home/pi-star/waypoint/bin/waypointd -addr 0.0.0.0:443 …
+ExecStartPre=-/usr/local/lib/waypoint/bin/waypointd -update-boot-check \
+  -update-binary /usr/local/lib/waypoint/bin/waypointd \
+  -update-marker /var/lib/waypoint/update.marker
+ExecStart=/usr/local/lib/waypoint/bin/waypointd -addr 0.0.0.0:443 …
 ```
 
 `waypointd` also checks on its own schedule (see [Automatic checks and the
 opt-out](#automatic-checks-and-the-opt-out)), so no `systemd` timer is needed;
 `waypointd -update-check` remains the way to ask from a shell or a cron of your
 own.
+
+## The 0.2 → 0.3 state move
+
+Through 0.2 a node kept everything — store, rendered configs, TLS material,
+peering keys and the `waypointd` binary — under `/home/pi-star/waypoint`, a
+directory named for an account no Waypoint image has ever created. State now
+lives at `/var/lib/waypoint` (where the provisioned marker already was) and the
+binary at `/usr/local/lib/waypoint/bin`.
+
+Nothing is required of you. On its first start a 0.3 `waypointd` moves the tree
+and leaves a symlink at the old path, then logs one line saying what it moved.
+The symlink is not cosmetic and it is not temporary: an installed node's unit
+files name the old path, and **nothing can rewrite them** — the image ships the
+units, the updater delivers only a binary, and the stack `.deb`s ship no units at
+all. So the old path keeps resolving for the life of that node. Re-flashing is
+what gets you a node with no symlink.
+
+That direction is also what keeps this update revertible. A failed health check
+restores the previous binary (see [The power-loss
+guarantee](#the-power-loss-guarantee)), and that binary has the old paths
+compiled in — they resolve through the symlink to the migrated tree. A move
+without the symlink would have been the one change the updater could not undo.
+
+The migration refuses to run, and `waypointd` exits, if both locations hold an
+entry of the same name. Waypoint never produces that overlap, so it means files
+were placed by hand; the journal names the colliding entries. Resolve it by
+moving or deleting the unwanted copy under `/var/lib/waypoint` and restarting.
 
 ## Automatic checks and the opt-out
 

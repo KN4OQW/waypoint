@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/KN4OQW/waypoint/internal/auth"
+	"github.com/KN4OQW/waypoint/internal/paths"
 	"github.com/KN4OQW/waypoint/internal/provision"
 	"github.com/KN4OQW/waypoint/internal/store"
 	"github.com/KN4OQW/waypoint/internal/wizard"
@@ -74,7 +75,7 @@ func checkResetMarker(as *auth.Store, st *store.Store, markers []string, paths r
 // process exit code.
 func runResetClaim(args []string) int {
 	fs := flag.NewFlagSet("reset-claim", flag.ExitOnError)
-	storePath := fs.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
+	storePath := fs.String("store", paths.StorePath, "path to the SQLite configuration store")
 	// --full is the deeper reset: it also forgets that the node was ever set up,
 	// so the next boot serves the setup wizard. It is opt-in because the common
 	// case — an operator handing a working node to somebody else — wants the

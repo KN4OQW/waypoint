@@ -119,9 +119,10 @@ systemd-sysusers /usr/lib/sysusers.d/waypoint.conf
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/waypoint-provision.conf || true
 rm -rf "${wp_tmp}"
 
-# Waypoint home tree (root-owned, user-agnostic). waypointd renders INIs into etc/
-# and opens the store on first boot; nothing is pre-created that would imply a
-# claimed or configured node (D5).
+# Waypoint state tree (root-owned). waypointd renders INIs into etc/ and opens the
+# store on first boot; nothing is pre-created that would imply a claimed or
+# configured node (D5). waypoint-firstboot writes its provisioned marker into this
+# same directory — that overlap is deliberate, and is why the tree lives here.
 install -d -m 0755 "${WAYPOINT_HOME}" "${WAYPOINT_HOME}/etc" "${WAYPOINT_HOME}/peering" "${WAYPOINT_HOME}/overrides.d" "${WAYPOINT_HOME}/tls"
 
 ########################################################################

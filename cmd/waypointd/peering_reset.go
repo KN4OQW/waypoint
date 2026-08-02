@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/KN4OQW/waypoint/internal/config"
+	"github.com/KN4OQW/waypoint/internal/paths"
 	"github.com/KN4OQW/waypoint/internal/peering"
 	"github.com/KN4OQW/waypoint/internal/store"
 )
@@ -22,8 +23,8 @@ import (
 // shell on the device, and prints what it did. Returns a process exit code.
 func runResetPeerIdentity(args []string) int {
 	fs := flag.NewFlagSet("reset-peer-identity", flag.ExitOnError)
-	storePath := fs.String("store", "/home/pi-star/waypoint/config.db", "path to the SQLite configuration store")
-	peeringDir := fs.String("peering-dir", "/home/pi-star/waypoint/peering", "directory holding the node's peering keypair (node.key/node.crt)")
+	storePath := fs.String("store", paths.StorePath, "path to the SQLite configuration store")
+	peeringDir := fs.String("peering-dir", paths.PeeringDir, "directory holding the node's peering keypair (node.key/node.crt)")
 	_ = fs.Parse(args)
 
 	st, err := store.Open(*storePath)
