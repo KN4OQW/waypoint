@@ -18,7 +18,13 @@ This document is a set of commitments, written down *before* the project had use
 
 ## RFCs
 
-Changes that alter architecture, protocol/API contracts, security posture, or governance itself require an RFC: a document opened as a discussion in the [RFCs category](https://github.com/KN4OQW/waypoint/discussions/categories/rfcs), open for comment for at least 14 days, accepted by consensus of maintainers (supermajority if contested). Comment threads live on the discussion itself, and its status line is edited in place as it moves from proposed to accepted. Small changes never need an RFC — when in doubt, open an issue and ask.
+**The RFC process is dormant until v1.** It is a mechanism for consulting a community, and consulting one that does not exist yet produces the form of consensus without the substance — a 14-day comment window that nobody comments in, "accepted by consensus" meaning one maintainer agreed with themselves. Running it in that state would teach contributors that the process is theatre, which is the harder thing to undo later.
+
+So, pre-v1: architecture decisions are made in the open as issues and pull requests, and recorded in `docs/design/` and in the code comment that implements them. The existing numbered RFCs remain the design record and are cited throughout the code; nothing about them is retracted. Do not open new ones, and do not ask a contributor to.
+
+It reactivates when there is a shippable v1 and a contributor base with a stake in the outcome — the point at which "open for comment" means something. At that point the process is: a document opened as a discussion in the [RFCs category](https://github.com/KN4OQW/waypoint/discussions/categories/rfcs), open for comment for at least 14 days, accepted by consensus of maintainers (supermajority if contested), with its status line edited in place as it moves from proposed to accepted.
+
+**Dormant does not mean lowered.** Where a principle above names the RFC process as the only way to change something — principle 2's telemetry policy in particular — that remains true, and the cost of reactivating the process for it is part of the protection, not an obstacle to route around.
 
 ## AI-assisted triage
 
@@ -36,4 +42,4 @@ See [SECURITY.md](SECURITY.md). Private reporting via GitHub's vulnerability rep
 
 ## Decision log
 
-Significant decisions and their reasoning are recorded in `docs/decisions/` — short, dated entries. Future contributors deserve to know *why*, not just *what*.
+Significant decisions and their reasoning are recorded in `docs/design/` — short, dated entries, alongside the run logs that produced them. Future contributors deserve to know *why*, not just *what*. With RFCs dormant (above), this is where architecture reasoning lands pre-v1, so it carries more weight than the name suggests.

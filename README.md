@@ -11,7 +11,7 @@ It exists because the amateur community deserves a hotspot platform that is:
 - **Secure by default** — no default credentials (first boot claims the device), HTTPS out of the box, a real security-reporting channel.
 - **Safe to update** — tagged releases with changelogs; updates are atomic or they don't happen. Your local customizations live in a documented override layer that survives every update.
 - **Usable from your phone** — responsive to 360 px with a dark-default and light theme, and a first-run claim/login you can complete on a phone; screen-reader accessible.
-- **Governed to outlive any one person** — public repos, public CI, a review SLA, an RFC process, and a written no-telemetry policy. See [GOVERNANCE.md](GOVERNANCE.md).
+- **Governed to outlive any one person** — public repos, public CI, a review SLA, a written no-telemetry policy, and an RFC process that activates at v1. See [GOVERNANCE.md](GOVERNANCE.md).
 
 ## Quick start
 
@@ -94,7 +94,7 @@ Full detail: [docs/architecture.md](docs/architecture.md).
 
 ## Contributing
 
-Start with [CONTRIBUTING.md](CONTRIBUTING.md). The short version: every PR gets a human response within 14 days — even if it's "no, and here's why." Requirement issues labeled `good-first-issue` are curated for newcomers. Feature-scale changes go through a lightweight [RFC process](GOVERNANCE.md#rfcs).
+Start with [CONTRIBUTING.md](CONTRIBUTING.md). The short version: every PR gets a human response within 14 days — even if it's "no, and here's why." Requirement issues labeled `good-first-issue` are curated for newcomers. Feature-scale changes start as an issue — the [RFC process](GOVERNANCE.md#rfcs) is dormant until v1, because a comment period needs a community to comment.
 
 This project also runs AI-assisted triage (Claude): new issues and PRs get an initial technical read within minutes, and you can mention `@claude` in any thread for interactive help. AI never merges; maintainers do.
 

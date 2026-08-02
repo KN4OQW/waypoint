@@ -9,10 +9,20 @@ Closes #
 
 ## How it was verified
 
-<!-- Tests added/updated, manual steps, on-hardware checks — whatever applies. -->
+<!-- Name the tests you ADDED and what each one asserts. "The suite passes" runs
+     somebody else's tests; the question is what this PR asserts that nothing
+     asserted before. Also say what you did NOT verify — a test written but never
+     executed, a path only checked by hand, an on-hardware run still owed. -->
 
 - [ ] `go test ./...` passes
-- [ ] Behavior changes are covered by tests
+- [ ] **This PR adds tests for the behavior it changes** (or: it changes no
+      behavior — docs, comments, renames — and says so above)
+- [ ] Any new rule that reports a configuration as wrong **cites its evidence**
+      (upstream source line or protocol field width) and is tested against
+      passing cases as well as failing ones
+- [ ] If it touches a renderer: `test/tier2/` still covers the daemon accepting
+      the result, or the PR says why it cannot
+- [ ] Anything **not** verified is named above, not left implied
 
 ## Privacy (no telemetry)
 
