@@ -120,6 +120,14 @@ type Plan struct {
 	Updates   []Update `json:"updates"`
 	Units     []string `json:"units"`  // affected systemd units, deduped, stable order
 	Reason    string   `json:"reason"` // why nothing is available, when !Available
+	// RequireMMDVM adds MMDVMHost's unit to the health gate even when the update
+	// touched no package that backs it — a stack update must not leave the modem
+	// host down. It is set by the caller rather than assumed here, because whether
+	// this node is supposed to be running MMDVMHost at all is a config question
+	// (config.ModemHostRuns): a node with every mode off, or with no modem port
+	// set, correctly runs no modem host, and gating on a unit that is *meant* to
+	// be stopped would fail every update on it forever.
+	RequireMMDVM bool `json:"require_mmdvm"`
 }
 
 // PackageNames returns the package names in the plan, in order.
@@ -320,7 +328,7 @@ func Apply(ctx context.Context, plan Plan, sys System, t Timings, pol Policy) (O
 	if err := sys.StartServices(ctx, plan.Units); err != nil {
 		return revert(ctx, sys, plan, prev, "restart after install failed: "+err.Error(), unrevertable)
 	}
-	if reason := gate(ctx, sys, plan.Units, t); reason != "" {
+	if reason := gate(ctx, sys, plan, t); reason != "" {
 		return revert(ctx, sys, plan, prev, reason, unrevertable)
 	}
 	_ = sys.RecordHistory(historyRows(prev, plan.Updates, ResultConfirmed))
@@ -329,14 +337,18 @@ func Apply(ctx context.Context, plan Plan, sys System, t Timings, pol Policy) (O
 
 // gate polls the health signal until it is healthy for ConfirmChecks consecutive
 // polls (sustained health — one healthy blip mid-restart never confirms) or MaxPolls
-// is exhausted. It returns "" on success or a failure reason to revert on. The
-// health gate always includes MMDVMHost's unit, so a modem that will not open —
-// MMDVMHost exits(1), systemd crash-loops it — never sustains and the update reverts.
-func gate(ctx context.Context, sys System, units []string, t Timings) string {
+// is exhausted. It returns "" on success or a failure reason to revert on. When the
+// plan requires it, the gate includes MMDVMHost's unit, so a modem that will not
+// open — MMDVMHost exits(1), systemd crash-loops it — never sustains and the update
+// reverts.
+func gate(ctx context.Context, sys System, plan Plan, t Timings) string {
 	if !sleep(ctx, t.SettleDelay) {
 		return "canceled during settle"
 	}
-	gateUnits := withMMDVM(units)
+	gateUnits := plan.Units
+	if plan.RequireMMDVM {
+		gateUnits = withMMDVM(gateUnits)
+	}
 	consecutive := 0
 	lastDetail := "no health probe ran"
 	for i := 0; i < t.MaxPolls; i++ {
@@ -387,9 +399,9 @@ func revertSet(prev map[string]string, names []string) []PkgVer {
 	return out
 }
 
-// withMMDVM ensures the health gate always includes MMDVMHost's unit, even when the
-// update itself did not touch waypoint-mmdvmhost — a stack update must never leave
-// the modem host down.
+// withMMDVM adds MMDVMHost's unit to the gate set when the plan requires it, even
+// though the update itself may not have touched waypoint-mmdvmhost — a stack update
+// must not leave the modem host down on a node that is meant to be running one.
 func withMMDVM(units []string) []string {
 	for _, u := range units {
 		if u == MMDVMUnit {

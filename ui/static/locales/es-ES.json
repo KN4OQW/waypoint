@@ -110,6 +110,7 @@
   "common.disabled": "DESACTIVADO",
   "common.enabled": "ACTIVADO",
   "common.gateway": "GATEWAY",
+  "common.gatewayBlockedGeneric": "Este demonio no se inicia hasta que se definan los valores anteriores.",
   "common.hangTimers": "TEMPORIZADORES DE HANG",
   "common.passwordUnchanged": "•••••• sin cambios",
   "common.remoteGatewayAdvancedLeave": "Gateway remoto (avanzado — déjalo desactivado para control local)",
@@ -616,6 +617,7 @@
   "masterSelect.hostListLoading2": "cargando lista de hosts…",
   "masterSelect.selectMaster": "— seleccionar master —",
 
+  "modem.hostBlocked": "MMDVM-Host no se inicia hasta que estos valores estén definidos. Sin un puerto de módem no hay nada que abrir, y una estación no puede transmitir sin indicativo ni ID. Todos los modos dependen de él: no habrá nada en el aire hasta completarlo.",
   "modes.cardLabel": "Modo {mode}",
   "modes.modeEnable": "ACTIVAR MODO",
   "modes.modeSettings": "AJUSTES DEL MODO",

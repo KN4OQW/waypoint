@@ -87,8 +87,28 @@ func (su *stackUpdater) check(ctx context.Context) (stackupdate.Plan, error) {
 		return stackupdate.Plan{}, err
 	}
 	plan := stackupdate.PlanFrom(stackupdate.ParseUpgradable(out))
+	plan.RequireMMDVM = su.modemHostExpected()
 	su.cacheAvailable(plan)
 	return plan, nil
+}
+
+// modemHostExpected answers the one config question the update engine cannot: is
+// this node supposed to be running MMDVMHost at all? The health gate requires that
+// unit so an update never leaves the modem host down — but on a node with every
+// mode off, or with no modem port configured, the unit is *meant* to be stopped,
+// and requiring it would fail every stack update forever with
+// "waypoint-mmdvm.service is not active".
+//
+// An unreadable config answers yes: that is the pre-existing behaviour and the
+// conservative one, since gating on a unit that should be up is a reverted update,
+// while skipping a gate that should have run is an unnoticed dead modem.
+func (su *stackUpdater) modemHostExpected() bool {
+	m, err := config.Load(su.store)
+	if err != nil {
+		log.Printf("stack update: read config for the health gate: %v (requiring the modem host)", err)
+		return true
+	}
+	return m.ModemHostRuns()
 }
 
 // cacheAvailable persists the available updates + a fresh last-check stamp so the

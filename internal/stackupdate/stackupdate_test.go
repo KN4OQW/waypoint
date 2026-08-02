@@ -17,6 +17,7 @@ type fakeSystem struct {
 	installed    map[string]string
 	healthSeq    []bool // scripted Healthy results; the last entry repeats
 	healthDetail string
+	onHealthy    func(units []string) // observes the unit set the gate actually probes
 
 	// pool models what the apt repo actually carries, as "name=version" keys. It
 	// is the thing #221 was about: the engine assumed the previous versions were
@@ -87,7 +88,10 @@ func (f *fakeSystem) StartServices(_ context.Context, units []string) error {
 	return f.startErr
 }
 
-func (f *fakeSystem) Healthy(_ context.Context, _ []string) (bool, string) {
+func (f *fakeSystem) Healthy(_ context.Context, units []string) (bool, string) {
+	if f.onHealthy != nil {
+		f.onHealthy(units)
+	}
 	if len(f.healthSeq) == 0 {
 		return true, ""
 	}
@@ -554,4 +558,89 @@ func TestDueForAutoApply(t *testing.T) {
 	if !DueForAutoApply(now, time.Time{}, "04:00", true, true) {
 		t.Error("should be due: never applied before")
 	}
+}
+
+// --- the health gate only requires the modem host when the node runs one ---
+
+// TestGateRequiresMMDVMWhenTheNodeRunsOne keeps the original safety property: an
+// update must not leave the modem host down, so on a node that runs MMDVMHost the
+// gate covers its unit even when the update touched no package that backs it.
+func TestGateRequiresMMDVMWhenTheNodeRunsOne(t *testing.T) {
+	var gated [][]string
+	f := &fakeSystem{
+		installed: map[string]string{"waypoint-dmrgateway": "0~old+wp1"},
+		healthSeq: []bool{true},
+	}
+	f.onHealthy = func(units []string) { gated = append(gated, units) }
+
+	plan := PlanFrom([]Update{{Package: "waypoint-dmrgateway", From: "0~old+wp1", To: "0~new+wp1"}})
+	plan.RequireMMDVM = true
+	if _, err := Apply(context.Background(), plan, f, fastTimings(), Policy{}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(gated) == 0 {
+		t.Fatal("the gate never probed")
+	}
+	if !contains(gated[0], MMDVMUnit) {
+		t.Errorf("the gate must cover %q on a node that runs it; got %v", MMDVMUnit, gated[0])
+	}
+}
+
+// TestGateSkipsMMDVMWhenTheNodeRunsNone is the regression for the interaction with
+// mode-gated rendering: a node with every mode off (or no modem port) correctly
+// runs no modem host, and gating on a unit that is meant to be stopped would fail
+// every stack update on it forever — the same "always reverts" failure #221 was
+// investigated through.
+func TestGateSkipsMMDVMWhenTheNodeRunsNone(t *testing.T) {
+	var gated [][]string
+	f := &fakeSystem{
+		installed: map[string]string{"waypoint-dmrgateway": "0~old+wp1"},
+		healthSeq: []bool{true},
+	}
+	f.onHealthy = func(units []string) { gated = append(gated, units) }
+
+	plan := PlanFrom([]Update{{Package: "waypoint-dmrgateway", From: "0~old+wp1", To: "0~new+wp1"}})
+	plan.RequireMMDVM = false
+	out, err := Apply(context.Background(), plan, f, fastTimings(), Policy{})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !out.Confirmed {
+		t.Fatalf("an update on a node with no modem host must be able to confirm, got %+v", out)
+	}
+	if len(gated) == 0 {
+		t.Fatal("the gate never probed")
+	}
+	if contains(gated[0], MMDVMUnit) {
+		t.Errorf("the gate must not require %q on a node that does not run it; got %v", MMDVMUnit, gated[0])
+	}
+}
+
+// An update that DOES touch waypoint-mmdvmhost gates on its unit regardless: the
+// unit is in the plan on its own merit, not because RequireMMDVM added it.
+func TestGateCoversMMDVMWhenTheUpdateTouchesIt(t *testing.T) {
+	var gated [][]string
+	f := &fakeSystem{
+		installed: map[string]string{"waypoint-mmdvmhost": "0~old+wp1"},
+		healthSeq: []bool{true},
+	}
+	f.onHealthy = func(units []string) { gated = append(gated, units) }
+
+	plan := PlanFrom([]Update{{Package: "waypoint-mmdvmhost", From: "0~old+wp1", To: "0~new+wp1"}})
+	plan.RequireMMDVM = false // even so
+	if _, err := Apply(context.Background(), plan, f, fastTimings(), Policy{}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !contains(gated[0], MMDVMUnit) {
+		t.Errorf("an update to waypoint-mmdvmhost must gate on its unit; got %v", gated[0])
+	}
+}
+
+func contains(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }

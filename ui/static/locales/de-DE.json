@@ -110,6 +110,7 @@
   "common.disabled": "DEAKTIVIERT",
   "common.enabled": "AKTIVIERT",
   "common.gateway": "GATEWAY",
+  "common.gatewayBlockedGeneric": "Dieser Dienst wird erst gestartet, wenn die oben genannten Werte gesetzt sind.",
   "common.hangTimers": "HANG-TIMER",
   "common.passwordUnchanged": "•••••• unverändert",
   "common.remoteGatewayAdvancedLeave": "Remote-Gateway (erweitert — für lokale Steuerung ausgeschaltet lassen)",
@@ -616,6 +617,7 @@
   "masterSelect.hostListLoading2": "Hostliste lädt…",
   "masterSelect.selectMaster": "— Master wählen —",
 
+  "modem.hostBlocked": "MMDVM-Host wird erst gestartet, wenn diese Werte gesetzt sind. Ohne Modem-Port gibt es nichts zu öffnen, und eine Station darf ohne Rufzeichen und ID nicht senden. Alle Betriebsarten hängen davon ab — bis dahin ist nichts auf Sendung.",
   "modes.cardLabel": "{mode}-Modus",
   "modes.modeEnable": "MODUS AKTIVIEREN",
   "modes.modeSettings": "MODUS-EINSTELLUNGEN",

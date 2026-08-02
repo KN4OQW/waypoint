@@ -120,34 +120,86 @@ func (m *Model) RegisteredBusUnits() []string {
 }
 
 // BootEnableUnits / BootDisableUnits are the boot-persistence picture apply
-// installs (Addendum §7). Without this a DISPLACED gateway stays enabled and, on
-// reboot, races the bus for the mode's loopback — so a displaced gateway must be
-// disabled for boot, and re-enabled when a detach restores it. Enabled buses are
-// enabled; disabled buses disabled. Gateway units NOT displaced are (re-)enabled so
-// a prior displace-disable is undone on detach; this is idempotent for the common
-// never-displaced case.
-func (m *Model) BootEnableUnits() []string {
-	out := append([]string(nil), m.RegisteredBusUnits()...)
-	if !m.modeDisplacesGateway(ModeYSF) {
-		if m.YSFGW.EnableDGId {
-			out = append(out, unitDGIdGateway)
-		} else {
-			out = append(out, unitYSFGateway)
+// installs (Addendum §7): what systemd should start on its own after a reboot.
+//
+// Both are DERIVED from the rendered target set, and that is the whole point.
+// They used to be hand-maintained lists, and the lists were wrong in both
+// directions at once: waypoint-mmdvm.service appeared in neither, so the modem
+// host — which every mode sits on, and which the stack updater's health gate
+// requires — died at every reboot and came back only when an operator applied
+// config; meanwhile the YSF and NXDN gateway units were enabled unconditionally,
+// so a node booted two daemons whose modes were switched off. The apply loop's own
+// comment said "the render is the boot picture" while the code did something else.
+//
+// Now it is true by construction. RenderTargets already answers "what should be
+// running here" — mode enabled, not displaced, requirements met — so the boot set
+// is exactly that set, and the disable set is exactly its complement over the units
+// this daemon manages. A mode switched off, a gateway displaced by a bus, a POCSAG
+// enable with no AuthKey: each drops the target, and boot-disable follows with no
+// second list to keep in step. A mode added in future is covered the day it gets a
+// render target.
+func (m *Model) BootEnableUnits(paths Paths) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, t := range m.RenderTargets(paths) {
+		if t.Unit == "" || seen[t.Unit] {
+			continue
 		}
-	}
-	if !m.modeDisplacesGateway(ModeNXDN) {
-		out = append(out, unitNXDNGateway)
+		seen[t.Unit] = true
+		out = append(out, t.Unit)
 	}
 	return out
 }
 
-// A gateway blocked by an unmet requirement joins the boot-disable set for the
-// same reason a displaced one does: it is not in the rendered target set, so
-// leaving it enabled means a reboot starts a daemon that is guaranteed to exit.
-func (m *Model) BootDisableUnits() []string {
-	out := append(m.DisabledBusUnits(), m.DisplacedGatewayUnits()...)
-	return append(out, m.BlockedGatewayUnits()...)
+// BootDisableUnits is the complement: every unit this daemon manages that the
+// render did NOT ask for. Deriving it (rather than listing displaced and blocked
+// units by hand) is what makes "switched off" and "not started at boot" the same
+// statement — including for a unit left enabled by an older version of waypointd,
+// which is reconciled on the next apply rather than persisting forever.
+//
+// Bus instances are handled separately from the static set: a disabled bus's unit
+// is enumerable from the model (DisabledBusUnits), while a DELETED bus's is not,
+// and the apply path finds that one through systemd (orphanedBusUnits).
+func (m *Model) BootDisableUnits(paths Paths) []string {
+	enabled := map[string]bool{}
+	for _, u := range m.BootEnableUnits(paths) {
+		enabled[u] = true
+	}
+	var out []string
+	for _, u := range managedUnits {
+		if !enabled[u] {
+			out = append(out, u)
+		}
+	}
+	for _, u := range m.DisabledBusUnits() {
+		if !enabled[u] {
+			out = append(out, u)
+		}
+	}
+	return out
 }
+
+// managedUnits is every static (non-templated) unit waypointd owns the boot state
+// of. It is the universe BootDisableUnits takes its complement over, so a unit
+// missing here would silently keep whatever boot state it happened to have —
+// which is the failure this whole mechanism exists to prevent. Bus units are
+// templated and enumerated per-instance instead.
+var managedUnits = []string{
+	unitMMDVM,
+	unitDMRGateway,
+	unitYSFGateway,
+	unitDGIdGateway,
+	unitP25Gateway,
+	unitNXDNGateway,
+	unitDStarGateway,
+	unitM17Gateway,
+	unitDAPNETGateway,
+}
+
+// ManagedUnits returns every static unit whose boot state waypointd reconciles
+// (copied). Exported for the apply path's reporting and for tests that assert the
+// complement is total.
+func ManagedUnits() []string { return append([]string(nil), managedUnits...) }
 
 // busLoopbacksFor is the per-mode loopback OVERRIDE carried into a bus's rendered
 // config: only the entries that differ from the fixed per-mode default. Today that
