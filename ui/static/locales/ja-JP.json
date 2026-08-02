@@ -4,12 +4,9 @@
     "tag": "ja-JP",
     "reviewed": true
   },
-
   "applyImport.importScannedConfigOverwrites": "スキャンした設定をインポートしますか？現在のモードとネットワーク設定が上書きされます。インポート後に確認および適用（Apply）が可能です。",
   "applyImport.importedReviewSettingsThen": "インポートしました。設定を確認後、[適用] を押して設定を再生成し、スタックを再起動してください。",
-
   "applyNetwork.networkChangeAppliedConfirm": "ネットワーク変更が適用されました。元に戻る前に変更を保持することを確定してください。",
-
   "attachParams.credentialsDmrNetwork": "認証情報 (DMR ネットワーク)",
   "attachParams.defaultId": "デフォルト ID",
   "attachParams.defaultTg": "デフォルト TG",
@@ -21,17 +18,13 @@
   "attachParams.reflectorDgId": "リフレクター / DG-ID",
   "attachParams.slot": "スロット",
   "attachParams.wiresXPassthrough": "Wires-X パススルー",
-
   "attachPickerHTML.attachLocalModeGreyed": "ローカルモードをアタッチ (グレーアウト中のモードはアタッチ不可・理由を表示):",
   "attachPickerHTML.attachMode": "＋ モードをアタッチ",
   "attachPickerHTML.attachModePairedPeer": "またはペアリング済みのピアからモードをアタッチ:",
   "attachPickerHTML.cancel": "キャンセル",
   "attachPickerHTML.checkingWhichModesCan": "アタッチ可能なモードを確認中…",
-
   "attachmentBlock.detach": "デタッチ",
-
   "baudRow.baudrate": "ボーレート",
-
   "bm.bmHotspotSecurity": "BM スポットセキュリティ",
   "bm.brandmeister": "Brandmeister",
   "bm.brandmeisterDashboards": "BrandMeister ダッシュボード",
@@ -65,17 +58,14 @@
   "bm.xlxNetworkSettings": "XLX ネットワーク設定",
   "bm.xlxStartupModule": "XLX スタートアップモジュール",
   "bm.xlxStartupTg": "XLX スタートアップ TG",
-
   "boardRow.notSet": "未設定",
   "boardRow.radioModem": "無線機 / モデム",
-
   "busCard.busEnabled": "バス有効",
   "busCard.busNeedsLeastTwo": "トラフィックをハブ接続するにはバスに少なくとも2つのアタッチメントが必要です。適用前に別のモードを追加してください。",
   "busCard.delete": "削除",
   "busCard.disabledItsAttachmentsAre": "無効 — アタッチメントは保持され、再有効化時に復元されます。",
   "busCard.localBus": "例: ローカルバス A",
   "busCard.name": "名前",
-
   "cal.applyingWritesSameNumber": "適用すると受信 (RX) と送信 (TX) の両方のオフセットに<b>同じ数値</b>が書き込まれます。ホットスポットには両方のパスを制御する1つの基準発振器があるため、受信測定時の誤差は送信時と同じ誤差になります。またスイープ処理は測定機器なしでは受信側のみ測定可能です。",
   "cal.calibration": "キャリブレーション",
   "cal.calibrationCannotRunYet": "キャリブレーションはまだ実行できません。",
@@ -89,21 +79,18 @@
   "cal.starting": "開始中…",
   "cal.sweepDidNotFinish": "スイープが終了しませんでした。",
   "cal.useOffset": "{offset} を使用",
-
   "calCurve.best": "最適",
   "calCurve.curveIncompleteSweepRan": "<b>このカーブは不完全です</b> — スイープがタイムアウトしたか停止されました。描画されているのは測定済みデータで、欠落している箇所は未測定です。",
   "calCurve.lowerBetter": "数値が低いほど良好",
   "calCurve.nothingWasDecodedAny": "<b>どの周波数でもデコードされませんでした。</b> 無線機が送信していないか、DMRモードではないか、スイープ範囲外です。",
-
   "cancelSweep.stoppingSweepNodeComes": "スイープを停止中 — ノードは自動的に復帰します。",
-
   "chrome.backToDashboard": "ダッシュボードに戻る",
   "chrome.language": "言語",
   "chrome.skipToMain": "メインコンテンツへスキップ",
   "chrome.skipToSettings": "設定へスキップ",
   "chrome.theme": "表示テーマ",
   "chrome.unreviewed": "(未レビュー)",
-
+  "common.add": "追加",
   "common.apply": "変更を適用",
   "common.behaviour": "動作",
   "common.cancel": "キャンセル",
@@ -114,19 +101,20 @@
   "common.hangTimers": "ハングタイマー",
   "common.passwordUnchanged": "•••••• 変更なし",
   "common.remoteGatewayAdvancedLeave": "リモートゲートウェイ (上級者向け — ローカル制御の場合はオフ)",
+  "common.remove": "削除",
   "common.reset": "リセット",
+  "common.save": "保存",
   "common.selfOnlyAcceptOnly": "自分のみ (自分のコールサインのみ許可)",
   "common.startupReflector": "スタートアップリフレクター",
+  "common.upload": "アップロード",
   "common.voiceAnnouncements": "音声アナウンス",
   "common.willNotStart": "起動しません",
-
   "confirmNetwork.browserDoesnTHold": "このブラウザには保留中の変更トークンが保持されていません。適用したタブから確認するか、変更が復元されるのを待ってください。",
   "confirmNetwork.dStar": "D-Star",
   "confirmNetwork.dmr": "DMR",
   "confirmNetwork.networkSettingsKept": "ネットワーク設定が保持されました。",
   "confirmNetwork.nxdn": "NXDN",
   "confirmNetwork.ysf": "YSF",
-
   "dash.crumb": "ステータス / ライブ",
   "dash.eventlog.event": "イベント",
   "dash.eventlog.head": "イベントログ",
@@ -164,13 +152,10 @@
   "dash.onair.to": " → ",
   "dash.pageTitle": "Waypoint · ダッシュボード",
   "dash.title": "ダッシュボード",
-
   "detectModem.modemUseMmdvmHost": "モデムは MMDVM-Host によって使用されているため応答できません。\\n\\n停止してモデムを検索し、再起動しますか？ ノードは数秒間停波します。",
-
   "deviceCard.gateway": "ゲートウェイ",
   "deviceCard.profile": "プロファイル",
   "deviceCard.state": "状態",
-
   "display.columns": "列数",
   "display.controlSoftware": "制御ソフトウェア",
   "display.display": "ディスプレイ",
@@ -188,7 +173,6 @@
   "display.rows": "行数",
   "display.simplexNode": "単信ノード",
   "display.trxMode": "TRX モード",
-
   "dmr.callHold": "コールホールド (TG ホールド)",
   "dmr.colorCode": "カラーコード",
   "dmr.dmrId": "DMR ID",
@@ -202,7 +186,6 @@
   "dmr.timeSlot2Enabled": "タイムスロット 2 有効",
   "dmr.timeSlotsAdvanced": "タイムスロット & 詳細設定",
   "dmr.txHang": "TX ハング",
-
   "dstar.blankAnonymous": "空欄 = 匿名",
   "dstar.dPlusLogin": "D-Plus ログイン",
   "dstar.dPlusRefNeeds": "D-Plus (REF — 登録済みコールサインが必要)",
@@ -218,14 +201,11 @@
   "dstar.registeredCallsignBlankStation": "登録済みコールサイン (空欄 = 自局のコールサイン)",
   "dstar.rfBehaviour": "RF 動作",
   "dstar.usernameBlankCallsign": "ユーザー名 (空欄 = コールサイン)",
-
   "essidSelect.none": "なし",
-
   "expert.configStore": "設定ストア",
   "expert.dashboardWaypointd": "ダッシュボード (waypointd)",
   "expert.rawIniEditingPower": "生の INI 編集および電源制御機能は今後のアップデートで実装予定です。現在設定はストアに保存されており、適用時に INI が再生成されます — <a href='https://github.com/KN4OQW/waypoint/issues/29'>waypoint#29</a>。",
   "expert.versions": "バージョン",
-
   "firmware.available": "利用可能",
   "firmware.checkFirmware": "ファームウェアを確認",
   "firmware.firmwareDownloadedSignedRelease": "ファームウェアは署名付きリリースからダウンロードされ、モデムに送信される前に署名が検証されます。GPIO ボードではブートローダーがチップに存在するため消去されず、書き込みが中断された場合でも再試行で復旧可能です。",
@@ -242,13 +222,10 @@
   "firmware.runningNow": "現在実行中",
   "firmware.waypointWillNotChoose": "Waypoint がこれを自動で選択することはありません。",
   "firmware.wouldWrite": "書き込み予定",
-
   "fixUART.freeGpioSerialPort": "モデム用に GPIO シリアルポートを解放しますか？\\n\\nブートパーティションの config.txt と cmdline.txt を編集し、シリアルログインサービスをマスクします。完了後、ノードの再起動が必要です。",
   "fixUART.gpioSerialPortWas": "GPIO シリアルポートはすでに解放されています。",
   "fixUART.hostHasNoRaspberry": "このホストには Raspberry Pi のブートパーティションがないため、解放する GPIO シリアルポートはありません。",
-
   "flashFirmware.flashingDoNotPower": "書き込み中 — ノードの電源を切らないでください。",
-
   "fm.0CarrierAccessCos": "0 — キャリアアクセス (COSあり)",
   "fm.1CtcssAccessNo": "1 — CTCSS アクセス (COSなし)",
   "fm.2CtcssAccessCos": "2 — CTCSS アクセス (COSあり)",
@@ -262,18 +239,14 @@
   "fm.rfAudioBoost": "RF オーディオ増幅",
   "fm.timeout": "タイムアウト",
   "fm.timing": "タイミング",
-
   "foot.source": "ソース",
   "foot.version": "waypointd {version}",
-
   "fwProgressHTML.firmwareFlashProgress": "ファームウェア書き込み進捗",
-
   "gateways.createBus": "＋ バスを作成",
   "gateways.migrateBridgesBus": "ブリッジを移行 → バス",
   "gateways.migrateRetiredBridges": "旧ブリッジからの移行",
   "gateways.noBusesYetBus": "バスがまだありません。<b>バス</b>を使用すると、接続されたモード同士 (DMR ⇄ YSF ⇄ NXDN) で音声を通すことができ、IDやトークグループは各モード用に相互変換されます。作成後に2つ以上のモードをアタッチしてください。",
   "gateways.oldPerModeBridges": "旧方式のモード別ブリッジ (YSF2DMR, DMR2YSF, YSF2NXDN, DMR2NXDN, NXDN2DMR) は廃止されました。移行処理を実行すると設定済みデータからバスが自動生成されます。<b>既存の設定データは保存され</b>、バスの追加のみが行われます（削除はされません）。",
-
   "general.calibration": "キャリブレーション",
   "general.callsign": "コールサイン",
   "general.dStar": "D-Star",
@@ -313,7 +286,6 @@
   "general.txInvert": "TX 反転",
   "general.txLevel": "TX レベル",
   "general.txOffset": "TX オフセット",
-
   "hardware.adoptingWritesPortLine": "適用すると、ポート、通信速度、ボード、基準発振器がこのノードの構成に書き込まれます。ファームウェアが報告していない発振器が書き込まれることはありません。基準周波数を間違えると周波数がずれます。",
   "hardware.attachedModem": "接続済みモデム",
   "hardware.board": "このボード:",
@@ -348,7 +320,6 @@
   "hardware.uartDefault": "115200 (デフォルト)",
   "hardware.useDetectedModem": "検出されたモデムを使用",
   "hardware.useModem": "このモデムを使用",
-
   "help.display.hd44780_cols": "1行あたりの文字数 — 通常は 16 または 20 です。",
   "help.display.hd44780_i2c_addr": "パネルの PCF8574 バックパックの 16進数 I2C アドレス。<code>0x27</code> や <code>0x3F</code> が一般的です。",
   "help.display.hd44780_rows": "パネルの行数 — 通常は 2 または 4 行です。",
@@ -488,12 +459,10 @@
   "help.ysfgw.wiresx_passthrough": "無線機からの Wires-X コマンドをネットワークに通過させ、無線機のメニュー操作でリフレクターを変更可能にします。",
   "help.ysfgw.ycs_network": "YSF 上でトークグループごとのルーティングを可能にする YCS サーバーに接続します。",
   "help.ysfgw.ysf_network": "YSF リフレクターネットワークに接続します。",
-
   "hostlistNote.listCouldNotDownloaded": "リストをダウンロードできなかったため、以下のピッカーは空です。",
   "hostlistNote.listEmpty": "このリストは空です。",
   "hostlistNote.listMayOutDate": "このリストは情報が古い可能性があります。",
   "hostlistNote.showingListShippedWaypoint": "Waypoint に同梱されているリストを表示しています。",
-
   "import.copyIncumbentSEtc": "旧カードから <code>/etc/mmdvmhost</code> や <code>/etc/dmrgateway</code> などの設定ファイルをコピーするか、カードをマウントしてパスを指定してください。<b>[インポート]</b> を押すまで書き込みは行われません。",
   "import.importPiStarWpsd": "Pi-Star / WPSD からインポート",
   "import.mntSdcardMedia": "/mnt/sdcard （または /media/…）",
@@ -501,9 +470,7 @@
   "import.mountedIncumbentCardPath": "マウントされた既存カードのパス",
   "import.scanDirectory": "ディレクトリをスキャン",
   "import.uploadConfigFiles": "…または設定ファイルをアップロード",
-
   "importProfile.profileNameAlreadyExists": "同名のプロファイルがすでに存在します。上書きしますか？",
-
   "importReport.apply": "適用",
   "importReport.detected": "検出済み",
   "importReport.dmrNetworks": "DMR ネットワーク",
@@ -516,7 +483,6 @@
   "importReport.scanResult": "スキャン結果",
   "importReport.theseIncumbentFeaturesAren": "以下の既存機能はまだ未対応です — インポート後に Waypoint 上で手動設定してください。",
   "importReport.wonTCarryOver": "引き継がれない項目",
-
   "ipv4Editor.dhcpAutomatic": "DHCP (自動)",
   "ipv4Editor.dhcpListingDnsServers": "DHCP 使用時にここに DNS サーバーを指定すると、DHCP サーバーから割り当てられた数値が<b>置き換えられます</b> (ignore-auto-dns)。",
   "ipv4Editor.gateway": "ゲートウェイ",
@@ -526,7 +492,6 @@
   "ipv4Editor.prefixCidr": "プレフィックス (CIDR)",
   "ipv4Editor.searchDomainsOptional": "検索ドメイン (任意)",
   "ipv4Editor.static": "静的 (Static)",
-
   "lcd.addPage": "+ ページを追加",
   "lcd.colsOption": "{n} 列",
   "lcd.columns": "列数",
@@ -585,12 +550,9 @@
   "lcd.tokenPaletteTitle": "{desc} — {token} を挿入",
   "lcd.warnUnknownToken": "⚠ 不明なトークン: {tokens} — スペルを確認してください。不明なトークンは空白描画されます。",
   "lcd.warnUnknownTokens": "⚠ 不明なトークン: {tokens} — スペルを確認してください。不明なトークンは空白描画されます。",
-
   "lcdLegend.tokenReference": "トークン一覧",
-
   "leds.modeDisabled": "{mode} 無効",
   "leds.modeEnabled": "{mode} 有効",
-
   "log.gatewayStatus": "{network}: {detail}",
   "log.link": "{network}: {detail}",
   "log.linkDown": "{network} リンク切断",
@@ -607,7 +569,6 @@
   "log.rfStart": "{source} 送信開始 → {dest} ({mode}{slot})",
   "log.slot": " S{slot}",
   "log.supervisorAction": "スーパーバイザー: {detail}",
-
   "m17.allowEncryptedM17Frames": "暗号化 M17 フレームを許可",
   "m17.can": "CAN",
   "m17.hangTimer": "ハングタイマー",
@@ -618,19 +579,15 @@
   "m17.revertStartupReflectorAfter": "無通信時にスタートアップリフレクターへ自動復帰",
   "m17.suffixHotspot": "H — ホットスポット",
   "m17.suffixRepeater": "R — レピーター",
-
   "masterSelect.hostListLoading2": "ホストリスト読込中…",
   "masterSelect.selectMaster": "— マスターを選択 —",
-
   "modes.cardLabel": "{mode} モード",
   "modes.modeEnable": "モード有効化",
   "modes.modeSettings": "モード設定",
   "modes.srDisabled": " (無効)",
   "modes.srEnabled": " (有効)",
   "modes.turnModeHaveMmdvm": "モードをオンにすると MMDVM-Host で処理されます。切り替え適用時にスタックが再起動します。",
-
   "modesSection.modeSettings": "モード設定",
-
   "nav.allSettings": "すべての設定",
   "nav.configSections": "設定セクション",
   "nav.configuration": "設定",
@@ -645,9 +602,7 @@
   "nav.primary": "プライマリ",
   "nav.settings": "設定",
   "nav.settingsSub": "ノード設定",
-
   "netEthCard.ethernetWaypointEth0": "イーサネット (waypoint-eth0)",
-
   "netHostCard.appliesImmediatelyHostnameTimezone": "即時適用されます (ホスト名・タイムゾーン・NTP設定は接続を切断しません)。",
   "netHostCard.applyHostSettings": "ホスト設定を適用",
   "netHostCard.hostTimeNtp": "ホスト · 時刻 · NTP",
@@ -664,18 +619,15 @@
   "netHostCard.tzHintDismiss": "閉じる",
   "netHostCard.tzHintUse": "使用する",
   "netHostCard.tzNoMatch": "一致するタイムゾーンがありません",
-
   "netScanSection.nearbyNetworks": "周辺のネットワーク",
   "netScanSection.noNetworksFoundYet": "ネットワークが見つかりません — [再スキャン] を押すか、非公開ネットワークの SSID を上に入力してください。",
   "netScanSection.rescan": "再スキャン",
-
   "netStatusSection.fetchingLiveNetworkStatus": "リアルタイムネットワークステータスを取得中…",
   "netStatusSection.hostLive": "ホスト (ライブ)",
   "netStatusSection.hostname": "ホスト名",
   "netStatusSection.liveStatus": "ライブステータス",
   "netStatusSection.noLiveEthernetWi": "アクティブなイーサネットまたは Wi-Fi インターフェースはありません。",
   "netStatusSection.wiFi": "Wi-Fi",
-
   "netVlanCard.addVlan": "+ VLAN を追加",
   "netVlanCard.labelOptional": "ラベル (任意)",
   "netVlanCard.noVlansAddOne": "VLAN がありません。追加して親デバイスにタグ付きインターフェースを割り当てます。",
@@ -685,7 +637,6 @@
   "netVlanCard.vlanId14094": "VLAN ID (1–4094)",
   "netVlanCard.vlanLabel": "VLAN ラベル",
   "netVlanCard.vlans": "VLAN",
-
   "netWifiCard.hiddenNetwork": "非公開ネットワーク (SSID非表示)",
   "netWifiCard.passphrase": "パスフレーズ",
   "netWifiCard.regulatoryCountry": "運用国コード (Regulatory Country)",
@@ -696,18 +647,14 @@
   "netWifiCard.wiFiPassphrase": "Wi-Fi パスフレーズ",
   "netWifiCard.wiFiSsid": "Wi-Fi SSID",
   "netWifiCard.wiFiWaypointWifi": "WI-FI (waypoint-wifi)",
-
   "network.appliesThroughConfirmRevert": "確認・自動復元機能付きで適用されます — 設定維持を選択しない場合自動的に元に戻ります。",
   "network.applyNetwork": "ネットワーク設定を適用",
   "network.editingHereWritesStore": "編集内容はストアに保存され、<b>[ネットワーク設定を適用]</b> を押すと誤設定による不通を防ぐ保護機能付きで NetworkManager 設定ファイルに反映されます。Waypoint が管理するのは自身で作成した <code>waypoint-*</code> プロファイルのみで、手動作成の接続は変更されません。",
   "network.loadingNetworkConfiguration": "ネットワーク設定を読み込み中…",
-
   "networks.enabledLabel": "{network} ネットワーク有効",
-
   "nodeLockRow.nodeLockPrivatePublic": "ノードロック (プライベート / パブリック)",
   "nodeLockRow.private": "プライベート",
   "nodeLockRow.public": "パブリック",
-
   "nxdn.commaSeparatedTgs10200": "カンマ区切り TG、例: 10200,65000",
   "nxdn.networkHang": "ネットワークハング",
   "nxdn.ran": "RAN",
@@ -715,15 +662,12 @@
   "nxdn.selfOnlyAcceptOnly": "自分のみ (自分の ID のみ許可)",
   "nxdn.startupTalkgroups": "スタートアップトークグループ",
   "nxdn.talkgroupListNotLoaded": "トークグループリストが未読み込みです (定期更新)。上のフィールドに番号を直接入力可能です。",
-
   "overrideRow.added": "追加済み",
   "overrideRow.removed": "削除済み",
-
   "overrides.dropInsLine": "オーバーライドファイルは {dir} 以下に配置され、ホストファイルフックは {prepend} · {append} に置かれます。これらは生成ファイルに最後にマージされ、更新処理の影響を受けません ({issue})。",
   "overrides.loadingOverrideLayer": "オーバーライドレイヤーを読み込み中…",
   "overrides.noOverridesActiveGenerated": "アクティブなオーバーライドはありません — 生成された構成はストア描画結果と同一です。",
   "overrides.overrides": "オーバーライド",
-
   "p25.commaSeparatedTgs10100": "カンマ区切り TG、例: 10100,10200",
   "p25.nacHex": "NAC (16進数)",
   "p25.networkHang": "ネットワークハング",
@@ -732,7 +676,6 @@
   "p25.selfOnlyAcceptOnly": "自分のみ (自分の ID のみ許可)",
   "p25.startupTalkgroups": "スタートアップトークグループ",
   "p25.talkgroupListNotLoaded": "トークグループリストが未読み込みです (定期更新)。上のフィールドに番号を直接入力可能です。",
-
   "peerModal.cancel": "キャンセル",
   "peerModal.confirm": "確定",
   "peerModal.confirmPairing": "ペアリングを確定",
@@ -744,7 +687,6 @@
   "peerModal.pairing": "ペアリング",
   "peerModal.pairingCode": "ペアリングコード",
   "peerModal.sLanPeersScreen": "の LAN Peers 画面を開き、ここで確定してください。",
-
   "peersCard.certificateFingerprint": "証明書のフィンガープリント",
   "peersCard.discoverPeers": "ピアを検出 (mDNS)",
   "peersCard.hostPort100": "ホスト:ポート — 例: 10.0.0.20:42501",
@@ -758,10 +700,8 @@
   "peersCard.peerHostPort": "ピアのホストとポート",
   "peersCard.revoke": "失効",
   "peersCard.scanning": "スキャン中…",
-
   "pending.settingsArenTWired": "設定がまだ連動していません — 設定ストアの今後のアップデートで対応予定です (",
   "pending.waypoint1": "waypoint#1",
-
   "pocsag.authkey": "AuthKey",
   "pocsag.blacklistCommaSeparatedRics": "ブラックリスト (カンマ区切り RIC)",
   "pocsag.callsignBlankStationCallsign": "コールサイン (空欄 = 自局のコールサイン)",
@@ -774,13 +714,11 @@
   "pocsag.pagingFrequency": "ページング周波数",
   "pocsag.ricFiltersOptional": "RIC フィルター (任意)",
   "pocsag.whitelistCommaSeparatedRics": "ホワイトリスト (カンマ区切り RIC)",
-
   "profileCard.activate": "有効化",
   "profileCard.active": "アクティブ",
   "profileCard.captured": "保存日時",
   "profileCard.delete": "削除",
   "profileCard.export": "エクスポート",
-
   "profiles.activatingProfileWritesIts": "プロファイルを有効化すると、保存されたモードとネットワーク設定が書き込まれてスタックが再起動します（[適用] と同様）。エクスポートファイルからは<b>パスワードが削除されます</b>。インポート時に再入力するかターゲットノードのパスワードが保持されます。コールサインや調整値はプロファイルに含まれません (<a href='https://github.com/KN4OQW/waypoint/blob/main/docs/rfcs/0006-connection-profiles.md'>RFC-0006</a>)。",
   "profiles.bmDmrDuplex": "例: BM DMR 複信",
   "profiles.importFile": "ファイルからインポート…",
@@ -790,12 +728,66 @@
   "profiles.profileName": "プロファイル名",
   "profiles.saveCurrentSetup": "現在の設定を保存",
   "profiles.saveProfile": "プロファイルを保存",
-
+  "publicview.activityTitle": "運用状況",
+  "publicview.addCallsign": "コールサイン",
+  "publicview.brandingTitle": "ブランディング",
+  "publicview.customHtml": "カスタムHTML",
+  "publicview.customHtmlWarning": "上級者向け。この内容はページの他の部分やセッションに到達できない隔離フレーム内で実行されますが、貼り付けた内容の責任はご自身にあります。",
+  "publicview.enabled": "公開ページを公開する",
+  "publicview.enabledHelp": "このノードに到達できる人は誰でもページを見ることができます。",
+  "publicview.freetext": "自由記入",
+  "publicview.gridOverride": "グリッドロケーター",
+  "publicview.linkHelp": "http:// と https:// のアドレスのみ受け付けます。",
+  "publicview.linkLabel": "ラベル",
+  "publicview.linkUrl": "アドレス",
+  "publicview.linksTitle": "外部リンク",
+  "publicview.loading": "読み込み中…",
+  "publicview.logo": "ロゴ",
+  "publicview.logoHelp": "PNGまたはJPEG、最大1MB。画像はここで再エンコードされ、含まれていた位置情報やカメラ情報は削除されます。",
+  "publicview.masterTitle": "公開ページ",
+  "publicview.modulesTitle": "モジュール",
+  "publicview.narrative": "このノードについて",
+  "publicview.netName": "名称",
+  "publicview.netNote": "備考",
+  "publicview.netTarget": "トークグループまたはリフレクター",
+  "publicview.netWhen": "日時",
+  "publicview.netsTitle": "定期ネット",
+  "publicview.offNote": "無効です。すべての公開アドレスは「見つかりません」を返します — 訪問者はこのノードと、この機能を一度も持たなかったノードを区別できません。まず表示内容を設定し、その後で有効にしてください。",
+  "publicview.onNote": "公開ページは次の場所で公開中です",
+  "publicview.powerLine": "出力とアンテナ",
+  "publicview.preview": "プレビュー",
+  "publicview.purposeTitle": "このノードの用途",
+  "publicview.reachTitle": "このノードへの接続方法",
+  "publicview.retention": "保持期間",
+  "publicview.retentionHelp": "公開ページがさかのぼる範囲（1〜168時間）。表示範囲を制限するだけで、データは削除されず、ご自身の履歴にも影響しません。",
+  "publicview.showCcTs": "カラーコードとタイムスロット",
+  "publicview.showCounters": "集計カウンター",
+  "publicview.showFreq": "周波数",
+  "publicview.showGrid": "グリッドロケーター",
+  "publicview.showGridHelp": "既定では無効です。所在地を示す唯一の項目です。",
+  "publicview.showLastHeard": "最近受信した局の一覧",
+  "publicview.showLinks": "外部リンク",
+  "publicview.showMap": "受信位置の地図",
+  "publicview.showMode": "モード",
+  "publicview.showNets": "定期ネット",
+  "publicview.showPowerLine": "出力とアンテナを表示",
+  "publicview.showQr": "QRコード",
+  "publicview.showStatus": "待機中 / 送信中",
+  "publicview.showTalkgroup": "アクティブなトークグループ",
+  "publicview.suppressEmpty": "非表示のコールサインはありません。",
+  "publicview.suppressHelp": "ここに登録したコールサインは、公開の受信履歴・カウンター・地図のいずれにも表示されません。SSIDやポータブル接尾辞は無視されるため、N4ABCを追加すればN4ABC-7やN4ABC/Mも対象になります。",
+  "publicview.suppressTitle": "非表示のコールサイン",
+  "publicview.tag.club_net": "クラブネット",
+  "publicview.tag.demo_event": "デモ / イベント",
+  "publicview.tag.emcomm": "非常通信",
+  "publicview.tag.experimental": "実験用",
+  "publicview.tag.net_control": "ネットコントロール",
+  "publicview.tag.personal_hotspot": "個人ホットスポット",
+  "publicview.tags": "タグ",
   "remoteAttachmentBlock.detach": "デタッチ",
   "remoteAttachmentBlock.dormant": "休止中",
   "remoteAttachmentBlock.peerNotPairedEdge": "ピア未ペアリング — 再ペアリングされるまでこのエッジは休止状態になります",
   "remoteAttachmentBlock.viaPeer": "ピア経由",
-
   "routingTable.addRoute": "+ ルートを追加",
   "routingTable.dialedTg": "ダイヤルされた TG",
   "routingTable.dialedTgTypeName": "ダイヤル TG — 名前または番号を入力",
@@ -803,26 +795,20 @@
   "routingTable.noOverridesEveryTalkgroup": "オーバーライドなし — すべてのトークグループはネットワークの接頭辞に従い、未ルーティングの通信はプライマリに転送されます。",
   "routingTable.slot": "スロット",
   "routingTable.talkgroupRouting": "トークグループルーティング",
-
   "settings.chooseSection": "ノードを設定するセクションを選択してください。",
   "settings.crumb": "設定",
   "settings.pageTitle": "Waypoint · 設定",
   "settings.title": "設定",
-
   "showNetworkConfirmBar.keepTheseNetworkSettings": "このネットワーク設定を保持しますか？",
   "showNetworkConfirmBar.nodeRevertsAutomatically": "設定は自動的に元の状態に戻ります (あと",
-
   "sidebar.callsign": "コールサイン",
   "sidebar.connecting": "接続中",
   "sidebar.offline": "オフライン",
   "sidebar.online": "オンライン",
   "sidebar.tagline": "ホットスポット制御",
-
   "stackApplyNow.applyAvailableStackUpdates": "利用可能なスタックのアップデートを今すぐ適用しますか？該当するサービスが再起動され、モデムが正常復帰しない場合は自動ロールバックされます。",
   "stackApplyNow.updateStartedHealthChecking": "更新を開始しました — スタックの正常性を確認中です。最大1分ほどかかる場合があります。",
-
   "startSweep.sweepingKeyRadioWhen": "スイープ中 — 促されたら無線機から送信（PTTオン）してください。",
-
   "station.callsignOverride": "コールサイン上書き",
   "station.eventHistory": "イベント履歴",
   "station.howLongNodeKeeps": "このノードが受信履歴やイベントログを本体ストレージに保持する期間。<b>0 で無期限。</b> 古いイベントは毎晩削除されます。長期間設定すると SD カード容量を消費します。",
@@ -834,7 +820,6 @@
   "station.retentionWindow": "保持期間",
   "station.stationIdentification": "局識別設定 (ID送出)",
   "station.toneLevel": "トーンレベル",
-
   "status.connected": "接続済み",
   "status.connecting": "接続中…",
   "status.dashboard": "ダッシュボード",
@@ -846,7 +831,6 @@
   "status.mode": "モード",
   "status.uptime": "稼働時間",
   "status.version": "バージョン",
-
   "tab.brandmeister.crumb": "ネットワーク / BRANDMEISTER",
   "tab.brandmeister.desc": "このノードが DMR トラフィックをブリッジするマスターサーバー。パスワードは保存され画面には表示されません。",
   "tab.brandmeister.label": "BrandMeister",
@@ -893,6 +877,11 @@
   "tab.profiles.label": "プロファイル",
   "tab.profiles.sub": "保存済み設定",
   "tab.profiles.title": "接続プロファイル",
+  "tab.publicview.crumb": "ADMIN / PUBLIC VIEW",
+  "tab.publicview.desc": "このノードについての読み取り専用ページを公開します — 接続方法、用途、受信した局。既定では無効で、有効にするまですべての公開アドレスは「見つかりません」を返します。各項目とモジュールは個別に制御でき、抑制リストに登録したコールサインは公開されるすべての情報から除外されます。",
+  "tab.publicview.label": "公開ビュー",
+  "tab.publicview.sub": "公開ページとブランディング",
+  "tab.publicview.title": "公開ビュー",
   "tab.setup.crumb": "システム / セットアップ",
   "tab.setup.desc": "TRX モードおよび MMDVM-Host ディスプレイドライバー。Waypoint はディスプレイなしで動作しますが、互換性および物理パネル制御のために提供されています。",
   "tab.setup.label": "セットアップ",
@@ -913,13 +902,11 @@
   "tab.updates.label": "アップデート",
   "tab.updates.sub": "バージョン & チャンネル",
   "tab.updates.title": "ソフトウェアアップデート",
-
   "tgMapEditor.addMapping": "＋ マッピングを追加",
   "tgMapEditor.dmrTg": "DMR TG",
   "tgMapEditor.removeMapping": "マッピングを削除",
   "tgMapEditor.sourceTg": "変換元 TG",
   "tgMapEditor.tgMapRewriteSource": "TG マッピング — 変換元トークグループを DMR TG に書き換え (任意)",
-
   "theme.amber": "アンバー",
   "theme.dark": "☾ ダーク",
   "theme.ice": "アイス",
@@ -929,11 +916,9 @@
   "theme.switchToDark": "ダークモードに切り替え",
   "theme.switchToLight": "ライトモードに切り替え",
   "theme.toggleLight": "ライトモードの切替",
-
   "time.hoursAgo": "{n}時間前",
   "time.minutesAgo": "{n}分前",
   "time.secondsAgo": "{n}秒前",
-
   "updates.applyingStopsAffectedServices": "適用すると対象サービスが停止し、新バージョンがインストールされた後に再起動・モデムの正常性テストが行われます。正常に復帰しない場合は<b>自動的に以前のバージョンへロールバック</b>されます。",
   "updates.applyingUpdateServicesAre": "<b>アップデートを適用中…</b> サービスの更新およびチェックを行っています。このページは自動的にリフレッシュされます。",
   "updates.automaticUpdateChecks": "自動アップデート確認",
@@ -959,7 +944,6 @@
   "updates.updateNow": "今すぐアップデート",
   "updates.updatePolicy": "アップデートポリシー",
   "updates.whatChanged": "変更内容",
-
   "ysf.aprsPositionBeacon": "APRS 位置情報ビーコン",
   "ysf.dgIdGateway": "DG-ID ゲートウェイ",
   "ysf.fcs00290YsfReflector": "例: FCS00290 または YSF リフレクター",
