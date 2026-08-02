@@ -144,7 +144,7 @@ func (s *Store) DeleteLink(id int64) error {
 func checkLink(l Link) (label, u string, err error) {
 	label = strings.TrimSpace(l.Label)
 	if label == "" {
-		return "", "", errors.New("publicview: link label is required")
+		return "", "", fmt.Errorf("%w: link label", ErrRequired)
 	}
 	u, err = ValidateURL(l.URL)
 	if err != nil {
@@ -209,10 +209,10 @@ func checkNet(n *Net) error {
 	n.Target = strings.TrimSpace(n.Target)
 	n.Note = strings.TrimSpace(n.Note)
 	if n.Name == "" {
-		return errors.New("publicview: net name is required")
+		return fmt.Errorf("%w: net name", ErrRequired)
 	}
 	if n.ScheduleText == "" {
-		return errors.New("publicview: net schedule is required")
+		return fmt.Errorf("%w: net schedule", ErrRequired)
 	}
 	return nil
 }

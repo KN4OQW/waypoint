@@ -4,12 +4,9 @@
     "tag": "en-US",
     "reviewed": true
   },
-
   "applyImport.importScannedConfigOverwrites": "Import the scanned config? This overwrites your current mode & network settings. You'll review and Apply afterward.",
   "applyImport.importedReviewSettingsThen": "Imported. Review the settings, then press Apply to regenerate configs and restart the stack.",
-
   "applyNetwork.networkChangeAppliedConfirm": "Network change applied — confirm to keep it before it reverts.",
-
   "attachParams.credentialsDmrNetwork": "Credentials (DMR network)",
   "attachParams.defaultId": "Default ID",
   "attachParams.defaultTg": "Default TG",
@@ -21,17 +18,13 @@
   "attachParams.reflectorDgId": "Reflector / DG-ID",
   "attachParams.slot": "Slot",
   "attachParams.wiresXPassthrough": "Wires-X passthrough",
-
   "attachPickerHTML.attachLocalModeGreyed": "Attach a local mode (greyed-out modes can't, reason shown):",
   "attachPickerHTML.attachMode": "＋ Attach mode",
   "attachPickerHTML.attachModePairedPeer": "Or attach a mode from a paired peer:",
   "attachPickerHTML.cancel": "Cancel",
   "attachPickerHTML.checkingWhichModesCan": "Checking which modes can attach…",
-
   "attachmentBlock.detach": "Detach",
-
   "baudRow.baudrate": "Baudrate",
-
   "bm.bmHotspotSecurity": "BM Hotspot Security",
   "bm.brandmeister": "Brandmeister",
   "bm.brandmeisterDashboards": "BrandMeister Dashboards",
@@ -65,17 +58,14 @@
   "bm.xlxNetworkSettings": "XLX Network Settings",
   "bm.xlxStartupModule": "XLX Startup Module",
   "bm.xlxStartupTg": "XLX Startup TG",
-
   "boardRow.notSet": "Not set",
   "boardRow.radioModem": "Radio / Modem",
-
   "busCard.busEnabled": "Bus enabled",
   "busCard.busNeedsLeastTwo": "A bus needs at least two attachments to hub traffic; add another mode before applying.",
   "busCard.delete": "Delete",
   "busCard.disabledItsAttachmentsAre": "Disabled — its attachments are kept and return when you re-enable it.",
   "busCard.localBus": "e.g. Local Bus A",
   "busCard.name": "Name",
-
   "cal.applyingWritesSameNumber": "Applying writes the same number to <b>both</b> RX and TX offset. A hotspot has one reference oscillator clocking both paths, so an error measured on receive is the same error transmitting — and the sweep can only measure the receive side without test equipment.",
   "cal.calibration": "CALIBRATION",
   "cal.calibrationCannotRunYet": "Calibration cannot run yet.",
@@ -89,21 +79,18 @@
   "cal.starting": "STARTING…",
   "cal.sweepDidNotFinish": "The sweep did not finish.",
   "cal.useOffset": "USE {offset}",
-
   "calCurve.best": "Best",
   "calCurve.curveIncompleteSweepRan": "<b>This curve is incomplete</b> — the sweep ran out of time or was stopped. What is drawn was measured; what is missing was not.",
   "calCurve.lowerBetter": "lower is better",
   "calCurve.nothingWasDecodedAny": "<b>Nothing was decoded at any frequency.</b> The radio was not transmitting, was not in DMR, or is outside the range the sweep covered.",
-
   "cancelSweep.stoppingSweepNodeComes": "Stopping the sweep — the node comes back on the air by itself.",
-
   "chrome.backToDashboard": "Back to dashboard",
   "chrome.language": "LANGUAGE",
   "chrome.skipToMain": "Skip to main content",
   "chrome.skipToSettings": "Skip to settings",
   "chrome.theme": "DISPLAY THEME",
   "chrome.unreviewed": "(unreviewed)",
-
+  "common.add": "Add",
   "common.apply": "APPLY CHANGES",
   "common.behaviour": "BEHAVIOUR",
   "common.cancel": "Cancel",
@@ -114,19 +101,20 @@
   "common.hangTimers": "HANG TIMERS",
   "common.passwordUnchanged": "•••••• unchanged",
   "common.remoteGatewayAdvancedLeave": "Remote gateway (advanced — leave off for local control)",
+  "common.remove": "Remove",
   "common.reset": "RESET",
+  "common.save": "Save",
   "common.selfOnlyAcceptOnly": "Self only (accept only my callsign)",
   "common.startupReflector": "Startup reflector",
+  "common.upload": "Upload",
   "common.voiceAnnouncements": "Voice announcements",
   "common.willNotStart": "Will not start",
-
   "confirmNetwork.browserDoesnTHold": "This browser doesn't hold the confirm token for the pending change — confirm from the tab that applied it, or let it revert.",
   "confirmNetwork.dStar": "D-Star",
   "confirmNetwork.dmr": "DMR",
   "confirmNetwork.networkSettingsKept": "Network settings kept.",
   "confirmNetwork.nxdn": "NXDN",
   "confirmNetwork.ysf": "YSF",
-
   "dash.crumb": "STATUS / LIVE",
   "dash.eventlog.event": "Event",
   "dash.eventlog.head": "EVENT LOG",
@@ -164,13 +152,10 @@
   "dash.onair.to": " to ",
   "dash.pageTitle": "Waypoint · Dashboard",
   "dash.title": "Dashboard",
-
   "detectModem.modemUseMmdvmHost": "The modem is in use by MMDVM-Host, so it cannot answer.\\n\\nStop it, look for the modem, and start it again? This node will be off the air for a few seconds.",
-
   "deviceCard.gateway": "Gateway",
   "deviceCard.profile": "Profile",
   "deviceCard.state": "State",
-
   "display.columns": "Columns",
   "display.controlSoftware": "CONTROL SOFTWARE",
   "display.display": "DISPLAY",
@@ -188,7 +173,6 @@
   "display.rows": "Rows",
   "display.simplexNode": "Simplex Node",
   "display.trxMode": "TRX Mode",
-
   "dmr.callHold": "Call hold (TG hold)",
   "dmr.colorCode": "Color Code",
   "dmr.dmrId": "DMR ID",
@@ -202,7 +186,6 @@
   "dmr.timeSlot2Enabled": "Time Slot 2 Enabled",
   "dmr.timeSlotsAdvanced": "TIME SLOTS & ADVANCED",
   "dmr.txHang": "TX hang",
-
   "dstar.blankAnonymous": "blank = anonymous",
   "dstar.dPlusLogin": "D-Plus login",
   "dstar.dPlusRefNeeds": "D-Plus (REF — needs a registered callsign)",
@@ -218,14 +201,11 @@
   "dstar.registeredCallsignBlankStation": "registered callsign (blank = station callsign)",
   "dstar.rfBehaviour": "RF BEHAVIOUR",
   "dstar.usernameBlankCallsign": "Username (blank = callsign)",
-
   "essidSelect.none": "None",
-
   "expert.configStore": "Config store",
   "expert.dashboardWaypointd": "Dashboard (waypointd)",
   "expert.rawIniEditingPower": "Raw INI editing and power controls land in a later slice. Config now lives in the store; the INIs are regenerated on Apply — <a href='https://github.com/KN4OQW/waypoint/issues/29'>waypoint#29</a>.",
   "expert.versions": "VERSIONS",
-
   "firmware.available": "Available",
   "firmware.checkFirmware": "CHECK FOR FIRMWARE",
   "firmware.firmwareDownloadedSignedRelease": "Firmware is downloaded from a signed release and its signature checked before a byte reaches the modem. On a GPIO board the bootloader lives in the chip and cannot be erased, so an interrupted flash is recoverable by trying again.",
@@ -242,13 +222,10 @@
   "firmware.runningNow": "Running now",
   "firmware.waypointWillNotChoose": "Waypoint will not choose this for you.",
   "firmware.wouldWrite": "Would write",
-
   "fixUART.freeGpioSerialPort": "Free the GPIO serial port for the modem?\\n\\nThis edits config.txt and cmdline.txt on the boot partition and masks the serial login service. The node must be rebooted afterwards.",
   "fixUART.gpioSerialPortWas": "The GPIO serial port was already free.",
   "fixUART.hostHasNoRaspberry": "This host has no Raspberry Pi boot partition, so there is no GPIO serial port to free.",
-
   "flashFirmware.flashingDoNotPower": "Flashing — do not power the node off.",
-
   "fm.0CarrierAccessCos": "0 — Carrier access with COS",
   "fm.1CtcssAccessNo": "1 — CTCSS access, no COS",
   "fm.2CtcssAccessCos": "2 — CTCSS access with COS",
@@ -262,18 +239,14 @@
   "fm.rfAudioBoost": "RF audio boost",
   "fm.timeout": "Timeout",
   "fm.timing": "TIMING",
-
   "foot.source": "source",
   "foot.version": "waypointd {version}",
-
   "fwProgressHTML.firmwareFlashProgress": "Firmware flash progress",
-
   "gateways.createBus": "＋ Create bus",
   "gateways.migrateBridgesBus": "Migrate bridges → bus",
   "gateways.migrateRetiredBridges": "MIGRATE FROM RETIRED BRIDGES",
   "gateways.noBusesYetBus": "No buses yet. A <b>bus</b> lets its attached modes hear each other (DMR ⇄ YSF ⇄ NXDN), with IDs/talkgroups translated per side. Create one, then attach two or more modes.",
   "gateways.oldPerModeBridges": "The old per-mode bridges (YSF2DMR, DMR2YSF, YSF2NXDN, DMR2NXDN, NXDN2DMR) are retired. Migration seeds a bus from whatever you had configured — your saved bridge settings are <b>preserved either way</b>, migration only <b>adds</b> a bus, it never deletes anything.",
-
   "general.calibration": "CALIBRATION",
   "general.callsign": "Callsign",
   "general.dStar": "D-Star",
@@ -313,7 +286,6 @@
   "general.txInvert": "TX Invert",
   "general.txLevel": "TX Level",
   "general.txOffset": "TX Offset",
-
   "hardware.adoptingWritesPortLine": "Adopting writes the port, line speed, board and reference oscillator into this node's configuration. An oscillator the firmware did not actually report is never written — a reference frequency guessed wrong detunes the radio.",
   "hardware.attachedModem": "ATTACHED MODEM",
   "hardware.board": "This board is a",
@@ -348,7 +320,6 @@
   "hardware.uartDefault": "115200 (default)",
   "hardware.useDetectedModem": "USE THE DETECTED MODEM",
   "hardware.useModem": "USE THIS MODEM",
-
   "help.display.hd44780_cols": "Characters per row — usually 16 or 20.",
   "help.display.hd44780_i2c_addr": "I2C address of the panel's PCF8574 backpack, in hex. <code>0x27</code> and <code>0x3F</code> cover most modules.",
   "help.display.hd44780_rows": "Character rows on the panel — 2 and 4 are the common sizes.",
@@ -488,12 +459,10 @@
   "help.ysfgw.wiresx_passthrough": "Pass Wires-X commands from the radio through to the network, so you can change reflectors from the radio's own menu instead of this page.",
   "help.ysfgw.ycs_network": "Connect to YCS servers, which add per-talkgroup routing on top of YSF.",
   "help.ysfgw.ysf_network": "Connect to the YSF reflector network.",
-
   "hostlistNote.listCouldNotDownloaded": "This list could not be downloaded, so the picker below is empty.",
   "hostlistNote.listEmpty": "This list is empty.",
   "hostlistNote.listMayOutDate": "This list may be out of date.",
   "hostlistNote.showingListShippedWaypoint": "Showing the list that shipped with Waypoint.",
-
   "import.copyIncumbentSEtc": "Copy the incumbent's <code>/etc/mmdvmhost</code>, <code>/etc/dmrgateway</code> and other gateway config files off the old card, or mount the card and give its path. Nothing is written until you press <b>Import</b>.",
   "import.importPiStarWpsd": "IMPORT FROM PI-STAR / WPSD",
   "import.mntSdcardMedia": "/mnt/sdcard  (or /media/…)",
@@ -501,9 +470,7 @@
   "import.mountedIncumbentCardPath": "Mounted incumbent card path",
   "import.scanDirectory": "SCAN DIRECTORY",
   "import.uploadConfigFiles": "…or upload config files",
-
   "importProfile.profileNameAlreadyExists": "A profile with that name already exists. Overwrite it?",
-
   "importReport.apply": "Apply",
   "importReport.detected": "Detected",
   "importReport.dmrNetworks": "DMR NETWORKS",
@@ -516,7 +483,6 @@
   "importReport.scanResult": "SCAN RESULT",
   "importReport.theseIncumbentFeaturesAren": "These incumbent features aren't modeled yet — reconfigure them in Waypoint after importing.",
   "importReport.wonTCarryOver": "WON'T CARRY OVER",
-
   "ipv4Editor.dhcpAutomatic": "DHCP (automatic)",
   "ipv4Editor.dhcpListingDnsServers": "With DHCP, listing DNS servers here <b>replaces</b> the ones the DHCP server hands out (ignore-auto-dns).",
   "ipv4Editor.gateway": "Gateway",
@@ -526,7 +492,6 @@
   "ipv4Editor.prefixCidr": "Prefix (CIDR)",
   "ipv4Editor.searchDomainsOptional": "Search domains (optional)",
   "ipv4Editor.static": "Static",
-
   "lcd.addPage": "+ ADD PAGE",
   "lcd.colsOption": "{n} columns",
   "lcd.columns": "Columns",
@@ -585,12 +550,9 @@
   "lcd.tokenPaletteTitle": "{desc} — inserts {token}",
   "lcd.warnUnknownToken": "⚠ Unknown token: {tokens} — check spelling; unknown tokens render blank.",
   "lcd.warnUnknownTokens": "⚠ Unknown tokens: {tokens} — check spelling; unknown tokens render blank.",
-
   "lcdLegend.tokenReference": "TOKEN REFERENCE",
-
   "leds.modeDisabled": "{mode} disabled",
   "leds.modeEnabled": "{mode} enabled",
-
   "log.gatewayStatus": "{network}: {detail}",
   "log.link": "{network}: {detail}",
   "log.linkDown": "{network} link lost",
@@ -607,7 +569,6 @@
   "log.rfStart": "{source} keyed up → {dest} ({mode}{slot})",
   "log.slot": " S{slot}",
   "log.supervisorAction": "supervisor: {detail}",
-
   "m17.allowEncryptedM17Frames": "Allow encrypted M17 frames",
   "m17.can": "CAN",
   "m17.hangTimer": "HANG TIMER",
@@ -618,19 +579,15 @@
   "m17.revertStartupReflectorAfter": "Revert to startup reflector after inactivity",
   "m17.suffixHotspot": "H — hotspot",
   "m17.suffixRepeater": "R — repeater",
-
   "masterSelect.hostListLoading2": "host list loading…",
   "masterSelect.selectMaster": "— select master —",
-
   "modes.cardLabel": "{mode} mode",
   "modes.modeEnable": "MODE ENABLE",
   "modes.modeSettings": "MODE SETTINGS",
   "modes.srDisabled": " (disabled)",
   "modes.srEnabled": " (enabled)",
   "modes.turnModeHaveMmdvm": "Turn a mode on to have MMDVM-Host handle it. Toggling one restarts the stack on Apply.",
-
   "modesSection.modeSettings": "Mode settings",
-
   "nav.allSettings": "All settings",
   "nav.configSections": "Configuration sections",
   "nav.configuration": "CONFIGURATION",
@@ -645,9 +602,7 @@
   "nav.primary": "Primary",
   "nav.settings": "Settings",
   "nav.settingsSub": "CONFIGURE NODE",
-
   "netEthCard.ethernetWaypointEth0": "ETHERNET (waypoint-eth0)",
-
   "netHostCard.appliesImmediatelyHostnameTimezone": "Applies immediately (hostname, timezone &amp; NTP can't strand the node).",
   "netHostCard.applyHostSettings": "APPLY HOST SETTINGS",
   "netHostCard.hostTimeNtp": "HOST · TIME · NTP",
@@ -664,18 +619,15 @@
   "netHostCard.tzHintDismiss": "Dismiss",
   "netHostCard.tzHintUse": "Use it",
   "netHostCard.tzNoMatch": "No matching timezones",
-
   "netScanSection.nearbyNetworks": "NEARBY NETWORKS",
   "netScanSection.noNetworksFoundYet": "No networks found yet — press Rescan, or enter an SSID above for a hidden network.",
   "netScanSection.rescan": "RESCAN",
-
   "netStatusSection.fetchingLiveNetworkStatus": "Fetching live network status…",
   "netStatusSection.hostLive": "HOST (LIVE)",
   "netStatusSection.hostname": "Hostname",
   "netStatusSection.liveStatus": "LIVE STATUS",
   "netStatusSection.noLiveEthernetWi": "No live Ethernet or Wi-Fi interfaces reported.",
   "netStatusSection.wiFi": "Wi-Fi",
-
   "netVlanCard.addVlan": "+ ADD VLAN",
   "netVlanCard.labelOptional": "Label (optional)",
   "netVlanCard.noVlansAddOne": "No VLANs. Add one to put a tagged interface on a parent device.",
@@ -685,7 +637,6 @@
   "netVlanCard.vlanId14094": "VLAN id (1–4094)",
   "netVlanCard.vlanLabel": "VLAN label",
   "netVlanCard.vlans": "VLANs",
-
   "netWifiCard.hiddenNetwork": "Hidden network",
   "netWifiCard.passphrase": "Passphrase",
   "netWifiCard.regulatoryCountry": "Regulatory country",
@@ -696,18 +647,14 @@
   "netWifiCard.wiFiPassphrase": "Wi-Fi passphrase",
   "netWifiCard.wiFiSsid": "Wi-Fi SSID",
   "netWifiCard.wiFiWaypointWifi": "WI-FI (waypoint-wifi)",
-
   "network.appliesThroughConfirmRevert": "Applies through confirm-or-revert — you'll get a countdown to keep the change before it auto-reverts.",
   "network.applyNetwork": "APPLY NETWORK",
   "network.editingHereWritesStore": "Editing here writes the store and, on <b>Apply Network</b>, renders NetworkManager keyfiles behind a confirm-or-revert guard so a bad change can't strand the node. Waypoint only manages its own <code>waypoint-*</code> profiles; your hand-made connections are never touched.",
   "network.loadingNetworkConfiguration": "Loading network configuration…",
-
   "networks.enabledLabel": "{network} network enabled",
-
   "nodeLockRow.nodeLockPrivatePublic": "Node Lock (Private / Public)",
   "nodeLockRow.private": "PRIVATE",
   "nodeLockRow.public": "PUBLIC",
-
   "nxdn.commaSeparatedTgs10200": "comma-separated TGs, e.g. 10200,65000",
   "nxdn.networkHang": "Network hang",
   "nxdn.ran": "RAN",
@@ -715,15 +662,12 @@
   "nxdn.selfOnlyAcceptOnly": "Self only (accept only my ID)",
   "nxdn.startupTalkgroups": "Startup talkgroups",
   "nxdn.talkgroupListNotLoaded": "Talkgroup list not loaded yet (fetched from the NXDN register on a schedule). You can still type talkgroup numbers above.",
-
   "overrideRow.added": "ADDED",
   "overrideRow.removed": "REMOVED",
-
   "overrides.dropInsLine": "Override drop-ins live under {dir} and host-file hooks under {prepend} · {append}. They merge last into the generated files and are never touched by an update ({issue}).",
   "overrides.loadingOverrideLayer": "Loading override layer…",
   "overrides.noOverridesActiveGenerated": "No overrides active — the generated configuration is exactly what the store renders.",
   "overrides.overrides": "OVERRIDES",
-
   "p25.commaSeparatedTgs10100": "comma-separated TGs, e.g. 10100,10200",
   "p25.nacHex": "NAC (hex)",
   "p25.networkHang": "Network hang",
@@ -732,7 +676,6 @@
   "p25.selfOnlyAcceptOnly": "Self only (accept only my ID)",
   "p25.startupTalkgroups": "Startup talkgroups",
   "p25.talkgroupListNotLoaded": "Talkgroup list not loaded yet (fetched from the P25 register on a schedule). You can still type talkgroup numbers above.",
-
   "peerModal.cancel": "Cancel",
   "peerModal.confirm": "Confirm",
   "peerModal.confirmPairing": "Confirm pairing",
@@ -744,7 +687,6 @@
   "peerModal.pairing": "PAIRING",
   "peerModal.pairingCode": "pairing code",
   "peerModal.sLanPeersScreen": "'s LAN Peers screen, then confirm here.",
-
   "peersCard.certificateFingerprint": "certificate fingerprint",
   "peersCard.discoverPeers": "Discover peers (mDNS)",
   "peersCard.hostPort100": "host:port — e.g. 10.0.0.20:42501",
@@ -758,10 +700,8 @@
   "peersCard.peerHostPort": "peer host and port",
   "peersCard.revoke": "Revoke",
   "peersCard.scanning": "Scanning…",
-
   "pending.settingsArenTWired": "settings aren't wired yet — a later slice of the configuration store (",
   "pending.waypoint1": "waypoint#1",
-
   "pocsag.authkey": "AuthKey",
   "pocsag.blacklistCommaSeparatedRics": "Blacklist (comma-separated RICs)",
   "pocsag.callsignBlankStationCallsign": "Callsign (blank = station callsign)",
@@ -774,13 +714,11 @@
   "pocsag.pagingFrequency": "Paging frequency",
   "pocsag.ricFiltersOptional": "RIC FILTERS (OPTIONAL)",
   "pocsag.whitelistCommaSeparatedRics": "Whitelist (comma-separated RICs)",
-
   "profileCard.activate": "ACTIVATE",
   "profileCard.active": "ACTIVE",
   "profileCard.captured": "Captured",
   "profileCard.delete": "DELETE",
   "profileCard.export": "EXPORT",
-
   "profiles.activatingProfileWritesIts": "Activating a profile writes its saved modes & networks and restarts the stack — the same as an Apply. Exported files have <b>passwords removed</b>; on import you re-enter any that are needed (or the target node keeps its own). Identity and calibration are never in a profile (<a href='https://github.com/KN4OQW/waypoint/blob/main/docs/rfcs/0006-connection-profiles.md'>RFC-0006</a>).",
   "profiles.bmDmrDuplex": "e.g. BM DMR duplex",
   "profiles.importFile": "Import from file…",
@@ -790,12 +728,66 @@
   "profiles.profileName": "Profile name",
   "profiles.saveCurrentSetup": "SAVE CURRENT SETUP",
   "profiles.saveProfile": "SAVE PROFILE",
-
+  "publicview.activityTitle": "Activity",
+  "publicview.addCallsign": "Callsign",
+  "publicview.brandingTitle": "Branding",
+  "publicview.customHtml": "Custom HTML",
+  "publicview.customHtmlWarning": "Advanced. This runs in an isolated frame that cannot reach the rest of the page or your session — but you own what you paste here.",
+  "publicview.enabled": "Publish a public page",
+  "publicview.enabledHelp": "Anyone who can reach this node will be able to see the page.",
+  "publicview.freetext": "In your words",
+  "publicview.gridOverride": "Grid square",
+  "publicview.linkHelp": "Only http:// and https:// addresses are accepted.",
+  "publicview.linkLabel": "Label",
+  "publicview.linkUrl": "Address",
+  "publicview.linksTitle": "External links",
+  "publicview.loading": "Loading…",
+  "publicview.logo": "Logo",
+  "publicview.logoHelp": "PNG or JPEG, up to 1 MB. The image is re-encoded here, which removes any location and camera information the file was carrying.",
+  "publicview.masterTitle": "Public page",
+  "publicview.modulesTitle": "Modules",
+  "publicview.narrative": "About this node",
+  "publicview.netName": "Name",
+  "publicview.netNote": "Note",
+  "publicview.netTarget": "Talkgroup or reflector",
+  "publicview.netWhen": "When",
+  "publicview.netsTitle": "Scheduled nets",
+  "publicview.offNote": "Off. Every public address answers \"not found\" — a visitor cannot tell this node from one that never had the feature. Configure what you want shown first, then switch it on.",
+  "publicview.onNote": "The public page is live at",
+  "publicview.powerLine": "Power and antenna",
+  "publicview.preview": "Preview",
+  "publicview.purposeTitle": "What this node is for",
+  "publicview.reachTitle": "How to reach this node",
+  "publicview.retention": "Retention",
+  "publicview.retentionHelp": "How far back the public page looks, 1 to 168 hours. This only limits what is shown — nothing is deleted, and your own history is unaffected.",
+  "publicview.showCcTs": "Colour code and timeslots",
+  "publicview.showCounters": "Summary counters",
+  "publicview.showFreq": "Frequencies",
+  "publicview.showGrid": "Grid square",
+  "publicview.showGridHelp": "Off by default. This is the one field that says where you are.",
+  "publicview.showLastHeard": "Last heard list",
+  "publicview.showLinks": "External links",
+  "publicview.showMap": "Map of heard positions",
+  "publicview.showMode": "Modes",
+  "publicview.showNets": "Scheduled nets",
+  "publicview.showPowerLine": "Show power and antenna",
+  "publicview.showQr": "QR code",
+  "publicview.showStatus": "Idle / transmitting",
+  "publicview.showTalkgroup": "Active talkgroup",
+  "publicview.suppressEmpty": "No callsigns suppressed.",
+  "publicview.suppressHelp": "Callsigns here never appear in the public last-heard list, the counters or the map. SSIDs and portable suffixes are ignored, so adding N4ABC also covers N4ABC-7 and N4ABC/M.",
+  "publicview.suppressTitle": "Suppressed callsigns",
+  "publicview.tag.club_net": "Club net",
+  "publicview.tag.demo_event": "Demo / event",
+  "publicview.tag.emcomm": "Emcomm",
+  "publicview.tag.experimental": "Experimental",
+  "publicview.tag.net_control": "Net control",
+  "publicview.tag.personal_hotspot": "Personal hotspot",
+  "publicview.tags": "Tags",
   "remoteAttachmentBlock.detach": "Detach",
   "remoteAttachmentBlock.dormant": "DORMANT",
   "remoteAttachmentBlock.peerNotPairedEdge": "peer not paired — this edge is dormant until re-paired",
   "remoteAttachmentBlock.viaPeer": "VIA PEER",
-
   "routingTable.addRoute": "+ ADD ROUTE",
   "routingTable.dialedTg": "Dialed TG",
   "routingTable.dialedTgTypeName": "dialed TG — type a name or number",
@@ -803,26 +795,20 @@
   "routingTable.noOverridesEveryTalkgroup": "No overrides — every talkgroup follows its network's prefix, and anything unrouted goes to the primary.",
   "routingTable.slot": "Slot",
   "routingTable.talkgroupRouting": "TALKGROUP ROUTING",
-
   "settings.chooseSection": "Choose a section to configure this node.",
   "settings.crumb": "SETTINGS",
   "settings.pageTitle": "Waypoint · Settings",
   "settings.title": "Settings",
-
   "showNetworkConfirmBar.keepTheseNetworkSettings": "Keep these network settings?",
   "showNetworkConfirmBar.nodeRevertsAutomatically": "The node reverts automatically (in",
-
   "sidebar.callsign": "CALLSIGN",
   "sidebar.connecting": "CONNECTING",
   "sidebar.offline": "OFFLINE",
   "sidebar.online": "ONLINE",
   "sidebar.tagline": "HOTSPOT CONTROL",
-
   "stackApplyNow.applyAvailableStackUpdates": "Apply the available stack updates now? The affected services restart, and the update rolls back automatically if the modem does not come back up.",
   "stackApplyNow.updateStartedHealthChecking": "Update started — health-checking the stack; this may take up to a minute.",
-
   "startSweep.sweepingKeyRadioWhen": "Sweeping — key your radio when it asks.",
-
   "station.callsignOverride": "Callsign override",
   "station.eventHistory": "EVENT HISTORY",
   "station.howLongNodeKeeps": "How long this node keeps its persistent last-heard and event log (stored on-device). <b>0 keeps history forever.</b> Older events are pruned nightly; a longer window uses more SD-card space.",
@@ -834,7 +820,6 @@
   "station.retentionWindow": "Retention window",
   "station.stationIdentification": "STATION IDENTIFICATION",
   "station.toneLevel": "Tone level",
-
   "status.connected": "connected",
   "status.connecting": "connecting…",
   "status.dashboard": "DASHBOARD",
@@ -846,7 +831,6 @@
   "status.mode": "MODE",
   "status.uptime": "UPTIME",
   "status.version": "VERSION",
-
   "tab.brandmeister.crumb": "NETWORKS / BRANDMEISTER",
   "tab.brandmeister.desc": "Master servers this node bridges DMR traffic to. Passwords are stored on the node and never shown.",
   "tab.brandmeister.label": "BrandMeister",
@@ -893,6 +877,11 @@
   "tab.profiles.label": "Profiles",
   "tab.profiles.sub": "Saved Setups",
   "tab.profiles.title": "Connection Profiles",
+  "tab.publicview.crumb": "ADMIN / PUBLIC VIEW",
+  "tab.publicview.desc": "Publish a read-only page about this node — how to reach it, what it is for, and who has been heard. Off by default: until you enable it every public address answers \"not found\". Each field and module is controlled separately, and a suppress list keeps named callsigns out of everything published.",
+  "tab.publicview.label": "Public View",
+  "tab.publicview.sub": "Public Page & Branding",
+  "tab.publicview.title": "Public View",
   "tab.setup.crumb": "SYSTEM / SETUP",
   "tab.setup.desc": "TRX mode and the MMDVM-Host display driver. Waypoint runs display-free (status is served over MQTT); these fields are here for parity and for nodes driving a physical panel.",
   "tab.setup.label": "Setup",
@@ -913,13 +902,11 @@
   "tab.updates.label": "Updates",
   "tab.updates.sub": "Version & Channel",
   "tab.updates.title": "Software Updates",
-
   "tgMapEditor.addMapping": "＋ Add mapping",
   "tgMapEditor.dmrTg": "DMR TG",
   "tgMapEditor.removeMapping": "Remove mapping",
   "tgMapEditor.sourceTg": "source TG",
   "tgMapEditor.tgMapRewriteSource": "TG map — rewrite a source-side talkgroup to a DMR TG (optional)",
-
   "theme.amber": "amber",
   "theme.dark": "☾ Dark",
   "theme.ice": "ice",
@@ -929,11 +916,9 @@
   "theme.switchToDark": "Switch to dark",
   "theme.switchToLight": "Switch to light",
   "theme.toggleLight": "Toggle light mode",
-
   "time.hoursAgo": "{n}h ago",
   "time.minutesAgo": "{n}m ago",
   "time.secondsAgo": "{n}s ago",
-
   "updates.applyingStopsAffectedServices": "Applying stops the affected services, installs the new versions, restarts, and health-checks the modem. If the stack does not come back up healthy it is <b>automatically rolled back</b> to the previous versions.",
   "updates.applyingUpdateServicesAre": "<b>Applying an update…</b> Services are being updated and health-checked. This page refreshes automatically.",
   "updates.automaticUpdateChecks": "Automatic update checks",
@@ -959,7 +944,6 @@
   "updates.updateNow": "UPDATE NOW",
   "updates.updatePolicy": "UPDATE POLICY",
   "updates.whatChanged": "What changed",
-
   "ysf.aprsPositionBeacon": "APRS position beacon",
   "ysf.dgIdGateway": "DG-ID GATEWAY",
   "ysf.fcs00290YsfReflector": "e.g. FCS00290 or a YSF reflector",

@@ -27,6 +27,7 @@ const TABS = [
   { id: "network",      tag: "NW" },
   { id: "gateways",     tag: "GW" },
   { id: "profiles",     tag: "PF" },
+  { id: "publicview",   tag: "PV" },
   { id: "updates",      tag: "UP" },
   { id: "system",       tag: "SS" },
   { id: "expert",       tag: "SY" },
@@ -3497,6 +3498,7 @@ function renderPanel() {
     case "modes":        box.innerHTML = panelModesSection(); break;
     case "profiles":     box.innerHTML = panelProfiles(); break;
     case "station":      box.innerHTML = panelStation(); break;
+    case "publicview":   box.innerHTML = panelPublicView(); pvAfterRender(); break;
     case "updates":      box.innerHTML = panelUpdates(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "system":       box.innerHTML = panelSystem(c); break;
@@ -3815,6 +3817,13 @@ function crumbFor(t) {
 function selectTab(id, sub) {
   const target = resolveTarget(sub ? id + "/" + sub : id);
   state.tab = target.id;
+  // The Public View tab reads its own endpoints rather than the config model, so
+  // it fetches on selection. Loading it with everything else would put five
+  // requests on the critical path of a page most operators open to change a
+  // frequency.
+  if (target.id === "publicview" && !pv.set) {
+    pvLoad().then(renderPanel);
+  }
   if (target.id === "modes") {
     state.sub = target.sub;
     try { localStorage.setItem(MODE_SUB_KEY, target.sub); } catch (e) { /* storage blocked — sub-tab is per-session */ }
@@ -4406,6 +4415,33 @@ document.getElementById("panels").addEventListener("input", (e) => {
   }
 });
 document.getElementById("panels").addEventListener("click", (e) => {
+  // --- Public View panel (D1-D8) ---
+  // Handled before everything else so its controls cannot be captured by a more
+  // general selector below. Each writes immediately; there is no Apply here.
+  const pvT = e.target.closest("[data-pv-toggle]");
+  if (pvT) { pvToggle(pvT.dataset.pvToggle); return; }
+  const pvTag = e.target.closest("[data-pv-tag]");
+  if (pvTag) { pvToggleTag(pvTag.dataset.pvTag); return; }
+  const pvUn = e.target.closest("[data-pv-unsuppress]");
+  if (pvUn) { pvRemoveSuppress(pvUn.dataset.pvUnsuppress); return; }
+  const pvDL = e.target.closest("[data-pv-dellink]");
+  if (pvDL) { pvDeleteLink(pvDL.dataset.pvDellink); return; }
+  const pvDN = e.target.closest("[data-pv-delnet]");
+  if (pvDN) { pvDeleteNet(pvDN.dataset.pvDelnet); return; }
+  const pvA = e.target.closest("[data-pv-action]");
+  if (pvA) {
+    switch (pvA.dataset.pvAction) {
+      case "add-suppress":   pvAddSuppress(); break;
+      case "add-link":       pvAddLink(); break;
+      case "add-net":        pvAddNet(); break;
+      case "upload-logo":    pvUploadLogo(); break;
+      case "clear-logo":     pvClearLogo(); break;
+      case "save-narrative": pvSaveBranding("narrative", "pv-narrative"); break;
+      case "save-custom":    pvSaveBranding("custom", "pv-custom"); break;
+    }
+    return;
+  }
+
   // --- inline help disclosure (#135) ---
   // Toggled in place rather than via renderPanel: the text is already in the DOM,
   // so this only flips its visibility, and skipping the re-render keeps the
@@ -4690,3 +4726,319 @@ WPI18n.ready.then(() => {
     startPeeringPoll();
   })();
 });
+
+
+/* ===========================================================================
+   Public View (D1-D8)
+   ===========================================================================
+
+   This panel is different from every other one in this file, and the difference
+   is not cosmetic: nothing here renders an INI or restarts a daemon. Turning the
+   public page on writes a row and takes effect on the next request, so these
+   controls save immediately and the tab has no Apply button. Routing a net
+   schedule through the render-and-restart pipeline would mean restarting a
+   repeater to publish it.
+
+   The panel is fully usable with the public view switched OFF, which is the
+   order an operator actually works in: configure what would be shown, look at it,
+   then decide to enable. A panel that demanded the switch first would make the
+   first thing they do the irreversible-feeling one. */
+
+// pv holds the panel's own state. It is deliberately not part of `edit`: `edit`
+// is the config model, dirty-tracked and flushed by apply(), and none of that
+// applies here.
+const pv = { set: null, tags: [], links: [], nets: [], suppress: [], branding: null, err: "" };
+
+async function pvLoad() {
+  try {
+    const [set, links, nets, sup, brand] = await Promise.all([
+      fetch("/api/public-view/settings").then((r) => r.json()),
+      fetch("/api/public-view/links").then((r) => r.json()),
+      fetch("/api/public-view/nets").then((r) => r.json()),
+      fetch("/api/public-view/suppress").then((r) => r.json()),
+      fetch("/api/branding").then((r) => r.json()),
+    ]);
+    pv.set = set;
+    pv.tags = set.available_tags || [];
+    pv.links = links.links || [];
+    pv.nets = nets.nets || [];
+    pv.suppress = sup.callsigns || [];
+    pv.branding = brand;
+    pv.err = "";
+  } catch (e) {
+    pv.err = String((e && e.message) || e);
+  }
+}
+
+// pvSave writes the settings row. Every toggle calls it, so a change is durable
+// the moment it is made — there is no half-configured state sitting in a browser
+// tab that an operator might close, and no Apply button to forget.
+async function pvSave() {
+  if (!pv.set) return;
+  const body = Object.assign({}, pv.set);
+  delete body.available_tags;
+  delete body.min_retention_hours;
+  delete body.max_retention_hours;
+  const r = await fetch("/api/public-view/settings", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    pv.err = (await r.text()).trim();
+  } else {
+    pv.err = "";
+  }
+  await pvLoad();
+  renderPanel();
+}
+
+function pvToggle(key) {
+  if (!pv.set) return;
+  pv.set[key] = !pv.set[key];
+  pvSave();
+}
+
+function pvSetField(key, value) {
+  if (!pv.set) return;
+  pv.set[key] = value;
+  pvSave();
+}
+
+function pvToggleTag(tag) {
+  if (!pv.set) return;
+  const cur = pv.set.purpose_tags || [];
+  pv.set.purpose_tags = cur.includes(tag) ? cur.filter((t) => t !== tag) : cur.concat([tag]);
+  pvSave();
+}
+
+async function pvAddSuppress() {
+  const el = document.getElementById("pv-sup-input");
+  if (!el || !el.value.trim()) return;
+  const r = await fetch("/api/public-view/suppress", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ callsign: el.value }),
+  });
+  pv.err = r.ok ? "" : (await r.text()).trim();
+  await pvLoad();
+  renderPanel();
+}
+
+async function pvRemoveSuppress(call) {
+  await fetch("/api/public-view/suppress?callsign=" + encodeURIComponent(call), { method: "DELETE" });
+  await pvLoad();
+  renderPanel();
+}
+
+async function pvAddLink() {
+  const label = (document.getElementById("pv-link-label") || {}).value || "";
+  const url = (document.getElementById("pv-link-url") || {}).value || "";
+  const r = await fetch("/api/public-view/links", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label: label, url: url, sort_order: pv.links.length }),
+  });
+  pv.err = r.ok ? "" : (await r.text()).trim();
+  await pvLoad();
+  renderPanel();
+}
+
+async function pvDeleteLink(id) {
+  await fetch("/api/public-view/links/" + id, { method: "DELETE" });
+  await pvLoad();
+  renderPanel();
+}
+
+async function pvAddNet() {
+  const g = (id) => (document.getElementById(id) || {}).value || "";
+  const r = await fetch("/api/public-view/nets", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: g("pv-net-name"), schedule_text: g("pv-net-when"),
+      target: g("pv-net-target"), note: g("pv-net-note"), sort_order: pv.nets.length,
+    }),
+  });
+  pv.err = r.ok ? "" : (await r.text()).trim();
+  await pvLoad();
+  renderPanel();
+}
+
+async function pvDeleteNet(id) {
+  await fetch("/api/public-view/nets/" + id, { method: "DELETE" });
+  await pvLoad();
+  renderPanel();
+}
+
+async function pvSaveBranding(field, elId) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const path = field === "narrative" ? "/api/branding/narrative" : "/api/branding/custom-html";
+  const r = await fetch(path, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value: el.value }),
+  });
+  pv.err = r.ok ? "" : (await r.text()).trim();
+  await pvLoad();
+  renderPanel();
+}
+
+async function pvUploadLogo() {
+  const el = document.getElementById("pv-logo-file");
+  if (!el || !el.files || !el.files[0]) return;
+  const r = await fetch("/api/branding/logo", { method: "POST", body: el.files[0] });
+  pv.err = r.ok ? "" : (await r.text()).trim();
+  await pvLoad();
+  renderPanel();
+}
+
+async function pvClearLogo() {
+  await fetch("/api/branding/logo", { method: "DELETE" });
+  await pvLoad();
+  renderPanel();
+}
+
+// pvPill is the panel's own toggle. It cannot use toggle()/toggleRow(), which
+// read from `edit` and write through the dirty set — this state lives elsewhere
+// and saves immediately. The accessibility contract is the same: a real button,
+// aria-pressed carrying the state, the label as the accessible name.
+function pvPill(key, name, help) {
+  const on = !!(pv.set || {})[key];
+  return `<div class="toggle-row"><span class="name">${esc(name)}` +
+    (help ? `<span class="sub">${esc(help)}</span>` : "") +
+    `</span><button type="button" class="pill ${on ? "on" : "off"}" data-pv-toggle="${esc(key)}" ` +
+    `aria-pressed="${on}" aria-label="${esc(name)}">${on ? "ON" : "OFF"}</button></div>`;
+}
+
+function panelPublicView() {
+  if (pv.err && !pv.set) return note(esc(pv.err));
+  if (!pv.set) return note(msg("publicview.loading"));
+  const s = pv.set;
+
+  // The master switch says in plain language what turning it on does. "Enable
+  // public view" alone would be a control whose consequences an operator has to
+  // infer, on the one setting in this application where inferring wrongly means
+  // publishing something.
+  const master = card(msg("publicview.masterTitle"),
+    pvPill("enabled", msg("publicview.enabled"), msg("publicview.enabledHelp")) +
+    note(s.enabled
+      ? msg("publicview.onNote") + ` <a class="ext" href="/public/" target="_blank" rel="noopener noreferrer">/public/ ↗</a>`
+      : msg("publicview.offNote")));
+
+  const reach = card(msg("publicview.reachTitle"),
+    pvPill("show_freq", msg("publicview.showFreq")) +
+    pvPill("show_cc_ts", msg("publicview.showCcTs")) +
+    pvPill("show_mode", msg("publicview.showMode")) +
+    pvPill("show_talkgroup", msg("publicview.showTalkgroup")) +
+    pvPill("show_grid", msg("publicview.showGrid"), msg("publicview.showGridHelp")) +
+    row(msg("publicview.gridOverride"),
+      `<input id="pv-grid" value="${esc(s.grid_override || "")}" placeholder="EM60lp" maxlength="6" data-pv-field="grid_override">`) +
+    row(msg("publicview.powerLine"),
+      `<input id="pv-power" value="${esc(s.power_line || "")}" data-pv-field="power_line">`) +
+    pvPill("show_power_line", msg("publicview.showPowerLine")));
+
+  const activity = card(msg("publicview.activityTitle"),
+    pvPill("show_status", msg("publicview.showStatus")) +
+    pvPill("show_lastheard", msg("publicview.showLastHeard")) +
+    pvPill("show_counters", msg("publicview.showCounters")) +
+    row(msg("publicview.retention"),
+      `<div class="unit"><input id="pv-retention" type="number" min="${s.min_retention_hours}" max="${s.max_retention_hours}" ` +
+      `value="${esc(String(s.retention_hours))}" data-pv-field="retention_hours"><span class="u">h</span></div>`) +
+    note(msg("publicview.retentionHelp")));
+
+  const modules = card(msg("publicview.modulesTitle"),
+    pvPill("show_map", msg("publicview.showMap")) +
+    pvPill("show_qr", msg("publicview.showQr")) +
+    pvPill("show_links", msg("publicview.showLinks")) +
+    pvPill("show_nets", msg("publicview.showNets")));
+
+  const tagChips = (pv.tags || []).map((t) => {
+    const on = (s.purpose_tags || []).includes(t);
+    return `<button type="button" class="pill ${on ? "on" : "off"}" data-pv-tag="${esc(t)}" ` +
+      `aria-pressed="${on}">${esc(msg("publicview.tag." + t))}</button>`;
+  }).join(" ");
+  const purpose = card(msg("publicview.purposeTitle"),
+    `<div class="row"><label>${esc(msg("publicview.tags"))}</label><div class="chips">${tagChips}</div></div>` +
+    row(msg("publicview.freetext"),
+      `<input id="pv-freetext" value="${esc(s.purpose_freetext || "")}" data-pv-field="purpose_freetext">`));
+
+  // The suppress list shows the NORMALISED callsign, which is how an operator
+  // learns that adding N4ABC-7 covers N4ABC-9 as well.
+  const supRows = pv.suppress.length
+    ? pv.suppress.map((c) => `<div class="toggle-row"><span class="name">${esc(c)}</span>` +
+        `<button type="button" class="pill off" data-pv-unsuppress="${esc(c)}">${esc(msg("common.remove"))}</button></div>`).join("")
+    : note(msg("publicview.suppressEmpty"));
+  const suppress = card(msg("publicview.suppressTitle"),
+    note(msg("publicview.suppressHelp")) + supRows +
+    `<div class="row"><label>${esc(msg("publicview.addCallsign"))}</label>` +
+    `<input id="pv-sup-input" placeholder="N4ABC"></div>` +
+    `<button type="button" class="btn" data-pv-action="add-suppress">${esc(msg("common.add"))}</button>`);
+
+  const linkRows = pv.links.map((l) =>
+    `<div class="toggle-row"><span class="name">${esc(l.label)}<span class="sub">${esc(l.url)}</span></span>` +
+    `<button type="button" class="pill off" data-pv-dellink="${l.id}">${esc(msg("common.remove"))}</button></div>`).join("");
+  const links = card(msg("publicview.linksTitle"),
+    linkRows +
+    `<div class="row"><label>${esc(msg("publicview.linkLabel"))}</label><input id="pv-link-label"></div>` +
+    `<div class="row"><label>${esc(msg("publicview.linkUrl"))}</label><input id="pv-link-url" placeholder="https://"></div>` +
+    `<button type="button" class="btn" data-pv-action="add-link">${esc(msg("common.add"))}</button>` +
+    note(msg("publicview.linkHelp")));
+
+  const netRows = pv.nets.map((n) =>
+    `<div class="toggle-row"><span class="name">${esc(n.name)}<span class="sub">${esc(n.schedule_text)}${n.target ? " · " + esc(n.target) : ""}</span></span>` +
+    `<button type="button" class="pill off" data-pv-delnet="${n.id}">${esc(msg("common.remove"))}</button></div>`).join("");
+  const nets = card(msg("publicview.netsTitle"),
+    netRows +
+    `<div class="row"><label>${esc(msg("publicview.netName"))}</label><input id="pv-net-name"></div>` +
+    `<div class="row"><label>${esc(msg("publicview.netWhen"))}</label><input id="pv-net-when" placeholder="MON 20:00"></div>` +
+    `<div class="row"><label>${esc(msg("publicview.netTarget"))}</label><input id="pv-net-target" placeholder="TS2 / TG 31123"></div>` +
+    `<div class="row"><label>${esc(msg("publicview.netNote"))}</label><input id="pv-net-note"></div>` +
+    `<button type="button" class="btn" data-pv-action="add-net">${esc(msg("common.add"))}</button>`);
+
+  const b = pv.branding || {};
+  // The preview is the server's own rendered output, not a second renderer in
+  // the browser. A preview that could disagree with production is worse than
+  // none: it invites sign-off on output nobody will ever serve.
+  const branding = card(msg("publicview.brandingTitle"),
+    `<div class="row"><label>${esc(msg("publicview.logo"))}</label><div>` +
+      (b.logo_path ? `<img src="/public/assets/logo" alt="" style="max-height:48px;border-radius:8px;background:var(--chip-bg)"> ` : "") +
+      `<input id="pv-logo-file" type="file" accept="image/png,image/jpeg">` +
+      `<button type="button" class="btn" data-pv-action="upload-logo">${esc(msg("common.upload"))}</button>` +
+      (b.logo_path ? `<button type="button" class="btn" data-pv-action="clear-logo">${esc(msg("common.remove"))}</button>` : "") +
+    `</div></div>` +
+    note(msg("publicview.logoHelp")) +
+    `<div class="row"><label>${esc(msg("publicview.narrative"))}</label>` +
+    `<textarea id="pv-narrative" rows="6">${esc(b.narrative_markdown || "")}</textarea></div>` +
+    `<button type="button" class="btn" data-pv-action="save-narrative">${esc(msg("common.save"))}</button>` +
+    (b.narrative_html ? `<div class="note"><b>${esc(msg("publicview.preview"))}</b><div class="pv-preview"></div></div>` : "") +
+    `<div class="row"><label>${esc(msg("publicview.customHtml"))}</label>` +
+    `<textarea id="pv-custom" rows="6">${esc(b.custom_html || "")}</textarea></div>` +
+    `<button type="button" class="btn" data-pv-action="save-custom">${esc(msg("common.save"))}</button>` +
+    note(msg("publicview.customHtmlWarning")));
+
+  return (pv.err ? note(esc(pv.err)) : "") +
+    `<div class="grid2">${master}<div class="stack">${reach}${activity}</div></div>` +
+    `<div class="grid2">${modules}${purpose}</div>` +
+    `<div class="grid2">${suppress}<div class="stack">${links}${nets}</div></div>` +
+    branding;
+}
+
+
+// pvAfterRender wires the panel's text inputs and paints the narrative preview.
+//
+// Text fields commit on `change` (blur or Enter) rather than on every keystroke:
+// each write is a round trip and a re-render, and saving per character would
+// fight the operator's cursor.
+function pvAfterRender() {
+  document.querySelectorAll("[data-pv-field]").forEach((el) => {
+    el.addEventListener("change", () => {
+      const key = el.dataset.pvField;
+      const v = key === "retention_hours" ? Number(el.value) : el.value;
+      pvSetField(key, v);
+    });
+  });
+  // The preview is the HTML the server rendered and sanitised — the same bytes
+  // the public page will insert. Rendering the Markdown here instead would put a
+  // second renderer in the browser, and a preview that can disagree with
+  // production is worse than none.
+  const box = document.querySelector(".pv-preview");
+  if (box && pv.branding && pv.branding.narrative_html) {
+    box.innerHTML = pv.branding.narrative_html;
+  }
+}

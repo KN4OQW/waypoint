@@ -4,12 +4,9 @@
     "tag": "fr-FR",
     "reviewed": true
   },
-
   "applyImport.importScannedConfigOverwrites": "Importer la configuration scannée ? Cela écrasera vos paramètres de mode et de réseau actuels. Vous pourrez vérifier et appliquer par la suite.",
   "applyImport.importedReviewSettingsThen": "Importé. Vérifiez les paramètres, puis appuyez sur Appliquer pour régénérer les configurations et redémarrer la pile.",
-
   "applyNetwork.networkChangeAppliedConfirm": "Changement de réseau appliqué — confirmez pour le conserver avant qu'il ne soit annulé.",
-
   "attachParams.credentialsDmrNetwork": "Identifiants (réseau DMR)",
   "attachParams.defaultId": "ID par défaut",
   "attachParams.defaultTg": "TG par défaut",
@@ -21,17 +18,13 @@
   "attachParams.reflectorDgId": "Réflecteur / DG-ID",
   "attachParams.slot": "Intervalle",
   "attachParams.wiresXPassthrough": "Passe-through Wires-X",
-
   "attachPickerHTML.attachLocalModeGreyed": "Attacher un mode local (les modes grisés ne le peuvent pas, raison affichée) :",
   "attachPickerHTML.attachMode": "＋ Attacher un mode",
   "attachPickerHTML.attachModePairedPeer": "Ou attacher un mode depuis un pair appairé :",
   "attachPickerHTML.cancel": "Annuler",
   "attachPickerHTML.checkingWhichModesCan": "Vérification des modes pouvant s'attacher…",
-
   "attachmentBlock.detach": "Détacher",
-
   "baudRow.baudrate": "Vitesse en bauds",
-
   "bm.bmHotspotSecurity": "Sécurité du Hotspot BM",
   "bm.brandmeister": "Brandmeister",
   "bm.brandmeisterDashboards": "Tableaux de bord BrandMeister",
@@ -65,17 +58,14 @@
   "bm.xlxNetworkSettings": "Paramètres du réseau XLX",
   "bm.xlxStartupModule": "Module de démarrage XLX",
   "bm.xlxStartupTg": "TG de démarrage XLX",
-
   "boardRow.notSet": "Non défini",
   "boardRow.radioModem": "Radio / Modem",
-
   "busCard.busEnabled": "Bus activé",
   "busCard.busNeedsLeastTwo": "Un bus a besoin d'au moins deux liaisons pour concentrer le trafic ; ajoutez un autre mode avant d'appliquer.",
   "busCard.delete": "Supprimer",
   "busCard.disabledItsAttachmentsAre": "Désactivé — ses liaisons sont conservées et réapparaîtront lorsque vous le réactiverez.",
   "busCard.localBus": "ex. Bus Local A",
   "busCard.name": "Nom",
-
   "cal.applyingWritesSameNumber": "L'application écrit la même valeur pour le décalage RX et TX. Un hotspot dispose d'un oscillateur de référence unique cadenceant les deux voies : une erreur mesurée en réception est donc identique en émission —, et le balayage ne peut mesurer que le côté réception sans équipement de test.",
   "cal.calibration": "ÉTALONNAGE",
   "cal.calibrationCannotRunYet": "L'étalonnage ne peut pas encore être exécuté.",
@@ -89,21 +79,18 @@
   "cal.starting": "DÉMARRAGE…",
   "cal.sweepDidNotFinish": "Le balayage ne s'est pas terminé.",
   "cal.useOffset": "UTILISER {offset}",
-
   "calCurve.best": "Meilleur",
   "calCurve.curveIncompleteSweepRan": "<b>Cette courbe est incomplète</b> — le balayage a manqué de temps ou s'est arrêté. Ce qui est tracé a été mesuré ; ce qui manque ne l'a pas été.",
   "calCurve.lowerBetter": "plus bas est préférable",
   "calCurve.nothingWasDecodedAny": "<b>Rien n'a été décodé à aucune fréquence.</b> La radio n'émettait pas, n'était pas en mode DMR, ou se trouve en dehors de la plage couverte par le balayage.",
-
   "cancelSweep.stoppingSweepNodeComes": "Arrêt du balayage — le nœud revient automatiquement en ligne.",
-
   "chrome.backToDashboard": "Retour au tableau de bord",
   "chrome.language": "LANGUE",
   "chrome.skipToMain": "Aller au contenu principal",
   "chrome.skipToSettings": "Aller aux paramètres",
   "chrome.theme": "THÈME D'AFFICHAGE",
   "chrome.unreviewed": "(non révisé)",
-
+  "common.add": "Ajouter",
   "common.apply": "APPLIQUER LES MODIFICATIONS",
   "common.behaviour": "COMPORTEMENT",
   "common.cancel": "Annuler",
@@ -114,19 +101,20 @@
   "common.hangTimers": "TEMPORISATEURS DE MAINTIEN",
   "common.passwordUnchanged": "•••••• inchangé",
   "common.remoteGatewayAdvancedLeave": "Passerelle distante (avancé — laisser désactivé pour un contrôle local)",
+  "common.remove": "Supprimer",
   "common.reset": "RÉINITIALISER",
+  "common.save": "Enregistrer",
   "common.selfOnlyAcceptOnly": "Soi-même uniquement (accepter uniquement mon indicatif)",
   "common.startupReflector": "Réflecteur de démarrage",
+  "common.upload": "Téléverser",
   "common.voiceAnnouncements": "Annonces vocales",
   "common.willNotStart": "Ne démarrera pas",
-
   "confirmNetwork.browserDoesnTHold": "Ce navigateur ne détient pas le jeton de confirmation pour la modification en attente — confirmez depuis l'onglet qui l'a appliquée ou laissez-la être annulée.",
   "confirmNetwork.dStar": "D-Star",
   "confirmNetwork.dmr": "DMR",
   "confirmNetwork.networkSettingsKept": "Paramètres réseau conservés.",
   "confirmNetwork.nxdn": "NXDN",
   "confirmNetwork.ysf": "YSF",
-
   "dash.crumb": "STATUT / EN DIRECT",
   "dash.eventlog.event": "Événement",
   "dash.eventlog.head": "JOURNAL DES ÉVÉNEMENTS",
@@ -164,13 +152,10 @@
   "dash.onair.to": " vers ",
   "dash.pageTitle": "Waypoint · Tableau de bord",
   "dash.title": "Tableau de bord",
-
   "detectModem.modemUseMmdvmHost": "Le modem est utilisé par MMDVM-Host et ne peut pas répondre.\\n\\nL'arrêter, rechercher le modem, et le redémarrer ? Ce nœud sera hors antenne pendant quelques secondes.",
-
   "deviceCard.gateway": "Passerelle",
   "deviceCard.profile": "Profil",
   "deviceCard.state": "État",
-
   "display.columns": "Colonnes",
   "display.controlSoftware": "LOGICIEL DE CONTRÔLE",
   "display.display": "AFFICHAGE",
@@ -188,7 +173,6 @@
   "display.rows": "Lignes",
   "display.simplexNode": "Nœud Simplex",
   "display.trxMode": "Mode TRX",
-
   "dmr.callHold": "Maintien d'appel (maintien TG)",
   "dmr.colorCode": "Code couleur",
   "dmr.dmrId": "ID DMR",
@@ -202,7 +186,6 @@
   "dmr.timeSlot2Enabled": "Intervalle de temps 2 activé",
   "dmr.timeSlotsAdvanced": "INTERVALLES DE TEMPS & AVANCÉ",
   "dmr.txHang": "Maintien TX",
-
   "dstar.blankAnonymous": "vide = anonyme",
   "dstar.dPlusLogin": "Connexion D-Plus",
   "dstar.dPlusRefNeeds": "D-Plus (REF — nécessite un indicatif enregistré)",
@@ -218,14 +201,11 @@
   "dstar.registeredCallsignBlankStation": "indicatif enregistré (vide = indicatif de la station)",
   "dstar.rfBehaviour": "COMPORTEMENT RF",
   "dstar.usernameBlankCallsign": "Nom d'utilisateur (vide = indicatif)",
-
   "essidSelect.none": "Aucun",
-
   "expert.configStore": "Magasin de configurations",
   "expert.dashboardWaypointd": "Tableau de bord (waypointd)",
   "expert.rawIniEditingPower": "L'édition brute de fichiers INI et les contrôles d'alimentation arriveront dans une version ultérieure. La configuration réside désormais dans le magasin ; les INI sont régénérés lors de l'application — <a href='https://github.com/KN4OQW/waypoint/issues/29'>waypoint#29</a>.",
   "expert.versions": "VERSIONS",
-
   "firmware.available": "Disponible",
   "firmware.checkFirmware": "RECHERCHER UN FIRMWARE",
   "firmware.firmwareDownloadedSignedRelease": "Le firmware est téléchargé à partir d'une version signée et sa signature est vérifiée avant qu'un seul octet n'atteigne le modem. Sur une carte GPIO, le bootloader réside dans la puce et ne peut être effacé ; un flash interrompu est donc récupérable en réessayant.",
@@ -242,13 +222,10 @@
   "firmware.runningNow": "En cours d'exécution",
   "firmware.waypointWillNotChoose": "Waypoint ne choisira pas cela pour vous.",
   "firmware.wouldWrite": "Écrirait",
-
   "fixUART.freeGpioSerialPort": "Libérer le port série GPIO pour le modem ?\\n\\nCela modifie config.txt et cmdline.txt sur la partition de démarrage et masque le service de connexion série. Le nœud doit être redémarré ensuite.",
   "fixUART.gpioSerialPortWas": "Le port série GPIO était déjà libre.",
   "fixUART.hostHasNoRaspberry": "Cet hôte n'a pas de partition de démarrage Raspberry Pi, il n'y a donc aucun port série GPIO à libérer.",
-
   "flashFirmware.flashingDoNotPower": "Flashage en cours — ne coupez pas l'alimentation du nœud.",
-
   "fm.0CarrierAccessCos": "0 — Accès porteuse avec COS",
   "fm.1CtcssAccessNo": "1 — Accès CTCSS, sans COS",
   "fm.2CtcssAccessCos": "2 — Accès CTCSS avec COS",
@@ -262,18 +239,14 @@
   "fm.rfAudioBoost": "Amplification audio RF",
   "fm.timeout": "Anti-bavard (timeout)",
   "fm.timing": "TEMPORISATION",
-
   "foot.source": "source",
   "foot.version": "waypointd {version}",
-
   "fwProgressHTML.firmwareFlashProgress": "Progression du flashage du firmware",
-
   "gateways.createBus": "＋ Créer un bus",
   "gateways.migrateBridgesBus": "Migrer passerelles → bus",
   "gateways.migrateRetiredBridges": "MIGRER DEPUIS LES ANCIENNES PASSERELLES",
   "gateways.noBusesYetBus": "Aucun bus pour l'instant. Un <b>bus</b> permet aux modes rattachés de s'entendre entre eux (DMR ⇄ YSF ⇄ NXDN), avec conversion des ID/talkgroups de chaque côté. Créez-en un, puis attachez deux modes ou plus.",
   "gateways.oldPerModeBridges": "Les anciennes passerelles mode à mode (YSF2DMR, DMR2YSF, YSF2NXDN, DMR2NXDN, NXDN2DMR) sont retirées. La migration crée un bus à partir de vos configurations actuelles — vos paramètres de passerelle sauvegardés sont <b>conservés dans tous les cas</b>, la migration ne fait qu'<b>ajouter</b> un bus sans rien supprimer.",
-
   "general.calibration": "ÉTALONNAGE",
   "general.callsign": "Indicatif",
   "general.dStar": "D-Star",
@@ -313,7 +286,6 @@
   "general.txInvert": "Inversion TX",
   "general.txLevel": "Niveau TX",
   "general.txOffset": "Décalage TX",
-
   "hardware.adoptingWritesPortLine": "L'adoption inscrit le port, la vitesse de ligne, la carte et l'oscillateur de référence dans la configuration de ce nœud. Un oscillateur non rapporté par le firmware n'est jamais écrit — une fréquence de référence mal devinée désaccorde la radio.",
   "hardware.attachedModem": "MODEM ATTACHÉ",
   "hardware.board": "Cette carte est une",
@@ -348,7 +320,6 @@
   "hardware.uartDefault": "115200 (par défaut)",
   "hardware.useDetectedModem": "UTILISER LE MODEM DÉTECTÉ",
   "hardware.useModem": "UTILISER CE MODEM",
-
   "help.display.hd44780_cols": "Caractères par ligne — généralement 16 ou 20.",
   "help.display.hd44780_i2c_addr": "Adresse I2C de l'interface PCF8574 de l'écran, en hexadécimal. <code>0x27</code> et <code>0x3F</code> couvrent la plupart des modules.",
   "help.display.hd44780_rows": "Lignes de caractères sur le panneau — 2 et 4 sont les tailles courantes.",
@@ -488,12 +459,10 @@
   "help.ysfgw.wiresx_passthrough": "Transmettre les commandes Wires-X de la radio au réseau, vous permettant de changer de réflecteur depuis le menu de votre radio au lieu de cette page.",
   "help.ysfgw.ycs_network": "Se connecter aux serveurs YCS, qui ajoutent le routage par talkgroup par-dessus YSF.",
   "help.ysfgw.ysf_network": "Se connecter au réseau de réflecteurs YSF.",
-
   "hostlistNote.listCouldNotDownloaded": "Impossible de télécharger cette liste, le sélecteur ci-dessous est donc vide.",
   "hostlistNote.listEmpty": "Cette liste est vide.",
   "hostlistNote.listMayOutDate": "Cette liste est peut-être obsolète.",
   "hostlistNote.showingListShippedWaypoint": "Affichage de la liste fournie par défaut avec Waypoint.",
-
   "import.copyIncumbentSEtc": "Copiez <code>/etc/mmdvmhost</code>, <code>/etc/dmrgateway</code> et les autres fichiers de configuration de passerelle de l'ancienne carte, ou montez la carte et indiquez son chemin. Rien n'est écrit tant que vous n'appuyez pas sur <b>Importer</b>.",
   "import.importPiStarWpsd": "IMPORTER DEPUIS PI-STAR / WPSD",
   "import.mntSdcardMedia": "/mnt/sdcard (ou /media/…)",
@@ -501,9 +470,7 @@
   "import.mountedIncumbentCardPath": "Chemin de l'ancienne carte montée",
   "import.scanDirectory": "ANALYSER LE RÉPERTOIRE",
   "import.uploadConfigFiles": "…ou téléverser des fichiers de configuration",
-
   "importProfile.profileNameAlreadyExists": "Un profil portant ce nom existe déjà. Voulez-vous le remplacer ?",
-
   "importReport.apply": "Appliquer",
   "importReport.detected": "Détecté",
   "importReport.dmrNetworks": "RÉSEAUX DMR",
@@ -516,7 +483,6 @@
   "importReport.scanResult": "RÉSULTAT DE L'ANALYSE",
   "importReport.theseIncumbentFeaturesAren": "Ces anciennes fonctionnalités ne sont pas encore gérées — reconfigurez-les dans Waypoint après l'importation.",
   "importReport.wonTCarryOver": "NE SERA PAS CONSERVÉ",
-
   "ipv4Editor.dhcpAutomatic": "DHCP (automatique)",
   "ipv4Editor.dhcpListingDnsServers": "En DHCP, indiquer des serveurs DNS ici <b>remplace</b> ceux fournis par le serveur DHCP (ignore-auto-dns).",
   "ipv4Editor.gateway": "Passerelle",
@@ -526,7 +492,6 @@
   "ipv4Editor.prefixCidr": "Préfixe (CIDR)",
   "ipv4Editor.searchDomainsOptional": "Domaines de recherche (optionnel)",
   "ipv4Editor.static": "Statique",
-
   "lcd.addPage": "+ AJOUTER UNE PAGE",
   "lcd.colsOption": "{n} colonnes",
   "lcd.columns": "Colonnes",
@@ -585,12 +550,9 @@
   "lcd.tokenPaletteTitle": "{desc} — insère {token}",
   "lcd.warnUnknownToken": "⚠ Jeton inconnu : {tokens} — vérifiez l'orthographe ; les jetons inconnus restent vides.",
   "lcd.warnUnknownTokens": "⚠ Jetons inconnus : {tokens} — vérifiez l'orthographe ; les jetons inconnus restent vides.",
-
   "lcdLegend.tokenReference": "RÉFÉRENCE DES JETONS",
-
   "leds.modeDisabled": "{mode} désactivé",
   "leds.modeEnabled": "{mode} activé",
-
   "log.gatewayStatus": "{network}: {detail}",
   "log.link": "{network}: {detail}",
   "log.linkDown": "{network} connexion perdue",
@@ -607,7 +569,6 @@
   "log.rfStart": "{source} a déclenché → {dest} ({mode}{slot})",
   "log.slot": " S{slot}",
   "log.supervisorAction": "superviseur : {detail}",
-
   "m17.allowEncryptedM17Frames": "Autoriser les trames M17 chiffrées",
   "m17.can": "CAN",
   "m17.hangTimer": "TEMPORISATEUR DE MAINTIEN",
@@ -618,19 +579,15 @@
   "m17.revertStartupReflectorAfter": "Retourner au réflecteur de démarrage après inactivité",
   "m17.suffixHotspot": "H — hotspot",
   "m17.suffixRepeater": "R — répéteur",
-
   "masterSelect.hostListLoading2": "chargement de la liste d'hôtes…",
   "masterSelect.selectMaster": "— sélectionner le maître —",
-
   "modes.cardLabel": "Mode {mode}",
   "modes.modeEnable": "ACTIVATION DU MODE",
   "modes.modeSettings": "PARAMÈTRES DU MODE",
   "modes.srDisabled": " (désactivé)",
   "modes.srEnabled": " (activé)",
   "modes.turnModeHaveMmdvm": "Activez un mode pour que MMDVM-Host le prenne en charge. La modification redémarre la pile lors de l'application.",
-
   "modesSection.modeSettings": "Paramètres de mode",
-
   "nav.allSettings": "Tous les paramètres",
   "nav.configSections": "Sections de configuration",
   "nav.configuration": "CONFIGURATION",
@@ -645,9 +602,7 @@
   "nav.primary": "Principal",
   "nav.settings": "Paramètres",
   "nav.settingsSub": "CONFIGURER LE NŒUD",
-
   "netEthCard.ethernetWaypointEth0": "ÉTHERNET (waypoint-eth0)",
-
   "netHostCard.appliesImmediatelyHostnameTimezone": "S'applique immédiatement (nom d'hôte, fuseau horaire &amp; NTP ne risquent pas de bloquer le nœud).",
   "netHostCard.applyHostSettings": "APPLIQUER LES PARAMÈTRES HÔTE",
   "netHostCard.hostTimeNtp": "HÔTE · HEURE · NTP",
@@ -664,18 +619,15 @@
   "netHostCard.tzHintDismiss": "Ignorer",
   "netHostCard.tzHintUse": "Utiliser",
   "netHostCard.tzNoMatch": "Aucun fuseau horaire correspondant",
-
   "netScanSection.nearbyNetworks": "RÉSEAUX À PROXIMITÉ",
   "netScanSection.noNetworksFoundYet": "Aucun réseau trouvé pour l'instant — appuyez sur Rebalayer ou entrez un SSID ci-dessus pour un réseau masqué.",
   "netScanSection.rescan": "REBALAYER",
-
   "netStatusSection.fetchingLiveNetworkStatus": "Récupération du statut réseau en direct…",
   "netStatusSection.hostLive": "HÔTE (EN DIRECT)",
   "netStatusSection.hostname": "Nom d'hôte",
   "netStatusSection.liveStatus": "STATUT EN DIRECT",
   "netStatusSection.noLiveEthernetWi": "Aucune interface Ethernet ou Wi-Fi active signalée.",
   "netStatusSection.wiFi": "Wi-Fi",
-
   "netVlanCard.addVlan": "+ AJOUTER UN VLAN",
   "netVlanCard.labelOptional": "Étiquette (optionnel)",
   "netVlanCard.noVlansAddOne": "Aucun VLAN. Ajoutez-en un pour associer une interface étiquetée à un périphérique parent.",
@@ -685,7 +637,6 @@
   "netVlanCard.vlanId14094": "ID du VLAN (1–4094)",
   "netVlanCard.vlanLabel": "Étiquette du VLAN",
   "netVlanCard.vlans": "VLANs",
-
   "netWifiCard.hiddenNetwork": "Réseau masqué",
   "netWifiCard.passphrase": "Mot de passe",
   "netWifiCard.regulatoryCountry": "Pays réglementaire",
@@ -696,18 +647,14 @@
   "netWifiCard.wiFiPassphrase": "Mot de passe Wi-Fi",
   "netWifiCard.wiFiSsid": "SSID Wi-Fi",
   "netWifiCard.wiFiWaypointWifi": "WI-FI (waypoint-wifi)",
-
   "network.appliesThroughConfirmRevert": "S'applique via une procédure de confirmation avec annulation automatique — un décompte vous permettra de valider la modification avant son annulation automatique.",
   "network.applyNetwork": "APPLIQUER LE RÉSEAU",
   "network.editingHereWritesStore": "Modifier ici met à jour le magasin et, lors de l'action <b>Appliquer le réseau</b>, génère les fichiers de clés NetworkManager sous le contrôle d'une sécurité de confirmation/annulation afin d'éviter tout blocage d'accès au nœud. Waypoint gère uniquement ses propres profils <code>waypoint-*</code> ; vos connexions créées manuellement ne sont jamais modifiées.",
   "network.loadingNetworkConfiguration": "Chargement de la configuration réseau…",
-
   "networks.enabledLabel": "Réseau {network} activé",
-
   "nodeLockRow.nodeLockPrivatePublic": "Verrouillage du nœud (Privé / Public)",
   "nodeLockRow.private": "PRIVÉ",
   "nodeLockRow.public": "PUBLIC",
-
   "nxdn.commaSeparatedTgs10200": "TG séparés par des virgules, ex. 10200,65000",
   "nxdn.networkHang": "Maintien réseau",
   "nxdn.ran": "RAN",
@@ -715,15 +662,12 @@
   "nxdn.selfOnlyAcceptOnly": "Soi-même uniquement (accepter uniquement mon ID)",
   "nxdn.startupTalkgroups": "Talkgroups de démarrage",
   "nxdn.talkgroupListNotLoaded": "Liste des talkgroups pas encore chargée (récupérée régulièrement depuis le registre NXDN). Vous pouvez toujours saisir des numéros de talkgroup ci-dessus.",
-
   "overrideRow.added": "AJOUTÉ",
   "overrideRow.removed": "SUPPRIMÉ",
-
   "overrides.dropInsLine": "Les surcharges personnalisées résident sous {dir} et les crochets de fichiers d'hôte sous {prepend} · {append}. Ils sont fusionnés en dernier dans les fichiers générés et ne sont jamais modifiés par une mise à jour ({issue}).",
   "overrides.loadingOverrideLayer": "Chargement de la couche de surcharge…",
   "overrides.noOverridesActiveGenerated": "Aucune surcharge active — la configuration générée correspond exactement à ce que produit le magasin.",
   "overrides.overrides": "SURCHARGES",
-
   "p25.commaSeparatedTgs10100": "TG séparés par des virgules, ex. 10100,10200",
   "p25.nacHex": "NAC (hex)",
   "p25.networkHang": "Maintien réseau",
@@ -732,7 +676,6 @@
   "p25.selfOnlyAcceptOnly": "Soi-même uniquement (accepter uniquement mon ID)",
   "p25.startupTalkgroups": "Talkgroups de démarrage",
   "p25.talkgroupListNotLoaded": "Liste des talkgroups pas encore chargée (récupérée régulièrement depuis le registre P25). Vous pouvez toujours saisir des numéros de talkgroup ci-dessus.",
-
   "peerModal.cancel": "Annuler",
   "peerModal.confirm": "Confirmer",
   "peerModal.confirmPairing": "Confirmer l'appairage",
@@ -744,7 +687,6 @@
   "peerModal.pairing": "APPAIRAGE",
   "peerModal.pairingCode": "code d'appairage",
   "peerModal.sLanPeersScreen": "sur l'écran Pairs LAN, puis confirmez ici.",
-
   "peersCard.certificateFingerprint": "empreinte du certificat",
   "peersCard.discoverPeers": "Découvrir des pairs (mDNS)",
   "peersCard.hostPort100": "hôte:port — ex. 10.0.0.20:42501",
@@ -758,10 +700,8 @@
   "peersCard.peerHostPort": "hôte et port du pair",
   "peersCard.revoke": "Révoker",
   "peersCard.scanning": "Analyse en cours…",
-
   "pending.settingsArenTWired": "les paramètres ne sont pas encore reliés — une tranche ultérieure du magasin de configuration (",
   "pending.waypoint1": "waypoint#1",
-
   "pocsag.authkey": "AuthKey",
   "pocsag.blacklistCommaSeparatedRics": "Liste noire (RIC séparés par des virgules)",
   "pocsag.callsignBlankStationCallsign": "Indicatif (vide = indicatif de la station)",
@@ -774,13 +714,11 @@
   "pocsag.pagingFrequency": "Fréquence de paging",
   "pocsag.ricFiltersOptional": "FILTRES RIC (OPTIONNEL)",
   "pocsag.whitelistCommaSeparatedRics": "Liste blanche (RIC séparés par des virgules)",
-
   "profileCard.activate": "ACTIVER",
   "profileCard.active": "ACTIF",
   "profileCard.captured": "Capturé",
   "profileCard.delete": "SUPPRIMER",
   "profileCard.export": "EXPORTER",
-
   "profiles.activatingProfileWritesIts": "Activer un profil applique ses modes &amp; réseaux enregistrés et redémarre la pile — équivalent à une action Appliquer. Les fichiers exportés ont leurs <b>mots de passe supprimés</b> ; lors de l'importation, vous devrez resaisir ceux nécessaires (ou le nœud cible conserve les siens). L'identité et l'étalonnage ne font jamais partie d'un profil (<a href='https://github.com/KN4OQW/waypoint/blob/main/docs/rfcs/0006-connection-profiles.md'>RFC-0006</a>).",
   "profiles.bmDmrDuplex": "ex. BM DMR duplex",
   "profiles.importFile": "Importer depuis un fichier…",
@@ -790,12 +728,66 @@
   "profiles.profileName": "Nom du profil",
   "profiles.saveCurrentSetup": "ENREGISTRER LA CONFIG ACTUELLE",
   "profiles.saveProfile": "ENREGISTRER LE PROFIL",
-
+  "publicview.activityTitle": "Activité",
+  "publicview.addCallsign": "Indicatif",
+  "publicview.brandingTitle": "Identité visuelle",
+  "publicview.customHtml": "HTML personnalisé",
+  "publicview.customHtmlWarning": "Avancé. Ce contenu s'exécute dans un cadre isolé qui ne peut atteindre ni le reste de la page ni votre session — mais vous êtes responsable de ce que vous y collez.",
+  "publicview.enabled": "Publier une page publique",
+  "publicview.enabledHelp": "Toute personne pouvant joindre ce nœud pourra voir la page.",
+  "publicview.freetext": "Dans vos mots",
+  "publicview.gridOverride": "Locator",
+  "publicview.linkHelp": "Seules les adresses http:// et https:// sont acceptées.",
+  "publicview.linkLabel": "Libellé",
+  "publicview.linkUrl": "Adresse",
+  "publicview.linksTitle": "Liens externes",
+  "publicview.loading": "Chargement…",
+  "publicview.logo": "Logo",
+  "publicview.logoHelp": "PNG ou JPEG, jusqu'à 1 Mo. L'image est ré-encodée ici, ce qui supprime les informations de localisation et d'appareil qu'elle contenait.",
+  "publicview.masterTitle": "Page publique",
+  "publicview.modulesTitle": "Modules",
+  "publicview.narrative": "À propos de ce nœud",
+  "publicview.netName": "Nom",
+  "publicview.netNote": "Note",
+  "publicview.netTarget": "Groupe de parole ou réflecteur",
+  "publicview.netWhen": "Quand",
+  "publicview.netsTitle": "Réseaux programmés",
+  "publicview.offNote": "Désactivée. Toutes les adresses publiques répondent « introuvable » — un visiteur ne peut pas distinguer ce nœud d'un nœud qui n'a jamais eu la fonction. Configurez d'abord ce que vous voulez montrer, puis activez-la.",
+  "publicview.onNote": "La page publique est en ligne à",
+  "publicview.powerLine": "Puissance et antenne",
+  "publicview.preview": "Aperçu",
+  "publicview.purposeTitle": "À quoi sert ce nœud",
+  "publicview.reachTitle": "Comment joindre ce nœud",
+  "publicview.retention": "Rétention",
+  "publicview.retentionHelp": "Jusqu'où remonte la page publique, de 1 à 168 heures. Cela limite seulement ce qui est affiché — rien n'est supprimé et votre propre historique n'est pas touché.",
+  "publicview.showCcTs": "Code couleur et intervalles",
+  "publicview.showCounters": "Compteurs de synthèse",
+  "publicview.showFreq": "Fréquences",
+  "publicview.showGrid": "Locator",
+  "publicview.showGridHelp": "Désactivé par défaut. C'est le seul champ qui indique où vous êtes.",
+  "publicview.showLastHeard": "Liste des dernières stations entendues",
+  "publicview.showLinks": "Liens externes",
+  "publicview.showMap": "Carte des positions entendues",
+  "publicview.showMode": "Modes",
+  "publicview.showNets": "Réseaux programmés",
+  "publicview.showPowerLine": "Afficher puissance et antenne",
+  "publicview.showQr": "Code QR",
+  "publicview.showStatus": "Au repos / en émission",
+  "publicview.showTalkgroup": "Groupe de parole actif",
+  "publicview.suppressEmpty": "Aucun indicatif masqué.",
+  "publicview.suppressHelp": "Les indicatifs listés ici n'apparaissent jamais dans la liste publique des dernières stations entendues, ni dans les compteurs, ni sur la carte. Les SSID et suffixes portables sont ignorés : ajouter N4ABC couvre aussi N4ABC-7 et N4ABC/M.",
+  "publicview.suppressTitle": "Indicatifs masqués",
+  "publicview.tag.club_net": "Réseau de club",
+  "publicview.tag.demo_event": "Démo / événement",
+  "publicview.tag.emcomm": "Secours",
+  "publicview.tag.experimental": "Expérimental",
+  "publicview.tag.net_control": "Contrôle de réseau",
+  "publicview.tag.personal_hotspot": "Hotspot personnel",
+  "publicview.tags": "Étiquettes",
   "remoteAttachmentBlock.detach": "Détacher",
   "remoteAttachmentBlock.dormant": "INACTIF",
   "remoteAttachmentBlock.peerNotPairedEdge": "pair non appairé — cette liaison est inactive jusqu'au ré-appairage",
   "remoteAttachmentBlock.viaPeer": "VIA PAIR",
-
   "routingTable.addRoute": "+ AJOUTER UNE ROUTE",
   "routingTable.dialedTg": "TG composé",
   "routingTable.dialedTgTypeName": "TG composé — saisissez un nom ou un numéro",
@@ -803,26 +795,20 @@
   "routingTable.noOverridesEveryTalkgroup": "Aucune surcharge — chaque talkgroup suit le préfixe de son réseau, et tout ce qui n'est pas routé va vers le réseau principal.",
   "routingTable.slot": "Intervalle",
   "routingTable.talkgroupRouting": "ROUTAGE DES TALKGROUPS",
-
   "settings.chooseSection": "Choisissez une section pour configurer ce nœud.",
   "settings.crumb": "PARAMÈTRES",
   "settings.pageTitle": "Waypoint · Paramètres",
   "settings.title": "Paramètres",
-
   "showNetworkConfirmBar.keepTheseNetworkSettings": "Conserver ces paramètres réseau ?",
   "showNetworkConfirmBar.nodeRevertsAutomatically": "Le nœud rétablira automatiquement l'ancienne configuration (dans",
-
   "sidebar.callsign": "INDICATIF",
   "sidebar.connecting": "CONNEXION EN COURS",
   "sidebar.offline": "HORS LIGNE",
   "sidebar.online": "EN LIGNE",
   "sidebar.tagline": "CONTRÔLE DU HOTSPOT",
-
   "stackApplyNow.applyAvailableStackUpdates": "Appliquer les mises à jour disponibles pour la pile dès maintenant ? Les services concernés redémarreront, et la mise à jour s'annulera automatiquement si le modem ne revient pas en ligne.",
   "stackApplyNow.updateStartedHealthChecking": "Mise à jour démarrée — vérification de l'état de la pile ; cela peut prendre jusqu'à une minute.",
-
   "startSweep.sweepingKeyRadioWhen": "Balayage en cours — passez en émission avec votre radio lorsqu'il le demande.",
-
   "station.callsignOverride": "Surcharge de l'indicatif",
   "station.eventHistory": "HISTORIQUE DES ÉVÉNEMENTS",
   "station.howLongNodeKeeps": "Durée pendant laquelle ce nœud conserve son historique persistant (dernières stations / événements enregistrés sur l'appareil). <b>0 conserve l'historique indéfiniment.</b> Les événements plus anciens sont purgés chaque nuit ; une durée plus longue utilise plus d'espace sur la carte SD.",
@@ -834,7 +820,6 @@
   "station.retentionWindow": "Période de conservation",
   "station.stationIdentification": "IDENTIFICATION DE LA STATION",
   "station.toneLevel": "Niveau de la tonalité",
-
   "status.connected": "connecté",
   "status.connecting": "connexion…",
   "status.dashboard": "TABLEAU DE BORD",
@@ -846,7 +831,6 @@
   "status.mode": "MODE",
   "status.uptime": "TEMPS DE FONCTIONNEMENT",
   "status.version": "VERSION",
-
   "tab.brandmeister.crumb": "RÉSEAUX / BRANDMEISTER",
   "tab.brandmeister.desc": "Serveurs maîtres vers lesquels ce nœud achemine le trafic DMR. Les mots de passe sont stockés sur le nœud et ne sont jamais réaffichés.",
   "tab.brandmeister.label": "BrandMeister",
@@ -893,6 +877,11 @@
   "tab.profiles.label": "Profils",
   "tab.profiles.sub": "Setups Enregistrés",
   "tab.profiles.title": "Profils de Connexion",
+  "tab.publicview.crumb": "ADMIN / PUBLIC VIEW",
+  "tab.publicview.desc": "Publier une page en lecture seule sur ce nœud — comment le joindre, à quoi il sert, et qui a été entendu. Désactivée par défaut : tant que vous ne l'activez pas, toutes les adresses publiques répondent « introuvable ». Chaque champ et chaque module se contrôle séparément, et une liste de masquage exclut les indicatifs nommés de tout ce qui est publié.",
+  "tab.publicview.label": "Vue publique",
+  "tab.publicview.sub": "Page publique et identité",
+  "tab.publicview.title": "Vue publique",
   "tab.setup.crumb": "SYSTÈME / SETUP",
   "tab.setup.desc": "Mode TRX et pilote d'affichage de MMDVM-Host. Waypoint fonctionne sans écran (le statut est transmis via MQTT) ; ces champs sont présents par souci de parité et pour les nœuds pilotant un écran physique.",
   "tab.setup.label": "Setup",
@@ -913,13 +902,11 @@
   "tab.updates.label": "Mises à jour",
   "tab.updates.sub": "Version & Canal",
   "tab.updates.title": "Mises à jour Logicielles",
-
   "tgMapEditor.addMapping": "＋ Ajouter une correspondance",
   "tgMapEditor.dmrTg": "TG DMR",
   "tgMapEditor.removeMapping": "Supprimer la correspondance",
   "tgMapEditor.sourceTg": "TG source",
   "tgMapEditor.tgMapRewriteSource": "Carte TG — réécrire un talkgroup source vers un TG DMR (optionnel)",
-
   "theme.amber": "ambre",
   "theme.dark": "☾ Sombre",
   "theme.ice": "glace",
@@ -929,11 +916,9 @@
   "theme.switchToDark": "Passer au mode sombre",
   "theme.switchToLight": "Passer au mode clair",
   "theme.toggleLight": "Basculeur de mode clair",
-
   "time.hoursAgo": "il y a {n}h",
   "time.minutesAgo": "il y a {n}m",
   "time.secondsAgo": "il y a {n}s",
-
   "updates.applyingStopsAffectedServices": "L'application arrête les services concernés, installe les nouvelles versions, redémarre et vérifie le bon fonctionnement du modem. Si la pile ne redémarre pas correctement, un <b>retour automatique à la version précédente</b> est effectué.",
   "updates.applyingUpdateServicesAre": "<b>Application d'une mise à jour…</b> Les services sont en cours de mise à jour et de vérification. Cette page se rafraîchira automatiquement.",
   "updates.automaticUpdateChecks": "Vérification automatique des mises à jour",
@@ -959,7 +944,6 @@
   "updates.updateNow": "METTRE À JOUR MAINTENANT",
   "updates.updatePolicy": "POLITIQUE DE MISE À JOUR",
   "updates.whatChanged": "Nouveautés",
-
   "ysf.aprsPositionBeacon": "Balise de position APRS",
   "ysf.dgIdGateway": "PASSERELLE DG-ID",
   "ysf.fcs00290YsfReflector": "ex. FCS00290 ou un réflecteur YSF",

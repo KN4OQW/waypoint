@@ -1807,6 +1807,7 @@ func (s *server) newMux() *http.ServeMux {
 	s.registerPublicRoutes(mux)
 	s.registerBrandingRoutes(mux)
 	s.registerAdminMapRoutes(mux)
+	s.registerPublicPanelRoutes(mux)
 	mux.Handle("/", s.rootHandler(http.FileServerFS(ui.FS())))
 	return mux
 }
