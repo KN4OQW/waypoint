@@ -102,3 +102,25 @@ func TestEnabledModesReportsOnlyWhatIsOn(t *testing.T) {
 		}
 	}
 }
+
+// TestReachCardReportsTheEffectiveColourCode is a hardware-validation regression.
+//
+// On the bench node the store held color_code = "" while the rendered
+// MMDVM-Host.ini said ColorCode=1 — render.go defaults a blank value. The reach
+// card read the store, so a node demonstrably operating on CC 1 published a card
+// with no colour code at all. That is not a smaller answer than the truth: it is
+// an instruction that does not work, handed to someone programming a codeplug.
+func TestReachCardReportsTheEffectiveColourCode(t *testing.T) {
+	set := DefaultSettings()
+	for _, tc := range []struct{ stored, want string }{
+		{"", config.DefaultDMRColorCode}, // blank: what the renderer will emit
+		{"  ", config.DefaultDMRColorCode},
+		{"7", "7"}, // set: what the operator chose
+	} {
+		m := &config.Model{}
+		m.DMR.ColorCode = tc.stored
+		if got := BuildNode(m, set, nil, nil, nil); got.ColorCode != tc.want {
+			t.Errorf("stored colour code %q published as %q, want %q", tc.stored, got.ColorCode, tc.want)
+		}
+	}
+}
