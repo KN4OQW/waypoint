@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -581,22 +582,72 @@ func TestViewSurfacesModeProblems(t *testing.T) {
 	}
 }
 
-// Reporting is advisory: it must never withhold a daemon. Only the DAPNET
-// AuthKey does that, and it does so through UnmetGatewayRequirements, which these
-// checks read rather than duplicate.
-func TestModeProblemsWithholdNoDaemon(t *testing.T) {
+// A finding that exists only to REPORT must not withhold a daemon.
+//
+// This claim used to be "no readiness fault withholds anything", which was true
+// when the registry held only the DAPNET AuthKey and stopped being true the
+// moment MMDVM-Host was registered under ModeModem. The blanket version was
+// always too broad for its own intent: the point is that REPORTING does not
+// silently acquire the power to refuse, not that no value is ever both reported
+// and required. So it is stated against the faults that are advisory and only
+// advisory — the ones whose whole point is a node that comes up healthy and
+// silent, where there is nothing for a registry to withhold because the daemon
+// starts perfectly well.
+func TestAdvisoryFindingsWithholdNoDaemon(t *testing.T) {
 	m := allModesOn()
-	m.General.Callsign, m.General.ID = "", ""
-	m.Modem.RXFreqHz, m.Modem.TXFreqHz = "", ""
+	// Every one of these produces a daemon that starts, binds, and reports itself
+	// healthy. Callsign, radio ID and modem port are deliberately absent: those are
+	// registered requirements as well as findings, which the next test covers.
 	m.DMR.ColorCode, m.P25.NAC, m.NXDN.RAN, m.M17.CAN = "20", "zzz", "99", "99"
+	m.FM.AccessMode = "9"
+	// Frequencies stay in this set: they are reported, and #216 asks for them to be
+	// registered as well, but they are not registered today. If that changes, this
+	// line is the one that fails and says so.
+	m.Modem.RXFreqHz, m.Modem.TXFreqHz = "", ""
 
 	if !m.HasModeErrors() {
 		t.Fatal("the wrecked model reported no errors; the rest of this test proves nothing")
 	}
 	if reqs := m.UnmetGatewayRequirements(); len(reqs) != 0 {
-		t.Errorf("a readiness fault withheld a gateway: %+v", reqs)
+		t.Errorf("an advisory-only fault withheld a gateway: %+v", reqs)
 	}
 	if units := m.BlockedGatewayUnits(); len(units) != 0 {
-		t.Errorf("a readiness fault blocked units: %v", units)
+		t.Errorf("an advisory-only fault blocked units: %v", units)
+	}
+}
+
+// The identity values are BOTH reported and registered, and that overlap is
+// deliberate rather than a duplicated rule: the registry withholds MMDVM-Host so
+// an unidentified station cannot transmit, and the readiness report is what tells
+// the operator which control to fill in. A withheld daemon is otherwise invisible
+// — the unit is simply not running.
+//
+// What must not happen is the two disagreeing, so this pins that they name the
+// same fields and fire on the same configuration.
+func TestIdentityIsBothReportedAndWithheld(t *testing.T) {
+	m := allModesOn()
+	m.General.Callsign, m.General.ID = "", ""
+
+	// Reported, against the station rather than any one mode.
+	requireProblem(t, m.ModeProblems(), "", "general.callsign", SeverityError)
+
+	// And withheld, naming the same fields.
+	reqs := m.UnmetGatewayRequirements()
+	if len(reqs) != 1 || reqs[0].Mode != ModeModem {
+		t.Fatalf("UnmetGatewayRequirements() = %+v, want one ModeModem entry", reqs)
+	}
+	for _, f := range []string{"general.callsign", "general.id"} {
+		if !slices.Contains(reqs[0].Missing, f) {
+			t.Errorf("Missing = %v, want it to name %q", reqs[0].Missing, f)
+		}
+	}
+
+	// Satisfying the identity clears both surfaces together.
+	m.General.Callsign, m.General.ID = "KN4OQW", "3180202"
+	if got := find(m.ModeProblems(), "", "general.callsign"); len(got) != 0 {
+		t.Errorf("callsign still reported once set: %s", got[0].Message)
+	}
+	if reqs := m.UnmetGatewayRequirements(); len(reqs) != 0 {
+		t.Errorf("still withheld once identity is set: %+v", reqs)
 	}
 }

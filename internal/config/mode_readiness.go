@@ -66,7 +66,7 @@ func (m *Model) ModeProblems() []ModeProblem {
 		return nil
 	}
 	var out []ModeProblem
-	if !m.anyModeEnabled() {
+	if !m.AnyModeEnabled() {
 		return nil
 	}
 	out = append(out, m.stationProblems()...)
@@ -116,15 +116,6 @@ func (m *Model) ProblemsFor(mode Mode) []ModeProblem {
 func (m *Model) HasModeErrors() bool {
 	for _, p := range m.ModeProblems() {
 		if p.Severity == SeverityError {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *Model) anyModeEnabled() bool {
-	for _, md := range modeDisplay {
-		if md.get(m.Modes) {
 			return true
 		}
 	}

@@ -18,34 +18,39 @@ import "strings"
 // config and restarts no unit for it — and any instance still running is stopped
 // and disabled for boot, the same treatment a displaced gateway gets.
 //
-// Surveyed against the pinned upstream sources, exactly one gateway is REGISTERED
-// here today:
+// One GATEWAY is registered here, and it is the only one:
 //
 //   - DAPNETGateway.cpp:283 — an empty (or literal "TOPSECRET") AuthKey logs
 //     "AuthKey not set or invalid" and returns 1, BEFORE constructing the DAPNET
 //     network object. So POCSAG enabled with no AuthKey is a guaranteed crash
 //     loop.
 //
-// It is NOT the only daemon that fails this way, and this survey used to say it
-// was — that "the rest have no equivalent: their early `return 1` paths are all
-// runtime conditions, not missing configuration". The bench contradicted it:
+// This survey used to claim that was the end of it — that "the rest have no
+// equivalent: their early `return 1` paths are all runtime conditions, not missing
+// configuration". The bench contradicted that twice, and the correction is worth
+// keeping because the survey's method is what failed, not just its conclusion: it
+// looked for `return 1` and did not look for an assert.
 //
 //   - #215 — YSFGateway with no TX frequency aborts on WiresX.cpp:103's
-//     assert(txFrequency > 0U). That is missing configuration, not a runtime
-//     condition; it was found looping with a restart counter over 2,000. The
-//     survey missed it by looking for `return 1` and not for an assert, so read
-//     the framing above as "exits OR ABORTS before opening anything".
-//   - #216 — MMDVM-Host itself, by a third route: 0 Hz earns a NAK to SET_FREQ
-//     and the host exits 1, with DisplayLevel=0 hiding the cause.
+//     assert(txFrequency > 0U). Missing configuration, not a runtime condition;
+//     found looping with a restart counter over 2,000. Read the framing above as
+//     "exits OR ABORTS before opening anything".
+//   - #216 — MMDVM-Host, by a third route again: 0 Hz earns a NAK to SET_FREQ and
+//     the host exits 1, with DisplayLevel=0 hiding the cause.
 //
-// Both are REPORTED rather than registered today: mode_readiness.go's YSF finding
-// names the abort, and test/tier2/modes_test.go executes it against the pinned
-// binary, so the claim rests on the daemon's behaviour rather than on a reading of
-// its source. Registering them — withholding the target, stopping the unit,
-// boot-disabling it, the treatment POCSAG gets — is what #215 and #216 ask for and
-// is deliberately not done here: it also has to cover the host, which this
-// registry does not model, and withholding MMDVM-Host takes every mode off the air
-// at once rather than one gateway.
+// The two are treated DIFFERENTLY, and the split is the point of this paragraph.
+// MMDVM-Host is registered below (modem.port, and the identity values). YSFGateway
+// is not: its abort is only REPORTED, by mode_readiness.go's YSF finding, and
+// executed against the pinned binary by test/tier2/modes_test.go so the claim
+// rests on the daemon's behaviour rather than a reading of its source.
+//
+// Why the asymmetry: withholding MMDVM-Host takes every mode off the air at once,
+// so it is only done for values that are unarguable — no port to open, or no
+// identity to transmit under. YSFGateway's frequency requirement is one daemon's,
+// and a frequency is a value an operator is mid-way through setting on a node
+// being configured; refusing to start the daemon during that is worse than
+// reporting it. Registering it is still open (#215) and is a decision, not an
+// oversight.
 //
 // The remaining daemons stay absent rather than being given invented
 // requirements, which would refuse to start daemons that work fine today. That
