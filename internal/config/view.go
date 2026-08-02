@@ -55,7 +55,14 @@ type View struct {
 	// daemon that is not running for no visible reason. Carries field NAMES, never
 	// values, so nothing secret is exposed by reporting that a secret is absent.
 	BlockedGateways []GatewayRequirement `json:"blocked_gateways"`
-	ReadOnly        bool                 `json:"read_only"`
+	// ModeProblems are the per-mode readiness findings (mode_readiness.go): the
+	// configurations that save fine, start fine, and then do not work on the air.
+	// Unlike BlockedGateways nothing is withheld for these — they are advisory, and
+	// the node runs — so the projection is the ONLY place an operator ever learns
+	// about them. Field names only, never values, for the same reason
+	// BlockedGateways carries names.
+	ModeProblems []ModeProblem `json:"mode_problems"`
+	ReadOnly     bool          `json:"read_only"`
 	// The cross-mode transcoding bridges (MMDVM_CM) are no longer projected here.
 	// The per-bridge-daemon model is retired for the RFC-0003 bus architecture, so
 	// the settings page shows a placeholder instead of bridge cards. The bridge store
@@ -575,6 +582,7 @@ func (m *Model) View(src Sources) *View {
 		AccessMode:    m.FM.AccessMode,
 	}
 	v.BlockedGateways = m.UnmetGatewayRequirements()
+	v.ModeProblems = m.ModeProblems()
 	// The cross-mode transcoding bridges are retired (RFC-0003) and no longer
 	// projected — their store sections stay dormant (see the View doc comment).
 	for _, md := range modeDisplay {
