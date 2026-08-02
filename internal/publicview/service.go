@@ -1,6 +1,7 @@
 package publicview
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -360,4 +361,40 @@ func isAllDigits(s string) bool {
 		}
 	}
 	return true
+}
+
+// Now is the service's clock. It is exported so the server-rendered embed widget
+// formats relative times against the same instant the service filtered on — a
+// widget computing "3 min ago" from its own wall clock would drift from the window
+// the list was built with, and the two would disagree at the boundary.
+func (s *Service) Now() time.Time { return s.now() }
+
+// RelativeTime renders an instant as the coarse "when" the public surface uses.
+//
+// Coarse on purpose. The exact second a station keyed up is a detail the public
+// list has no reason to publish, and rounding is one more place the surface says
+// less than it knows. It also matches what the page's own JavaScript renders, so
+// the widget and the page do not describe the same event differently.
+func RelativeTime(at, now time.Time) string {
+	d := now.Sub(at)
+	if d < 0 {
+		d = 0
+	}
+	if d < 45*time.Second {
+		return "just now"
+	}
+	return RelativeMinutes(int(d.Round(time.Minute) / time.Minute))
+}
+
+// RelativeMinutes renders a whole-minute age.
+func RelativeMinutes(n int) string {
+	switch {
+	case n < 1:
+		return "just now"
+	case n < 60:
+		return fmt.Sprintf("%d min ago", n)
+	case n < 24*60:
+		return fmt.Sprintf("%d h ago", n/60)
+	}
+	return fmt.Sprintf("%d d ago", n/(24*60))
 }

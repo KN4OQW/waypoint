@@ -366,7 +366,10 @@
     var rows = res.entries || [];
     if (!rows.length) {
       var tr2 = el("tr");
-      var td2 = el("td", "empty", "Nothing heard in the retention window.");
+      // "on RF" distinguishes this from the status line, which counts network
+      // traffic as activity too. Both can be true at once, and without the
+      // qualifier the pair reads as a contradiction.
+      var td2 = el("td", "empty", "No stations heard on RF in the retention window.");
       td2.colSpan = 3;
       tr2.appendChild(td2);
       body.appendChild(tr2);
