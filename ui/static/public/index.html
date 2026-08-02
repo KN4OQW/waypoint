@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Node · Waypoint</title>
 <link rel="icon" type="image/svg+xml" href="/public/assets/icon.svg">
+<link rel="stylesheet" href="/public/vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="/public/public.css">
 </head>
 <!--
@@ -63,13 +64,14 @@
   </div>
 </header>
 
-<!-- HERO. The map layer itself lands with the position store; until then the
-     hero carries the identity and on-air overlays that make the layout read. -->
+<!-- HERO. Leaflet mounts into #map when the map module is on and there is
+     something to plot; the placeholder inside it is what a visitor sees
+     otherwise, and says why rather than showing an empty grey rectangle. -->
 <section class="hero">
   <div id="map" class="map" aria-hidden="true">
     <div id="map-ph" class="map-ph">
       <span class="map-ph-title">COVERAGE MAP</span>
-      <span class="map-ph-sub">Locally-heard positions appear here once a mesh transport is attached.</span>
+      <span id="map-ph-sub" class="map-ph-sub">Locally-heard positions appear here once a mesh transport is attached.</span>
     </div>
   </div>
 
@@ -213,6 +215,7 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
+<script src="/public/vendor/leaflet/leaflet.js"></script>
 <script src="/public/vendor/qrcode.js"></script>
 <script src="/public/public.js"></script>
 </body>

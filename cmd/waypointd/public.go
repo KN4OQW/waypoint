@@ -83,6 +83,7 @@ func (s *server) registerPublicRoutes(mux *http.ServeMux) {
 	// catch-all below keeps everything else under /embed/ away from the file
 	// server, since the auth gate exempts the whole prefix.
 	s.registerEmbedRoutes(mux, limiter)
+	s.registerPublicMapRoute(mux, limiter)
 	mux.Handle("/embed/", s.publicGate(limiter.Middleware(http.NotFoundHandler())))
 }
 
@@ -144,6 +145,19 @@ var publicPageAssets = map[string]struct{ file, mime string }{
 	"/public/public.js":        {"public/public.js", "text/javascript; charset=utf-8"},
 	"/public/vendor/qrcode.js": {"vendor/qrcode.js", "text/javascript; charset=utf-8"},
 	"/public/assets/icon.svg":  {"logo-mono.svg", "image/svg+xml"},
+
+	// Leaflet. Listed individually rather than served from a directory, for the
+	// same reason the rest of this map is an allow-list. leaflet.css references
+	// three of the images by relative URL, so the CSS has to be served from a path
+	// with images/ beside it — which is why these keep the vendor/leaflet/ shape
+	// rather than being flattened.
+	"/public/vendor/leaflet/leaflet.js":                {"vendor/leaflet/leaflet.js", "text/javascript; charset=utf-8"},
+	"/public/vendor/leaflet/leaflet.css":               {"vendor/leaflet/leaflet.css", "text/css; charset=utf-8"},
+	"/public/vendor/leaflet/images/layers.png":         {"vendor/leaflet/images/layers.png", "image/png"},
+	"/public/vendor/leaflet/images/layers-2x.png":      {"vendor/leaflet/images/layers-2x.png", "image/png"},
+	"/public/vendor/leaflet/images/marker-icon.png":    {"vendor/leaflet/images/marker-icon.png", "image/png"},
+	"/public/vendor/leaflet/images/marker-icon-2x.png": {"vendor/leaflet/images/marker-icon-2x.png", "image/png"},
+	"/public/vendor/leaflet/images/marker-shadow.png":  {"vendor/leaflet/images/marker-shadow.png", "image/png"},
 }
 
 // publicPage serves the standalone public dashboard.
@@ -192,7 +206,10 @@ func publicPageCSP(next http.Handler) http.Handler {
 	const policy = "default-src 'self'; " +
 		"script-src 'self'; " +
 		"style-src 'self' 'unsafe-inline'; " +
-		"img-src 'self' data:; " +
+		// Tiles are the one thing the page cannot serve itself, and the host is
+		// named rather than admitted by scheme: "any HTTPS image" to allow one
+		// origin is how a strict policy becomes decorative.
+		"img-src 'self' data: https://tile.openstreetmap.org https://*.tile.openstreetmap.org; " +
 		"connect-src 'self'; " +
 		"font-src 'self'; " +
 		// The custom block is framed from this origin and nowhere else. Without

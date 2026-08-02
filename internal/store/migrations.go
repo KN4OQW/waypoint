@@ -40,6 +40,17 @@ type migration struct {
 var migrations = []migration{
 	{to: 2, name: "meta-claim-and-provision-columns", fn: migrateMetaColumns},
 	{to: 3, name: "public-view-tables-and-admin-role", fn: migratePublicView},
+	{to: 4, name: "heard-positions", fn: migrateHeardPositions},
+}
+
+// migrateHeardPositions installs the locally-heard position table (D3) on a
+// database that already has rows. Like the step before it, the DDL is the same
+// const the baseline executes, so the two cannot drift.
+func migrateHeardPositions(tx *sql.Tx) error {
+	if _, err := tx.Exec(heardPositionsDDL); err != nil {
+		return fmt.Errorf("create heard_positions: %w", err)
+	}
+	return nil
 }
 
 // migrateMetaColumns brings meta's claim and provisioning columns under the
