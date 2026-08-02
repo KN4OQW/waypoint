@@ -97,15 +97,21 @@ type CountersResult struct {
 	Counters  Counters `json:"counters"`
 }
 
-// history is the slice of the event store this service reads. Narrowing it to one
+// History is the slice of the event store this service reads. Narrowing it to one
 // method keeps the service testable against synthetic fixtures without standing up
 // a database, and makes it obvious that nothing here writes.
-type history interface {
+//
+// It is exported so callers can hold a nil interface deliberately. Assigning a nil
+// *events.Store into an unexported parameter would produce a non-nil interface
+// wrapping a nil pointer, and the nil checks below would sail past it into a
+// dereference — the classic Go footgun, and one worth designing out rather than
+// remembering.
+type History interface {
 	History(events.HistoryQuery) ([]hub.Event, error)
 }
 
-// live is the slice of the status aggregator this service reads.
-type live interface {
+// Live is the slice of the status aggregator this service reads.
+type Live interface {
 	Snapshot() status.Status
 }
 
@@ -114,8 +120,8 @@ type live interface {
 // takes effect on the next request rather than at the next restart.
 type Service struct {
 	store   *Store
-	history history
-	live    live
+	history History
+	live    Live
 	// idDB reports whether callsign resolution can be trusted. Never nil; see
 	// NewService.
 	idDB func() IDDBStatus
@@ -129,7 +135,7 @@ type Service struct {
 // answers rather than failing, because a public page that 500s when the event
 // database is briefly unavailable is worse than one that says "no recent
 // activity".
-func NewService(s *Store, h history, l live) *Service {
+func NewService(s *Store, h History, l Live) *Service {
 	return &Service{store: s, history: h, live: l, idDB: alwaysAvailable, now: time.Now}
 }
 

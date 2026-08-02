@@ -158,6 +158,17 @@ func (a *Auth) handleLogout(w http.ResponseWriter, r *http.Request) {
 //     deliberately allowlisted here.
 func (a *Auth) Gate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The opt-in public surface is the one route group that is anonymous by
+		// design, so it is let through here rather than being taught to satisfy the
+		// wall. This is not a hole: what it passes to still decides for itself
+		// whether to answer at all, and answers 404 unless the operator turned the
+		// feature on. Letting it past a gate that would otherwise 403 an unclaimed
+		// node also keeps the two states consistent — a public page must not appear
+		// and disappear depending on whether the owner has claimed the box.
+		if a.allowAnon != nil && a.allowAnon(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if !a.Claimed() {
 			a.gateUnclaimed(w, r, next)
 			return
@@ -165,6 +176,14 @@ func (a *Auth) Gate(next http.Handler) http.Handler {
 		a.gateClaimed(w, r, next)
 	})
 }
+
+// AllowAnonymous registers the predicate that names the routes exempt from the
+// session wall. It exists so the exemption is declared by the subsystem that owns
+// those routes rather than hardcoded here — this package should not have to know
+// what a public dashboard is — while still being wired in exactly one place.
+//
+// Passing nil, or never calling this, leaves the gate default-deny as before.
+func (a *Auth) AllowAnonymous(fn func(*http.Request) bool) { a.allowAnon = fn }
 
 func (a *Auth) gateUnclaimed(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	switch {
