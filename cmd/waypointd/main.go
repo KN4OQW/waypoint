@@ -1805,6 +1805,7 @@ func (s *server) newMux() *http.ServeMux {
 	// besides the two above; each 404s unless the operator enabled the feature, so
 	// registering them costs a disabled node nothing but a not-found.
 	s.registerPublicRoutes(mux)
+	s.registerBrandingRoutes(mux)
 	mux.Handle("/", s.rootHandler(http.FileServerFS(ui.FS())))
 	return mux
 }

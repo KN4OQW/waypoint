@@ -57,6 +57,22 @@ type Node struct {
 	PurposeFreetext string   `json:"purpose_freetext,omitempty"`
 	Links           []Link   `json:"links,omitempty"`
 	Nets            []Net    `json:"nets,omitempty"`
+
+	// Branding (D4).
+	//
+	// NarrativeHTML is already rendered and already sanitised — the page inserts
+	// it and never renders Markdown itself, because that would put a renderer and
+	// a sanitiser in the browser where neither can be trusted.
+	//
+	// HasLogo and HasCustomBlock are booleans rather than content on purpose. The
+	// page needs to know whether to create an <img> and an <iframe>; it does not
+	// need the bytes, and the custom block in particular must arrive through its
+	// own sandboxed endpoint rather than through a JSON field that could end up
+	// inserted into the parent document by a future refactor. A boolean cannot be
+	// inserted anywhere.
+	NarrativeHTML  string `json:"narrative_html,omitempty"`
+	HasLogo        bool   `json:"has_logo,omitempty"`
+	HasCustomBlock bool   `json:"has_custom_block,omitempty"`
 }
 
 // BuildNode assembles the reach card from the configuration, the public settings,
