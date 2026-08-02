@@ -235,6 +235,104 @@ func TestInstallFailureSkipsRehold(t *testing.T) {
 	}
 }
 
+// --- CheckInstallable: the pre-flight's command construction (#221) ---
+
+// TestCheckInstallableSimulatesAndChangesNothing: the pre-flight's whole value is
+// that it answers "could this be installed?" without installing it. A missing
+// --simulate would make Apply install the *previous* versions before installing
+// the new ones.
+func TestCheckInstallableSimulatesAndChangesNothing(t *testing.T) {
+	r := &fakeRunner{installed: map[string]string{"waypoint-stack": "0.2.0"}}
+	s := &OSSystem{Run: r.run}
+
+	err := s.CheckInstallable(context.Background(), []PkgVer{{Package: "waypoint-stack", Version: "0.1.0"}})
+	if err != nil {
+		t.Fatalf("CheckInstallable: %v", err)
+	}
+	cmd, ok := r.find("apt-get")
+	if !ok {
+		t.Fatal("no apt-get command was run")
+	}
+	if !hasArg(cmd.args, "--simulate") {
+		t.Errorf("the pre-flight must not change the system; got %v", cmd.args)
+	}
+	if hasArg(cmd.args, "-y") {
+		t.Errorf("a simulation has nothing to assume yes to; got %v", cmd.args)
+	}
+	// It asks about the exact pinned version — that is the question.
+	if !hasArg(cmd.args, "waypoint-stack=0.1.0") {
+		t.Errorf("the pre-flight must name the exact version; got %v", cmd.args)
+	}
+	// Simulating changes nothing, so there are no holds to restore.
+	if r.count("apt-mark") != 0 {
+		t.Errorf("a simulation must not touch hold state; ran apt-mark %d time(s)", r.count("apt-mark"))
+	}
+}
+
+// TestCheckInstallableMatchesInstallResolution: a simulation run under different
+// constraints than the real install would prove the wrong thing — it could pass
+// while the install it is vouching for fails, which is exactly the guarantee #221
+// needs. Every resolver-affecting flag must therefore match Install's.
+func TestCheckInstallableMatchesInstallResolution(t *testing.T) {
+	pkgs := []PkgVer{{Package: "waypoint-stack", Version: "0.1.0"}}
+
+	ri := &fakeRunner{installed: map[string]string{"waypoint-stack": "0.1.0"}}
+	if err := (&OSSystem{Run: ri.run}).Install(context.Background(), pkgs); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	rc := &fakeRunner{installed: map[string]string{"waypoint-stack": "0.2.0"}}
+	if err := (&OSSystem{Run: rc.run}).CheckInstallable(context.Background(), pkgs); err != nil {
+		t.Fatalf("CheckInstallable: %v", err)
+	}
+	install, _ := ri.find("apt-get")
+	check, _ := rc.find("apt-get")
+
+	// --allow-downgrades: the revert is a downgrade, so a pre-flight without it
+	// would reject a target the revert could actually install.
+	// --allow-change-held-packages: every stack package is held (#220).
+	for _, flag := range []string{"--allow-downgrades", "--allow-change-held-packages", "--no-install-recommends"} {
+		if !hasArg(install.args, flag) {
+			t.Errorf("Install lost %q — the pre-flight parity check is now meaningless; got %v", flag, install.args)
+		}
+		if !hasArg(check.args, flag) {
+			t.Errorf("the pre-flight must resolve under Install's %q; got %v", flag, check.args)
+		}
+	}
+}
+
+// TestCheckInstallableReportsAptsReason: the refusal an operator reads is only
+// actionable if it carries apt's own words for what is missing.
+func TestCheckInstallableReportsAptsReason(t *testing.T) {
+	r := &fakeRunner{
+		installed: map[string]string{"waypoint-stack": "0.2.0"},
+		failOn:    func(name string, _ []string) bool { return name == "apt-get" },
+	}
+	s := &OSSystem{Run: r.run}
+
+	err := s.CheckInstallable(context.Background(), []PkgVer{{Package: "waypoint-stack", Version: "0.1.0"}})
+	if err == nil {
+		t.Fatal("an unresolvable version must be reported as an error")
+	}
+	if !strings.Contains(err.Error(), "E: something went wrong") {
+		t.Errorf("the error should carry apt's output, got %q", err)
+	}
+}
+
+// TestCheckInstallableEmptyRunsNothing — no revert targets (every planned package is
+// a fresh install) is trivially installable, and must not become an apt call whose
+// "install nothing" result could fail for unrelated reasons.
+func TestCheckInstallableEmptyRunsNothing(t *testing.T) {
+	r := &fakeRunner{installed: map[string]string{"waypoint-stack": "0.2.0"}}
+	s := &OSSystem{Run: r.run}
+
+	if err := s.CheckInstallable(context.Background(), nil); err != nil {
+		t.Fatalf("CheckInstallable(nil): %v", err)
+	}
+	if len(r.cmds) != 0 {
+		t.Errorf("expected no commands, got %v", r.cmds)
+	}
+}
+
 // TestInstallEmptyRunsNothing — an empty target set is a no-op, not an apt call that
 // would resolve to "install nothing" and touch the hold state anyway.
 func TestInstallEmptyRunsNothing(t *testing.T) {

@@ -2,7 +2,9 @@ package stackupdate
 
 import (
 	"context"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,7 +18,14 @@ type fakeSystem struct {
 	healthSeq    []bool // scripted Healthy results; the last entry repeats
 	healthDetail string
 
+	// pool models what the apt repo actually carries, as "name=version" keys. It
+	// is the thing #221 was about: the engine assumed the previous versions were
+	// still here and they were not. A nil pool means "everything is available",
+	// so the tests that predate the pre-flight keep their original meaning.
+	pool map[string]bool
+
 	installCalls [][]PkgVer
+	checkCalls   [][]PkgVer
 	stopCalls    [][]string
 	startCalls   [][]string
 	history      [][]HistoryRow
@@ -24,6 +33,22 @@ type fakeSystem struct {
 	installErr error
 	stopErr    error
 	startErr   error
+}
+
+// has reports whether the modelled pool carries this exact version.
+func (f *fakeSystem) has(p PkgVer) bool {
+	return f.pool == nil || f.pool[p.Package+"="+p.Version]
+}
+
+func (f *fakeSystem) CheckInstallable(_ context.Context, pkgs []PkgVer) error {
+	f.checkCalls = append(f.checkCalls, append([]PkgVer(nil), pkgs...))
+	for _, p := range pkgs {
+		if !f.has(p) {
+			// Mirrors apt's own wording, which is what an operator sees in the log.
+			return fmt.Errorf("E: Version '%s' for '%s' was not found", p.Version, p.Package)
+		}
+	}
+	return nil
 }
 
 func (f *fakeSystem) InstalledVersions(_ context.Context, pkgs []string) (map[string]string, error) {
@@ -38,6 +63,13 @@ func (f *fakeSystem) Install(_ context.Context, pkgs []PkgVer) error {
 	f.installCalls = append(f.installCalls, pkgs)
 	if f.installErr != nil {
 		return f.installErr
+	}
+	// A version the pool does not carry cannot be installed — the same failure the
+	// revert path hit on the bench Pi, so an opted-in run reaches it for real.
+	for _, p := range pkgs {
+		if !f.has(p) {
+			return fmt.Errorf("E: Version '%s' for '%s' was not found", p.Version, p.Package)
+		}
 	}
 	for _, p := range pkgs { // model the install so InstalledVersions reflects it
 		f.installed[p.Package] = p.Version
@@ -148,7 +180,7 @@ func TestApplyConfirms(t *testing.T) {
 		{Package: "waypoint-mmdvmhost", From: "0~old+wp1", To: "0~new+wp1"},
 		{Package: "waypoint-dmrgateway", From: "0~old+wp1", To: "0~new+wp1"},
 	})
-	out, err := Apply(context.Background(), plan, f, fastTimings())
+	out, err := Apply(context.Background(), plan, f, fastTimings(), Policy{})
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -181,7 +213,7 @@ func TestApplyRevertsOnUnhealthy(t *testing.T) {
 		healthDetail: "waypoint-mmdvm.service SubState=auto-restart (modem not open)",
 	}
 	plan := PlanFrom([]Update{{Package: "waypoint-mmdvmhost", From: "0~old+wp1", To: "0~bad+wp1"}})
-	out, err := Apply(context.Background(), plan, f, fastTimings())
+	out, err := Apply(context.Background(), plan, f, fastTimings(), Policy{})
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -216,12 +248,174 @@ func TestApplyRevertsOnInstallFailure(t *testing.T) {
 		installErr: context.DeadlineExceeded,
 	}
 	plan := PlanFrom([]Update{{Package: "waypoint-dmrgateway", From: "0~old+wp1", To: "0~new+wp1"}})
-	out, err := Apply(context.Background(), plan, f, fastTimings())
+	out, err := Apply(context.Background(), plan, f, fastTimings(), Policy{})
 	// installErr makes the FIRST install fail; revert then reinstalls the previous
 	// version (which the fake lets succeed because installErr is sticky — so assert
 	// the failure surfaced instead).
 	if err == nil && !out.Reverted {
 		t.Fatalf("expected revert or error on install failure, got %+v (err %v)", out, err)
+	}
+}
+
+// --- Apply: the revert targets are pre-flighted before anything moves (#221) ---
+
+// bench221 reproduces the bench Pi at the moment #221 was observed: waypoint-stack
+// 0.1.0 installed, and a pool that carries only the 0.2.0 being offered. The
+// update installs fine, the health gate fails, and the revert to 0.1.0 has nowhere
+// to go.
+func bench221() (*fakeSystem, Plan) {
+	f := &fakeSystem{
+		installed:    map[string]string{"waypoint-stack": "0.1.0"},
+		pool:         map[string]bool{"waypoint-stack=0.2.0": true}, // 0.1.0 is gone
+		healthSeq:    []bool{false},                                 // waypoint-mmdvm.service is not active
+		healthDetail: "waypoint-mmdvm.service is not active",
+	}
+	return f, PlanFrom([]Update{{Package: "waypoint-stack", From: "0.1.0", To: "0.2.0"}})
+}
+
+// TestApplyRefusesWhenRevertTargetIsNotInThePool is the #221 regression. Before the
+// pre-flight this ran the whole update, failed the gate, and died in REVERT FAILED
+// with the node stranded on 0.2.0. Now it must refuse having changed nothing.
+func TestApplyRefusesWhenRevertTargetIsNotInThePool(t *testing.T) {
+	f, plan := bench221()
+
+	out, err := Apply(context.Background(), plan, f, fastTimings(), Policy{})
+	if err == nil {
+		t.Fatalf("an update whose revert target is not installable must be refused, got %+v", out)
+	}
+	if out.Confirmed || out.Reverted {
+		t.Fatalf("a refused update must report neither confirmed nor reverted, got %+v", out)
+	}
+	// The refusal has to say what is wrong, and carry apt's own words for it.
+	if !strings.Contains(err.Error(), "rolled back") {
+		t.Errorf("the refusal should explain that rollback is impossible, got %q", err)
+	}
+	if !strings.Contains(err.Error(), "Version '0.1.0' for 'waypoint-stack' was not found") {
+		t.Errorf("the refusal should carry apt's reason, got %q", err)
+	}
+	// Nothing moved: this is the whole point of pre-flighting rather than
+	// discovering the dead end after a successful install.
+	if len(f.installCalls) != 0 {
+		t.Errorf("a refused update must install nothing, got %v", f.installCalls)
+	}
+	if len(f.stopCalls) != 0 || len(f.startCalls) != 0 {
+		t.Errorf("a refused update must not touch services, stop=%v start=%v", f.stopCalls, f.startCalls)
+	}
+	if f.installed["waypoint-stack"] != "0.1.0" {
+		t.Errorf("the node must stay on its installed version, got %v", f.installed)
+	}
+	// And it leaves no phantom in-flight row in the audit trail.
+	if len(f.history) != 0 {
+		t.Errorf("a refused update must record no history, got %+v", f.history)
+	}
+}
+
+// TestApplyPreflightsThePreviousVersionsNotTheTargets pins *what* is checked. The
+// question is whether the way back is reachable, so the pre-flight must resolve the
+// installed versions — checking the targets would always pass and prove nothing.
+func TestApplyPreflightsThePreviousVersionsNotTheTargets(t *testing.T) {
+	f := &fakeSystem{
+		installed: map[string]string{"waypoint-mmdvmhost": "0~old+wp1", "waypoint-dmrgateway": "0~old+wp1"},
+		healthSeq: []bool{true},
+	}
+	plan := PlanFrom([]Update{
+		{Package: "waypoint-mmdvmhost", From: "0~old+wp1", To: "0~new+wp1"},
+		{Package: "waypoint-dmrgateway", From: "0~old+wp1", To: "0~new+wp1"},
+	})
+	if _, err := Apply(context.Background(), plan, f, fastTimings(), Policy{}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(f.checkCalls) != 1 {
+		t.Fatalf("expected exactly one pre-flight, got %d: %v", len(f.checkCalls), f.checkCalls)
+	}
+	want := []PkgVer{
+		{Package: "waypoint-dmrgateway", Version: "0~old+wp1"},
+		{Package: "waypoint-mmdvmhost", Version: "0~old+wp1"},
+	}
+	if !reflect.DeepEqual(f.checkCalls[0], want) {
+		t.Fatalf("pre-flight checked %v, want the installed versions %v", f.checkCalls[0], want)
+	}
+}
+
+// TestApplyPreflightsBeforeInstalling pins the *ordering*: the check has to precede
+// the install, not merely happen. A pre-flight after the install would reproduce
+// #221 exactly.
+func TestApplyPreflightsBeforeInstalling(t *testing.T) {
+	f, plan := bench221()
+	f.healthSeq = []bool{true} // healthy, so only the pre-flight can stop this
+
+	_, _ = Apply(context.Background(), plan, f, fastTimings(), Policy{})
+	if len(f.checkCalls) == 0 {
+		t.Fatal("Apply never pre-flighted the revert targets")
+	}
+	if len(f.installCalls) != 0 {
+		t.Fatal("the pre-flight must run before the install, not after it")
+	}
+}
+
+// TestApplyProceedsWhenOperatorOptsOut: allow_unrevertable is the escape hatch for a
+// node that must take an update the pool cannot roll back. The update runs, and the
+// outcome says plainly that it ran without a way back.
+func TestApplyProceedsWhenOperatorOptsOut(t *testing.T) {
+	f, plan := bench221()
+	f.healthSeq = []bool{true} // comes up healthy, so it confirms
+
+	out, err := Apply(context.Background(), plan, f, fastTimings(), Policy{AllowUnrevertable: true})
+	if err != nil {
+		t.Fatalf("an opted-in update must proceed, got %v", err)
+	}
+	if !out.Confirmed {
+		t.Fatalf("expected Confirmed, got %+v", out)
+	}
+	if !out.Unrevertable {
+		t.Error("an update that ran with no way back must say so in the outcome")
+	}
+	if f.installed["waypoint-stack"] != "0.2.0" {
+		t.Errorf("the update should have been applied, got %v", f.installed)
+	}
+}
+
+// TestApplyOptedOutStillFailsToRevert is the honest cost of the escape hatch, and
+// the reason it is off by default: opting past the pre-flight does not conjure a
+// pool. This is #221's exact outcome, reached deliberately instead of by surprise.
+func TestApplyOptedOutStillFailsToRevert(t *testing.T) {
+	f, plan := bench221() // health gate fails
+
+	out, err := Apply(context.Background(), plan, f, fastTimings(), Policy{AllowUnrevertable: true})
+	if err == nil {
+		t.Fatalf("the revert had nowhere to go; expected REVERT FAILED, got %+v", out)
+	}
+	if !strings.Contains(err.Error(), "REVERT FAILED") {
+		t.Errorf("expected REVERT FAILED, got %q", err)
+	}
+	if !out.Unrevertable {
+		t.Error("the outcome must attribute the failed revert to the missing pool")
+	}
+	if f.installed["waypoint-stack"] != "0.2.0" {
+		t.Errorf("the node is stranded on the new version, as predicted: %v", f.installed)
+	}
+}
+
+// TestApplySkipsPreflightForFreshInstalls: a package with no installed version has
+// no revert target, so there is nothing to prove and nothing to refuse. Without
+// this, a plan containing a brand-new package could never be applied.
+func TestApplySkipsPreflightForFreshInstalls(t *testing.T) {
+	f := &fakeSystem{
+		installed: map[string]string{"waypoint-dapnetgateway": ""}, // not installed yet
+		pool:      map[string]bool{"waypoint-dapnetgateway=0~new+wp1": true},
+		healthSeq: []bool{true},
+	}
+	plan := PlanFrom([]Update{{Package: "waypoint-dapnetgateway", From: "", To: "0~new+wp1"}})
+
+	out, err := Apply(context.Background(), plan, f, fastTimings(), Policy{})
+	if err != nil {
+		t.Fatalf("a fresh install has no revert target and must not be refused: %v", err)
+	}
+	if !out.Confirmed {
+		t.Fatalf("expected Confirmed, got %+v", out)
+	}
+	if out.Unrevertable {
+		t.Error("nothing to revert to is not the same as no way back")
 	}
 }
 
@@ -235,7 +429,7 @@ func TestGateNeedsSustainedHealth(t *testing.T) {
 	}
 	plan := PlanFrom([]Update{{Package: "waypoint-mmdvmhost", From: "0~old+wp1", To: "0~new+wp1"}})
 	tm := Timings{MaxPolls: 8, ConfirmChecks: 3}
-	out, err := Apply(context.Background(), plan, f, tm)
+	out, err := Apply(context.Background(), plan, f, tm, Policy{})
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -251,7 +445,7 @@ func TestGateRevertsWhenNeverSustained(t *testing.T) {
 	}
 	plan := PlanFrom([]Update{{Package: "waypoint-mmdvmhost", From: "0~old+wp1", To: "0~new+wp1"}})
 	tm := Timings{MaxPolls: 6, ConfirmChecks: 2}
-	out, err := Apply(context.Background(), plan, f, tm)
+	out, err := Apply(context.Background(), plan, f, tm, Policy{})
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}

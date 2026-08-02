@@ -460,6 +460,7 @@
   "help.station_id.enable": "Keyt dein Rufzeichen in Morse in festen Intervallen, sodass der Node sich identifiziert, ohne dass du etwas tust. <b>Die meisten Lizenzen verlangen periodische Identifikation</b> — in den USA alle 10 Minuten (§97.119).",
   "help.station_id.time_mins": "Minuten zwischen Identifikationen. Auf die Anforderung deiner Lizenz oder kürzer setzen — 10 Minuten in den USA. Die Identifikation wird zwischen Übertragungen gesendet, nie während einer.",
   "help.station_id.tx_level": "Lautstärke der Morse-Identifikation als Prozentsatz des vollen Hubs. Erhöhen, wenn die ID schwer zu kopieren ist, senken, wenn sie neben Sprachverkehr störend wirkt.",
+  "help.update.allow_unrevertable": "Erlaubt eine Aktualisierung auch dann, wenn die derzeit installierten Versionen nicht mehr im Repository vorhanden sind und sie daher im Fehlerfall nicht rückgängig gemacht werden könnte. Normalerweise lehnt der Knoten eine solche Aktualisierung ab und bleibt unverändert. Aktivieren Sie dies nur, um einen sonst blockierten Knoten wieder aktualisierbar zu machen, und schalten Sie es danach wieder aus.",
   "help.update.auto_apply": "Updates automatisch installieren, wenn sie gefunden werden. Updates werden nach der Installation auf Gesundheit geprüft und rollen sich zurück, wenn das Modem nicht wieder hochkommt.",
   "help.update.channel": "Welchem Release-Stream dieser Node folgt. Stabil ist der getestete; die anderen erhalten Änderungen früher und mit mehr Risiko.",
   "help.update.check_enabled": "Das signierte Waypoint-Apt-Repository auf neue Versionen prüfen. Ausschalten bedeutet, dass der Node den Update-Server nie kontaktiert — du musst von Hand prüfen.",
@@ -945,6 +946,8 @@
 
   "updates.applyingStopsAffectedServices": "Beim Anwenden werden die betroffenen Dienste gestoppt, die neuen Versionen installiert, neu gestartet und das Modem auf Gesundheit geprüft. Kommt der Stack nicht gesund zurück, wird <b>automatisch auf die vorherigen Versionen zurückgerollt</b>.",
   "updates.applyingUpdateServicesAre": "<b>Update wird angewendet…</b> Dienste werden aktualisiert und auf Gesundheit geprüft. Diese Seite aktualisiert sich automatisch.",
+  "updates.allowUnrevertable": "Nicht rückgängig machbare Aktualisierungen erlauben",
+  "updates.allowUnrevertableWarning": "<b>Nicht rückgängig machbare Aktualisierungen sind erlaubt.</b> Wenn eine Aktualisierung die Gesundheitsprüfung nicht besteht, kann dieser Knoten nicht auf die derzeit installierten Versionen zurückkehren und bleibt auf den neuen. Schalten Sie dies wieder AUS, sobald der Knoten aktuell ist.",
   "updates.automaticUpdateChecks": "Automatische Update-Prüfungen",
   "updates.automaticUpdateChecksAre": "<b>Automatische Update-Prüfungen sind aus.</b> Dieser Node prüft nur, wenn du <b>JETZT PRÜFEN</b> drückst.",
   "updates.automaticUpdateChecksAsk": "<b>Automatische Update-Prüfungen</b> fragen planmäßig, ob eine neuere Version existiert. Die Anfrage ist ein anonymer Abruf einer signierten, statischen Datei — sie trägt kein Rufzeichen, keine ID und nichts anderes über diesen Node, und es gibt nirgendwo in Waypoint Telemetrie. Ausschalten und der Node hört von selbst auf zu fragen; <b>JETZT PRÜFEN</b>, ein Update anzuwenden und alles andere funktioniert weiter — aber automatische Updates stoppen damit, da sie installieren, was eine Prüfung gefunden hat.",

@@ -16,11 +16,28 @@
 //
 // Apply's ordering is the safety argument, mirroring RFC-0014:
 //
-//	record intended change -> stop affected services -> apt-get install the exact
-//	target versions (never a bare dist-upgrade) -> restart -> health-gate (every
-//	affected unit active AND MMDVMHost's modem open, sustained) -> confirm; or on
-//	any failure, apt-get install the previous versions (kept in the repo's pool/)
-//	and restart -> reverted, with a logged reason.
+//	pre-flight the revert targets -> record intended change -> stop affected
+//	services -> apt-get install the exact target versions (never a bare
+//	dist-upgrade) -> restart -> health-gate (every affected unit active AND
+//	MMDVMHost's modem open, sustained) -> confirm; or on any failure, apt-get
+//	install the previous versions (kept in the repo's pool/) and restart ->
+//	reverted, with a logged reason.
+//
+// The pre-flight step exists because the rest of that argument rests on an
+// assumption this package cannot enforce: that the previous versions are still
+// downloadable when the revert needs them. They were not (issue #221) —
+// waypoint-stack's publish-apt.sh rebuilt the pool from only the current build,
+// so the repo carried exactly one version per package, and a node whose update
+// installed cleanly but failed its health gate could not go back:
+//
+//	stackupdate: REVERT FAILED (…): E: Version '0.1.0' for 'waypoint-stack' was not found
+//
+// leaving it stranded on the new version. That had stayed hidden because every
+// earlier revert was a no-op — the install had failed *before* changing anything,
+// so the revert reinstalled versions that were still installed. Only a revert
+// following a *successful* install needs the pool. So Apply now proves the way
+// back is installable before it takes a step it may need to undo, and refuses
+// outright rather than discovering the dead end afterwards.
 package stackupdate
 
 import (
@@ -129,6 +146,22 @@ type Outcome struct {
 	Reverted  bool     `json:"reverted"`  // the update failed and the prior versions were restored
 	Applied   []PkgVer `json:"applied"`   // the versions now installed (targets on confirm, previous on revert)
 	Reason    string   `json:"reason"`    // why it reverted, when Reverted
+	// Unrevertable records that this update ran with no working way back: the
+	// pre-flight found the previous versions uninstallable and Policy.
+	// AllowUnrevertable let it proceed anyway. Set on confirm and on revert
+	// alike — on a revert it is the explanation for why the revert then failed.
+	Unrevertable bool `json:"unrevertable,omitempty"`
+}
+
+// Policy is the operator-set behaviour Apply honours, distinct from Timings
+// (which tunes the health gate rather than deciding anything).
+type Policy struct {
+	// AllowUnrevertable proceeds with an update whose revert targets are not
+	// installable. Default false: no way back means no update, because a node
+	// stranded on a broken stack is worse than a node that stayed on a working
+	// one. It is an escape hatch for the operator who must take an update on a
+	// node the pool cannot roll back — knowingly, and only for that run.
+	AllowUnrevertable bool
 }
 
 // Apply result-code constants recorded in the history table.
@@ -158,6 +191,12 @@ type System interface {
 	// Install installs exactly these package=version pairs — `apt-get install
 	// name=version …`, never a bare upgrade or dist-upgrade (D2).
 	Install(ctx context.Context, pkgs []PkgVer) error
+	// CheckInstallable reports whether apt could install exactly these
+	// package=version pairs right now, changing nothing. It is how Apply proves
+	// the revert set is reachable before it installs anything (#221); an error
+	// means at least one version is no longer in the pool, so there is no way
+	// back. An empty set is installable by definition.
+	CheckInstallable(ctx context.Context, pkgs []PkgVer) error
 	// StopServices stops the given units before an install; StartServices restarts
 	// them after. Empty unit lists are no-ops.
 	StopServices(ctx context.Context, units []string) error
@@ -244,10 +283,11 @@ func PlanFrom(updates []Update) Plan {
 }
 
 // Apply performs the transactional stack update. The step ordering is the safety
-// argument (see the package doc): the previous versions are recorded before any
-// change, and any failure — a failed install, a failed restart, or a health gate
-// that never sustains — reverts to those previous versions from the repo's pool/.
-func Apply(ctx context.Context, plan Plan, sys System, t Timings) (Outcome, error) {
+// argument (see the package doc): the way back is proven installable and the
+// previous versions are recorded before any change, and any failure — a failed
+// install, a failed restart, or a health gate that never sustains — reverts to
+// those previous versions from the repo's pool/.
+func Apply(ctx context.Context, plan Plan, sys System, t Timings, pol Policy) (Outcome, error) {
 	if !plan.Available {
 		return Outcome{}, fmt.Errorf("stackupdate: nothing to apply: %s", plan.Reason)
 	}
@@ -255,24 +295,36 @@ func Apply(ctx context.Context, plan Plan, sys System, t Timings) (Outcome, erro
 	if err != nil {
 		return Outcome{}, fmt.Errorf("stackupdate: read installed versions: %w", err)
 	}
+	// Prove the way back before taking a step that may need undoing (#221). This
+	// runs before the pending history row as well as before any service or package
+	// move, so a refused update leaves the node — and its audit trail — exactly as
+	// it found them, rather than logging an in-flight update that never began.
+	unrevertable := false
+	if err := sys.CheckInstallable(ctx, revertSet(prev, plan.PackageNames())); err != nil {
+		if !pol.AllowUnrevertable {
+			return Outcome{}, fmt.Errorf("stackupdate: refusing to update — the currently installed "+
+				"versions could not be reinstalled, so a failed update could not be rolled back: %w", err)
+		}
+		unrevertable = true
+	}
 	// Record the intended change up front: a durable applied/previous trail the
 	// revert path (and an operator) can read even if this process dies mid-apply.
 	_ = sys.RecordHistory(historyRows(prev, plan.Updates, ResultPending))
 
 	if err := sys.StopServices(ctx, plan.Units); err != nil {
-		return revert(ctx, sys, plan, prev, "stopping services failed: "+err.Error())
+		return revert(ctx, sys, plan, prev, "stopping services failed: "+err.Error(), unrevertable)
 	}
 	if err := sys.Install(ctx, plan.Targets()); err != nil {
-		return revert(ctx, sys, plan, prev, "apt install failed: "+err.Error())
+		return revert(ctx, sys, plan, prev, "apt install failed: "+err.Error(), unrevertable)
 	}
 	if err := sys.StartServices(ctx, plan.Units); err != nil {
-		return revert(ctx, sys, plan, prev, "restart after install failed: "+err.Error())
+		return revert(ctx, sys, plan, prev, "restart after install failed: "+err.Error(), unrevertable)
 	}
 	if reason := gate(ctx, sys, plan.Units, t); reason != "" {
-		return revert(ctx, sys, plan, prev, reason)
+		return revert(ctx, sys, plan, prev, reason, unrevertable)
 	}
 	_ = sys.RecordHistory(historyRows(prev, plan.Updates, ResultConfirmed))
-	return Outcome{Confirmed: true, Applied: plan.Targets()}, nil
+	return Outcome{Confirmed: true, Applied: plan.Targets(), Unrevertable: unrevertable}, nil
 }
 
 // gate polls the health signal until it is healthy for ConfirmChecks consecutive
@@ -304,19 +356,22 @@ func gate(ctx context.Context, sys System, units []string, t Timings) string {
 }
 
 // revert restores the previous versions (kept in the repo's pool/) and restarts —
-// back to the prior, known-good stack with a clear logged reason.
-func revert(ctx context.Context, sys System, plan Plan, prev map[string]string, reason string) (Outcome, error) {
+// back to the prior, known-good stack with a clear logged reason. unrevertable
+// carries the pre-flight's verdict through to the outcome: when it is set the
+// caller opted past a known-missing pool, so a REVERT FAILED here is the
+// predicted consequence rather than a surprise.
+func revert(ctx context.Context, sys System, plan Plan, prev map[string]string, reason string, unrevertable bool) (Outcome, error) {
 	revertPkgs := revertSet(prev, plan.PackageNames())
 	_ = sys.StopServices(ctx, plan.Units)
 	if err := sys.Install(ctx, revertPkgs); err != nil {
 		_ = sys.RecordHistory(historyRows(prev, plan.Updates, ResultRevertFailed))
-		return Outcome{}, fmt.Errorf("stackupdate: REVERT FAILED (%s): %w", reason, err)
+		return Outcome{Unrevertable: unrevertable}, fmt.Errorf("stackupdate: REVERT FAILED (%s): %w", reason, err)
 	}
 	if err := sys.StartServices(ctx, plan.Units); err != nil {
-		return Outcome{}, fmt.Errorf("stackupdate: reverted packages but restart failed (%s): %w", reason, err)
+		return Outcome{Unrevertable: unrevertable}, fmt.Errorf("stackupdate: reverted packages but restart failed (%s): %w", reason, err)
 	}
 	_ = sys.RecordHistory(historyRows(prev, plan.Updates, ResultReverted))
-	return Outcome{Reverted: true, Reason: reason, Applied: revertPkgs}, nil
+	return Outcome{Reverted: true, Reason: reason, Applied: revertPkgs, Unrevertable: unrevertable}, nil
 }
 
 // revertSet is the previous versions to reinstall: every planned package that had a

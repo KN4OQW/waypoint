@@ -125,10 +125,17 @@ func (su *stackUpdater) apply(ctx context.Context) (stackupdate.Outcome, error) 
 		return stackupdate.Outcome{}, fmt.Errorf("nothing to apply: %s", plan.Reason)
 	}
 	log.Printf("stack update: applying %d package(s): %s", len(plan.Updates), summarize(plan))
-	out, err := stackupdate.Apply(ctx, plan, su.sys, su.timings)
+	out, err := stackupdate.Apply(ctx, plan, su.sys, su.timings, su.policy())
 	if err != nil {
 		su.setLastResult("error: " + err.Error())
 		return out, err
+	}
+	// An update that ran without a way back is worth saying out loud even when it
+	// succeeded: the operator opted past the rollback guarantee, and the window
+	// where that mattered has now closed one way or the other.
+	if out.Unrevertable {
+		log.Printf("stack update: WARNING: this update ran with no rollback available " +
+			"(update.allow_unrevertable is on and the installed versions were not in the apt repo)")
 	}
 	switch {
 	case out.Confirmed:
@@ -143,6 +150,21 @@ func (su *stackUpdater) apply(ctx context.Context) (stackupdate.Outcome, error) 
 		_ = p
 	}
 	return out, nil
+}
+
+// policy reads the operator's update policy for the engine. It is read per apply
+// rather than cached at construction so an operator who turns allow_unrevertable
+// on to get one stuck node moving, then turns it back off, gets exactly that —
+// the setting takes effect on the next apply with no daemon restart.
+func (su *stackUpdater) policy() stackupdate.Policy {
+	var prefs config.UpdatePrefs
+	if _, err := su.store.GetInto("update", &prefs); err != nil {
+		// Unreadable policy falls back to the safe default (refuse), never to the
+		// permissive one — a store read error must not silently drop the guarantee.
+		log.Printf("stack update: read update policy: %v (assuming rollback required)", err)
+		return stackupdate.Policy{}
+	}
+	return stackupdate.Policy{AllowUnrevertable: prefs.AllowUnrevertable}
 }
 
 func (su *stackUpdater) setLastResult(s string) {

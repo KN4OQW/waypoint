@@ -203,6 +203,7 @@ const HELP = new Set([
   "update.auto_apply",
   "update.channel",
   "update.quiet_window",
+  "update.allow_unrevertable",
   // --- display / LCD ---
   "display.port",
   "display.hd44780_rows",
@@ -353,6 +354,9 @@ function buildEdit(c) {
       check_enabled: (c.update || {}).check_enabled !== false,
       auto_apply: !!(c.update || {}).auto_apply,
       quiet_window: (c.update || {}).quiet_window || "04:00",
+      // Absent must read as "rollback required" — the safe state, and the one a
+      // node that has never seen this key is actually in.
+      allow_unrevertable: !!(c.update || {}).allow_unrevertable,
     },
     // Mode buses (RFC-0003): buses[] and their attachments. Neither carries a
     // secret — a DMR attachment authenticates through an existing network named by
@@ -2662,7 +2666,7 @@ function panelUpdates() {
   const available = card(msg("updates.availableUpdates"), binInner + availInner);
 
   // Update policy (edit-backed; saved with Apply Changes).
-  const u = edit.update || (edit.update = { channel: "stable", check_enabled: true, auto_apply: false, quiet_window: "04:00" });
+  const u = edit.update || (edit.update = { channel: "stable", check_enabled: true, auto_apply: false, quiet_window: "04:00", allow_unrevertable: false });
   const chan = u.channel || "stable";
   const chanSel = `<select data-sec="update" data-key="channel">` +
     [["stable", msg("updates.channelStable")], ["beta", msg("updates.channelBeta")]].map(([v, l]) => `<option value="${v}"${v === chan ? " selected" : ""}>${esc(l)}</option>`).join("") +
@@ -2672,8 +2676,12 @@ function panelUpdates() {
     toggle("update", "check_enabled", msg("updates.automaticUpdateChecks"), "ON", "OFF") +
     toggle("update", "auto_apply", msg("updates.automaticUpdates"), "ON", "OFF") +
     row(msg("updates.quietWindow"), `<input type="time" data-sec="update" data-key="quiet_window" value="${esc(u.quiet_window || "04:00")}">`) +
+    toggle("update", "allow_unrevertable", msg("updates.allowUnrevertable"), "ON", "OFF") +
     note(msg("updates.automaticUpdateChecksAsk")) +
-    note(msg("updates.defaultNotifyClickUpdates")));
+    note(msg("updates.defaultNotifyClickUpdates")) +
+    // Only warn while it is actually on: a permanent scare note next to a default
+    // that is already safe teaches operators to skip the notes that matter.
+    (u.allow_unrevertable ? note(msg("updates.allowUnrevertableWarning")) : ""));
 
   // Recent history.
   const hist = (st.history || []).slice(0, 8);

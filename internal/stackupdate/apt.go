@@ -132,10 +132,7 @@ func (s *OSSystem) Install(ctx context.Context, pkgs []PkgVer) error {
 	if len(pkgs) == 0 {
 		return nil
 	}
-	args := []string{"install", "-y", "--allow-downgrades", "--allow-change-held-packages", "--no-install-recommends"}
-	for _, p := range pkgs {
-		args = append(args, p.Package+"="+p.Version)
-	}
+	args := append([]string{"install", "-y"}, installArgs(pkgs)...)
 	if out, err := s.run(ctx, "apt-get", args...); err != nil {
 		return fmt.Errorf("%v: %s", err, lastLines(out, 4))
 	}
@@ -144,6 +141,45 @@ func (s *OSSystem) Install(ctx context.Context, pkgs []PkgVer) error {
 	// is worth a loud log but not worth reverting a good install over.
 	if err := s.holdAll(ctx); err != nil {
 		s.logf("stackupdate: WARNING: restoring apt-mark hold failed — stack packages are unprotected from unattended upgrades: %v", err)
+	}
+	return nil
+}
+
+// installArgs is the apt-get argument list shared by Install and CheckInstallable,
+// minus the leading verb flags each supplies. Sharing it is the point: a simulation
+// that resolved under different constraints than the real install would prove
+// nothing, so the pins and the allow-flags are constructed exactly once.
+func installArgs(pkgs []PkgVer) []string {
+	args := []string{"--allow-downgrades", "--allow-change-held-packages", "--no-install-recommends"}
+	for _, p := range pkgs {
+		args = append(args, p.Package+"="+p.Version)
+	}
+	return args
+}
+
+// CheckInstallable asks apt whether it *could* install these exact pinned versions,
+// without installing them: `apt-get install --simulate name=version …`. Apply uses
+// it to prove the revert set is still reachable before it installs anything (#221).
+//
+// --simulate rather than a lighter probe (`apt-cache madison`, say) because only a
+// full resolve answers the question that matters. madison reports that a version
+// appears in some index; it does not report that apt can actually install it —
+// unsatisfiable dependencies, a version present for the wrong architecture, or a
+// pin that excludes it all pass madison and fail the install. The revert path runs
+// `apt-get install` with these flags, so the pre-flight runs the same resolve with
+// the same flags (see installArgs) and differs only in changing nothing.
+//
+// No sourceLimit: Install does not use one either, because resolving a stack
+// package's dependencies needs the OS sources as well as the Waypoint one. A
+// simulation limited to a narrower source set than the install would produce
+// false failures.
+func (s *OSSystem) CheckInstallable(ctx context.Context, pkgs []PkgVer) error {
+	if len(pkgs) == 0 {
+		return nil // nothing to revert to is not a missing pool — see revertSet
+	}
+	args := append([]string{"install", "--simulate"}, installArgs(pkgs)...)
+	if out, err := s.run(ctx, "apt-get", args...); err != nil {
+		return fmt.Errorf("%v: %s", err, lastLines(out, 4))
 	}
 	return nil
 }

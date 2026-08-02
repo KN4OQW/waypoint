@@ -38,14 +38,29 @@ type UpdatePrefs struct {
 	CheckEnabled bool   `json:"check_enabled"`
 	AutoApply    bool   `json:"auto_apply"`   // apply stack updates automatically in the quiet window
 	QuietWindow  string `json:"quiet_window"` // "HH:MM" local time auto-apply runs
+	// AllowUnrevertable lets a stack update proceed when the currently installed
+	// versions are no longer installable from the apt repo, so a failed update
+	// could not be rolled back (#221). Default false: the updater refuses such an
+	// update rather than risk stranding the node on a stack it cannot leave.
+	//
+	// It exists because the refusal is absolute, and an operator may have a node
+	// that needs an update the pool cannot roll back — an older node whose
+	// installed versions have aged out of the retained pool, most likely. Turning
+	// it on trades the rollback guarantee for the ability to move; it is not a
+	// setting to leave on, and the outcome records that the update ran without a
+	// way back.
+	AllowUnrevertable bool `json:"allow_unrevertable"`
 }
 
 // DefaultUpdate is the out-of-the-box policy: stable channel, automatic checks on
 // (they are anonymous, and an operator who does not want them turns them off),
 // notify-and-click (auto-apply off), quiet window at 04:00 for when an operator
-// does opt in.
+// does opt in, and the rollback guarantee enforced (allow-unrevertable off).
 func DefaultUpdate() UpdatePrefs {
-	return UpdatePrefs{Channel: ChannelStable, CheckEnabled: true, AutoApply: false, QuietWindow: DefaultQuietWindow}
+	return UpdatePrefs{
+		Channel: ChannelStable, CheckEnabled: true, AutoApply: false,
+		QuietWindow: DefaultQuietWindow, AllowUnrevertable: false,
+	}
 }
 
 // BackfillUpdateCheckEnabled seeds check_enabled=true on an update row written

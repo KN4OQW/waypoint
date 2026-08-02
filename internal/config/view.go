@@ -126,10 +126,11 @@ type ViewStationID struct {
 // ViewUpdate is the Updates tab's read model for the operator update policy
 // (RFC-0014). No secrets — a straight projection of the Update section.
 type ViewUpdate struct {
-	Channel      string `json:"channel"`
-	CheckEnabled bool   `json:"check_enabled"`
-	AutoApply    bool   `json:"auto_apply"`
-	QuietWindow  string `json:"quiet_window"`
+	Channel           string `json:"channel"`
+	CheckEnabled      bool   `json:"check_enabled"`
+	AutoApply         bool   `json:"auto_apply"`
+	QuietWindow       string `json:"quiet_window"`
+	AllowUnrevertable bool   `json:"allow_unrevertable"`
 }
 
 type ViewLCDPage struct {
@@ -631,7 +632,10 @@ func (m *Model) View(src Sources) *View {
 		EffectiveCallsign: m.EffectiveIDCallsign(),
 		TXLevel:           m.StationID.TXLevel,
 	}
-	v.Update = ViewUpdate{Channel: m.Update.Channel, CheckEnabled: m.Update.CheckEnabled, AutoApply: m.Update.AutoApply, QuietWindow: m.Update.QuietWindow}
+	v.Update = ViewUpdate{
+		Channel: m.Update.Channel, CheckEnabled: m.Update.CheckEnabled, AutoApply: m.Update.AutoApply,
+		QuietWindow: m.Update.QuietWindow, AllowUnrevertable: m.Update.AllowUnrevertable,
+	}
 	// Buses/attachments project verbatim (no secrets). Copy the slices so the view
 	// never aliases the model's backing arrays.
 	v.Buses = append([]Bus(nil), m.Buses...)
