@@ -13,3 +13,13 @@ image/src/workspace-*/
 image/src/image-*/
 /hostseed
 /.wrangler/
+
+# Claude Code's scratch worktrees. These are working copies of THIS repository —
+# committing one records a gitlink to a commit that exists only in somebody's
+# local clone, which is how .claude/worktrees/issue-33-closeout got in (2eef761)
+# and dangled until it was removed. Editor/agent state is not repository state.
+#
+# Scoped to worktrees/ rather than all of .claude/ on purpose: shared agent
+# config (settings.json, agents, skills) is a reasonable thing to commit later,
+# and a blanket ignore would silently swallow it.
+/.claude/worktrees/
