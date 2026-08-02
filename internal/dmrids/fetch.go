@@ -54,10 +54,10 @@ func Fetch(ctx context.Context, urls []string, path string, v verifydl.Verify) e
 // the node downloads; there is no benefit in pulling megabytes hourly.
 func Run(ctx context.Context, urls []string, path string, interval time.Duration, v verifydl.Verify) {
 	hostsrc.Register(hostsrc.DMRIds, "DMR ID / callsign table")
-	fetch := func() {
+	hostsrc.Every(ctx, hostsrc.DMRIds, interval, func(ctx context.Context) error {
 		if err := Fetch(ctx, urls, path, v); err != nil {
 			log.Printf("dmrids: fetch failed (using cached table if present): %v", err)
-			return
+			return err
 		}
 		if t, err := Load(path); err == nil {
 			hostsrc.SetEntries(hostsrc.DMRIds, t.Len())
@@ -65,16 +65,6 @@ func Run(ctx context.Context, urls []string, path string, interval time.Duration
 		} else {
 			log.Printf("dmrids: updated %s", path)
 		}
-	}
-	fetch()
-	tk := time.NewTicker(interval)
-	defer tk.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-tk.C:
-			fetch()
-		}
-	}
+		return nil
+	})
 }

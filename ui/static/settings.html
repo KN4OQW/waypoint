@@ -450,6 +450,13 @@
   .hw-warn-f { font-family: var(--mono); font-size: 10px; color: var(--dim); }
   .mono-sm { font-family: var(--mono); font-size: 11px; }
 
+  /* Reference-data list state (Updates tab). Semantic tokens, not literal colours,
+     so light mode re-maps these with everything else — --warn and --bad are already
+     darkened there to clear 4.5:1 on white. */
+  .refdata-ok   { color: var(--accent); }
+  .refdata-warn { color: var(--warn); }
+  .refdata-bad  { color: var(--bad); }
+
   /* DMR routing builder */
   .catch-ctl { display: flex; align-items: center; gap: 8px; }
   .route-block { margin-top: 14px; }

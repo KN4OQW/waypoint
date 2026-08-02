@@ -234,6 +234,7 @@ let m17Refs = [];           // cached M17 reflector list for the startup picker
 let overridesData = null;   // GET /api/overrides — the override layer's effective records (read-only, RFC-0005)
 let stackStatus = null;     // GET /api/update/stack — installed versions, available updates, history (RFC-0014)
 let stackBusy = false;      // a check/apply request is in flight (guards double-clicks)
+let hostlistsBusy = false;  // an on-demand hostlist refresh is in flight (same guard)
 let stackPoll = null;       // interval while an apply runs, cleared when it settles
 let profiles = null;        // saved connection profiles from /api/profiles (RFC-0006)
 let hardware = null;        // GET /api/hardware — last detection, board table, UART diagnosis (#18)
@@ -1091,30 +1092,42 @@ function hostList(name) { return hostLists.find((h) => h.name === name); }
 
 // hostlistNote renders an explanation above a picker when its list is not in good
 // shape, and nothing at all when it is — a healthy list should not be narrated.
+//
+// Every note names its list. A panel can carry more than one — the DMR panel has
+// both the master list and the talkgroup names — and when two of them are in the
+// same state an unnamed note renders twice, byte for byte, reading as a UI bug
+// rather than as two facts about two lists.
 function hostlistNote(name) {
   const h = hostList(name);
   if (!h) return "";
+  // Label comes from the daemon ("DMR master list", "DMR talkgroup names").
+  const who = esc(h.label || name);
   const when = h.last_success && !String(h.last_success).startsWith("0001")
     ? new Date(h.last_success).toLocaleString() : null;
   // Nothing to show: downloaded recently and has content.
   if (h.entries > 0 && !h.from_seed && !h.stale) return "";
 
   if (h.entries === 0 && !h.has_seed && h.last_error) {
-    return note(`<b>${msg("hostlistNote.listCouldNotDownloaded")}</b> ` +
+    return note(`<b>${who}: ${msg("hostlistNote.listCouldNotDownloaded")}</b> ` +
       `Every source failed${when ? ` — the last successful download was ${esc(when)}` : ", and it has never downloaded"}. ` +
       `You can still type a value in by hand. <span style="color:var(--muted)">${esc(shortErr(h.last_error))}</span>`);
   }
   if (h.from_seed) {
-    return note(`<b>${msg("hostlistNote.showingListShippedWaypoint")}</b> ` +
+    // The failure is shown here too. This is the state an operator is most likely
+    // to be looking at while wondering why a list that plainly exists upstream
+    // never arrived, and the reason ("no such host" at boot, a TLS clock error)
+    // is the whole answer — it used to be recorded and then withheld.
+    return note(`<b>${who}: ${msg("hostlistNote.showingListShippedWaypoint")}</b> ` +
       `The node has not managed to download a newer one${h.last_error ? "" : " yet"}, so entries added upstream since the release will be missing. ` +
-      `You can still type a value in by hand.`);
+      `You can still type a value in by hand.` +
+      (h.last_error ? ` <span style="color:var(--muted)">${esc(shortErr(h.last_error))}</span>` : ""));
   }
   if (h.stale && when) {
-    return note(`<b>${msg("hostlistNote.listMayOutDate")}</b> It last downloaded on ${esc(when)}; refreshes since then have failed. ` +
+    return note(`<b>${who}: ${msg("hostlistNote.listMayOutDate")}</b> It last downloaded on ${esc(when)}; refreshes since then have failed. ` +
       `<span style="color:var(--muted)">${esc(shortErr(h.last_error))}</span>`);
   }
   if (h.entries === 0) {
-    return note(`<b>${msg("hostlistNote.listEmpty")}</b> It downloaded without error but contained no entries. You can still type a value in by hand.`);
+    return note(`<b>${who}: ${msg("hostlistNote.listEmpty")}</b> It downloaded without error but contained no entries. You can still type a value in by hand.`);
   }
   return "";
 }
@@ -2669,7 +2682,53 @@ function panelUpdates() {
     : note(msg("updates.noStackUpdateHistory"));
   const history = card(msg("updates.recentUpdates"), histInner);
 
-  return `<div class="grid2">${versions}${available}</div><div class="grid2">${policy}${history}</div>`;
+  // Reference data spans the full width rather than sharing a grid2 row: it is
+  // eight rows of list-per-line, and half a column turns every one of them into
+  // two wrapped lines.
+  return `<div class="grid2">${versions}${available}</div><div class="grid2">${policy}${history}</div>` +
+    panelReferenceData();
+}
+
+// panelReferenceData renders the downloaded-lists card in the Updates tab: the
+// reflector, master, talkgroup and ID lists, one row each, with a control that
+// downloads all of them now.
+//
+// It belongs on this tab because it is the same question the rest of the tab
+// answers — what is installed, is it current, fetch me a newer one — for the data
+// half of the node rather than the software half. Until now these lists refreshed
+// once a day and on no other trigger, so an operator who fixed the thing blocking
+// the download had nothing to press: the fix was to wait, or to restart a live
+// hotspot to reload a settings-page list.
+function panelReferenceData() {
+  const lists = hostLists || [];
+  if (!lists.length) return card(msg("refdata.title"), note(msg("refdata.noListsReported")));
+
+  const rows = lists.map((h) => {
+    // State, worst first, in the operator's terms rather than the API's fields.
+    let state, cls = "";
+    if (h.entries === 0 && !h.has_seed && h.last_error) { state = msg("refdata.stateFailed"); cls = "refdata-bad"; }
+    else if (h.from_seed)                               { state = msg("refdata.stateShipped"); cls = "refdata-warn"; }
+    else if (h.stale)                                   { state = msg("refdata.stateStale"); cls = "refdata-warn"; }
+    else if (h.entries === 0)                           { state = msg("refdata.stateEmpty"); cls = "refdata-warn"; }
+    else                                                { state = msg("refdata.stateCurrent"); cls = "refdata-ok"; }
+
+    // Entry count is what an operator actually checks — "did it get the list?" —
+    // so it leads, with the last successful download behind it.
+    const when = h.last_success && !String(h.last_success).startsWith("0001")
+      ? new Date(h.last_success).toLocaleString() : null;
+    const detail = [
+      `${h.entries || 0} ${h.entries === 1 ? msg("refdata.entry") : msg("refdata.entries")}`,
+      when ? msg("refdata.updatedWhen", { when }) : msg("refdata.neverDownloaded"),
+    ].join(" · ");
+
+    return row(esc(h.label || h.name),
+      `<span class="${cls}">${esc(state)}</span> <span style="color:var(--muted)">${esc(detail)}</span>` +
+      (h.last_error ? `<div class="mono-sm" style="color:var(--muted)">${esc(shortErr(h.last_error))}</div>` : ""));
+  }).join("");
+
+  const btn = `<div class="row"><label></label>` +
+    `<button type="button" id="hostlists-refresh" class="btn ghost">${msg("refdata.refreshNow")}</button></div>`;
+  return card(msg("refdata.title"), rows + btn + note(msg("refdata.listsRefreshDaily")));
 }
 
 
@@ -3573,9 +3632,14 @@ function banner(msg, kind) {
   }
   b.setAttribute("role", kind === "bad" ? "alert" : "status");
   b.textContent = msg;
-  b.style.background = kind === "bad" ? "rgba(255,107,107,0.08)" : "var(--accent-soft)";
-  b.style.color = kind === "bad" ? "var(--bad)" : "var(--accent)";
-  b.style.border = "1px solid " + (kind === "bad" ? "rgba(255,107,107,0.4)" : "var(--accent)");
+  // "warn" is its own kind, not a shade of ok: a partly-successful action —
+  // six lists refreshed, two sources down — read as unqualified success in the
+  // accent colour, which is the one outcome an operator most needs to notice.
+  const tint = { bad: "var(--bad)", warn: "var(--warn)" }[kind] || "var(--accent)";
+  const wash = { bad: "rgba(255,107,107,0.08)", warn: "rgba(255,159,69,0.08)" }[kind] || "var(--accent-soft)";
+  b.style.background = wash;
+  b.style.color = tint;
+  b.style.border = "1px solid " + tint;
   b.hidden = false;
 }
 
@@ -4110,6 +4174,44 @@ async function stackCheckNow() {
   await loadUpdateStatus();
 }
 
+// hostlistsRefreshNow downloads every reference list on demand and repaints from
+// the reply, which carries the refreshed supply state so no follow-up GET is
+// needed. Failures are reported per list rather than as one verdict: a node whose
+// YSF source is down but whose DMR masters just arrived has not "failed".
+async function hostlistsRefreshNow() {
+  if (hostlistsBusy) return;
+  hostlistsBusy = true;
+  const btn = document.getElementById("hostlists-refresh");
+  if (btn) { btn.textContent = msg("refdata.refreshing"); btn.disabled = true; }
+  try {
+    const r = await fetch("/api/hostlists/refresh", { method: "POST" });
+    if (!r.ok) throw new Error((await r.text()).trim());
+    const body = await r.json();
+    hostLists = body.lists || hostLists;
+    const results = body.results || [];
+    const bad = results.filter((x) => !x.ok && !x.busy);
+    if (!bad.length) {
+      banner(msg("refdata.allListsUpdated", { count: results.length }), "ok");
+    } else {
+      // Name the lists that failed. "3 of 8 failed" sends an operator hunting
+      // through the rows; naming them is the whole diagnosis.
+      banner(msg("refdata.someListsFailed", {
+        ok: results.length - bad.length,
+        total: results.length,
+        lists: bad.map((x) => x.label || x.name).join(", "),
+      }), "warn");
+    }
+  } catch (err) {
+    banner(String(err.message || err), "bad");
+  } finally {
+    hostlistsBusy = false;
+    // Repaint whatever tab is showing: the pickers on the mode tabs read the same
+    // supply state as the Updates card, so a successful refresh clears their
+    // notices too.
+    renderPanel();
+  }
+}
+
 // stackApplyNow starts a health-gated apply (the daemon runs it in the background)
 // and polls the status until it settles to confirmed/reverted.
 async function stackApplyNow() {
@@ -4534,6 +4636,7 @@ document.getElementById("panels").addEventListener("click", (e) => {
   // --- software updates (RFC-0014) ---
   if (e.target.id === "stack-check") { stackCheckNow(); return; }
   if (e.target.id === "stack-apply") { stackApplyNow(); return; }
+  if (e.target.id === "hostlists-refresh") { hostlistsRefreshNow(); return; }
   const tg = e.target.closest("[data-toggle]");
   if (tg) {
     const [sec, key] = tg.dataset.toggle.split(".");

@@ -123,23 +123,24 @@ func Reflectors(path string) ([]Reflector, error) {
 // toggling "UPPERCASE Hostfiles" takes effect on the next refresh; nil means
 // never uppercase.
 func Run(ctx context.Context, urls []string, path string, interval time.Duration, upper func() bool) {
-	fetch := func() {
+	// Register and Restore, which every other list's Run does and this one did not:
+	// without them the YSF list reported its raw id as its label in the supply API,
+	// and — the part that mattered on the air — it never laid the shipped copy down
+	// as a floor, so a node that had not yet reached the internet had no reflectors
+	// at all rather than the ones the image shipped with.
+	hostsrc.Register(hostsrc.YSFHosts, "YSF reflector list")
+	if wrote, err := hostsrc.Restore(hostsrc.YSFHosts, path); err != nil {
+		log.Printf("ysfhosts: could not write the shipped list: %v", err)
+	} else if wrote {
+		log.Printf("ysfhosts: seeded %s from the shipped copy", path)
+	}
+	hostsrc.Every(ctx, hostsrc.YSFHosts, interval, func(ctx context.Context) error {
 		up := upper != nil && upper()
 		if err := Fetch(ctx, urls, path, up); err != nil {
 			log.Printf("ysfhosts: fetch failed (using cached list if present): %v", err)
-		} else {
-			log.Printf("ysfhosts: updated %s", path)
+			return err
 		}
-	}
-	fetch()
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			fetch()
-		}
-	}
+		log.Printf("ysfhosts: updated %s", path)
+		return nil
+	})
 }
