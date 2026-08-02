@@ -25,7 +25,7 @@ import (
 // migrated database, so a release that raises it must also raise the update
 // manifest's min_version (RFC-0014) to the first release that ships the new
 // version. See docs/updates.md.
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // ErrSchemaNewer is returned by Open when the database was written by a newer
 // build. It is a distinct error because it is the one open failure with a real
@@ -76,6 +76,84 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
+// publicViewDDL is the public dashboard's schema (D1–D8). It lives in its own
+// const rather than inline in the baseline because the ladder step that installs
+// it on an existing database executes this exact text — the baseline and the
+// migration cannot drift apart if there is only one of them to drift.
+//
+// The public surface is opt-in and default-off (D2): a node that has never been
+// configured for it has enabled = 0, and every public route 404s. The per-field
+// toggles decide what a visitor sees once it is on; the never-public list (D2) is
+// not represented here at all, because it is enforced by the shape of the response
+// structs rather than by a setting an operator could flip.
+//
+// Both single-row tables are keyed id = 1 so a second INSERT is a primary-key
+// conflict, matching meta's convention. Their defaults live on the columns, so the
+// seed below is a bare INSERT that adopts them.
+const publicViewDDL = `
+CREATE TABLE IF NOT EXISTS public_view_settings (
+  id               INTEGER PRIMARY KEY CHECK (id = 1),
+  enabled          INTEGER NOT NULL DEFAULT 0,   -- D2: opt-in, default off
+  -- Reach card ("how to reach this node"), default on when public view is on.
+  show_freq        INTEGER NOT NULL DEFAULT 1,
+  show_cc_ts       INTEGER NOT NULL DEFAULT 1,
+  show_talkgroup   INTEGER NOT NULL DEFAULT 1,
+  show_mode        INTEGER NOT NULL DEFAULT 1,
+  -- Activity modules (D5).
+  show_status      INTEGER NOT NULL DEFAULT 1,
+  show_counters    INTEGER NOT NULL DEFAULT 1,
+  show_lastheard   INTEGER NOT NULL DEFAULT 1,
+  -- Location. Off by default: a grid square is the one reach-card field that
+  -- discloses where the operator is, so it is opted into, not out of (D3).
+  show_grid        INTEGER NOT NULL DEFAULT 0,
+  show_power_line  INTEGER NOT NULL DEFAULT 1,
+  show_links       INTEGER NOT NULL DEFAULT 1,
+  show_nets        INTEGER NOT NULL DEFAULT 1,
+  show_map         INTEGER NOT NULL DEFAULT 1,
+  show_qr          INTEGER NOT NULL DEFAULT 1,
+  -- D6: bounds are 1..168 h; the model layer clamps, and the CHECK is the
+  -- backstop for anything that reaches the table another way.
+  retention_hours  INTEGER NOT NULL DEFAULT 24 CHECK (retention_hours BETWEEN 1 AND 168),
+  power_line       TEXT NOT NULL DEFAULT '',
+  purpose_tags     TEXT NOT NULL DEFAULT '[]',   -- JSON array of predefined keys
+  purpose_freetext TEXT NOT NULL DEFAULT '',
+  grid_override    TEXT NOT NULL DEFAULT ''      -- manual 6-char Maidenhead, optional
+);
+-- D8: third-party callsigns excluded from every public output. Stored normalized
+-- (uppercase, SSID/suffix stripped) so the comparison is a primary-key lookup
+-- rather than a scan with per-row normalization.
+CREATE TABLE IF NOT EXISTS public_suppress_list (
+  callsign   TEXT PRIMARY KEY,
+  added_at   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS public_links (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  label      TEXT NOT NULL,
+  url        TEXT NOT NULL,               -- http/https only, validated at write time
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS public_nets (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL,
+  schedule_text TEXT NOT NULL,            -- free text, e.g. "Thursdays 20:00 local"
+  target        TEXT NOT NULL,            -- TG / reflector
+  note          TEXT NOT NULL DEFAULT '',
+  sort_order    INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS branding (
+  id                 INTEGER PRIMARY KEY CHECK (id = 1),
+  logo_path          TEXT,                -- nullable: no logo uploaded
+  narrative_markdown TEXT NOT NULL DEFAULT '',
+  custom_html        TEXT NOT NULL DEFAULT ''
+);`
+
+// publicViewSeed materializes the single rows so readers never have to special-case
+// "configured but never written". Both are INSERT OR IGNORE: re-running is a no-op,
+// and an existing row keeps whatever the operator set.
+const publicViewSeed = `
+INSERT OR IGNORE INTO public_view_settings(id) VALUES(1);
+INSERT OR IGNORE INTO branding(id) VALUES(1);`
+
 func (s *Store) init() error {
 	// The baseline is always the CURRENT schema: a fresh database is created at
 	// head and runs no migrations. Anything added here must also arrive as a ladder
@@ -106,6 +184,12 @@ CREATE TABLE IF NOT EXISTS applies (
   diff       TEXT NOT NULL             -- JSON summary of what changed
 );`
 	if _, err := s.db.Exec(ddl); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(publicViewDDL); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(publicViewSeed); err != nil {
 		return err
 	}
 

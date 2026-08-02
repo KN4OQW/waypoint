@@ -58,6 +58,13 @@ func NewStore(s *store.Store) (*Store, error) {
 //     primary-key conflict — the atomic guard the claim race relies on).
 //   - sessions: server-side sessions keyed by the SHA-256 of the cookie token.
 //   - meta.claimed_at: the timestamp of the winning claim; null means unclaimed.
+//
+// admin.role carries 'admin' and nothing else today. It exists so the public
+// dashboard's two-level access model (D1: public and admin) can grow a second role
+// without a schema migration on every node in the field. Nothing reads it yet, and
+// no code should branch on it until multi-user is actually designed — an unused
+// column is cheap, a half-enforced permission check is not. Databases that predate
+// it get it from the store ladder (migratePublicView); a fresh one gets it here.
 func (s *Store) migrate() error {
 	const ddl = `
 CREATE TABLE IF NOT EXISTS admin (
@@ -65,7 +72,8 @@ CREATE TABLE IF NOT EXISTS admin (
   username      TEXT NOT NULL,
   password_hash TEXT NOT NULL,
   params        TEXT NOT NULL,
-  created_at    TEXT NOT NULL
+  created_at    TEXT NOT NULL,
+  role          TEXT NOT NULL DEFAULT 'admin'
 );
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY,
