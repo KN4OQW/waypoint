@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,6 +39,7 @@ type migration struct {
 // released step, because databases in the field have already run it.
 var migrations = []migration{
 	{to: 2, name: "meta-claim-and-provision-columns", fn: migrateMetaColumns},
+	{to: 3, name: "public-view-tables-and-admin-role", fn: migratePublicView},
 }
 
 // migrateMetaColumns brings meta's claim and provisioning columns under the
@@ -65,6 +67,50 @@ func migrateMetaColumns(tx *sql.Tx) error {
 		if _, err := tx.Exec(`ALTER TABLE meta ADD COLUMN ` + c.name + ` ` + c.typ); err != nil {
 			return fmt.Errorf("add meta.%s: %w", c.name, err)
 		}
+	}
+	return nil
+}
+
+// migratePublicView installs the public dashboard's tables (D1–D8) on a database
+// that already has rows, and adds admin.role.
+//
+// The tables come from publicViewDDL — the same text the baseline executes — so
+// there is no second copy of the schema to keep in step. The seed runs here too:
+// an existing node must come out of the migration with the same single rows a
+// fresh one is created with, and default-off is the whole point of D2, so a
+// migrated node's public surface stays dark until an operator turns it on.
+//
+// admin.role is D1's "role-ready without a second migration": one column, one
+// value ('admin'), no behavior attached. Multi-user is not being built now, but
+// the schema change that would make it painful later is cheap today. The column is
+// added rather than the table created, because the auth subsystem owns admin's
+// shape (see auth.Store.migrate) — the ladder owns only the column's existence,
+// the same division migrateMetaColumns settled for meta. A database that has never
+// attached auth has no admin table yet; auth creates it at head shape, including
+// role, so skipping it here is correct rather than a gap.
+func migratePublicView(tx *sql.Tx) error {
+	if _, err := tx.Exec(publicViewDDL); err != nil {
+		return fmt.Errorf("create public view tables: %w", err)
+	}
+	if _, err := tx.Exec(publicViewSeed); err != nil {
+		return fmt.Errorf("seed public view tables: %w", err)
+	}
+	has, err := txHasTable(tx, "admin")
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+	hasCol, err := txHasColumn(tx, "admin", "role")
+	if err != nil {
+		return err
+	}
+	if hasCol {
+		return nil
+	}
+	if _, err := tx.Exec(`ALTER TABLE admin ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'`); err != nil {
+		return fmt.Errorf("add admin.role: %w", err)
 	}
 	return nil
 }
@@ -171,6 +217,21 @@ func fsync(path string) error {
 	}
 	defer f.Close() //nolint:errcheck // Sync below is what reports a write failure
 	return f.Sync()
+}
+
+// txHasTable reports whether table exists. A step that alters a table another
+// subsystem owns has to ask, because whether that subsystem has ever run against
+// this database is not something the schema version records.
+func txHasTable(tx *sql.Tx, table string) (bool, error) {
+	var name string
+	err := tx.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return true, nil
 }
 
 // txHasColumn reports whether table has a column named col. SQLite has no

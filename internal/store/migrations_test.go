@@ -37,6 +37,44 @@ CREATE TABLE applies (
   diff       TEXT NOT NULL
 );`
 
+// v2DDL is the schema exactly as shipped at SchemaVersion 2 — v1 plus the meta
+// columns the first ladder step added. Like v1DDL it is frozen: it exists so the
+// step from v2 can be exercised on its own, rather than only as the tail of a
+// v1 -> head run where a bug in it could be masked by the step before.
+const v2DDL = `
+CREATE TABLE meta (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  schema_version INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  claimed_at TEXT,
+  provisioned INTEGER
+);
+CREATE TABLE settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  updated_by TEXT NOT NULL
+);
+CREATE TABLE applies (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  at         TEXT NOT NULL,
+  by         TEXT NOT NULL,
+  diff       TEXT NOT NULL
+);`
+
+// v2AdminDDL is the auth subsystem's admin table as it stood at schema v2, before
+// it grew a role column. A claimed node in the field has this; an unclaimed one
+// that has still been started has it too, because auth creates its tables at
+// startup regardless. Both are fixtures below.
+const v2AdminDDL = `
+CREATE TABLE admin (
+  id            INTEGER PRIMARY KEY CHECK (id = 1),
+  username      TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  params        TEXT NOT NULL,
+  created_at    TEXT NOT NULL
+);`
+
 // writeV1Fixture builds a schema-v1 database at path holding operator data, so a
 // migration that loses rows is caught rather than a migration that merely runs.
 //
@@ -251,6 +289,197 @@ func tableShape(t *testing.T, s *Store) string {
 		out = append(out, tbl+"("+strings.Join(cols, ", ")+")")
 	}
 	return strings.Join(out, " ")
+}
+
+// writeV2Fixture builds a schema-v2 database at path holding operator data.
+// withAdmin adds the auth subsystem's table as it stood at v2 — the shape the
+// public-view step has to add a role column to. Without it, the step's
+// table-missing branch is the one under test instead.
+func writeV2Fixture(t *testing.T, path string, withAdmin bool) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+	if _, err := db.Exec(v2DDL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO meta(id, schema_version, created_at, claimed_at) VALUES(1, 2, '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range fixtureSettings {
+		if _, err := db.Exec(`INSERT INTO settings(key, value, updated_at, updated_by) VALUES(?, ?, '2026-01-01T00:00:00Z', 'fixture')`, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO applies(at, by, diff) VALUES('2026-01-01T00:00:00Z', 'fixture', '{"general.callsign":"KN4OQW"}')`); err != nil {
+		t.Fatal(err)
+	}
+	if !withAdmin {
+		return
+	}
+	if _, err := db.Exec(v2AdminDDL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO admin(id, username, password_hash, params, created_at) VALUES(1, 'W4RJM', 'hash', '{}', '2026-01-02T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestMigratesV2ToHead exercises the public-view step against a node that already
+// exists, which is the only kind of node it ever runs on.
+//
+// The claimed/unclaimed split is not decoration: the step alters a table the auth
+// subsystem owns, and whether that table is there is a property of the node's
+// history rather than of its schema version. Both branches have to leave a usable
+// database, and the unclaimed one has to leave the column to auth rather than
+// inventing the table itself.
+func TestMigratesV2ToHead(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		withAdmin bool
+	}{
+		{"claimed", true},    // admin table present: the ladder adds the column
+		{"unclaimed", false}, // no admin table: the ladder leaves it to auth
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.db")
+			writeV2Fixture(t, path, tc.withAdmin)
+
+			s, err := Open(path)
+			if err != nil {
+				t.Fatalf("Open on a v2 store: %v", err)
+			}
+			defer s.Close() //nolint:errcheck // test cleanup
+
+			v, err := s.Version()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if v != SchemaVersion {
+				t.Errorf("after Open, version = %d, want %d", v, SchemaVersion)
+			}
+			assertFixtureIntact(t, s)
+
+			// D2's default-off is the whole security posture of the feature: a node
+			// that migrates forward must not start disclosing anything because it
+			// was updated. This assertion is the one that would catch a future
+			// change to the column default.
+			var enabled int
+			if err := s.db.QueryRow(`SELECT enabled FROM public_view_settings WHERE id = 1`).Scan(&enabled); err != nil {
+				t.Fatalf("public_view_settings row missing after migration: %v", err)
+			}
+			if enabled != 0 {
+				t.Error("a migrated node came up with the public view already enabled — D2 requires opt-in")
+			}
+			var retention int
+			if err := s.db.QueryRow(`SELECT retention_hours FROM public_view_settings WHERE id = 1`).Scan(&retention); err != nil {
+				t.Fatal(err)
+			}
+			if retention != 24 {
+				t.Errorf("migrated retention_hours = %d, want the 24 h default (D6)", retention)
+			}
+			var branding int
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM branding WHERE id = 1`).Scan(&branding); err != nil {
+				t.Fatal(err)
+			}
+			if branding != 1 {
+				t.Errorf("branding singleton row count = %d, want 1", branding)
+			}
+
+			if !tc.withAdmin {
+				return
+			}
+			var role string
+			if err := s.db.QueryRow(`SELECT role FROM admin WHERE id = 1`).Scan(&role); err != nil {
+				t.Fatalf("admin.role not present after migration: %v", err)
+			}
+			if role != "admin" {
+				t.Errorf("existing credential migrated to role %q, want %q", role, "admin")
+			}
+		})
+	}
+}
+
+// TestMigrationIsIdempotent runs Open twice over the same database. The second
+// call finds it at head and runs nothing, but the DDL and seed are written to be
+// re-runnable regardless — a step that is only correct once is a step that breaks
+// whenever a future version has to replay it.
+func TestMigrationIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.db")
+	writeV2Fixture(t, path, true)
+
+	for i := range 2 {
+		s, err := Open(path)
+		if err != nil {
+			t.Fatalf("Open #%d: %v", i+1, err)
+		}
+		v, err := s.Version()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v != SchemaVersion {
+			t.Errorf("Open #%d left version %d, want %d", i+1, v, SchemaVersion)
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Re-running must not have duplicated the singleton rows or reset them. An
+	// operator's opt-in surviving a restart is the property that matters.
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+	for _, tbl := range []string{"public_view_settings", "branding"} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + tbl).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Errorf("%s has %d rows after two opens, want 1", tbl, n)
+		}
+	}
+}
+
+// TestSeedPreservesOperatorChoice is the other half of idempotency, and the one
+// with teeth: an operator who turned the public view on must not find it off
+// again after a restart re-runs the seed.
+func TestSeedPreservesOperatorChoice(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.db")
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE public_view_settings SET enabled = 1, retention_hours = 72 WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close() //nolint:errcheck // test cleanup
+	var (
+		enabled   int
+		retention int
+	)
+	if err := s2.db.QueryRow(`SELECT enabled, retention_hours FROM public_view_settings WHERE id = 1`).Scan(&enabled, &retention); err != nil {
+		t.Fatal(err)
+	}
+	if enabled != 1 || retention != 72 {
+		t.Errorf("reopen reset the operator's settings: enabled = %d, retention = %d, want 1 and 72", enabled, retention)
+	}
 }
 
 // TestPreMigrationBackup is the recovery half of property 4: the copy RFC-0001
