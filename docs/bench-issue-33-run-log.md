@@ -1,7 +1,7 @@
 # Bench run log — issue #33 closeout: DMR hang timers + DAPNETGateway
 
-Hardware validation of the last two items on [#33], 2026-07-29: the DMR call-hold
-and hang-timer overrides ([#193]) and the newly packaged DAPNETGateway
+Hardware validation of the last two items on [#33]: the DMR call-hold and
+hang-timer overrides ([#193]) and the newly packaged DAPNETGateway
 (KN4OQW/waypoint-stack#15).
 
 Both had only ever been exercised against unit tests and a build container. The
@@ -10,6 +10,14 @@ values and Waypoint deliberately does not, so the only way to see the real
 outcome is to read MMDVM-Host's own parameter block. DAPNETGateway had never run
 here at all — the unit file has shipped in the image since July with no binary
 behind it.
+
+Three runs, appended in order:
+
+| Date | Covers | Outcome |
+|---|---|---|
+| 2026-07-29 | DMR hang timers; DAPNETGateway tier 1 (no credential) | Both pass; DAPNET stops at the AuthKey guard (finding 1) |
+| 2026-08-02 | DAPNET tier 2, with a real operator AuthKey ([#196]) | Authenticated connect confirmed |
+| 2026-08-02 | Delivery — does *apt* carry the daemon, not `dpkg -i` | Confirmed, after fixing two updater defects ([#220], [#221]) |
 
 ## The bench
 
@@ -337,6 +345,52 @@ unblocked the same way — artifact `waypoint-stack-debs-armhf` from run
 Until #15 merges, no image has ever contained this daemon and every reimage will
 lose it again.
 
+**Resolved 2026-08-02.** [waypoint-stack#15] merged at 06:07Z: the daemon is
+pinned at `5527546`, published to the signed repo for armhf and arm64, and
+`waypoint-stack 0.2.0` carries it in `Depends`, so an install of the metapackage
+now pulls it. Verified on this bench the same day, twice — see the run below.
+
+# Delivery — the apt path, 2026-08-02
+
+Both runs above installed the .deb by hand, so the *supported* path had never
+carried this daemon. Proving it did meant removing the hand-installed package to
+restore the Finding 2 state, then letting apt deliver it.
+
+It could not. `POST /api/update/stack/apply` failed:
+
+```
+reverted: apt install failed: exit status 100:
+E: Held packages were changed and -y was used without --allow-change-held-packages.
+```
+
+Filed as **[#220]**. The image holds every `waypoint-*` package and the updater
+never passed that flag, so no imaged node could take any stack update; with
+`auto_apply` on, this box had already retried and reverted three times that day
+(06:34Z, 09:06Z, 17:56Z) with nothing but a `last_result` string to show. Three
+simulations isolated it: the metapackage alone and the metapackage with its new
+dependency named explicitly failed identically, and adding the flag resolved the
+transaction — so the hold was the whole cause, not the new dependency.
+
+With the flag, apt installed `waypoint-stack 0.2.0`, pulled `waypoint-dapnetgateway`
+in as a new dependency, and the daemon came up bound to the rendered loopback
+`127.0.0.1:4800` with an ESTABLISHED connection to `137.226.79.100:43434` — DAPNET's
+core server, reachable only past the AuthKey guard. **Delivery confirmed.**
+
+Two further results came out of the fix for #220, which was then re-verified here
+against a recreated fielded-node state (the genuine `0.1.0` metapackage from CI run
+`30495252689`, twelve packages held, no DAPNET binary):
+
+- The flag **clears** the hold on whatever it changed, and a newly pulled dependency
+  arrives unheld — so the fix re-asserts the holds afterwards. After the verified
+  run all thirteen packages were held, including the two that would otherwise have
+  been left exposed.
+- The revert path cannot run at all: the published pool keeps only the current
+  version, so the health gate's failure here (`waypoint-mmdvm.service is not
+  active` — that unit is disabled on this box) ended in `REVERT FAILED … E: Version
+  '0.1.0' for 'waypoint-stack' was not found`. Filed as **[#221]**; the earlier
+  "reverted" outcomes had only looked healthy because the install failed before
+  changing anything, so nothing needed the pool.
+
 ### Finding 3 — YSFGateway has a startup guard the survey says it does not
 
 Filed as [#215].
@@ -394,4 +448,6 @@ loops predate this run and were not caused by it.
 [#196]: https://github.com/KN4OQW/waypoint/issues/196
 [#215]: https://github.com/KN4OQW/waypoint/issues/215
 [#216]: https://github.com/KN4OQW/waypoint/issues/216
+[#220]: https://github.com/KN4OQW/waypoint/issues/220
+[#221]: https://github.com/KN4OQW/waypoint/issues/221
 [waypoint-stack#15]: https://github.com/KN4OQW/waypoint-stack/pull/15

@@ -44,7 +44,7 @@ behind the gateway-plugin model ([#21]); DMR + YSF are the MVP ([#17]).
 | Mode | MMDVM-Host section | Gateway daemon | Gateway config surface | Status |
 |---|---|---|---|---|
 | DMR | `[DMR]` + `[DMR Network]` | DMRGateway | networks ✅ · static/dynamic TG (Options) ✅ · TG hold ✅ · fine-grained per-section hangs ✅ | ✅ |
-| YSF (Fusion) | `[System Fusion]` | YSFGateway / DGIdGateway | YSF + FCS rooms ✅ · DG-ID map ✅ · Wires-X passthrough ✅ · daemon built | ✅ |
+| YSF (Fusion) | `[System Fusion]` | YSFGateway / DGIdGateway | YSF + FCS rooms ✅ · DG-ID gateway ✅ (generated table; an operator-editable DG-ID map is [#108], beyond WPSD's surface) · Wires-X passthrough ✅ · daemon built | ✅ |
 | D-Star | `[D-Star]` + `[D-Star Network]` | DStarGateway (ircDDB, MQTT era) | module ✅ · ircDDB login ✅ · startup reflector ✅ · DExtra/DPlus/DCS/XLX ✅ · daemon built | ✅ |
 | P25 | `[P25]` | P25Gateway | reflector network ✅ · startup TG list ✅ · NAC ✅ · daemon built | ✅ |
 | NXDN | `[NXDN]` | NXDNGateway | reflectors ✅ · startup TG list ✅ · RAN ✅ · daemon built | ✅ |
@@ -242,12 +242,23 @@ APRS (APRSGateway), GPSD, transparent data, DAPNET beyond POCSAG.
 Per-mode config is **done** — all eight modes have store sections, renderers,
 render targets, settings tabs, and (as of `waypoint-dapnetgateway`) a built
 daemon. The five cross-mode bridges are retired (§3, superseded by RFC-0003);
-their sections remain dormant. [#33] is closed.
+their sections remain dormant.
+
+That leaves [#33] with no feature work outstanding. It stayed open past this
+paragraph's earlier claim that it *was* closed, because shipping the last daemon
+is not the same as delivering it: the apt path was only proven on 2026-08-02, and
+proving it turned up two updater defects that stood between a published package
+and a running one ([#220], [#221]).
 
 1. ~~Pin/build the remaining daemon in waypoint-stack `build.sh`:
    **DAPNETGateway** (POCSAG).~~ **Done** — pinned at `5527546`, built, and
    packaged as `waypoint-dapnetgateway`. The **MMDVM_CM** cross-mode bridge
-   binaries were never needed — the bridge surface is retired (§3).
+   binaries were never needed — the bridge surface is retired (§3). Delivery is
+   proven too, which is the part packaging alone did not settle: the signed repo
+   serves the package on armhf and arm64, `waypoint-stack 0.2.0` depends on it,
+   and a bench node pulled it in through waypointd's own updater. Both bench runs
+   before that had installed it by hand with `dpkg -i`, so the supported path had
+   never actually carried it — see `bench-issue-33-run-log.md`.
 2. Host network config — [#32]. **Complete** (`internal/netconfig`): status,
    keyfile renderer, confirm-or-revert apply, and the full edit surface
    (Ethernet/IPv4, Wi-Fi, VLAN, NTP, hostname/timezone), all hardware-validated on
@@ -267,4 +278,7 @@ their sections remain dormant. [#33] is closed.
 [#24]: https://github.com/KN4OQW/waypoint/issues/24
 [#32]: https://github.com/KN4OQW/waypoint/issues/32
 [#33]: https://github.com/KN4OQW/waypoint/issues/33
+[#108]: https://github.com/KN4OQW/waypoint/issues/108
 [#131]: https://github.com/KN4OQW/waypoint/issues/131
+[#220]: https://github.com/KN4OQW/waypoint/issues/220
+[#221]: https://github.com/KN4OQW/waypoint/issues/221
