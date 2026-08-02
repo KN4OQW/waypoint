@@ -460,6 +460,7 @@
   "help.station_id.enable": "Keya tu indicativo en Morse a intervalos fijos, de modo que el nodo se identifica sin que hagas nada. <b>La mayoría de licencias exigen identificación periódica</b> — en EE. UU., cada 10 minutos (§97.119).",
   "help.station_id.time_mins": "Minutos entre identificaciones. Ajústalo al requisito de tu licencia o menos — 10 minutos en EE. UU. La identificación se envía entre transmisiones, nunca durante una.",
   "help.station_id.tx_level": "Volumen de la identificación Morse, como porcentaje de la desviación completa. Súbelo si el ID es difícil de copiar, bájalo si resulta molesto junto al tráfico de voz.",
+  "help.update.allow_unrevertable": "Permite que una actualización se realice aunque las versiones instaladas actualmente ya no estén en el repositorio, por lo que no podría deshacerse si algo saliera mal. Normalmente el nodo rechaza este tipo de actualización y se queda como está. Actívelo solo para desbloquear un nodo que de otro modo no podría actualizarse, y vuelva a desactivarlo después.",
   "help.update.auto_apply": "Instalar actualizaciones automáticamente cuando se encuentren. Las actualizaciones se comprueban de salud tras instalarse y se revierten solas si el módem no vuelve a arrancar.",
   "help.update.channel": "Qué flujo de versiones sigue este nodo. Estable es el probado; los demás reciben cambios antes y con más riesgo.",
   "help.update.check_enabled": "Comprobar el repositorio apt firmado de Waypoint en busca de versiones nuevas. Desactivarlo significa que el nodo nunca contacta el servidor de actualizaciones — tendrás que comprobar a mano.",
@@ -945,6 +946,8 @@
 
   "updates.applyingStopsAffectedServices": "Al aplicar se detienen los servicios afectados, se instalan las nuevas versiones, se reinician y se comprueba la salud del módem. Si el stack no vuelve sano se <b>revierte automáticamente</b> a las versiones anteriores.",
   "updates.applyingUpdateServicesAre": "<b>Aplicando una actualización…</b> Se están actualizando y comprobando la salud de los servicios. Esta página se refresca automáticamente.",
+  "updates.allowUnrevertable": "Permitir actualizaciones que no se pueden deshacer",
+  "updates.allowUnrevertableWarning": "<b>Se permiten actualizaciones que no se pueden deshacer.</b> Si una actualización no supera la comprobación de salud, este nodo no podrá volver a las versiones que tiene ahora y se quedará en las nuevas. Vuelva a desactivar esta opción cuando el nodo esté actualizado.",
   "updates.automaticUpdateChecks": "Comprobaciones automáticas de actualización",
   "updates.automaticUpdateChecksAre": "<b>Las comprobaciones automáticas de actualización están desactivadas.</b> Este nodo solo comprueba cuando pulsas <b>COMPROBAR AHORA</b>.",
   "updates.automaticUpdateChecksAsk": "<b>Las comprobaciones automáticas de actualización</b> preguntan de forma programada si existe una versión más nueva. La petición es una obtención anónima de un archivo estático firmado — no lleva indicativo, ni ID, ni nada más de este nodo, y no hay telemetría en ninguna parte de Waypoint. Desactívalo y el nodo deja de preguntar por su cuenta; <b>COMPROBAR AHORA</b>, aplicar una actualización y todo lo demás siguen funcionando — pero las actualizaciones automáticas se detienen con ello, ya que instalan lo que encontró una comprobación.",

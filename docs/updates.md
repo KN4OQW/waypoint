@@ -273,6 +273,11 @@ settings tab (installed versions, what is available, an Apply button).
 
 `Apply` runs a fixed, health-gated sequence — the ordering is the safety argument:
 
+0. **Pre-flight the way back.** Resolve the currently-installed versions with
+   `apt-get install --simulate` before anything moves. If apt cannot install
+   them, this update could not be rolled back, and it is **refused** — nothing is
+   stopped, installed, or written to the history table. See
+   [Revert relies on the repo keeping old versions](#revert-relies-on-the-repo-keeping-old-versions).
 1. **Record** the currently-installed version of every affected package (the
    revert set) in the store.
 2. **Stop** the affected services.
@@ -293,12 +298,48 @@ settings tab (installed versions, what is available, an Apply button).
 
 ### Revert relies on the repo keeping old versions
 
-The revert step is `apt-get install <previous versions>` — which only works
-because the apt repo **retains prior versions in `pool/`** (the repo carries
-every published version forward). That retention is the apt-side half of the
-rollback story; the health gate is the trigger. Every applied/previous pair and
-its result (`confirmed`/`reverted`) is recorded in the `stack_update_history`
-table for the audit and revert trail.
+The revert step is `apt-get install <previous versions>`, which only works
+because the apt repo **retains prior versions in `pool/`**. That retention is the
+apt-side half of the rollback story; the health gate is the trigger. Every
+applied/previous pair and its result (`confirmed`/`reverted`) is recorded in the
+`stack_update_history` table for the audit and revert trail.
+
+For a long time the retention half was simply assumed, and it was not true
+([#221](https://github.com/KN4OQW/waypoint/issues/221)): `publish-apt.sh` rebuilt
+the published tree from only the current build's `.deb`s, so the repo carried
+exactly one version of each package. A node whose update installed cleanly and
+then failed its health gate had nowhere to go —
+
+```
+stackupdate: REVERT FAILED (…): E: Version '0.1.0' for 'waypoint-stack' was not found
+```
+
+— and was stranded on the new version. It stayed hidden because every earlier
+revert had been a no-op: the install failed *before* changing anything, so the
+revert reinstalled versions that were still installed. **Only a revert following a
+successful install needs the pool**, and that path had never run.
+
+Both halves are now real:
+
+- **The repo retains the current version plus three previous ones**, per package
+  per architecture (`packaging/publish-apt.sh` in `KN4OQW/waypoint-stack`).
+- **The engine no longer assumes it.** Step 0 above proves the revert set is
+  installable before the update starts, so a node refuses to move rather than
+  discovering afterwards that it cannot move back.
+
+#### When the node refuses to update
+
+A refusal means the versions this node is running have aged out of the pool (or
+the repo is misconfigured). The node is *not* broken — it is running a stack it
+knows it can keep. The fix is to publish a build that retains them, or to accept
+the risk deliberately:
+
+`update.allow_unrevertable` (default **off**) lets the update proceed anyway. The
+outcome is then flagged `unrevertable` and the daemon logs that the update ran
+with no rollback available. It is an escape hatch for a node that must move and
+cannot be rolled back — not a setting to leave on, because with it on a failed
+health gate strands the node exactly as [#221](https://github.com/KN4OQW/waypoint/issues/221)
+did.
 
 ### Timing and auto-apply
 
