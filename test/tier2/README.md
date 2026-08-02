@@ -16,6 +16,27 @@ gateway binds the other:
 |---|---|---|
 | DMR | `62032` | `62031` (DMRGateway) |
 | YSF | `3200` | `4200` (YSFGateway / DGIdGateway) |
+| P25 | `32010` | `42020` (P25Gateway) |
+| NXDN | `14021` | `14020` (NXDNGateway) |
+| M17 | `17011` | `17010` (M17Gateway) |
+| D-Star | `20011` | `20010` (dstargateway) |
+| POCSAG | `3800` | `4800` (DAPNETGateway) |
+
+DMR and YSF are covered end to end — a transmission goes down the loopback and
+the reply comes back. The other four gateways are covered at the startup seam
+(`modes_test.go`): the rendered config parses, the daemon stays up, and it owns
+its half of the pair. That is a weaker claim than the DMR/YSF ones and is meant
+to be — it is also the claim that did not exist at all before, so nothing in this
+project had established that a pinned P25Gateway will so much as read the file
+Waypoint writes for it.
+
+The one deviation from the rendered file is the managed path prefix. The
+renderers emit absolute paths under `/var/lib/waypoint` that exist on a device
+and not on a build host, so `modes_test.go` rewrites that prefix to a temporary
+directory holding the **shipped** seed hostlists (`internal/hostsrc/seed`). The
+content is what ships and nothing else in the file is touched — same substitution
+the live-reflector tests make for `Hosts=`, generalised because P25, NXDN and
+D-Star each reference several paths rather than one.
 
 `repeater.go` stands in for MMDVM-Host: it binds `62032`, announces itself with
 the `DMRC` config packet DMRGateway waits for, and injects `DMRD` frames exactly
@@ -61,7 +82,32 @@ LD_LIBRARY_PATH="$PWD/out/lib" go test -tags tier2 -v ./test/tier2/
 
 The daemons link `libmosquitto.so.1`; if your host lacks it, extract it from the
 same container image into `out/lib` (see `build.sh`). Override the binary
-directory with `WAYPOINT_GW_BIN`.
+directory with `WAYPOINT_GW_BIN`. M17Gateway is the exception: the pinned
+`g4klx/M17Gateway` is pre-MQTT, links no libmosquitto, and logs to stdout.
+
+A daemon whose binary is missing **skips** rather than fails, so a partial
+`out/` runs the subset it can. `go test -v` names what it skipped.
+
+### On the bench
+
+These run unchanged on a bench Pi, which is the point of building them this way —
+they are the same claims the device makes, so an on-hardware run and a CI run
+disagree only when the hardware does.
+
+Nothing here touches a modem or keys a radio, so a node under test can stay in
+service. What it cannot do is share the loopback ports: `waypointd` is not
+running these daemons at the same address by accident, so stop the stack first,
+or run on a Pi that is not the one on the air.
+
+```sh
+sudo systemctl stop 'waypoint-*gateway.service'
+WAYPOINT_GW_BIN=/usr/bin LD_LIBRARY_PATH=/usr/lib go test -tags tier2 -v ./test/tier2/
+```
+
+Pointing `WAYPOINT_GW_BIN` at `/usr/bin` runs the tests against the binaries the
+device actually installed rather than a fresh build of the same SHAs — which is a
+slightly different and slightly better claim, because it also covers the
+packaging.
 
 ## What each test claims
 
@@ -71,6 +117,26 @@ directory with `WAYPOINT_GW_BIN`.
 - `TestTier2_ParrotEcho` — a keyed group call on TG 9990 reaches the primary,
   the generated `TypeRewrite` converts it to the private call BM Parrot expects,
   and the echo returns down the loopback.
+- `TestTier2_GatewaysAcceptRenderedConfigs` — for P25, NXDN, M17 and D-Star: the
+  pinned daemon parses the generated config, stays up, and binds MMDVM-Host's
+  loopback for that mode. The model it renders from is asserted ready by
+  `internal/config` first, so "the daemon accepted our config" is always a
+  statement about a configuration the product would have shipped to a device.
+- `TestTier2_ReadinessErrorsPredictDaemonFailure` — the accountability test.
+  `internal/config/mode_readiness.go` claims certain configurations stop a daemon
+  from starting; two of those claims are checkable here, and both are checked in
+  **both** directions — the bad config fails and the good one does not.
+  - YSF with no transmit frequency aborts (#145); with frequencies it stays up.
+  - DAPNETGateway exits non-zero on an empty or `TOPSECRET` AuthKey, and a
+    syntactically valid key clears the guard. No DAPNET credential is involved:
+    the valid-key run still fails, at the login rather than the guard, and the
+    two are told apart by the guard's own log line with the empty-key run as the
+    positive control.
+
+  The other readiness errors are deliberately absent. A four-bit colour code set
+  to 20 produces a daemon that starts, binds, and reports itself healthy — that
+  is the whole reason the check exists, and a loopback with no radio has nothing
+  to say about it. Their evidence is the protocol field width cited at each check.
 - `TestTier2_DGIdGatewayAcceptsRenderedConfig` — the pinned DGIdGateway parses
   our generated INI, stays up, binds `:4200`, and materializes the generated
   DG-ID table.
