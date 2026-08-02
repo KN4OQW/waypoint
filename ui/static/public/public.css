@@ -89,11 +89,37 @@ body {
 .signin:hover, .signin:focus-visible { border-color: var(--accent); color: var(--accent); }
 
 /* ---------- hero ---------- */
-/* The hero is shorter than the mockup's 560px until the map layer lands: with a
-   placeholder behind it, the extra height is just dark space under the overlay
-   cards. It goes back up when there are tiles to look at. */
-.hero { position: relative; min-height: 430px; border-bottom: 1px solid var(--panel-line); }
+/* Full height now that there are tiles to look at. It is a compromise between
+   the mockup's 560 and the 430 that stopped the placeholder state being a slab
+   of dark nothing — a node with no positions yet still sees this band. */
+.hero { position: relative; min-height: 500px; border-bottom: 1px solid var(--panel-line); }
 .map { position: absolute; inset: 0; z-index: 0; background: #0b0e13; }
+/* Leaflet inside the dark hero. The library ships a light chrome; these are the
+   minimum overrides to stop the controls and attribution reading as a white box
+   pasted onto the page. */
+.leaflet-container { background: #0b0e13 !important; font-family: var(--mono) !important; }
+/* OSM's standard tiles are a light map, and the page around them is not. This
+   dims and desaturates rather than inverting: inversion is the usual dark-map
+   trick and it turns roads into negatives and labels into mud, which for a
+   coverage map someone is reading at an event is worse than a bright rectangle.
+   Nothing here alters the map's content or hides the attribution — it is a
+   presentation filter over tiles fetched and displayed per OSM's usage policy. */
+.leaflet-tile-pane { filter: brightness(.74) saturate(.82) contrast(1.06); }
+.leaflet-control-attribution {
+  background: rgba(6,7,10,.72) !important; color: var(--faint) !important; font-size: 9px !important;
+}
+.leaflet-control-attribution a { color: var(--dim) !important; }
+.leaflet-bar a {
+  background: var(--panel) !important; color: var(--ink-body) !important;
+  border-bottom-color: var(--panel-line) !important;
+}
+.leaflet-bar a:hover { background: #161b22 !important; }
+.wp-pin {
+  width: 11px; height: 11px; border-radius: 50%; background: var(--accent);
+  border: 2px solid #06070a; box-shadow: 0 0 10px var(--accent-glow);
+}
+.wp-pop { font-family: var(--mono); font-size: 11px; line-height: 1.5; }
+.wp-pop b { color: #0f1218; }
 .map-ph {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
   justify-content: center; gap: 8px; text-align: center; padding: 20px;

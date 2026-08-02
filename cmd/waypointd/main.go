@@ -1806,6 +1806,7 @@ func (s *server) newMux() *http.ServeMux {
 	// registering them costs a disabled node nothing but a not-found.
 	s.registerPublicRoutes(mux)
 	s.registerBrandingRoutes(mux)
+	s.registerAdminMapRoutes(mux)
 	mux.Handle("/", s.rootHandler(http.FileServerFS(ui.FS())))
 	return mux
 }
@@ -2204,6 +2205,10 @@ func main() {
 	// into a login screen and rootHandler can answer it per-request. "/index.html"
 	// is never on this list: it is the admin entry that must keep reaching the
 	// login screen whatever the public toggle says.
+	// Bounded retention of other people's location data (D3). Hourly rather than
+	// at startup only, because a node that runs for weeks would otherwise never
+	// drop anything after its first minute.
+	go runPositionPrune(s.publicStore, time.Hour, context.Background().Done())
 	s.auth.AllowAnonymous(func(r *http.Request) bool {
 		if IsPublicRoute(r.URL.Path) {
 			return true
