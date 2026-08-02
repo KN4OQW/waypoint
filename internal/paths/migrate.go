@@ -323,18 +323,21 @@ func copyTree(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	// Read handle: nothing to flush, and the read has already happened.
+	defer func() { _ = in.Close() }()
 	// The mode matters: config.db and DMRGateway.ini carry secrets and are 0600.
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, fi.Mode().Perm())
 	if err != nil {
 		return err
 	}
+	// On these two paths the copy has already failed, so the Close error would
+	// only mask the one worth reporting. The success path below checks it.
 	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+		_ = out.Close()
 		return err
 	}
 	if err := out.Sync(); err != nil {
-		out.Close()
+		_ = out.Close()
 		return err
 	}
 	return out.Close()
@@ -348,6 +351,7 @@ func fsyncDir(dir string) error {
 	if err != nil {
 		return err
 	}
-	defer d.Close()
+	// Read handle on a directory; Sync below is what has to succeed.
+	defer func() { _ = d.Close() }()
 	return d.Sync()
 }
