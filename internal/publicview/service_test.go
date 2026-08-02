@@ -1,8 +1,11 @@
 package publicview
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,6 +85,22 @@ func newService(t *testing.T, evs []hub.Event, tx *status.Transmission) (*Servic
 	return svc, ps, h
 }
 
+// lastHeard unwraps the entries for the tests that are about filtering and
+// windowing rather than about availability. It asserts availability on the way
+// through, so a test that starts failing because the list was withheld says so
+// instead of reporting a mysteriously empty result.
+func lastHeard(t *testing.T, svc *Service, limit int) ([]Heard, error) {
+	t.Helper()
+	res, err := svc.LastHeard(limit)
+	if err != nil {
+		return nil, err
+	}
+	if !res.Available {
+		t.Fatalf("last-heard list withheld unexpectedly: %+v", res)
+	}
+	return res.Entries, nil
+}
+
 // ---------------------------------------------------------------------------
 // The field audit — the server-side backstop for D2's never-public list
 // ---------------------------------------------------------------------------
@@ -101,6 +120,12 @@ func TestPublicStructsCarryNothingElse(t *testing.T) {
 		{Status{}, []string{"State", "LastActivityMinutes"}},
 		{Heard{}, []string{"Callsign", "Mode", "At"}},
 		{Counters{}, []string{"Callsigns", "Transmissions", "WindowHours"}},
+		// The wrappers carry an availability flag and a server-authored notice.
+		// Notice is on the allow-list only because it is a fixed string from the
+		// const block above — never a path, never an OS error, never anything
+		// derived from the machine.
+		{LastHeardResult{}, []string{"Available", "Notice", "Entries"}},
+		{CountersResult{}, []string{"Available", "Notice", "Counters"}},
 	} {
 		typ := reflect.TypeOf(tc.v)
 		t.Run(typ.Name(), func(t *testing.T) {
@@ -135,7 +160,7 @@ func TestNeverPublicFieldNamesAbsent(t *testing.T) {
 		"Config", "Password", "Token", "Secret", "Log", "Audit",
 		"Network", "Dest", "Talkgroup", "Slot",
 	}
-	for _, v := range []any{Status{}, Heard{}, Counters{}} {
+	for _, v := range []any{Status{}, Heard{}, Counters{}, LastHeardResult{}, CountersResult{}} {
 		typ := reflect.TypeOf(v)
 		for i := range typ.NumField() {
 			name := typ.Field(i).Name
@@ -200,10 +225,14 @@ func TestUnresolvedIDsNeverReachTheList(t *testing.T) {
 		end(4, "W4RJM", "DMR"),
 	}, nil)
 
-	got, err := svc.LastHeard(0)
+	res, err := svc.LastHeard(0)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !res.Available {
+		t.Fatalf("list withheld with a healthy ID database: %+v", res)
+	}
+	got := res.Entries
 	if len(got) != 2 {
 		t.Fatalf("last heard = %+v, want only the two resolvable callsigns", got)
 	}
@@ -219,7 +248,7 @@ func TestUnresolvedIDsNeverReachTheList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Transmissions != 2 || c.Callsigns != 2 {
+	if c.Counters.Transmissions != 2 || c.Counters.Callsigns != 2 {
 		t.Errorf("counters = %+v, want 2 transmissions from 2 callsigns", c)
 	}
 }
@@ -240,7 +269,7 @@ func TestSuppressionHidesEverySSIDVariant(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := svc.LastHeard(0)
+	got, err := lastHeard(t, svc, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +281,7 @@ func TestSuppressionHidesEverySSIDVariant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Transmissions != 1 || c.Callsigns != 1 {
+	if c.Counters.Transmissions != 1 || c.Counters.Callsigns != 1 {
 		t.Errorf("counters = %+v, want 1 and 1 — suppressed stations count in neither", c)
 	}
 }
@@ -295,7 +324,7 @@ func TestWindowEdges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := svc.LastHeard(0)
+	got, err := lastHeard(t, svc, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +354,7 @@ func TestRetentionChangeTakesEffectImmediately(t *testing.T) {
 	if err := ps.SaveSettings(set); err != nil {
 		t.Fatal(err)
 	}
-	got, err := svc.LastHeard(0)
+	got, err := lastHeard(t, svc, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +367,7 @@ func TestRetentionChangeTakesEffectImmediately(t *testing.T) {
 	if err := ps.SaveSettings(set); err != nil {
 		t.Fatal(err)
 	}
-	got, err = svc.LastHeard(0)
+	got, err = lastHeard(t, svc, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +386,7 @@ func TestRetentionIsNotDeletion(t *testing.T) {
 	if err := ps.SaveSettings(set); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.LastHeard(0); err != nil {
+	if _, err := lastHeard(t, svc, 0); err != nil {
 		t.Fatal(err)
 	}
 	if len(h.events) != len(all) {
@@ -381,14 +410,14 @@ func TestCountersCountTransmissionsNotStations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Transmissions != 4 {
-		t.Errorf("transmissions = %d, want 4", c.Transmissions)
+	if c.Counters.Transmissions != 4 {
+		t.Errorf("transmissions = %d, want 4", c.Counters.Transmissions)
 	}
-	if c.Callsigns != 3 {
-		t.Errorf("unique callsigns = %d, want 3 — SSID variants are one operator", c.Callsigns)
+	if c.Counters.Callsigns != 3 {
+		t.Errorf("unique callsigns = %d, want 3 — SSID variants are one operator", c.Counters.Callsigns)
 	}
-	if c.WindowHours != DefaultRetentionHours {
-		t.Errorf("window = %d h, want %d", c.WindowHours, DefaultRetentionHours)
+	if c.Counters.WindowHours != DefaultRetentionHours {
+		t.Errorf("window = %d h, want %d", c.Counters.WindowHours, DefaultRetentionHours)
 	}
 }
 
@@ -404,8 +433,8 @@ func TestCountersCountEndsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Transmissions != 1 {
-		t.Errorf("transmissions = %d, want 1 — a start and its end are one transmission", c.Transmissions)
+	if c.Counters.Transmissions != 1 {
+		t.Errorf("transmissions = %d, want 1 — a start and its end are one transmission", c.Counters.Transmissions)
 	}
 }
 
@@ -415,10 +444,10 @@ func TestEmptyWindowCounters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Transmissions != 0 || c.Callsigns != 0 {
+	if c.Counters.Transmissions != 0 || c.Counters.Callsigns != 0 {
 		t.Errorf("counters on an empty window = %+v, want zeros", c)
 	}
-	got, err := svc.LastHeard(0)
+	got, err := lastHeard(t, svc, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -495,7 +524,7 @@ func TestDegradesWithoutBackends(t *testing.T) {
 	if st.State != StateIdle || st.LastActivityMinutes != nil {
 		t.Errorf("status without backends = %+v, want a bare idle", st)
 	}
-	heard, err := svc.LastHeard(0)
+	heard, err := lastHeard(t, svc, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,7 +535,7 @@ func TestDegradesWithoutBackends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Transmissions != 0 {
+	if c.Counters.Transmissions != 0 {
 		t.Errorf("counters without backends = %+v, want zeros", c)
 	}
 }
@@ -516,7 +545,7 @@ func TestLastHeardLimit(t *testing.T) {
 		end(1, "KK4WXT", "DMR"), end(2, "W4RJM", "DMR"),
 		end(3, "N4DEF", "DMR"), end(4, "KI4TSA", "DMR"),
 	}, nil)
-	got, err := svc.LastHeard(2)
+	got, err := lastHeard(t, svc, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,7 +559,7 @@ func TestLastHeardLimit(t *testing.T) {
 // the projection.
 func TestHeardCarriesOnlyWhatItMayCarry(t *testing.T) {
 	svc, _, _ := newService(t, []hub.Event{end(3, "KK4WXT", "DMR")}, nil)
-	got, err := svc.LastHeard(0)
+	got, err := lastHeard(t, svc, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -540,5 +569,183 @@ func TestHeardCarriesOnlyWhatItMayCarry(t *testing.T) {
 	want := Heard{Callsign: "KK4WXT", Mode: "DMR", At: fixedNow.Add(-3 * time.Minute)}
 	if got[0] != want {
 		t.Errorf("heard entry = %+v, want %+v", got[0], want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Station ID database failover
+// ---------------------------------------------------------------------------
+
+// brokenIDDB is a probe reporting the table as missing or corrupt.
+func brokenIDDB() IDDBStatus { return IDDBStatus{Reason: ReasonIDDBMissing} }
+
+// TestBrokenIDDatabaseWithholdsTheList is the failover rule: when callsign
+// resolution cannot be trusted, the public list is withheld entirely rather than
+// shortened.
+//
+// The fixture is the shape that makes a shortened list dangerous. Two DMR stations
+// would resolve to nothing but bare IDs, and one YSF station carries its callsign
+// off the air regardless. Filtering alone would leave a page confidently showing
+// one station and implying the DMR repeater had been silent all day.
+func TestBrokenIDDatabaseWithholdsTheList(t *testing.T) {
+	svc, _, _ := newService(t, []hub.Event{
+		end(1, "3112345", "DMR"), // unresolvable: the database is gone
+		end(2, "3112346", "DMR"),
+		end(3, "AE4GHI", "YSF"), // resolves anyway — YSF carries the callsign
+	}, nil)
+	svc.WithIDDatabase(brokenIDDB)
+
+	res, err := svc.LastHeard(0)
+	if err != nil {
+		t.Fatalf("a broken ID database must not be an error: %v", err)
+	}
+	if res.Available {
+		t.Error("the list was served with a broken ID database")
+	}
+	if len(res.Entries) != 0 {
+		t.Errorf("entries = %+v, want none — a partial list is worse than no list", res.Entries)
+	}
+	if res.Notice != ReasonIDDBMissing {
+		t.Errorf("notice = %q, want %q", res.Notice, ReasonIDDBMissing)
+	}
+}
+
+// TestBrokenIDDatabaseWithholdsCounters: the counters are built from resolved
+// callsigns, so they would collapse to the YSF traffic alone. "1 callsign heard
+// today" on a busy DMR repeater is a worse answer than "the database is down".
+func TestBrokenIDDatabaseWithholdsCounters(t *testing.T) {
+	svc, ps, _ := newService(t, []hub.Event{
+		end(1, "3112345", "DMR"),
+		end(2, "AE4GHI", "YSF"),
+	}, nil)
+	svc.WithIDDatabase(brokenIDDB)
+
+	set := DefaultSettings()
+	set.RetentionHours = 12
+	if err := ps.SaveSettings(set); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := svc.Counters()
+	if err != nil {
+		t.Fatalf("a broken ID database must not be an error: %v", err)
+	}
+	if res.Available {
+		t.Error("counters were served with a broken ID database")
+	}
+	if res.Counters.Transmissions != 0 || res.Counters.Callsigns != 0 {
+		t.Errorf("counters = %+v, want zeros alongside the notice", res.Counters)
+	}
+	if res.Notice != ReasonIDDBMissing {
+		t.Errorf("notice = %q, want %q", res.Notice, ReasonIDDBMissing)
+	}
+	// The window is still reported: it describes the page's own policy, not the
+	// data, and stays true whether or not the database is readable.
+	if res.Counters.WindowHours != 12 {
+		t.Errorf("window = %d h, want the configured 12 even while unavailable", res.Counters.WindowHours)
+	}
+}
+
+// TestBrokenIDDatabaseLeavesStatusAlone: the status line never resolves a
+// callsign, so nothing about it is less true when the table is gone. Blanking it
+// would hide a working node behind an unrelated fault.
+func TestBrokenIDDatabaseLeavesStatusAlone(t *testing.T) {
+	svc, _, _ := newService(t, []hub.Event{end(4, "3112345", "DMR")}, nil)
+	svc.WithIDDatabase(brokenIDDB)
+
+	got, err := svc.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateIdle {
+		t.Errorf("state = %q, want idle", got.State)
+	}
+	if got.LastActivityMinutes == nil || *got.LastActivityMinutes != 4 {
+		t.Errorf("status = %+v, want activity 4 minutes ago regardless of the ID database", got)
+	}
+}
+
+// TestNoticeDisclosesNothingAboutTheMachine. The notice reaches anonymous
+// visitors, so it must stay a fixed sentence rather than an OS error carrying a
+// filesystem path.
+func TestNoticeDisclosesNothingAboutTheMachine(t *testing.T) {
+	probe := DMRIDsProbe("/nonexistent/deep/path/DMRIds.dat")
+	got := probe()
+	if got.Available {
+		t.Fatal("a missing file probed as available")
+	}
+	if got.Reason != ReasonIDDBMissing {
+		t.Errorf("reason = %q, want the fixed notice %q", got.Reason, ReasonIDDBMissing)
+	}
+	for _, leak := range []string{"/nonexistent", "deep", "DMRIds.dat", "no such file"} {
+		if strings.Contains(got.Reason, leak) {
+			t.Errorf("the public notice leaks %q: %q", leak, got.Reason)
+		}
+	}
+}
+
+func TestDMRIDsProbe(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "DMRIds.dat")
+
+	probe := DMRIDsProbe(path)
+	if probe().Available {
+		t.Error("probe reported a missing file as available")
+	}
+
+	// Present but empty: resolves nothing, so it is the same failure as missing.
+	if err := os.WriteFile(path, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if probe().Available {
+		t.Error("probe reported an empty file as available")
+	}
+
+	// Present but only comments: parses cleanly to zero rows — still unusable.
+	if err := os.WriteFile(path, []byte("# nothing here\n; nor here\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := probe(); got.Available {
+		t.Errorf("probe reported a rowless file as available: %+v", got)
+	}
+
+	// A real table.
+	if err := os.WriteFile(path, []byte("3112345 KN4OQW Clint\n3112346 W4RJM Bob\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := probe(); !got.Available {
+		t.Errorf("probe reported a usable table as unavailable: %+v", got)
+	}
+
+	// And it notices the table going away again, rather than serving a stale
+	// verdict from its cache.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if probe().Available {
+		t.Error("probe kept reporting available after the table was deleted")
+	}
+}
+
+// TestHealthyIDDatabaseServesTheList closes the loop: the withholding is
+// conditional, not a permanent downgrade.
+func TestHealthyIDDatabaseServesTheList(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "DMRIds.dat")
+	if err := os.WriteFile(path, []byte("3112345 KN4OQW Clint\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc, _, _ := newService(t, []hub.Event{end(1, "KN4OQW", "DMR")}, nil)
+	svc.WithIDDatabase(DMRIDsProbe(path))
+
+	res, err := svc.LastHeard(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Available || len(res.Entries) != 1 {
+		t.Errorf("with a healthy table, result = %+v, want the one station", res)
+	}
+	if res.Notice != "" {
+		t.Errorf("healthy result carries a notice: %q", res.Notice)
 	}
 }

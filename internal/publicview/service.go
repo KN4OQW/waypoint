@@ -64,6 +64,39 @@ type Counters struct {
 	WindowHours   int `json:"window_hours"`
 }
 
+// LastHeardResult wraps the list with whether it can be trusted at all.
+//
+// When the station ID database is missing or corrupt, DMR, P25 and NXDN sources
+// arrive as bare numeric IDs (see publishableCallsign), and a list built from
+// what is left would be a lie by omission: it would quietly show only the D-Star
+// and YSF traffic while presenting itself as everything the node has heard. So the
+// list is withheld entirely and replaced by one empty record carrying Notice —
+// the page renders that single blank row and stops there.
+//
+// Saying "the database is broken" is the honest answer, and it is also the useful
+// one: it is the state an operator can fix, where a mysteriously short list is not.
+type LastHeardResult struct {
+	// Available reports whether Entries is a complete answer.
+	Available bool `json:"available"`
+	// Notice is the operator-facing explanation when it is not. Server-authored,
+	// never derived from a path or an OS error.
+	Notice string `json:"notice,omitempty"`
+	// Entries is empty whenever Available is false.
+	Entries []Heard `json:"entries"`
+}
+
+// CountersResult wraps the counters the same way and for the same reason.
+//
+// The counters are computed from resolved callsigns, so a broken ID database
+// would silently drop every DMR, P25 and NXDN station out of both figures. A
+// visitor reading "3 callsigns heard today" on a busy DMR repeater is worse
+// informed than one reading that the database is down.
+type CountersResult struct {
+	Available bool     `json:"available"`
+	Notice    string   `json:"notice,omitempty"`
+	Counters  Counters `json:"counters"`
+}
+
 // history is the slice of the event store this service reads. Narrowing it to one
 // method keeps the service testable against synthetic fixtures without standing up
 // a database, and makes it obvious that nothing here writes.
@@ -83,6 +116,9 @@ type Service struct {
 	store   *Store
 	history history
 	live    live
+	// idDB reports whether callsign resolution can be trusted. Never nil; see
+	// NewService.
+	idDB func() IDDBStatus
 	// now is injectable so window-edge behavior can be tested exactly rather than
 	// approximately.
 	now func() time.Time
@@ -94,7 +130,17 @@ type Service struct {
 // database is briefly unavailable is worse than one that says "no recent
 // activity".
 func NewService(s *Store, h history, l live) *Service {
-	return &Service{store: s, history: h, live: l, now: time.Now}
+	return &Service{store: s, history: h, live: l, idDB: alwaysAvailable, now: time.Now}
+}
+
+// WithIDDatabase attaches the station ID database probe, usually DMRIDsProbe over
+// the node's DMRIds.dat. Without it the service assumes resolution is fine and
+// relies on the per-source filter alone.
+func (s *Service) WithIDDatabase(probe func() IDDBStatus) *Service {
+	if probe != nil {
+		s.idDB = probe
+	}
+	return s
 }
 
 // Status reports whether the node is on the air.
@@ -147,14 +193,20 @@ func (s *Service) Status() (Status, error) {
 // limit <= 0 means "as many as the window holds", bounded by the event store's own
 // read ceiling. The retention window is a query bound, not a deletion policy: the
 // admin history keeps everything, and this simply declines to look further back.
-func (s *Service) LastHeard(limit int) ([]Heard, error) {
+//
+// A broken station ID database withholds the list rather than shortening it — see
+// LastHeardResult.
+func (s *Service) LastHeard(limit int) (LastHeardResult, error) {
+	if db := s.idDB(); !db.Available {
+		return LastHeardResult{Notice: db.Reason, Entries: []Heard{}}, nil
+	}
 	set, err := s.store.Settings()
 	if err != nil {
-		return nil, err
+		return LastHeardResult{}, err
 	}
 	evs, suppressed, err := s.windowEvents(set)
 	if err != nil {
-		return nil, err
+		return LastHeardResult{}, err
 	}
 	out := []Heard{}
 	for _, e := range evs {
@@ -167,7 +219,7 @@ func (s *Service) LastHeard(limit int) ([]Heard, error) {
 			break
 		}
 	}
-	return out, nil
+	return LastHeardResult{Available: true, Entries: out}, nil
 }
 
 // Counters summarizes the same window: distinct callsigns and total
@@ -177,14 +229,19 @@ func (s *Service) LastHeard(limit int) ([]Heard, error) {
 // callsign count is the point D8 turns on. A count that still moved when a
 // suppressed operator keyed up would let anyone watching the page infer exactly
 // when they were on the air, which is the thing they asked not to be published.
-func (s *Service) Counters() (Counters, error) {
+// A broken station ID database withholds both figures for the same reason it
+// withholds the list — see CountersResult.
+func (s *Service) Counters() (CountersResult, error) {
 	set, err := s.store.Settings()
 	if err != nil {
-		return Counters{}, err
+		return CountersResult{}, err
+	}
+	if db := s.idDB(); !db.Available {
+		return CountersResult{Notice: db.Reason, Counters: Counters{WindowHours: set.RetentionHours}}, nil
 	}
 	evs, suppressed, err := s.windowEvents(set)
 	if err != nil {
-		return Counters{}, err
+		return CountersResult{}, err
 	}
 	seen := map[string]bool{}
 	out := Counters{WindowHours: set.RetentionHours}
@@ -197,7 +254,7 @@ func (s *Service) Counters() (Counters, error) {
 		seen[call] = true
 	}
 	out.Callsigns = len(seen)
-	return out, nil
+	return CountersResult{Available: true, Counters: out}, nil
 }
 
 // windowEvents reads the completed transmissions inside the retention window,
@@ -253,6 +310,12 @@ func isVoice(t string) bool {
 //     siblings. On a hit that is the callsign from the ID database. On a miss it
 //     falls back to the decimal ID rendered as a string, and the all-stations ID
 //     resolves to the literal "ALL".
+//   - M17 (KN4OQW/MMDVM-Host, m17-restore) carries base-40 callsigns in its LSF
+//     and has no ID database in the path at all, so it will land here shaped like
+//     D-Star and YSF once its control class gains a WriteJSON. Today it reports
+//     only through LogMessage, so no M17 event reaches this filter.
+//   - FM publishes {timestamp, state} and no identity whatsoever, so it never
+//     produces a heard entry either.
 //
 // So a node whose DMR ID database is stale or missing produces a stream of sources
 // like "3112345". Publishing those would be worse than publishing nothing: a bare
