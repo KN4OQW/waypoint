@@ -65,7 +65,7 @@ status="$ROOTFS/var/lib/dpkg/status"
 grep -q '^Package: waypoint-stack$' "$status" 2>/dev/null && ok "waypoint-stack installed" || bad "waypoint-stack not installed"
 grep -q '^Package: waypoint-mmdvmhost$' "$status" 2>/dev/null && ok "waypoint-mmdvmhost installed" || bad "waypoint-mmdvmhost not installed"
 have /usr/bin/MMDVM-Host && ok "/usr/bin/MMDVM-Host present" || bad "/usr/bin/MMDVM-Host missing"
-have /home/pi-star/waypoint/bin/waypointd && ok "waypointd installed at RFC-0014 path" || bad "waypointd missing"
+have /usr/local/lib/waypoint/bin/waypointd && ok "waypointd installed at RFC-0014 path" || bad "waypointd missing"
 grep -q '^Package: mosquitto$' "$status" 2>/dev/null && ok "mosquitto broker installed" || bad "mosquitto not installed"
 
 # 4. units enabled (symlinks in multi-user.target.wants), boot-check hook present
@@ -125,11 +125,17 @@ held="$(awk '/^Package: waypoint-/{p=$2} /^Status:.*hold/{print p}' "$selections
 
 # 7. no TLS material
 shopt -s nullglob
-certs=("$ROOTFS"/home/pi-star/waypoint/tls/*)
+certs=("$ROOTFS"/var/lib/waypoint/tls/*)
 [ ${#certs[@]} -eq 0 ] && ok "no TLS certs shipped (RFC-0012 mints on first boot)" || bad "TLS material present: ${certs[*]}"
 
 # 8. no claim state / no store
-have /home/pi-star/waypoint/config.db && bad "config store present (would imply a configured/claimed node)" || ok "no config store (unclaimed)"
+have /var/lib/waypoint/config.db && bad "config store present (would imply a configured/claimed node)" || ok "no config store (unclaimed)"
+
+# 8b. no legacy state tree. The compatibility symlink at the pre-0.3 path is
+# created by waypointd when it migrates an already-flashed node; a fresh image
+# has nothing to migrate, so finding either the directory or the symlink here
+# means the build put state back where it no longer belongs.
+have /home/pi-star && bad "legacy /home/pi-star present on a fresh image" || ok "no legacy state tree"
 
 # D5: no default user credential
 have /boot/firmware/userconf.txt || have /boot/userconf.txt

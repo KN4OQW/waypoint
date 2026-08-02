@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/KN4OQW/waypoint/internal/paths"
 )
 
 // Paths locates where each daemon reads its generated INI. The server wires
@@ -876,8 +878,8 @@ func (m *Model) RenderYSFGateway() string {
 // Managed reflector/room hostlists, fetched and cached by waypointd. The pinned
 // YSFGateway parses YSFHosts as JSON (data["reflectors"]).
 const (
-	ysfHostsPath = "/home/pi-star/waypoint/etc/YSFHosts.json"
-	fcsRoomsPath = "/home/pi-star/waypoint/etc/FCSRooms.txt"
+	ysfHostsPath = paths.EtcDir + "/YSFHosts.json"
+	fcsRoomsPath = paths.EtcDir + "/FCSRooms.txt"
 )
 
 // DGIdGateway-internal loopback ports for its per-DG-ID network blocks (from the
@@ -996,8 +998,8 @@ func (m *Model) RenderDGIdGateway() string {
 // (data["reflectors"], each with designator/port/ipv4). Audio holds the spoken
 // announcement clips; a missing directory only disables voice, it is not fatal.
 const (
-	p25HostsPath = "/home/pi-star/waypoint/etc/P25Hosts.json"
-	p25AudioDir  = "/home/pi-star/waypoint/etc/P25Audio"
+	p25HostsPath = paths.EtcDir + "/P25Hosts.json"
+	p25AudioDir  = paths.EtcDir + "/P25Audio"
 )
 
 // RenderP25Gateway renders a complete P25Gateway.ini from the model. Callsign
@@ -1054,8 +1056,8 @@ func (m *Model) RenderP25Gateway() string {
 // designator/port/ipv4). Audio holds the spoken announcement clips; a missing
 // directory only disables voice (NXDNGateway nulls it and continues).
 const (
-	nxdnHostsPath = "/home/pi-star/waypoint/etc/NXDNHosts.json"
-	nxdnAudioDir  = "/home/pi-star/waypoint/etc/NXDNAudio"
+	nxdnHostsPath = paths.EtcDir + "/NXDNHosts.json"
+	nxdnAudioDir  = paths.EtcDir + "/NXDNAudio"
 )
 
 // RenderNXDNGateway renders a complete NXDNGateway.ini from the model. Callsign
@@ -1124,9 +1126,9 @@ func (m *Model) RenderNXDNGateway() string {
 // (loadPaths only records the path). CustomHostsfiles must differ from the data
 // dir, so it points at a sibling overrides directory.
 const (
-	dstarHostsDir      = "/home/pi-star/waypoint/etc/"                    // holds DStar_Hosts.json
-	dstarDataDir       = "/home/pi-star/waypoint/etc/dstar/"              // audio clips (optional)
-	dstarCustomHostDir = "/home/pi-star/waypoint/etc/dstar-hostsfiles.d/" // local host overrides
+	dstarHostsDir      = paths.EtcDir + "/"                    // holds DStar_Hosts.json
+	dstarDataDir       = paths.EtcDir + "/dstar/"              // audio clips (optional)
+	dstarCustomHostDir = paths.EtcDir + "/dstar-hostsfiles.d/" // local host overrides
 )
 
 // RenderDStarGateway renders a complete dstargateway.cfg from the model.
@@ -1223,8 +1225,8 @@ func (m *Model) RenderDStarGateway() string {
 // " \t\r\n": name, address, port) — NOT JSON. Audio holds the spoken
 // announcement clips; a missing directory only nulls voice, it is not fatal.
 const (
-	m17HostsPath = "/home/pi-star/waypoint/etc/M17Hosts.txt"
-	m17AudioDir  = "/home/pi-star/waypoint/etc/M17Audio"
+	m17HostsPath = paths.EtcDir + "/M17Hosts.txt"
+	m17AudioDir  = paths.EtcDir + "/M17Audio"
 )
 
 // RenderM17Gateway renders a complete M17Gateway.ini from the model. This gateway

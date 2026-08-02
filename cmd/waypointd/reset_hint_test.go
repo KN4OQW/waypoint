@@ -13,10 +13,10 @@ import (
 // node whose reset command was working exactly as designed.
 
 func TestReadonlyStoreErrorSaysWhatToDo(t *testing.T) {
-	err := explainStoreError(errors.New("attempt to write a readonly database (8)"), "/home/pi-star/waypoint/config.db")
+	err := explainStoreError(errors.New("attempt to write a readonly database (8)"), "/var/lib/waypoint/config.db")
 	got := err.Error()
 
-	if !strings.Contains(got, "/home/pi-star/waypoint/config.db") {
+	if !strings.Contains(got, "/var/lib/waypoint/config.db") {
 		t.Error("the message does not say which file could not be written")
 	}
 	if os.Geteuid() != 0 && !strings.Contains(got, "sudo") {

@@ -54,7 +54,7 @@ You should see something like:
 
 ```
 reset-claim: wiped admin credential (admin "bench"), revoked 1 session(s),
-cleared claimed_at — device returned to claim mode (store /home/pi-star/waypoint/config.db)
+cleared claimed_at — device returned to claim mode (store /var/lib/waypoint/config.db)
 ```
 
 Now open the dashboard in a browser. Within a few seconds it shows the **claim

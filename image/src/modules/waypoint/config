@@ -26,12 +26,20 @@
 # GOARCH-style artifact suffix per Debian arch (filled in start_chroot_script).
 
 # --- Install paths (the RFC-0014 updater's defaults; see image/README.md) ---
-# Waypoint's home is /home/pi-star/waypoint, root-owned and user-agnostic — it is
-# every waypointd path flag's default and the updater's -update-binary/-update-marker
-# default, so the units need no path overrides. The stack DAEMONS live in /usr/bin
-# (owned by the waypoint-stack .debs); only waypointd lives under the Waypoint home.
-[ -n "$WAYPOINT_HOME" ]     || WAYPOINT_HOME="/home/pi-star/waypoint"
-[ -n "$WAYPOINT_BIN" ]      || WAYPOINT_BIN="${WAYPOINT_HOME}/bin/waypointd"
+# These mirror internal/paths, which is where the layout is defined; keep the two
+# in step. Node state is /var/lib/waypoint — the FHS location, and where the
+# provisioned marker has always lived — and it is every waypointd state-path
+# flag's default, so the units need no path overrides. The binary the updater
+# swaps sits apart from the state it manages, in /usr/local/lib/waypoint/bin. The
+# stack DAEMONS are in /usr/bin, owned by the waypoint-stack .debs; only waypointd
+# updates itself.
+#
+# Images through 0.2 put both under /home/pi-star/waypoint, a directory named for
+# an account no Waypoint image has ever created. Nodes flashed from those images
+# keep working: waypointd migrates the tree on its first start and leaves a
+# symlink at the old path, which their units still name (see internal/paths).
+[ -n "$WAYPOINT_HOME" ]     || WAYPOINT_HOME="/var/lib/waypoint"
+[ -n "$WAYPOINT_BIN" ]      || WAYPOINT_BIN="/usr/local/lib/waypoint/bin/waypointd"
 [ -n "$WAYPOINT_KEYRING_DST" ] || WAYPOINT_KEYRING_DST="/usr/share/keyrings/waypoint-archive-keyring.gpg"
 [ -n "$WAYPOINT_RELEASE_PUBKEY" ] || WAYPOINT_RELEASE_PUBKEY="/usr/share/waypoint/waypoint-release.pub"
 

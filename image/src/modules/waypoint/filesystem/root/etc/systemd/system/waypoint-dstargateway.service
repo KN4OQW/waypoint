@@ -8,7 +8,7 @@ Wants=mosquitto.service
 # renders on Apply. Managed by waypointd: enabled/started when its mode is
 # configured, health-gated on stack updates (RFC-0014). Not enabled at image
 # build — a fresh, unclaimed node runs no gateways until it is configured.
-ExecStart=/usr/bin/dstargateway /home/pi-star/waypoint/etc/dstargateway.cfg
+ExecStart=/usr/bin/dstargateway /var/lib/waypoint/etc/dstargateway.cfg
 Restart=on-failure
 RestartSec=3
 User=root

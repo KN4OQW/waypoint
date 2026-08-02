@@ -15,7 +15,7 @@ on an SD card and holds a modem open 24/7.
 - **waypoint-stack** (`waypoint-stack` metapackage + daemons) from the signed apt
   repo at `https://kn4oqw.github.io/waypoint-stack`. The archive keyring is pinned
   by sha256; the deb822 source trusts only that keyring (`Signed-By`).
-- **waypointd** at `/home/pi-star/waypoint/bin/waypointd` (the RFC-0014 updater's
+- **waypointd** at `/usr/local/lib/waypoint/bin/waypointd` (the RFC-0014 updater's
   path), verified at build time against the RFC-0013 release key with minisign.
 - **systemd units**: `waypointd.service` (enabled) with the
   `ExecStartPre=-…-update-boot-check` power-loss-revert hook (RFC-0014), plus the

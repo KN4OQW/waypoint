@@ -8,7 +8,7 @@ Wants=mosquitto.service
 # renders on Apply. Managed by waypointd: enabled/started when its mode is
 # configured, health-gated on stack updates (RFC-0014). Not enabled at image
 # build — a fresh, unclaimed node runs no gateways until it is configured.
-ExecStart=/usr/bin/P25Gateway /home/pi-star/waypoint/etc/P25Gateway.ini
+ExecStart=/usr/bin/P25Gateway /var/lib/waypoint/etc/P25Gateway.ini
 Restart=on-failure
 RestartSec=3
 User=root

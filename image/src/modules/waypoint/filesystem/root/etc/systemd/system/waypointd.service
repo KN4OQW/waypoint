@@ -14,10 +14,14 @@ Wants=mosquitto.service
 # RFC-0014 power-loss safety: an update that was swapped but never confirmed is
 # reverted here, BEFORE the daemon starts, so the unit then runs the prior binary.
 # Non-fatal (leading '-') — a boot-check hiccup must never wedge startup. The
-# paths are the updater's own defaults (Waypoint home = /home/pi-star/waypoint).
-ExecStartPre=-/home/pi-star/waypoint/bin/waypointd -update-boot-check \
-  -update-binary /home/pi-star/waypoint/bin/waypointd \
-  -update-marker /home/pi-star/waypoint/update.marker
+# paths are the updater's own defaults, spelled out because this line is where an
+# operator looks first: node state lives in /var/lib/waypoint, and the binary the
+# updater swaps in /usr/local/lib/waypoint/bin (see internal/paths). A node
+# flashed before that split still has both under /home/pi-star/waypoint and keeps
+# working through the symlink waypointd leaves there on its first start.
+ExecStartPre=-/usr/local/lib/waypoint/bin/waypointd -update-boot-check \
+  -update-binary /usr/local/lib/waypoint/bin/waypointd \
+  -update-marker /var/lib/waypoint/update.marker
 # First start mints the self-signed TLS cert (RFC-0012) and enters the claim flow
 # (RFC-0002) — the image ships neither, so the box is unclaimed until an operator
 # claims it over the web UI. -release-pubkey is the RFC-0013 key the updater
@@ -31,7 +35,7 @@ ExecStartPre=-/home/pi-star/waypoint/bin/waypointd -update-boot-check \
 # they set are the daemon's compiled defaults, so removing them changes nothing
 # about how a node starts; it only lets the operator's edit take effect.
 # -addr stays: the listen address is deployment-owned and shown read-only.
-ExecStart=/home/pi-star/waypoint/bin/waypointd \
+ExecStart=/usr/local/lib/waypoint/bin/waypointd \
   -addr 0.0.0.0:443 -tls -http-redirect-addr 0.0.0.0:80 \
   -release-pubkey /usr/share/waypoint/waypoint-release.pub
 Restart=on-failure

@@ -60,7 +60,7 @@ func requireLiveNetwork(t *testing.T) {
 }
 
 // localHostlist rewrites the managed hostlist path in a rendered config to a copy
-// of the shipped seed file. That absolute path (/home/pi-star/waypoint/etc) only
+// of the shipped seed file. That absolute path (/var/lib/waypoint/etc) only
 // exists on a device; the file's CONTENT is the same one that ships, and nothing
 // else in the rendered config is touched — the routing and link behaviour under
 // test are unaffected.

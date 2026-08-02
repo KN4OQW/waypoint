@@ -109,7 +109,7 @@ sudo unattended-upgrade --dry-run --debug 2>&1 | tee /tmp/uu.log
 
 - [ ] `journalctl --disk-usage` reports the journal in **volatile** storage
       (`/run/log/journal`), not `/var/log/journal`.
-- [ ] `ls /home/pi-star/waypoint/tls/` was empty at first boot; a cert now exists
+- [ ] `ls /var/lib/waypoint/tls/` was empty at first boot; a cert now exists
       (minted on first start, not shipped).
 
 ---
