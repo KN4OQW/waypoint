@@ -27,6 +27,7 @@
 package hostsrc
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -144,6 +145,188 @@ func Split(s string) []string {
 // disables downloading rather than being an error the refresher should retry.
 var ErrNoSources = errors.New("hostsrc: no sources configured")
 
+// Retry pacing for a failed refresh: start a minute out and double to half an
+// hour. Short enough that a node which boots ahead of its network has its lists
+// within a couple of minutes, long enough that a genuinely unreachable source is
+// not hammered all day.
+const (
+	firstRetry = time.Minute
+	maxRetry   = 30 * time.Minute
+)
+
+// Every runs fetch immediately and then every interval, retrying a failed fetch
+// on a short backoff instead of waiting out the whole interval.
+//
+// The retry is the point. waypointd deliberately starts before the network is up
+// — an unprovisioned node has no network, which is the entire reason the setup
+// access point exists — so the first fetch of every list routinely runs against
+// an interface that has not associated yet. On a plain interval ticker that one
+// lost race cost the node its hostlists for a full day: every picker showed the
+// shipped copy, the panel said so, and the next attempt was 24 hours away. The
+// backoff never runs slower than interval, so a short interval (tests, or a
+// deployment that wants aggressive refreshes) still paces itself.
+//
+// Registering the fetch under name is what also makes the list refreshable on
+// demand: see Refresh and RefreshAll, which run this same function under the same
+// lock, so an operator asking from the UI can never overlap the daily tick.
+func Every(ctx context.Context, name string, interval time.Duration, fetch func(context.Context) error) {
+	setRefresher(name, fetch)
+	backoff := firstRetry
+	for {
+		// ErrBusy is not a failure to back off from: the operator asked for this
+		// same list from the UI and that download is in flight, so the scheduled
+		// one is redundant rather than unsuccessful.
+		err := Refresh(ctx, name)
+		wait, next := nextWait(interval, backoff, err != nil && !errors.Is(err, ErrBusy))
+		backoff = next
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// nextWait returns how long to sleep before the next attempt and the backoff to
+// carry into it: the retry ladder on failure, the plain interval on success, and
+// never longer than interval either way.
+func nextWait(interval, backoff time.Duration, failed bool) (wait, next time.Duration) {
+	if !failed {
+		return interval, firstRetry
+	}
+	next = backoff * 2
+	if next > maxRetry {
+		next = maxRetry
+	}
+	if wait = backoff; wait > interval {
+		wait = interval
+	}
+	return wait, next
+}
+
+// --- Refreshing on demand -------------------------------------------------
+//
+// The daily tick is the right cadence for lists that change slowly, and the wrong
+// one for an operator who has just fixed the thing that was blocking the download
+// and wants the picker populated now. Every list's Run registers its fetch here,
+// so "refresh now" is the same code path as the scheduled refresh — same sources,
+// same verification, same recorded status — rather than a second implementation
+// that could drift from it.
+
+// ErrNoRefresher means the list has no registered fetch: either it is not one of
+// the downloaded lists, or this node is not running its refreshers (demo mode).
+var ErrNoRefresher = errors.New("hostsrc: list cannot be refreshed on this node")
+
+// ErrBusy means a refresh of that list was already running. It is not a failure —
+// the caller's intent (a fresh list) is being served by the run already in flight.
+var ErrBusy = errors.New("hostsrc: a refresh is already running for this list")
+
+type refresher struct {
+	fn func(context.Context) error
+	mu sync.Mutex // held for the duration of a fetch; TryLock is how Busy is detected
+}
+
+var (
+	refMu      sync.RWMutex
+	refreshers = map[string]*refresher{}
+)
+
+func setRefresher(name string, fn func(context.Context) error) {
+	refMu.Lock()
+	defer refMu.Unlock()
+	if r, ok := refreshers[name]; ok {
+		r.fn = fn
+		return
+	}
+	refreshers[name] = &refresher{fn: fn}
+}
+
+// clearRefresher forgets a list's fetch. Nothing in the daemon unregisters — a
+// refresher lives as long as the process — but the registry is package state, and
+// tests that install a fake need to be able to take it back out again.
+func clearRefresher(name string) {
+	refMu.Lock()
+	defer refMu.Unlock()
+	delete(refreshers, name)
+}
+
+// Refresh downloads one list now. It holds that list's lock for the duration, so
+// the scheduled refresh and an operator-triggered one can never run at the same
+// time and race on the cache file — a refresh already in flight is reported as
+// ErrBusy rather than queued, because the caller wants a current list and one is
+// already on its way.
+func Refresh(ctx context.Context, name string) error {
+	refMu.RLock()
+	r := refreshers[name]
+	refMu.RUnlock()
+	if r == nil {
+		return ErrNoRefresher
+	}
+	if !r.mu.TryLock() {
+		return ErrBusy
+	}
+	defer r.mu.Unlock()
+	return r.fn(ctx)
+}
+
+// RefreshResult is one list's outcome from RefreshAll, in the order All() reports
+// them so the API output is stable.
+type RefreshResult struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
+	OK    bool   `json:"ok"`
+	Busy  bool   `json:"busy,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+// RefreshAll downloads every refreshable list concurrently and reports each
+// outcome. One list failing never stops another: a node with a dead YSF source
+// should still come back with fresh DMR masters.
+func RefreshAll(ctx context.Context) []RefreshResult {
+	refMu.RLock()
+	names := make([]string, 0, len(refreshers))
+	for n := range refreshers {
+		names = append(names, n)
+	}
+	refMu.RUnlock()
+	sort.Strings(names)
+
+	out := make([]RefreshResult, len(names))
+	var wg sync.WaitGroup
+	for i, n := range names {
+		wg.Add(1)
+		go func(i int, n string) {
+			defer wg.Done()
+			res := RefreshResult{Name: n, Label: n}
+			if st, ok := Report(n); ok && st.Label != "" {
+				res.Label = st.Label
+			}
+			switch err := Refresh(ctx, n); {
+			case err == nil:
+				res.OK = true
+			case errors.Is(err, ErrBusy):
+				res.Busy = true
+				res.Error = err.Error()
+			default:
+				res.Error = err.Error()
+			}
+			out[i] = res
+		}(i, n)
+	}
+	wg.Wait()
+	return out
+}
+
+// Refreshable reports whether any list can be refreshed on demand, which is what
+// lets the UI hide the control on a node that runs no refreshers at all.
+func Refreshable() bool {
+	refMu.RLock()
+	defer refMu.RUnlock()
+	return len(refreshers) > 0
+}
+
 // Download tries each source in order and returns the first body that fetches and
 // verifies, along with the URL that supplied it. Every source is tried before
 // giving up, and the returned error names each failure, so a log line or an API
@@ -187,6 +370,14 @@ func Download(ctx context.Context, name string, urls []string, v verifydl.Verify
 // status will say so until a download succeeds.
 func Restore(name, path string) (bool, error) {
 	if fi, err := os.Stat(path); err == nil && fi.Size() > 0 {
+		// The cache survives reboots; the in-memory status does not. Without this
+		// check a node that was seeded, restarted, and still has no working
+		// connection reported the shipped copy as an ordinary cache — the panel
+		// stopped saying "shipped copy" the moment the box was power-cycled, which
+		// is exactly when an operator is most likely to be looking at it.
+		if isSeed(name, path) {
+			with(name, func(s *Status) { s.FromSeed, s.Source = true, "seed" })
+		}
 		return false, nil
 	}
 	body, ok := Seed(name)
@@ -208,6 +399,20 @@ func Restore(name, path string) (bool, error) {
 		s.FromSeed, s.Source = true, "seed"
 	})
 	return true, nil
+}
+
+// isSeed reports whether the cache at path is byte-for-byte the copy shipped in
+// the binary. A downloaded list differs from the seed in content, and one written
+// through the operator's prepend/append hooks differs again, so equality here
+// means nothing has replaced the floor yet. A read error answers "not the seed":
+// an unreadable cache is a problem the download status already describes.
+func isSeed(name, path string) bool {
+	seed, ok := Seed(name)
+	if !ok {
+		return false
+	}
+	b, err := os.ReadFile(path)
+	return err == nil && bytes.Equal(b, seed)
 }
 
 func dir(path string) string {

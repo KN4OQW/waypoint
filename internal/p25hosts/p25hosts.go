@@ -97,22 +97,12 @@ func Run(ctx context.Context, urls []string, path string, interval time.Duration
 	} else if wrote {
 		log.Printf("p25hosts: seeded %s from the shipped copy", path)
 	}
-	fetch := func() {
+	hostsrc.Every(ctx, hostsrc.P25Hosts, interval, func(ctx context.Context) error {
 		if err := Fetch(ctx, urls, path); err != nil {
 			log.Printf("p25hosts: fetch failed (using cached list if present): %v", err)
-		} else {
-			log.Printf("p25hosts: updated %s", path)
+			return err
 		}
-	}
-	fetch()
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			fetch()
-		}
-	}
+		log.Printf("p25hosts: updated %s", path)
+		return nil
+	})
 }

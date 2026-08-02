@@ -244,25 +244,77 @@ func (s *server) dmrMasters(w http.ResponseWriter, _ *http.Request) {
 // saying which. This is what lets the UI tell an operator that a list is the
 // shipped copy, or that every source failed, and when it last succeeded.
 func (s *server) hostlistStatus(w http.ResponseWriter, _ *http.Request) {
-	// Count from the caches now rather than trusting whatever a picker last
-	// parsed: a status fetched before any picker has opened would otherwise report
-	// zero entries for a perfectly good list, and the UI would call it empty.
-	s.countHostlists()
-	out := hostsrc.All()
-	// has_seed is a property of the build, not of any attempt, so it is attached
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(s.hostlistItems())
+}
+
+// hostlistItem is one list's supply state as the API reports it.
+type hostlistItem struct {
+	hostsrc.Status
+	// HasSeed is a property of the build, not of any attempt, so it is attached
 	// here rather than tracked as mutable status: it answers "will this list ever
 	// show anything while offline?".
-	type item struct {
-		hostsrc.Status
-		HasSeed bool `json:"has_seed"`
-		Stale   bool `json:"stale"`
-	}
-	items := make([]item, 0, len(out))
+	HasSeed bool `json:"has_seed"`
+	Stale   bool `json:"stale"`
+}
+
+// hostlistItems counts every cache and returns the supply state of each list.
+// Counting happens here rather than trusting whatever a picker last parsed: a
+// status fetched before any picker has opened would otherwise report zero entries
+// for a perfectly good list, and the UI would call it empty.
+func (s *server) hostlistItems() []hostlistItem {
+	s.countHostlists()
+	out := hostsrc.All()
+	items := make([]hostlistItem, 0, len(out))
 	for _, st := range out {
-		items = append(items, item{Status: st, HasSeed: hostsrc.HasSeed(st.Name), Stale: st.Stale(48 * time.Hour)})
+		items = append(items, hostlistItem{Status: st, HasSeed: hostsrc.HasSeed(st.Name), Stale: st.Stale(48 * time.Hour)})
 	}
+	return items
+}
+
+// hostlistRefresh downloads every reference list now (POST /api/hostlists/refresh).
+//
+// The scheduled refresh runs daily, which is right for lists that change slowly
+// and wrong for the operator who has just fixed whatever was blocking the
+// download — a node that booted before its wifi associated, a proxy that is now
+// configured, a source that has come back. Without this the only ways to retry
+// were to wait out the backoff or restart the daemon, and restarting a hotspot to
+// pick up a hostlist takes it off the air to solve a settings-page problem.
+//
+// It runs the same fetch the scheduler runs, so there is one download path with
+// one set of sources and one verification step. The reply is the refreshed supply
+// state — the same shape GET returns — so the UI repaints from this one response
+// rather than following up with another request.
+func (s *server) hostlistRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	if !hostsrc.Refreshable() {
+		// A demo node runs no refreshers at all, so there is nothing to ask for.
+		http.Error(w, "this node does not download hostlists", http.StatusNotImplemented)
+		return
+	}
+	// Bounded so a hung source cannot hold the request open indefinitely; generous
+	// because this is eight lists over what may be a slow link, and the largest of
+	// them (DMRIds.dat) is several megabytes.
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	defer cancel()
+
+	results := hostsrc.RefreshAll(ctx)
+	var failed int
+	for _, res := range results {
+		if !res.OK && !res.Busy {
+			failed++
+		}
+	}
+	log.Printf("hostlists: operator-requested refresh finished — %d of %d lists updated", len(results)-failed, len(results))
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(items)
+	_ = json.NewEncoder(w).Encode(struct {
+		Results []hostsrc.RefreshResult `json:"results"`
+		Lists   []hostlistItem          `json:"lists"`
+	}{results, s.hostlistItems()})
 }
 
 // countHostlists reparses each cache and records how many entries it holds.
@@ -1761,6 +1813,7 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/m17/reflectors", s.m17Reflectors)
 	mux.HandleFunc("/api/dmr/masters", s.dmrMasters)
 	mux.HandleFunc("/api/hostlists", s.hostlistStatus)
+	mux.HandleFunc("/api/hostlists/refresh", s.hostlistRefresh)
 	mux.HandleFunc("/api/dmr/talkgroups", s.dmrTalkgroups) // TG name list (RFC-0010)
 	// Modem hardware: identity, detection, and adoption into the config (#18).
 	mux.HandleFunc("/api/hardware", s.hardware)

@@ -323,6 +323,38 @@ update-stack: confirmed — waypoint-mmdvmhost=0~gitNEW+wp1, …
 | `-apt-source-file` | `/etc/apt/sources.list.d/waypoint.sources` | The signed-repo deb822 source; the check limits apt to it (D2). |
 | `-update-poll-interval` | `6h` | How often waypointd checks for updates (manifest + apt) and evaluates quiet-window auto-apply. Gated on `check_enabled` — off means no unattended request at all (#15). |
 
+## Reference data (the downloaded lists)
+
+The reflector, master, talkgroup and DMR-ID lists are the other half of what a
+node keeps current, and they update on their own path: no signing gate by
+default, no health gate, no revert — a failed download simply leaves the previous
+cache in place. They share the Updates tab because they answer the same operator
+question as the software rows: what is installed, is it current, fetch me a newer
+one.
+
+Each list refreshes at startup and then daily. **A failed refresh is retried on a
+short backoff** (1m → 30m) rather than waiting out the full day: waypointd
+deliberately starts before the network is up, so the first fetch of every list
+routinely runs against an interface that has not associated yet, and on a plain
+daily ticker that one lost race left the node on its shipped copies until the
+next tick.
+
+**REFRESH LISTS NOW** in the Updates tab downloads all of them immediately —
+which is what you want after fixing whatever was blocking a download (wifi
+credentials, a proxy, a source that has come back), and it avoids restarting a
+live hotspot to solve a settings-page problem.
+
+- `GET /api/hostlists` → each list's supply state: source, entry count, last
+  success, last error, whether it is serving the copy shipped in the binary.
+- `POST /api/hostlists/refresh` → download every list now. Returns
+  `{ "results": [...], "lists": [...] }` — per-list outcomes plus the refreshed
+  supply state, so a caller repaints from one response. `501` on a node that runs
+  no refreshers (demo mode).
+
+A refresh triggered here runs the same fetch the scheduler runs, under the same
+per-list lock, so a manual refresh and the daily tick can never race on a cache
+file. A list already refreshing reports `busy` rather than being run twice.
+
 ## What is not here yet
 
 - **A/B image slots (Phase 3)** — the same verify/confirm/rollback state machine
