@@ -79,8 +79,10 @@ func (s *server) registerPublicRoutes(mux *http.ServeMux) {
 	mux.Handle("/public/assets/logo", s.publicGate(limiter.Middleware(http.HandlerFunc(s.publicLogo))))
 	mux.Handle("/public/custom-block", s.publicGate(limiter.Middleware(http.HandlerFunc(s.publicCustomBlock))))
 
-	// The embed widget arrives with the documentation prompt. Its namespace is
-	// claimed now for the same reason, so the file server never sees it.
+	// The embed widget (embed.go). Its own routes are registered first; the
+	// catch-all below keeps everything else under /embed/ away from the file
+	// server, since the auth gate exempts the whole prefix.
+	s.registerEmbedRoutes(mux, limiter)
 	mux.Handle("/embed/", s.publicGate(limiter.Middleware(http.NotFoundHandler())))
 }
 
