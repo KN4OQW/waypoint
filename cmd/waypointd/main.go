@@ -45,6 +45,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/peering"
 	"github.com/KN4OQW/waypoint/internal/privhelper"
 	"github.com/KN4OQW/waypoint/internal/provision"
+	"github.com/KN4OQW/waypoint/internal/publicview"
 	"github.com/KN4OQW/waypoint/internal/sdnotify"
 	"github.com/KN4OQW/waypoint/internal/seed"
 	"github.com/KN4OQW/waypoint/internal/status"
@@ -136,6 +137,13 @@ type server struct {
 	dmrHosts   string // cached DMR master hostlist (DMR_Hosts.txt, space/tab text)
 	dmrTGs     string // cached DMR talkgroup-name list (RFC-0010)
 	dmrIDs     string // cached DMR/NXDN id<->callsign table (DMRIds.dat), shared with every gateway
+
+	// The opt-in public dashboard (D1-D8). publicStore is the settings and
+	// operator-authored content; publicSvc answers the activity questions. Both are
+	// nil in tests that do not exercise the public surface, and the gate treats nil
+	// as "not enabled" so a partially-built server 404s rather than panicking.
+	publicStore *publicview.Store
+	publicSvc   *publicview.Service
 
 	// Atomic-update surface (RFC-0014 / issue #13). update holds the manifest URL,
 	// release key, and OS seams; updateArgs is the `-update` invocation the apply
@@ -1793,6 +1801,10 @@ func (s *server) newMux() *http.ServeMux {
 	// claimed); everything else above is behind the wall.
 	mux.HandleFunc("/api/claim", s.auth.HandleClaim)
 	mux.HandleFunc("/api/session", s.auth.HandleSession)
+	// The opt-in public dashboard (D2/D7). These are the only anonymous routes
+	// besides the two above; each 404s unless the operator enabled the feature, so
+	// registering them costs a disabled node nothing but a not-found.
+	s.registerPublicRoutes(mux)
 	mux.Handle("/", http.FileServerFS(ui.FS()))
 	return mux
 }
@@ -2140,6 +2152,32 @@ func main() {
 	if err != nil {
 		log.Fatalf("auth: %v", err)
 	}
+
+	// The opt-in public dashboard (D1-D8). The store's tables are guaranteed by
+	// the schema version, so there is nothing to create here; the service is handed
+	// the same event history and status fold the authenticated API reads, and its
+	// own far narrower projection of them.
+	//
+	// The ID-database probe is what lets the public last-heard list withhold itself
+	// when DMRIds.dat is missing or corrupt, rather than quietly serving only the
+	// D-Star and YSF traffic that resolves without it.
+	s.publicStore = publicview.New(st)
+	// Assigned through the interfaces rather than passed directly, so a build
+	// without one of them hands the service a genuinely nil interface instead of a
+	// non-nil one wrapping a nil pointer.
+	var pubHistory publicview.History
+	if s.evStore != nil {
+		pubHistory = s.evStore
+	}
+	var pubLive publicview.Live
+	if s.agg != nil {
+		pubLive = s.agg
+	}
+	s.publicSvc = publicview.NewService(s.publicStore, pubHistory, pubLive).
+		WithIDDatabase(publicview.DMRIDsProbe(*dmrIDs))
+	// Anonymous by design, and the only routes that are. What they reach still
+	// 404s unless the operator opted in (public.go).
+	s.auth.AllowAnonymous(func(r *http.Request) bool { return IsPublicRoute(r.URL.Path) })
 
 	// Native LCD driver: paints a physical HD44780 from the live status plane when
 	// the operator has enabled it. Disabled by default, so this is a no-op on a

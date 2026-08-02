@@ -31,6 +31,10 @@ type Auth struct {
 
 	idleWindow time.Duration
 
+	// allowAnon names the routes the gate lets through without a session. Nil
+	// keeps the gate default-deny; see AllowAnonymous.
+	allowAnon func(*http.Request) bool
+
 	// secureCookie sets the cookie Secure flag. It is false until the TLS PR
 	// lands and flips it — a pre-TLS build must not set Secure or the cookie would
 	// be unusable over plain HTTP during bring-up (RFC-0002).
