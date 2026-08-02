@@ -19,7 +19,8 @@ import (
 // the feature in whatever state the caller wants.
 func newPublicServer(t *testing.T, enabled bool) (*server, *publicview.Store) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	storePath := filepath.Join(t.TempDir(), "config.db")
+	st, err := store.Open(storePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +33,10 @@ func newPublicServer(t *testing.T, enabled bool) (*server, *publicview.Store) {
 		t.Fatal(err)
 	}
 	s := &server{
-		store:       st,
+		store: st,
+		// storePath is what brandingDir() derives the logo directory from, so a
+		// server without it cannot accept an upload.
+		storePath:   storePath,
 		publicStore: ps,
 		agg:         status.New(status.DefaultTxTTL, 0),
 		publicSvc:   publicview.NewService(ps, nil, nil),
@@ -239,6 +243,13 @@ func TestPublicAPIIsReadOnly(t *testing.T) {
 			t.Errorf("%s /api/public/node = %d, want 405", m, w.Code)
 		}
 	}
+	// HEAD is a read: uptime monitors, link checkers and `curl -I` all use it, and
+	// refusing it buys nothing.
+	for _, p := range publicPaths {
+		if w := do(t, s, http.MethodHead, p, "203.0.113.9:1234"); w.Code != http.StatusOK {
+			t.Errorf("HEAD %s = %d, want 200", p, w.Code)
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -386,6 +397,9 @@ func TestNodeStructIsAllowListed(t *testing.T) {
 		"ColorCode": true, "Slots": true, "Modes": true, "Talkgroup": true,
 		"Grid": true, "PowerLine": true, "PurposeTags": true,
 		"PurposeFreetext": true, "Links": true, "Nets": true,
+		// Branding (D4). NarrativeHTML is pre-sanitised server-side; the other two
+		// are booleans, so neither can carry content into the parent document.
+		"NarrativeHTML": true, "HasLogo": true, "HasCustomBlock": true,
 	}
 	typ := reflect.TypeOf(publicview.Node{})
 	for i := range typ.NumField() {

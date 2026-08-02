@@ -247,7 +247,50 @@
       show($("links"));
     }
 
+    renderBranding(n);
     renderQR(n);
+  }
+
+  /* -------------------------------------------------------------- branding */
+
+  function renderBranding(n) {
+    if (n.has_logo) {
+      var img = $("logo");
+      img.src = "/public/assets/logo";
+      // The alt text is the node's own callsign, not "logo": a screen reader
+      // announcing "logo" has told the listener nothing.
+      img.alt = n.callsign ? n.callsign + " logo" : "";
+      img.onload = function () { show(img); hide($("logo-ph")); };
+      img.onerror = function () { hide(img); show($("logo-ph")); };
+    }
+
+    // Already rendered from Markdown and already sanitised, server-side, by
+    // goldmark + bluemonday. This is the one place the page assigns innerHTML
+    // from data, and it is safe for a reason that is worth stating: the string
+    // never contained script by the time it left the node, the page's CSP has no
+    // script-src exception that would let any that survived run, and the
+    // alternative — shipping Markdown and rendering it here — would put both a
+    // renderer and a sanitiser in the browser where neither can be trusted.
+    if (has(n.narrative_html)) {
+      $("narrative").innerHTML = n.narrative_html;
+      show($("narrative"));
+    }
+
+    // The custom block is loaded through its own endpoint into a sandbox, never
+    // inserted into this document. allow-scripts without allow-same-origin gives
+    // the frame a unique opaque origin: it can run the operator's code and reach
+    // nothing of ours.
+    if (n.has_custom_block) {
+      var frame = document.createElement("iframe");
+      frame.className = "custom-frame";
+      frame.setAttribute("sandbox", "allow-scripts");
+      frame.setAttribute("loading", "lazy");
+      frame.setAttribute("referrerpolicy", "no-referrer");
+      frame.title = "Operator content";
+      frame.src = "/public/custom-block";
+      $("custom-body").replaceChildren(frame);
+      show($("custom"));
+    }
   }
 
   /* -------------------------------------------------------------------- QR */
