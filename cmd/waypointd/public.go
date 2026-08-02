@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"strconv"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/publicview"
 	"github.com/KN4OQW/waypoint/internal/status"
+	"github.com/KN4OQW/waypoint/ui"
 )
 
 // The public HTTP surface (D2, D5, D7).
@@ -28,9 +30,9 @@ import (
 //     database and nothing else is standing between them and a stranger.
 
 // publicRoutePrefixes are the three namespaces the public surface owns (D7).
-// The HTML page and the embed widget land in later prompts; the prefixes are
-// declared here so the gate covers them from the start rather than being widened
-// later, which is the change nobody reviews carefully.
+// All three are claimed on the mux even before they have content, so nothing under
+// them can fall through to the embedded file server, which the auth gate would not
+// be protecting.
 var publicRoutePrefixes = []string{"/api/public/", "/public/", "/embed/"}
 
 // IsPublicRoute reports whether a path belongs to the public surface. The auth
@@ -62,19 +64,139 @@ func (s *server) registerPublicRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/public/lastheard", api(s.publicLastHeard))
 	mux.Handle("/api/public/counters", api(s.publicCounters))
 
-	// The HTML page and the embed widget arrive in later prompts, but their
-	// namespaces are claimed and gated now, and that is not tidiness.
+	// The public page. Served through the same gate as the API — the page and the
+	// data it renders must appear and disappear together, or a visitor sees a shell
+	// that cannot fill itself in.
 	//
-	// The auth gate exempts these prefixes from the session wall (IsPublicRoute).
-	// Without a handler registered they fall through to "/", which is the embedded
-	// static file server — so the first file anyone adds under a public/ directory
-	// in the UI bundle would be served to anonymous visitors whether or not the
-	// operator ever enabled the feature. Claiming the prefixes with a gated
-	// not-found closes that today, while the hole is theoretical, rather than in
-	// the prompt that happens to create the file.
-	notYet := s.publicGate(limiter.Middleware(http.NotFoundHandler()))
-	mux.Handle("/public/", notYet)
-	mux.Handle("/embed/", notYet)
+	// This is also the reason the prefix is claimed explicitly rather than left to
+	// fall through: the auth gate exempts /public/ from the session wall, and "/"
+	// is the embedded static file server, so an unclaimed prefix would serve every
+	// asset under it to anonymous visitors regardless of the toggle.
+	mux.Handle("/public/", s.publicGate(limiter.Middleware(publicPageCSP(http.HandlerFunc(s.publicPage)))))
+
+	// The embed widget arrives with the documentation prompt. Its namespace is
+	// claimed now for the same reason, so the file server never sees it.
+	mux.Handle("/embed/", s.publicGate(limiter.Middleware(http.NotFoundHandler())))
+}
+
+// publicRootEnabled reports whether a bare "/" should answer with the public page
+// (D7). It is consulted by the auth gate, which is what would otherwise turn that
+// request into a login screen.
+func (s *server) publicRootEnabled() bool {
+	if s.publicStore == nil {
+		return false
+	}
+	on, err := s.publicStore.Enabled()
+	return err == nil && on
+}
+
+// serveRootPublicly answers "/" with the public page for a visitor who has no
+// session (D7).
+//
+// The asymmetry between "/" and "/index.html" is the whole design, and it is
+// deliberate rather than incidental:
+//
+//   - "/" is the address on a QR code, a business card, a repeater directory. When
+//     the operator has opted in, a stranger typing it should get the node's public
+//     page, not a password prompt for a machine they have no business logging into.
+//   - "/index.html" is never swapped. It is the admin entry, it always reaches the
+//     login screen or the dashboard, and it is where the public page's "Sign in"
+//     link points.
+//
+// That second rule is load-bearing. Without a path that is guaranteed never to
+// become the public page, enabling this feature would leave an operator with no
+// URL that reaches their own login screen — the setting would be a lockout with
+// extra steps. Anyone who can reach the node can still reach the admin entry,
+// whatever the public toggle says.
+//
+// An authenticated request is never diverted: a keeper who has signed in and
+// navigates to "/" wants their dashboard, and the session is the signal that says
+// so.
+func (s *server) serveRootPublicly(w http.ResponseWriter, r *http.Request) {
+	// Rewrite so the asset allow-list and the page's own relative links resolve
+	// against /public/ exactly as they do when it is reached directly. Serving two
+	// different URLs for one page is how their behaviour drifts apart.
+	r2 := r.Clone(r.Context())
+	r2.URL.Path = "/public/"
+	publicPageCSP(http.HandlerFunc(s.publicPage)).ServeHTTP(w, r2)
+}
+
+// publicPageAssets are the files the public page is allowed to serve, mapped to
+// their content types.
+//
+// An allow-list rather than a directory handler, because a directory handler
+// serves whatever is in the directory — and this directory is inside the UI bundle
+// that the authenticated application also lives in. One misplaced file, one
+// editor backup, one future refactor that moves an admin asset a level up, and the
+// public surface has grown without anyone deciding it should. Enumerating the
+// files makes adding one a deliberate act that shows up in a diff.
+var publicPageAssets = map[string]struct{ file, mime string }{
+	"/public/":                 {"public/index.html", "text/html; charset=utf-8"},
+	"/public/index.html":       {"public/index.html", "text/html; charset=utf-8"},
+	"/public/public.css":       {"public/public.css", "text/css; charset=utf-8"},
+	"/public/public.js":        {"public/public.js", "text/javascript; charset=utf-8"},
+	"/public/vendor/qrcode.js": {"vendor/qrcode.js", "text/javascript; charset=utf-8"},
+	"/public/assets/icon.svg":  {"logo-mono.svg", "image/svg+xml"},
+}
+
+// publicPage serves the standalone public dashboard.
+func (s *server) publicPage(w http.ResponseWriter, r *http.Request) {
+	if !publicGET(w, r) {
+		return
+	}
+	a, ok := publicPageAssets[r.URL.Path]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	b, err := fs.ReadFile(ui.FS(), a.file)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", a.mime)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// The page is a shell; everything in it comes from the API, which is
+	// no-store. Letting the shell cache briefly keeps a phone at an event from
+	// re-fetching it on every glance without ever showing stale data.
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	_, _ = w.Write(b)
+}
+
+// publicPageCSP is the strict policy the public page renders under.
+//
+// default-src 'self' with no script-src exception is the load-bearing part: there
+// is no inline script and no inline event handler anywhere in the page, so
+// operator-authored text that somehow reached the DOM as markup still could not
+// execute. That is the second line of defence behind the sanitising, and the one
+// that does not depend on getting the sanitising right.
+//
+//   - style-src allows 'unsafe-inline' only because element.hidden and the
+//     stylesheet do not need it — but the QR library writes an <svg> with
+//     presentation attributes, and future map tiles will set positions inline.
+//     Style injection without script is a defacement risk, not an execution one.
+//   - img-src allows data: for the same QR SVG, and https: so the vendored map
+//     tiles can load when that lands. No wildcard scheme beyond those.
+//   - frame-ancestors 'self' keeps the page itself un-embeddable. The widget on
+//     /embed/ is the thing designed to be framed, and it gets its own policy.
+//   - form-action 'none' and base-uri 'none': the page has no forms and no
+//     relative-URL base to hijack.
+func publicPageCSP(next http.Handler) http.Handler {
+	const policy = "default-src 'self'; " +
+		"script-src 'self'; " +
+		"style-src 'self' 'unsafe-inline'; " +
+		"img-src 'self' data:; " +
+		"connect-src 'self'; " +
+		"font-src 'self'; " +
+		"object-src 'none'; " +
+		"base-uri 'none'; " +
+		"form-action 'none'; " +
+		"frame-ancestors 'self'"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", policy)
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // publicGate is D2's master switch. A node whose operator has not enabled the
