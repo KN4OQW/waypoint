@@ -41,7 +41,7 @@ func newStackUpdater(st *store.Store, sourceFile string) (*stackUpdater, error) 
 		return nil, err
 	}
 	su := &stackUpdater{
-		sys:        &stackupdate.OSSystem{Hist: hist},
+		sys:        &stackupdate.OSSystem{Hist: hist, Logf: log.Printf},
 		hist:       hist,
 		store:      st,
 		sourceFile: sourceFile,
