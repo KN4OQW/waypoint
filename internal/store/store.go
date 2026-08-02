@@ -25,7 +25,7 @@ import (
 // migrated database, so a release that raises it must also raise the update
 // manifest's min_version (RFC-0014) to the first release that ships the new
 // version. See docs/updates.md.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // ErrSchemaNewer is returned by Open when the database was written by a newer
 // build. It is a distinct error because it is the one open failure with a real
@@ -147,6 +147,30 @@ CREATE TABLE IF NOT EXISTS branding (
   custom_html        TEXT NOT NULL DEFAULT ''
 );`
 
+// heardPositionsDDL is the locally-heard position store (D3).
+//
+// Positions come from the mesh transports RFC-0018 describes — Meshtastic,
+// MeshCore, LoRa APRS — and from nowhere else. APRS-IS is cut entirely, and the
+// aprs.fi API is never consulted: republishing either would be someone else's data
+// under this node's name, and in aprs.fi's case against its terms.
+//
+// One row per station per transport, upserted. A position report supersedes the
+// previous one from the same station rather than accumulating, because the
+// question a map answers is "where is this station now" and a history of a
+// third party's movements is a far larger disclosure than a current location.
+// That is a privacy decision expressed as a schema: the table cannot leak a track
+// because it does not hold one.
+const heardPositionsDDL = `
+CREATE TABLE IF NOT EXISTS heard_positions (
+  station    TEXT NOT NULL,             -- callsign, or the transport's node id
+  transport  TEXT NOT NULL,             -- meshtastic | meshcore | lora_aprs | ...
+  lat        REAL NOT NULL,
+  lon        REAL NOT NULL,
+  heard_at   TEXT NOT NULL,             -- RFC-3339 UTC
+  PRIMARY KEY (station, transport)
+);
+CREATE INDEX IF NOT EXISTS idx_heard_positions_at ON heard_positions (heard_at);`
+
 // publicViewSeed materializes the single rows so readers never have to special-case
 // "configured but never written". Both are INSERT OR IGNORE: re-running is a no-op,
 // and an existing row keeps whatever the operator set.
@@ -190,6 +214,9 @@ CREATE TABLE IF NOT EXISTS applies (
 		return err
 	}
 	if _, err := s.db.Exec(publicViewSeed); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(heardPositionsDDL); err != nil {
 		return err
 	}
 

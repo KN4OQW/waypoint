@@ -57,6 +57,22 @@ type Node struct {
 	PurposeFreetext string   `json:"purpose_freetext,omitempty"`
 	Links           []Link   `json:"links,omitempty"`
 	Nets            []Net    `json:"nets,omitempty"`
+
+	// Branding (D4).
+	//
+	// NarrativeHTML is already rendered and already sanitised — the page inserts
+	// it and never renders Markdown itself, because that would put a renderer and
+	// a sanitiser in the browser where neither can be trusted.
+	//
+	// HasLogo and HasCustomBlock are booleans rather than content on purpose. The
+	// page needs to know whether to create an <img> and an <iframe>; it does not
+	// need the bytes, and the custom block in particular must arrive through its
+	// own sandboxed endpoint rather than through a JSON field that could end up
+	// inserted into the parent document by a future refactor. A boolean cannot be
+	// inserted anywhere.
+	NarrativeHTML  string `json:"narrative_html,omitempty"`
+	HasLogo        bool   `json:"has_logo,omitempty"`
+	HasCustomBlock bool   `json:"has_custom_block,omitempty"`
 }
 
 // BuildNode assembles the reach card from the configuration, the public settings,
@@ -75,7 +91,16 @@ func BuildNode(m *config.Model, set Settings, live *status.Status, links []Link,
 		n.TXFrequency = m.Modem.TXFreqHz
 	}
 	if m != nil && set.ShowCCTS {
-		n.ColorCode = m.DMR.ColorCode
+		// The EFFECTIVE colour code, not the stored one. A blank store value
+		// renders as config.DefaultDMRColorCode in MMDVM-Host.ini, so that is what
+		// the radio is running and what someone programming a codeplug needs. This
+		// was found on hardware: a node happily operating on CC 1 published a reach
+		// card with no colour code at all, which is not a smaller answer than the
+		// truth — it is an instruction that does not work.
+		n.ColorCode = strings.TrimSpace(m.DMR.ColorCode)
+		if n.ColorCode == "" {
+			n.ColorCode = config.DefaultDMRColorCode
+		}
 		n.Slots = slots(m)
 	}
 	if m != nil && set.ShowMode {

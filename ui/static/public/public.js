@@ -247,7 +247,50 @@
       show($("links"));
     }
 
+    renderBranding(n);
     renderQR(n);
+  }
+
+  /* -------------------------------------------------------------- branding */
+
+  function renderBranding(n) {
+    if (n.has_logo) {
+      var img = $("logo");
+      img.src = "/public/assets/logo";
+      // The alt text is the node's own callsign, not "logo": a screen reader
+      // announcing "logo" has told the listener nothing.
+      img.alt = n.callsign ? n.callsign + " logo" : "";
+      img.onload = function () { show(img); hide($("logo-ph")); };
+      img.onerror = function () { hide(img); show($("logo-ph")); };
+    }
+
+    // Already rendered from Markdown and already sanitised, server-side, by
+    // goldmark + bluemonday. This is the one place the page assigns innerHTML
+    // from data, and it is safe for a reason that is worth stating: the string
+    // never contained script by the time it left the node, the page's CSP has no
+    // script-src exception that would let any that survived run, and the
+    // alternative — shipping Markdown and rendering it here — would put both a
+    // renderer and a sanitiser in the browser where neither can be trusted.
+    if (has(n.narrative_html)) {
+      $("narrative").innerHTML = n.narrative_html;
+      show($("narrative"));
+    }
+
+    // The custom block is loaded through its own endpoint into a sandbox, never
+    // inserted into this document. allow-scripts without allow-same-origin gives
+    // the frame a unique opaque origin: it can run the operator's code and reach
+    // nothing of ours.
+    if (n.has_custom_block) {
+      var frame = document.createElement("iframe");
+      frame.className = "custom-frame";
+      frame.setAttribute("sandbox", "allow-scripts");
+      frame.setAttribute("loading", "lazy");
+      frame.setAttribute("referrerpolicy", "no-referrer");
+      frame.title = "Operator content";
+      frame.src = "/public/custom-block";
+      $("custom-body").replaceChildren(frame);
+      show($("custom"));
+    }
   }
 
   /* -------------------------------------------------------------------- QR */
@@ -323,7 +366,10 @@
     var rows = res.entries || [];
     if (!rows.length) {
       var tr2 = el("tr");
-      var td2 = el("td", "empty", "Nothing heard in the retention window.");
+      // "on RF" distinguishes this from the status line, which counts network
+      // traffic as activity too. Both can be true at once, and without the
+      // qualifier the pair reads as a contradiction.
+      var td2 = el("td", "empty", "No stations heard on RF in the retention window.");
       td2.colSpan = 3;
       tr2.appendChild(td2);
       body.appendChild(tr2);
@@ -373,17 +419,97 @@
     pollTimer = setTimeout(tick, ms);
   }
 
+  /* ------------------------------------------------------------------- map */
+
+  var map = null, markers = null;
+
+  // The map plots grid CENTRES, not received positions. The server snapped them
+  // before they left the node — the raw fix is not in the response and never was
+  // — so there is nothing for this code to be careful with, which is the point of
+  // doing the snap server-side rather than here.
+  function renderMap(res) {
+    var ph = $("map-ph");
+    if (!res || !Array.isArray(res.stations)) return;
+
+    if (!res.stations.length) {
+      // Say why the map is empty. A grey rectangle reads as broken.
+      text($("map-ph-sub"), res.window_hours
+        ? "No positions heard in the last " + res.window_hours + " h. Stations appear here when a mesh transport hears them."
+        : "Locally-heard positions appear here once a mesh transport is attached.");
+      show(ph);
+      return;
+    }
+    if (typeof L !== "object" || !L || !L.map) return;
+
+    if (!map) {
+      hide(ph);
+      map = L.map($("map"), {
+        zoomControl: true,
+        // scrollWheelZoom off: the map is a hero band inside a scrolling page,
+        // and a wheel that zooms instead of scrolling traps the reader.
+        scrollWheelZoom: false,
+        attributionControl: true
+      });
+      // OpenStreetMap's tile usage policy is a condition of using these, not a
+      // courtesy: attribution shown, no prefetching, ordinary caching, and no
+      // bulk downloading. maxZoom 18 is theirs; detectRetina is deliberately off
+      // because it doubles tile fetches for a decorative gain.
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 18,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" rel="noopener noreferrer">OpenStreetMap</a> contributors'
+      }).addTo(map);
+      markers = L.layerGroup().addTo(map);
+    }
+
+    markers.clearLayers();
+    var pts = [];
+    res.stations.forEach(function (st) {
+      if (typeof st.lat !== "number" || typeof st.lon !== "number") return;
+      pts.push([st.lat, st.lon]);
+      L.marker([st.lat, st.lon], {
+        icon: L.divIcon({ className: "", iconSize: [12, 12], iconAnchor: [6, 6], html: '<div class="wp-pin"></div>' }),
+        // The callsign is the accessible name; without it a screen reader
+        // announces an unlabelled marker.
+        alt: st.callsign || st.station || "station",
+        title: (st.station || "") + " · " + (st.grid || "")
+      }).addTo(markers).bindPopup(
+        // The popup says the grid, not a coordinate, because the grid is what
+        // this position actually is — a 5 x 3 km square, not a point.
+        '<div class="wp-pop"><b>' + esc(st.station) + "</b><br>" +
+        esc(st.grid) + "<br>" + esc(ago(st.heard_at)) + "</div>"
+      );
+    });
+    if (pts.length === 1) {
+      map.setView(pts[0], 9);
+    } else if (pts.length) {
+      map.fitBounds(L.latLngBounds(pts).pad(0.25));
+    }
+    setTimeout(function () { map.invalidateSize(); }, 60);
+  }
+
+  // The popup takes an HTML string, so its inputs are escaped here. They are
+  // server-constrained already (callsigns are A-Z0-9, grids are validated), but
+  // the escaping is unconditional rather than relying on a guarantee made in
+  // another process.
+  function esc(v) {
+    return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
   function tick() {
     // Polling rather than SSE, deliberately: the public surface stays as small as
     // possible, and a long-lived stream per anonymous visitor is a bigger one.
     Promise.all([
       getJSON("/api/public/status").catch(function () { return null; }),
       getJSON("/api/public/lastheard?limit=" + LAST_HEARD_LIMIT).catch(function () { return null; }),
-      getJSON("/api/public/counters").catch(function () { return null; })
+      getJSON("/api/public/counters").catch(function () { return null; }),
+      getJSON("/api/public/map").catch(function () { return null; })
     ]).then(function (r) {
       renderStatus(r[0]);
       renderLastHeard(r[1]);
       renderCounters(r[2]);
+      renderMap(r[3]);
       schedule(document.hidden ? SLOW_POLL_MS : POLL_MS);
     }).catch(function () {
       schedule(SLOW_POLL_MS);

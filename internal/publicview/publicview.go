@@ -67,6 +67,11 @@ var (
 	ErrBadURL      = errors.New("publicview: link URL must be http or https")
 	ErrBadCallsign = errors.New("publicview: not a callsign")
 	ErrBadGrid     = errors.New("publicview: not a Maidenhead grid square")
+	// ErrRequired is a field the operator left blank. It is a distinct sentinel
+	// so the HTTP layer can answer 400 rather than 500 — the difference between
+	// "you left the name empty" and "something broke", which is the difference
+	// between a message worth showing an operator and one that is not.
+	ErrRequired = errors.New("publicview: required field is empty")
 )
 
 // Settings is the public dashboard's configuration: one master switch and the

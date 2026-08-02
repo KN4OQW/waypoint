@@ -74,8 +74,16 @@ func (s *server) registerPublicRoutes(mux *http.ServeMux) {
 	// asset under it to anonymous visitors regardless of the toggle.
 	mux.Handle("/public/", s.publicGate(limiter.Middleware(publicPageCSP(http.HandlerFunc(s.publicPage)))))
 
-	// The embed widget arrives with the documentation prompt. Its namespace is
-	// claimed now for the same reason, so the file server never sees it.
+	// Branding, inside the same gate (D4). The logo and the custom block are part
+	// of the public surface and disappear with it.
+	mux.Handle("/public/assets/logo", s.publicGate(limiter.Middleware(http.HandlerFunc(s.publicLogo))))
+	mux.Handle("/public/custom-block", s.publicGate(limiter.Middleware(http.HandlerFunc(s.publicCustomBlock))))
+
+	// The embed widget (embed.go). Its own routes are registered first; the
+	// catch-all below keeps everything else under /embed/ away from the file
+	// server, since the auth gate exempts the whole prefix.
+	s.registerEmbedRoutes(mux, limiter)
+	s.registerPublicMapRoute(mux, limiter)
 	mux.Handle("/embed/", s.publicGate(limiter.Middleware(http.NotFoundHandler())))
 }
 
@@ -137,6 +145,19 @@ var publicPageAssets = map[string]struct{ file, mime string }{
 	"/public/public.js":        {"public/public.js", "text/javascript; charset=utf-8"},
 	"/public/vendor/qrcode.js": {"vendor/qrcode.js", "text/javascript; charset=utf-8"},
 	"/public/assets/icon.svg":  {"logo-mono.svg", "image/svg+xml"},
+
+	// Leaflet. Listed individually rather than served from a directory, for the
+	// same reason the rest of this map is an allow-list. leaflet.css references
+	// three of the images by relative URL, so the CSS has to be served from a path
+	// with images/ beside it — which is why these keep the vendor/leaflet/ shape
+	// rather than being flattened.
+	"/public/vendor/leaflet/leaflet.js":                {"vendor/leaflet/leaflet.js", "text/javascript; charset=utf-8"},
+	"/public/vendor/leaflet/leaflet.css":               {"vendor/leaflet/leaflet.css", "text/css; charset=utf-8"},
+	"/public/vendor/leaflet/images/layers.png":         {"vendor/leaflet/images/layers.png", "image/png"},
+	"/public/vendor/leaflet/images/layers-2x.png":      {"vendor/leaflet/images/layers-2x.png", "image/png"},
+	"/public/vendor/leaflet/images/marker-icon.png":    {"vendor/leaflet/images/marker-icon.png", "image/png"},
+	"/public/vendor/leaflet/images/marker-icon-2x.png": {"vendor/leaflet/images/marker-icon-2x.png", "image/png"},
+	"/public/vendor/leaflet/images/marker-shadow.png":  {"vendor/leaflet/images/marker-shadow.png", "image/png"},
 }
 
 // publicPage serves the standalone public dashboard.
@@ -185,9 +206,16 @@ func publicPageCSP(next http.Handler) http.Handler {
 	const policy = "default-src 'self'; " +
 		"script-src 'self'; " +
 		"style-src 'self' 'unsafe-inline'; " +
-		"img-src 'self' data:; " +
+		// Tiles are the one thing the page cannot serve itself, and the host is
+		// named rather than admitted by scheme: "any HTTPS image" to allow one
+		// origin is how a strict policy becomes decorative.
+		"img-src 'self' data: https://tile.openstreetmap.org https://*.tile.openstreetmap.org; " +
 		"connect-src 'self'; " +
 		"font-src 'self'; " +
+		// The custom block is framed from this origin and nowhere else. Without
+		// this the sandboxed iframe would be blocked by default-src, and with a
+		// wider value the page could be made to frame someone else's document.
+		"frame-src 'self'; " +
 		"object-src 'none'; " +
 		"base-uri 'none'; " +
 		"form-action 'none'; " +
@@ -229,7 +257,7 @@ func (s *server) publicGate(next http.Handler) http.Handler {
 func publicCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
 		w.Header().Set("Access-Control-Max-Age", "600")
 		// Deliberately no Access-Control-Allow-Credentials: with the wildcard
 		// origin a browser would refuse it anyway, and the combination is the
@@ -252,12 +280,16 @@ func publicJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// publicGET rejects anything but GET. The public API is read-only, and saying so
-// with a 405 is better than letting a POST fall through to a handler that ignores
-// the method.
+// publicGET rejects anything that is not a read. The public surface is read-only,
+// and saying so with a 405 is better than letting a POST fall through to a handler
+// that ignores the method.
+//
+// HEAD is a read and is allowed. net/http discards the body for it automatically,
+// so the handler needs no special case — and refusing it would break `curl -I`,
+// uptime monitors, and link checkers, which is a lot of friction to buy nothing.
 func publicGET(w http.ResponseWriter, r *http.Request) bool {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET, OPTIONS")
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD, OPTIONS")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return false
 	}
@@ -292,7 +324,23 @@ func (s *server) publicNode(w http.ResponseWriter, r *http.Request) {
 	if set.ShowNets {
 		nets, _ = s.publicStore.Nets()
 	}
-	publicJSON(w, publicview.BuildNode(m, set, live, links, nets))
+	node := publicview.BuildNode(m, set, live, links, nets)
+
+	// Branding rides with the reach card rather than having an endpoint of its
+	// own: it is part of "who is this node", it changes only when an operator
+	// edits it, and a second round trip for a paragraph of prose would be a
+	// second thing to fail.
+	if b, err := s.publicStore.Branding(); err == nil {
+		node.HasLogo = b.LogoPath != ""
+		node.HasCustomBlock = strings.TrimSpace(b.CustomHTML) != ""
+		// Rendered and sanitised here, so the page receives HTML it can insert and
+		// never Markdown it would have to render itself — which would put a
+		// renderer, and a sanitiser, in the browser where neither can be trusted.
+		if html, err := publicview.RenderNarrative(b.NarrativeMarkdown); err == nil {
+			node.NarrativeHTML = html
+		}
+	}
+	publicJSON(w, node)
 }
 
 // publicStatus serves the simple status line (D5).

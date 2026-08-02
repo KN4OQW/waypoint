@@ -19,7 +19,8 @@ import (
 // the feature in whatever state the caller wants.
 func newPublicServer(t *testing.T, enabled bool) (*server, *publicview.Store) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	storePath := filepath.Join(t.TempDir(), "config.db")
+	st, err := store.Open(storePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +33,10 @@ func newPublicServer(t *testing.T, enabled bool) (*server, *publicview.Store) {
 		t.Fatal(err)
 	}
 	s := &server{
-		store:       st,
+		store: st,
+		// storePath is what brandingDir() derives the logo directory from, so a
+		// server without it cannot accept an upload.
+		storePath:   storePath,
 		publicStore: ps,
 		agg:         status.New(status.DefaultTxTTL, 0),
 		publicSvc:   publicview.NewService(ps, nil, nil),
@@ -239,6 +243,13 @@ func TestPublicAPIIsReadOnly(t *testing.T) {
 			t.Errorf("%s /api/public/node = %d, want 405", m, w.Code)
 		}
 	}
+	// HEAD is a read: uptime monitors, link checkers and `curl -I` all use it, and
+	// refusing it buys nothing.
+	for _, p := range publicPaths {
+		if w := do(t, s, http.MethodHead, p, "203.0.113.9:1234"); w.Code != http.StatusOK {
+			t.Errorf("HEAD %s = %d, want 200", p, w.Code)
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -386,6 +397,9 @@ func TestNodeStructIsAllowListed(t *testing.T) {
 		"ColorCode": true, "Slots": true, "Modes": true, "Talkgroup": true,
 		"Grid": true, "PowerLine": true, "PurposeTags": true,
 		"PurposeFreetext": true, "Links": true, "Nets": true,
+		// Branding (D4). NarrativeHTML is pre-sanitised server-side; the other two
+		// are booleans, so neither can carry content into the parent document.
+		"NarrativeHTML": true, "HasLogo": true, "HasCustomBlock": true,
 	}
 	typ := reflect.TypeOf(publicview.Node{})
 	for i := range typ.NumField() {
@@ -684,16 +698,61 @@ func TestVendoredQRIsServedAndIntact(t *testing.T) {
 	}
 }
 
-func TestPageReferencesNoExternalOrigins(t *testing.T) {
-	s, _ := newPublicServer(t, true)
+// TestPageReferencesOnlyTheDocumentedExternalOrigin.
+//
+// The page is offline-safe by design: a hotspot in a car park frequently has no
+// internet, and the CSP forbids fetching from anywhere but this node. There is
+// exactly ONE exception, and it is the map tiles — nobody can vendor the planet.
+//
+// The test is written as an allow-list rather than a ban so that the exception is
+// visible. Adding a second one means editing this list, in a diff, next to the
+// reason. A blanket "no https://" would have been simpler and would have been
+// deleted the moment the map landed.
+func TestPageReferencesOnlyTheDocumentedExternalOrigin(t *testing.T) {
+	allowed := []string{
+		// OpenStreetMap tiles, named host, no wildcard scheme. See mapview.go for
+		// the usage-policy conditions that come with it.
+		"https://tile.openstreetmap.org",
+		// The attribution link OSM's policy requires the map to display.
+		"https://www.openstreetmap.org/copyright",
+	}
 	for _, p := range []string{"/public/", "/public/public.css", "/public/public.js"} {
-		body := do(t, s, http.MethodGet, p, "203.0.113.9:1234").Body.String()
+		srv, _ := newPublicServer(t, true)
+		body := do(t, srv, http.MethodGet, p, "203.0.113.9:1234").Body.String()
+		for _, a := range allowed {
+			body = strings.ReplaceAll(body, a, "")
+		}
 		for _, bad := range []string{
 			"https://", "http://", "//unpkg.com", "//cdn.", "fonts.googleapis", "fonts.gstatic",
 		} {
 			if strings.Contains(body, bad) {
-				t.Errorf("%s references an external origin (%q) — a hotspot has no internet", p, bad)
+				t.Errorf("%s references an undocumented external origin (%q). A hotspot may "+
+					"have no internet, and the CSP will block it — add it to the allow-list "+
+					"here with its reason, or serve it from the node.", p, bad)
 			}
+		}
+	}
+}
+
+// TestTileHostIsNamedNotWildcarded. Admitting the tile origin by scheme — img-src
+// https: — would have been one character shorter and would have let any HTTPS
+// image load, which is most of what a CSP on this page is for.
+func TestTileHostIsNamedNotWildcarded(t *testing.T) {
+	srv, _ := newPublicServer(t, true)
+	csp := do(t, srv, http.MethodGet, "/public/", "203.0.113.9:1234").Header().Get("Content-Security-Policy")
+	var imgSrc string
+	for _, part := range strings.Split(csp, ";") {
+		if strings.Contains(part, "img-src") {
+			imgSrc = strings.TrimSpace(part)
+		}
+	}
+	if !strings.Contains(imgSrc, "tile.openstreetmap.org") {
+		t.Errorf("img-src does not permit the tile host, so the map renders blank: %q", imgSrc)
+	}
+	// "https:" alone, or a bare "*", would admit every HTTPS image on the web.
+	for _, bad := range []string{"https: ", "https:;", " * ", "*;"} {
+		if strings.Contains(imgSrc+";", bad) {
+			t.Errorf("img-src admits images by scheme or wildcard rather than by host: %q", imgSrc)
 		}
 	}
 }
