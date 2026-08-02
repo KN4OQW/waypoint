@@ -216,6 +216,14 @@ const (
 	// so a refusal can name them (ValidateBuses).
 	ModeFM     Mode = "fm"
 	ModePOCSAG Mode = "pocsag"
+
+	// ModeModem is a PSEUDO-mode: it names MMDVM-Host itself, which serves every
+	// mode rather than being one. It exists so the modem host can carry startup
+	// requirements in the same registry as the gateways (gateway_requirements.go)
+	// and be reported to the operator through the same type. It is deliberately
+	// absent from the Modes section, from rfModes, and from anything that
+	// enumerates operator-selectable modes — ModeEnabled returns false for it.
+	ModeModem Mode = "modem"
 )
 
 // Bus is a named, operator-created hub (RFC-0003 §4). Modes attach to it via

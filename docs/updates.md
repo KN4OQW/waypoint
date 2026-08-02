@@ -286,12 +286,22 @@ settings tab (installed versions, what is available, an Apply button).
    apt touches only the named packages.
 4. **Restart** the services.
 5. **Health-gate**: poll until healthy for several consecutive checks —
-   **every affected unit is `active` AND MMDVMHost's modem is open**. The
-   modem-open signal is ground-truthed: MMDVMHost **exits(1)** when its modem
-   will not open (`MMDVM-Host.cpp` `createModem → return 1`), so a
-   `waypoint-mmdvm.service` that will not stay cleanly `running` (SubState) is
-   the real "modem did not open" signal — no log scraping. A brief healthy blip
-   mid-restart does not confirm; the health must *sustain*.
+   **every affected unit is `active`, and MMDVMHost's modem is open on a node
+   that runs one**. The modem-open signal is ground-truthed: MMDVMHost
+   **exits(1)** when its modem will not open (`MMDVM-Host.cpp` `createModem →
+   return 1`), so a `waypoint-mmdvm.service` that will not stay cleanly
+   `running` (SubState) is the real "modem did not open" signal — no log
+   scraping. A brief healthy blip mid-restart does not confirm; the health must
+   *sustain*.
+
+   The modem host is included even when the update touched no package that backs
+   it — an update must not leave it down. But *whether this node runs one at all*
+   is a config question (`config.ModemHostRuns`), and the caller answers it
+   (`Plan.RequireMMDVM`). A node with every mode off, or with no modem port set,
+   correctly runs no modem host; gating on a unit that is deliberately stopped
+   would fail every update on it forever, which is the same "always reverts"
+   shape that [#221](https://github.com/KN4OQW/waypoint/issues/221) was
+   investigated through.
 6. **Confirm**, or on any failure (a failed install, a failed restart, or a
    health gate that never sustains) **revert**: reinstall the previous versions
    and restart.

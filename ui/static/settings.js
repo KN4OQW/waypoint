@@ -2545,7 +2545,11 @@ function blockedGatewayCard(mode) {
   if (!blocked.length) return "";
   const items = blocked.map((b) => {
     const fields = (b.missing || []).map((f) => `<span class="hw-warn-f">${esc(f)}</span>`).join(" ");
-    return `<li class="hw-warn bad"><span class="hw-warn-k">${esc(msg("common.willNotStart"))}</span> ${fields}<div>${esc(msg("pocsag.gatewayBlockedAuthKey"))}</div></li>`;
+    // The explanation is per mode: POCSAG's daemon crash-loops without its key,
+    // while the modem host is held back so the station never transmits without an
+    // identity. A generic line covers any requirement added later.
+    const why = { pocsag: "pocsag.gatewayBlockedAuthKey", modem: "modem.hostBlocked" }[b.mode] || "common.gatewayBlockedGeneric";
+    return `<li class="hw-warn bad"><span class="hw-warn-k">${esc(msg("common.willNotStart"))}</span> ${fields}<div>${esc(msg(why))}</div></li>`;
   }).join("");
   return card(msg("common.gatewayNotRunning"), `<ul class="hw-warns">${items}</ul>`);
 }
@@ -2859,7 +2863,10 @@ function panelHardware() {
     }
   }
 
-  return `<div class="grid2">${identity}<div class="stack">${configured}${adopt}</div></div>${warnCard}${panelFirmware()}${panelCalibration()}${uartCard}${scanCard}`;
+  // The modem host is withheld when it has no port to open, or no callsign/ID to
+  // transmit under. That is the one thing on this page whose absence stops every
+  // mode at once, so it goes above the rest rather than into a mode panel.
+  return `<div class="grid2">${identity}<div class="stack">${configured}${adopt}</div></div>${blockedGatewayCard("modem")}${warnCard}${panelFirmware()}${panelCalibration()}${uartCard}${scanCard}`;
 }
 
 // --- Calibration: measuring the oscillator error (#20 / RFC-0021) ---------

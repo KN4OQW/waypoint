@@ -135,39 +135,65 @@ type RenderTarget struct {
 // DMRGateway lead; each later mode appends its own entry. The order fixes both
 // the write order and the restart order, so it must not change casually.
 //
-// The System Fusion slot is the one conditional target: YSFGateway and
-// DGIdGateway share MMDVM-Host's 3200/4200 loopback and cannot run at once, so
-// EnableDGId swaps the whole target — file, unit, and renderer — rather than
-// adding a second one. The apply loop then restarts exactly one YSF unit; the
-// deploy's systemd Conflicts= between the two units stops the other daemon.
+// EVERY target is conditional, and on one predicate: GatewayRuns(mode) — the mode
+// is on, no bus displaced it, nothing it needs is missing — with ModemHostRuns()
+// as MMDVM-Host's equivalent. This set therefore *is* the answer to "what should
+// be running on this node", which is why the boot picture is derived from it
+// (BootEnableUnits) rather than listed separately. A hand-maintained boot list is
+// what let waypoint-mmdvm.service go un-enabled while YSF and NXDN were enabled
+// with both modes off — the running set and the boot set have no way to disagree
+// now.
+//
+// Gateways used to be rendered unconditionally on the reasoning that they idle
+// harmlessly with their mode off. They do, but "harmless" is not free: it boots
+// daemons the operator switched off, holds their loopback ports, and reports them
+// as running gateways. POCSAG was already gated for the stronger reason that
+// DAPNETGateway crash-loops without an AuthKey; the gate is now uniform.
+//
+// The System Fusion slot swaps rather than adds: YSFGateway and DGIdGateway share
+// MMDVM-Host's 3200/4200 loopback and cannot run at once, so EnableDGId swaps the
+// whole target — file, unit, and renderer. The apply loop then restarts exactly
+// one YSF unit; the deploy's systemd Conflicts= between the two stops the other.
 func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 	ysf := RenderTarget{Path: paths.YSFGateway, Unit: unitYSFGateway, Daemon: daemonYSFGateway, Render: (*Model).RenderYSFGateway}
 	if m.YSFGW.EnableDGId {
 		ysf = RenderTarget{Path: paths.DGIdGateway, Unit: unitDGIdGateway, Daemon: daemonDGIdGateway, Render: (*Model).RenderDGIdGateway}
 	}
-	targets := []RenderTarget{
-		{Path: paths.MMDVM, Unit: unitMMDVM, Daemon: daemonMMDVM, Render: (*Model).RenderMMDVM},
-		{Path: paths.DMRGateway, Unit: unitDMRGateway, Daemon: daemonDMRGateway, Render: (*Model).RenderDMRGateway},
+	var targets []RenderTarget
+	// MMDVM-Host runs when any mode wants the air and its own requirements are met
+	// — not unconditionally. A node with every mode off has nothing for the modem
+	// host to carry, and one with no modem port configured cannot open a modem at
+	// all (see gateway_requirements.go).
+	if m.ModemHostRuns() {
+		targets = append(targets, RenderTarget{Path: paths.MMDVM, Unit: unitMMDVM, Daemon: daemonMMDVM, Render: (*Model).RenderMMDVM})
+	}
+	if m.GatewayRuns(ModeDMR) {
+		targets = append(targets, RenderTarget{Path: paths.DMRGateway, Unit: unitDMRGateway, Daemon: daemonDMRGateway, Render: (*Model).RenderDMRGateway})
 	}
 	// RFC-0003 Addendum A §2/§3: a YSF (resp. NXDN) bus attachment DISPLACES the stock
 	// gateway — the bus becomes the mode's gateway on the same loopback, so the stock
 	// gateway target is not rendered while the attachment exists (mirroring how
 	// EnableDGId already swaps the YSF unit). Its running unit is stopped by the apply
 	// path (DisplacedGatewayUnits) before the bus starts. DMR never displaces (§1).
-	if !m.modeDisplacesGateway(ModeYSF) {
+	if m.GatewayRuns(ModeYSF) {
 		targets = append(targets, ysf)
 	}
-	targets = append(targets,
-		RenderTarget{Path: paths.P25Gateway, Unit: unitP25Gateway, Daemon: daemonP25Gateway, Render: (*Model).RenderP25Gateway},
-	)
-	if !m.modeDisplacesGateway(ModeNXDN) {
+	if m.GatewayRuns(ModeP25) {
+		targets = append(targets,
+			RenderTarget{Path: paths.P25Gateway, Unit: unitP25Gateway, Daemon: daemonP25Gateway, Render: (*Model).RenderP25Gateway})
+	}
+	if m.GatewayRuns(ModeNXDN) {
 		targets = append(targets,
 			RenderTarget{Path: paths.NXDNGateway, Unit: unitNXDNGateway, Daemon: daemonNXDNGateway, Render: (*Model).RenderNXDNGateway})
 	}
-	targets = append(targets,
-		RenderTarget{Path: paths.DStarGateway, Unit: unitDStarGateway, Daemon: daemonDStarGateway, Render: (*Model).RenderDStarGateway},
-		RenderTarget{Path: paths.M17Gateway, Unit: unitM17Gateway, Daemon: daemonM17Gateway, Render: (*Model).RenderM17Gateway},
-	)
+	if m.GatewayRuns(ModeDStar) {
+		targets = append(targets,
+			RenderTarget{Path: paths.DStarGateway, Unit: unitDStarGateway, Daemon: daemonDStarGateway, Render: (*Model).RenderDStarGateway})
+	}
+	if m.GatewayRuns(ModeM17) {
+		targets = append(targets,
+			RenderTarget{Path: paths.M17Gateway, Unit: unitM17Gateway, Daemon: daemonM17Gateway, Render: (*Model).RenderM17Gateway})
+	}
 	// POCSAG's DAPNETGateway is gated on the POCSAG mode enable, NOT always-on.
 	// Unlike the digital-mode gateways (YSF/P25/NXDN/M17/D-Star) — which idle
 	// harmlessly when their mode is off — DAPNETGateway exits immediately with
@@ -182,7 +208,7 @@ func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 	// AuthKey guard runs before it opens anything. gatewayBlocked covers that —
 	// see gateway_requirements.go for the survey of which daemons have such a
 	// guard (today, only this one).
-	if m.Modes.POCSAG && !m.gatewayBlocked(ModePOCSAG) {
+	if m.GatewayRuns(ModePOCSAG) {
 		targets = append(targets, RenderTarget{Path: paths.DAPNETGateway, Unit: unitDAPNETGateway, Daemon: daemonDAPNETGateway, Render: (*Model).RenderDAPNETGateway})
 	}
 	// The cross-mode transcoding bridges (MMDVM_CM) used to append here when enabled.

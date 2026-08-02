@@ -644,9 +644,12 @@ func (s *server) applyRender(by string) (restarted, stopped []string, err error)
 	//     DAPNET AuthKey): also dropped from targets, and a daemon that would exit
 	//     immediately must be stopped rather than left crash-looping from an earlier
 	//     apply that had the value set.
+	//   - and, since the render set is now gated on the mode enable, every managed
+	//     unit the render did not ask for: a mode switched off must stop its daemon,
+	//     not leave it running until the next reboot. BootDisableUnits is exactly
+	//     that complement, so the stop set and the boot set cannot disagree.
 	stopUnits := append(config.RetiredBridgeUnits(), m.DisabledBusUnits()...)
-	stopUnits = append(stopUnits, m.DisplacedGatewayUnits()...)
-	stopUnits = append(stopUnits, m.BlockedGatewayUnits()...)
+	stopUnits = append(stopUnits, m.BootDisableUnits(paths)...)
 	// A DELETED bus's row cannot be enumerated from the model (DisabledBusUnits only
 	// sees buses that still exist), so its lingering unit — which still holds the
 	// mode's loopback and would make a restored gateway crash-loop — is found via
@@ -667,8 +670,8 @@ func (s *server) applyRender(by string) (restarted, stopped []string, err error)
 	// disabled buses and DISPLACED gateways so, on reboot, a displaced gateway does not
 	// race the bus for the mode's loopback. Best-effort — a boot-persistence failure is
 	// logged, never fatal to the apply.
-	s.enableUnits(m.BootEnableUnits())
-	s.disableUnits(append(m.BootDisableUnits(), orphans...))
+	s.enableUnits(m.BootEnableUnits(paths))
+	s.disableUnits(append(m.BootDisableUnits(paths), orphans...))
 
 	_ = s.store.RecordApply(by, map[string]any{"restarted": restarted, "stopped": stopped})
 	// The native LCD driver renders no INI and restarts no unit, so it is absent

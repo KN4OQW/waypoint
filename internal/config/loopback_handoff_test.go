@@ -102,7 +102,12 @@ func TestDisplaceDropsGatewayTarget(t *testing.T) {
 		return out
 	}
 
+	// Both modes are ON in every model here: the subject is DISPLACEMENT, and with
+	// the modes off the gateway targets would be absent for the unrelated reason
+	// that nobody asked for them — the assertions would pass without testing
+	// anything.
 	ysfBus := &Model{
+		Modes:       Modes{YSF: true, NXDN: true},
 		Buses:       []Bus{{ID: "a", Enabled: true}},
 		Attachments: []Attachment{{BusID: "a", Mode: ModeYSF}, {BusID: "a", Mode: ModeNXDN}},
 	}
@@ -122,8 +127,8 @@ func TestDisplaceDropsGatewayTarget(t *testing.T) {
 		t.Fatalf("DisplacedGatewayUnits = %v, want YSF+NXDN gateways", got)
 	}
 
-	// No bus ⇒ the gateway targets are back.
-	none := units(&Model{})
+	// No bus ⇒ the gateway targets are back (the modes are still on).
+	none := units(&Model{Modes: Modes{YSF: true, NXDN: true}})
 	if !none[unitYSFGateway] || !none[unitNXDNGateway] {
 		t.Fatal("with no bus, the stock gateway targets must be present")
 	}

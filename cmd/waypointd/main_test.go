@@ -383,6 +383,18 @@ func TestOverridesEndpoint(t *testing.T) {
 	defer st.Close()
 	etc := t.TempDir()
 	ovr := t.TempDir()
+	// The override report walks the RENDERED targets, and rendering is gated on the
+	// mode enables plus a runnable modem host — so an unconfigured store renders
+	// nothing and there is no mmdvm.d fragment to report.
+	if err := st.Set("modes", config.Modes{DMR: true}, "seed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Set("general", config.General{Callsign: "KN4OQW", ID: "3180202"}, "seed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Set("modem", config.Modem{Port: "/dev/ttyAMA0"}, "seed"); err != nil {
+		t.Fatal(err)
+	}
 	s := &server{
 		store: st,
 		paths: config.Paths{
@@ -668,6 +680,15 @@ func TestStatusAndLivenessProbe(t *testing.T) {
 	defer st.Close()
 	// A minimal enabled config so RenderTargets yields gateway units to probe.
 	if err := st.Set("modes", config.Modes{DMR: true, YSF: true}, "seed"); err != nil {
+		t.Fatal(err)
+	}
+	// The render set is gated on the modem host being runnable, so seed the
+	// identity and port too — without them nothing renders and there is no
+	// gateway unit to probe.
+	if err := st.Set("general", config.General{Callsign: "KN4OQW", ID: "3180202"}, "seed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Set("modem", config.Modem{Port: "/dev/ttyAMA0"}, "seed"); err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()

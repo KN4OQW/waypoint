@@ -33,6 +33,18 @@ func applyRecorder(t *testing.T, m *config.Model, activeState map[string]string)
 	if len(m.Attachments) > 0 {
 		mustSet(t, st, "attachments", m.Attachments)
 	}
+	// The render set is gated on the mode enables and on the modem host being
+	// runnable, so these have to reach the store too — a caller's Modes/General/
+	// Modem were previously dropped here, which now means "render nothing".
+	if (m.Modes != config.Modes{}) {
+		mustSet(t, st, "modes", m.Modes)
+	}
+	if (m.General != config.General{}) {
+		mustSet(t, st, "general", m.General)
+	}
+	if m.Modem.Port != "" {
+		mustSet(t, st, "modem", m.Modem)
+	}
 
 	orig := systemctlRun
 	systemctlRun = func(args ...string) ([]byte, error) {
@@ -135,7 +147,13 @@ func TestApplyReconcilesOrphanedBusUnit(t *testing.T) {
 // dedicated port, so no gateway is displaced and no stop-before-start is imposed —
 // DMRGateway is restarted and the bus started, no DMR gateway stop.
 func TestApplyMultiplexNoGatewayStop(t *testing.T) {
+	// DMR and YSF on, and the modem host's requirements met: the render set is gated
+	// on the mode enable, so a model with no modes would render no DMRGateway at all
+	// and this test would pass by accident.
 	m := &config.Model{
+		Modes:       config.Modes{DMR: true, YSF: true},
+		General:     config.General{Callsign: "KN4OQW", ID: "3180202"},
+		Modem:       config.Modem{Port: "/dev/ttyAMA0"},
 		Buses:       []config.Bus{{ID: "a", Enabled: true}},
 		Attachments: []config.Attachment{{BusID: "a", Mode: config.ModeDMR, Slot: "2", DefaultTG: "91"}, {BusID: "a", Mode: config.ModeYSF}},
 	}
