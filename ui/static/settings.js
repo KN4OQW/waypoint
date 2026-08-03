@@ -1799,7 +1799,11 @@ function netScanSection() {
   const rows = (netScanResults || []).map((n) => {
     const lock = n.security ? "🔒" : "";
     const inuse = n.in_use ? ' <span style="color:var(--accent)">· connected</span>' : "";
-    return `<div class="toggle-row"><span class="name">${esc(n.ssid)} ${lock} <span style="opacity:0.6">${n.signal}%</span>${inuse}</span>` +
+    // color, not opacity: fading --ink-body to 0.6 over the row's --swatch-bg
+    // lands on #7e848e, which is 3.32:1 in light mode (#121). --muted is the
+    // token for de-emphasised text and clears 4.5:1 on every surface it is used
+    // on, so the signal figure stays readable in both modes.
+    return `<div class="toggle-row"><span class="name">${esc(n.ssid)} ${lock} <span style="color:var(--muted)">${n.signal}%</span>${inuse}</span>` +
       `<button type="button" class="pill off" data-netjoin="${esc(n.ssid)}" data-netsec="${esc(n.security)}" style="cursor:pointer;" aria-label="Join Wi-Fi network ${esc(n.ssid)}">JOIN</button></div>`;
   }).join("");
   const body = (netScanResults && netScanResults.length) ? rows : note(msg("netScanSection.noNetworksFoundYet"));

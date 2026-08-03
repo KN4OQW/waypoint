@@ -51,7 +51,13 @@
     --accent: #12a35a; --accent-soft: rgba(18,163,90,0.12); --accent-glow: rgba(18,163,90,0.30);
     --bg: #eef1f6; --panel: #ffffff; --panel-line: #dde3ec; --field: #f5f7fb; --field-line: #ccd4e0;
     --side: #f3f5f9; --side-line: #dde3ec; --row-line: #e7ebf2;
-    --ink: #1a2130; --ink-head: #0e1420; --ink-body: #333b49; --label: #566072; --muted: #5c6472; --dim: #616a78; --faint: #6b7380;
+    /* --dim and --faint are darker than the ramp's even spacing would suggest.
+       Both were set by eye against --panel #ffffff, where they cleared 4.5:1, and
+       both are in fact used on the dimmer surfaces: --faint on the aside's --side,
+       and --dim on the --accent-soft tint .nav-item.on paints over it. Measured at
+       4.38:1 and 4.28:1 there (#121). Sized to clear 4.5:1 on the darkest surface
+       each actually lands on, not on the lightest. */
+    --ink: #1a2130; --ink-head: #0e1420; --ink-body: #333b49; --label: #566072; --muted: #5c6472; --dim: #5c6471; --faint: #5d646f;
     --bad: #cc3333; --warn: #9a5f08;
     --chip-bg: #f0f3f8; --chip-line: #dde3ec; --tag-bg: #f0f3f8; --card-t: #566072;
     --stat-k: #6b7380; --stat-v: #1a2130; --led-off: #c2cad6;
