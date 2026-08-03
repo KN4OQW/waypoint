@@ -7,8 +7,10 @@ signature format with a 56-byte public key you can pin.
 
 ## Verifying a release artifact
 
-Every released `waypointd-linux-<arch>` binary ships with a `<file>.minisig`
-signature. Verify it before running an update:
+Every released binary ships with a `<file>.minisig` signature —
+`waypointd-linux-<arch>`, and alongside it `waypoint-provision-helper-linux-<arch>`
+and `waypoint-bus-linux-<arch>`, which the image module verifies against the same
+key before baking them in. Verify one before running an update:
 
 ```
 # with the bundled Waypoint verifier (no extra tools):

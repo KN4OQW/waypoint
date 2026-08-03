@@ -32,6 +32,9 @@ which:
 
 1. **Builds** `waypointd` for `linux/amd64`, `linux/arm64`, and `linux/arm` (GOARM=6,
    the Pi Zero), each stamped with the tag and `CGO_ENABLED=0` (a static binary).
+   `waypoint-provision-helper` and `waypoint-bus` are built per-arch alongside it:
+   the image module fetches each by name, so a release missing one produces an
+   image build that waits for an asset that never arrives and then fails.
 2. **Signs** each binary with minisign ([RFC-0013](https://github.com/KN4OQW/waypoint/discussions/168)),
    emitting a `.minisig` beside it.
 3. **Publishes** the binaries + signatures to a GitHub release named for the tag,
@@ -67,6 +70,12 @@ warning, rather than hard-failing. Configuring the key is in [docs/signing.md](s
   }
 }
 ```
+
+Only `waypointd` appears here, though the release carries three binaries. The
+updater stages one file, health-checks the daemon that results and reverts that one
+file when the check fails (RFC-0014); a second entry would need its own health gate
+and its own boot-check marker before it could be reverted safely. The helper and the
+bus daemon are delivered by the image and replaced with the rest of the system.
 
 Artifact keys are the node's `GOOS/GOARCH` — what the updater's `PlanUpdate` matches
 against. `linux/arm` is the GOARM=6 build (its asset suffix is `arm6`). `min_version`
