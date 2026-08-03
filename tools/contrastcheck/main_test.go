@@ -221,10 +221,23 @@ func TestCompareShells(t *testing.T) {
 		t.Errorf("a missing block reported %d problem(s), want 1", n)
 	}
 
-	// A token present in one shell only counts too.
-	added := map[string]map[string]string{"": {"--accent": "#35d07f", "--bg": "#05070a", "--new": "#123456"}}
-	if n := compareShells(a, added, "index.html", "settings.html"); n != 1 {
-		t.Errorf("an added token reported %d problem(s), want 1", n)
+	// A token declared in one shell only is NOT drift — it is scoping, and it
+	// must stay silent. settings.html declares five --input-*/--pill-* tokens
+	// that index.html has no use for, because the dashboard has no inputs and no
+	// pills; the first version of this check called all ten of those a problem.
+	// A token a shell never reads cannot put anything out of contrast there.
+	scoped := map[string]map[string]string{"": {
+		"--accent": "#35d07f", "--bg": "#05070a", "--pill-bg": "#181d26",
+	}}
+	if n := compareShells(a, scoped, "index.html", "settings.html"); n != 0 {
+		t.Errorf("a token scoped to one shell reported %d problem(s), want 0", n)
+	}
+	// ...but a scoped token must not mask a real divergence alongside it.
+	both := map[string]map[string]string{"": {
+		"--accent": "#0e7c45", "--bg": "#05070a", "--pill-bg": "#181d26",
+	}}
+	if n := compareShells(a, both, "index.html", "settings.html"); n != 1 {
+		t.Errorf("drift alongside a scoped token reported %d problem(s), want 1", n)
 	}
 }
 

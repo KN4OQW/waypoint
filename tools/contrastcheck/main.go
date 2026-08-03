@@ -165,6 +165,15 @@ func modeName(m string) string {
 	return m
 }
 
+// variantLabel names a palette block for a human. The base block's key is the
+// empty string, which prints as nothing and reads as a formatting bug.
+func variantLabel(v string) string {
+	if v == "" {
+		return "base"
+	}
+	return v
+}
+
 func main() {
 	dir := flag.String("dir", filepath.Join("ui", "static"), "directory holding the UI shells")
 	strict := flag.Bool("strict", false, "exit non-zero on any violation")
@@ -245,7 +254,19 @@ func main() {
 	}
 }
 
-// compareShells reports tokens that differ between the two shells' palettes.
+// compareShells reports tokens the two shells declare differently.
+//
+// Only tokens declared in *both* shells are a problem. The first version of this
+// check treated a token present in one shell and absent in the other as drift
+// too, and it was wrong: it fired on ten tokens that are simply scoped. The five
+// --input-* and --pill-* tokens live in settings.html because the dashboard has
+// no inputs and no pills, and a token a shell never reads cannot put anything out
+// of contrast there. The hazard this check exists for is the one from #121 — a
+// palette value corrected in one shell and forgotten in the other — and that only
+// arises where both declare it.
+//
+// A missing *block* is still a problem: if one shell lacked the whole
+// [data-mode="light"] rule, light mode would be broken there rather than scoped.
 func compareShells(a, b map[string]map[string]string, nameA, nameB string) int {
 	problems := 0
 	variants := map[string]bool{}
@@ -264,30 +285,25 @@ func compareShells(a, b map[string]map[string]string, nameA, nameB string) int {
 	for _, v := range names {
 		av, bv := a[v], b[v]
 		if av == nil {
-			fmt.Printf("DIVERGED %s: block %q present in %s, absent in %s\n", v, v, nameB, nameA)
+			fmt.Printf("DIVERGED %s: block present in %s, absent in %s\n", variantLabel(v), nameB, nameA)
 			problems++
 			continue
 		}
 		if bv == nil {
-			fmt.Printf("DIVERGED %s: block %q present in %s, absent in %s\n", v, v, nameA, nameB)
+			fmt.Printf("DIVERGED %s: block present in %s, absent in %s\n", variantLabel(v), nameA, nameB)
 			problems++
 			continue
 		}
-		tokens := map[string]bool{}
-		for t := range av {
-			tokens[t] = true
-		}
-		for t := range bv {
-			tokens[t] = true
-		}
 		var tn []string
-		for t := range tokens {
-			tn = append(tn, t)
+		for t := range av {
+			if _, both := bv[t]; both {
+				tn = append(tn, t)
+			}
 		}
 		sort.Strings(tn)
 		for _, t := range tn {
 			if av[t] != bv[t] {
-				fmt.Printf("DIVERGED %s %s: %s has %q, %s has %q\n", v, t, nameA, av[t], nameB, bv[t])
+				fmt.Printf("DIVERGED %s %s: %s has %q, %s has %q\n", variantLabel(v), t, nameA, av[t], nameB, bv[t])
 				problems++
 			}
 		}
