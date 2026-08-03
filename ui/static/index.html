@@ -46,9 +46,17 @@
   /* Light mode (RFC-0009): dark is the default; data-mode="light" re-maps every
      structural surface + the text ramp to a light palette, and darkens the accent
      so accent-coloured text clears 4.5:1 on a white panel. Composes with the accent
-     themes (the [data-mode][data-theme] rules below win by specificity). */
+     themes (the [data-mode][data-theme] rules below win by specificity).
+
+     That claim about 4.5:1 was wrong when it was written, and stayed wrong for as
+     long as it did because the only thing that could have caught it was not
+     looking: the axe job was manual-only, and when it did run it was measuring
+     ice rather than phosphor (#121). #12a35a on #ffffff is 3.27:1, and 2.89:1 on
+     the --bg that .btn.primary inverts against. The green now here is the same
+     hue and saturation taken down in lightness until it clears 4.5:1 on --panel,
+     --field, --side and --bg alike; ratios are checked by tools/contrastcheck. */
   :root[data-mode="light"] {
-    --accent: #12a35a; --accent-soft: rgba(18,163,90,0.12); --accent-glow: rgba(18,163,90,0.30);
+    --accent: #0e7c45; --accent-soft: rgba(14,124,69,0.12); --accent-glow: rgba(14,124,69,0.30);
     --bg: #eef1f6; --panel: #ffffff; --panel-line: #dde3ec; --field: #f5f7fb; --field-line: #ccd4e0;
     --side: #f3f5f9; --side-line: #dde3ec; --row-line: #e7ebf2;
     /* --dim and --faint are darker than the ramp's even spacing would suggest.
@@ -66,7 +74,11 @@
     --statusbar-bg: rgba(255,255,255,0.82);
   }
   :root[data-mode="light"][data-theme="amber"] { --accent: #9a5d05; --accent-soft: rgba(154,93,5,0.12); --accent-glow: rgba(154,93,5,0.30); }
-  :root[data-mode="light"][data-theme="ice"]   { --accent: #1f77c9; --accent-soft: rgba(31,119,201,0.12); --accent-glow: rgba(31,119,201,0.30); }
+  /* ice went down the same way and for the same reason: #1f77c9 was 4.09:1 on --bg.
+     amber is left alone — #9a5d05 already clears every light surface (4.71:1 at
+     worst), and darkening it for symmetry would cost contrast in the other
+     direction on .btn.primary for no measured gain. */
+  :root[data-mode="light"][data-theme="ice"]   { --accent: #1d6eba; --accent-soft: rgba(29,110,186,0.12); --accent-glow: rgba(29,110,186,0.30); }
 
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
