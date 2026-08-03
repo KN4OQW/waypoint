@@ -1443,7 +1443,7 @@ function importReport(s) {
     `<div class="row"><label>${msg("importReport.detected")}</label><span style="font-family:var(--mono); font-size:12px;">${esc(rep.platform || "unknown")}</span></div>` +
     `<div class="row"><label>${msg("importReport.modes")}</label><span style="font-family:var(--mono); font-size:12px;">${modes}</span></div>` + files);
   const apply = `<div style="display:flex; gap:12px; align-items:center; margin-top:10px;">
-      <button type="button" id="import-apply"${dis} style="padding:9px 20px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">${msg("importReport.importIntoStore")}</button>
+      <button type="button" id="import-apply"${dis} style="padding:9px 20px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:var(--bg); border:none; border-radius:6px;">${msg("importReport.importIntoStore")}</button>
       <span class="note" style="margin:0;">${msg("importReport.overwritesCurrentModeAmp")} <b>${msg("importReport.apply")}</b> ${msg("importReport.goLive")}</span>
     </div>`;
   return `<div class="stack" style="margin-top:12px;">${summary}${card(msg("importReport.dmrNetworks"), nets)}${unmapped}</div>${apply}`;
@@ -1502,7 +1502,7 @@ function panelProfiles() {
       <input id="prof-name" placeholder="${esc(msg("profiles.bmDmrDuplex"))}" maxlength="64" aria-label="${esc(msg("profiles.newProfileName"))}">
     </div>
     <div style="display:flex; gap:12px; align-items:center; margin-top:6px;">
-      <button type="button" id="prof-save"${profileBusy ? " disabled" : ""} style="padding:8px 18px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">${msg("profiles.saveProfile")}</button>
+      <button type="button" id="prof-save"${profileBusy ? " disabled" : ""} style="padding:8px 18px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:var(--bg); border:none; border-radius:6px;">${msg("profiles.saveProfile")}</button>
       <label class="prof-import" style="font-family:var(--mono); font-size:12px; cursor:pointer; text-decoration:underline;">
         ${msg("profiles.importFile")}<input id="prof-import-file" type="file" accept=".json,application/json" style="display:none;">
       </label>
@@ -1534,7 +1534,7 @@ function profileCard(p) {
     <div class="row"><label>${msg("profileCard.captured")}</label><span style="font-family:var(--mono); font-size:12px; opacity:.8;">${esc(p.updated_at || p.created_at || "—")}${fpText ? " · " + esc(fpText) : ""}</span></div>
     ${sens}
     <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
-      <button type="button" data-prof-activate="${esc(p.name)}"${dis} aria-label="Activate profile ${esc(p.name)}"${p.active ? " title='Already active'" : ""} style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">${msg("profileCard.activate")}</button>
+      <button type="button" data-prof-activate="${esc(p.name)}"${dis} aria-label="Activate profile ${esc(p.name)}"${p.active ? " title='Already active'" : ""} style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:var(--bg); border:none; border-radius:6px;">${msg("profileCard.activate")}</button>
       <button type="button" data-prof-export="${esc(p.name)}" aria-label="Export profile ${esc(p.name)}" style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:6px;">${msg("profileCard.export")}</button>
       <button type="button" data-prof-delete="${esc(p.name)}"${dis} aria-label="Delete profile ${esc(p.name)}" style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:6px;">${msg("profileCard.delete")}</button>
     </div>
@@ -1566,7 +1566,7 @@ function panelNetwork() {
   // confirm-or-revert guard (save → guarded apply → countdown). No direct-apply
   // escape hatch exists for host networking.
   const actions = `<div class="net-actions" style="display:flex; gap:12px; align-items:center; margin-top:6px;">
-      <button type="button" id="net-apply"${netDirty ? "" : " disabled"} style="padding:8px 18px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">${msg("network.applyNetwork")}</button>
+      <button type="button" id="net-apply"${netDirty ? "" : " disabled"} style="padding:8px 18px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:var(--bg); border:none; border-radius:6px;">${msg("network.applyNetwork")}</button>
       <span class="note" style="margin:0;">${msg("network.appliesThroughConfirmRevert")}</span>
     </div>`;
   const hint = note(msg("network.editingHereWritesStore"));
@@ -1772,7 +1772,7 @@ function netHostCard() {
     row(msg("netHostCard.timezone"), tzInner) +
     switchRow(msg("netHostCard.ntpTimeSync"), "netntp", "1", n.enabled) +
     row(msg("netHostCard.ntpServersOptional"), `<input data-ntpservers="1" value="${esc(listToText(n.servers))}" placeholder="${esc(msg("netHostCard.poolNtpOrgTime"))}" aria-label="${esc(msg("netHostCard.ntpServers"))}">`) +
-    `<div style="margin-top:10px;"><button type="button" id="host-apply"${netHostDirty ? "" : " disabled"} style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:#000; border:none; border-radius:6px;">${msg("netHostCard.applyHostSettings")}</button> <span class="note" style="margin:0;">${msg("netHostCard.appliesImmediatelyHostnameTimezone")}</span></div>`;
+    `<div style="margin-top:10px;"><button type="button" id="host-apply"${netHostDirty ? "" : " disabled"} style="padding:7px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--accent); color:var(--bg); border:none; border-radius:6px;">${msg("netHostCard.applyHostSettings")}</button> <span class="note" style="margin:0;">${msg("netHostCard.appliesImmediatelyHostnameTimezone")}</span></div>`;
   return card(msg("netHostCard.hostTimeNtp"), body);
 }
 
@@ -1840,7 +1840,7 @@ function showNetworkConfirmBar(deadlineISO, token) {
     const btn = el("button", "", "Keep settings");
     btn.type = "button";
     btn.setAttribute("aria-label", "Keep these network settings and cancel the automatic revert");
-    btn.style.cssText = "margin-left:auto; padding:6px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--warn); color:#000; border:none; border-radius:6px;";
+    btn.style.cssText = "margin-left:auto; padding:6px 16px; font-family:var(--mono); font-size:12px; cursor:pointer; background:var(--warn); color:var(--bg); border:none; border-radius:6px;";
     btn.onclick = () => confirmNetwork(token);
     bar.appendChild(btn);
   }

@@ -101,6 +101,15 @@ var pairs = []pair{
 		evidence: "color: var(--muted); background: var(--tag-bg), both on the same rule",
 	},
 	{
+		// Three layers deep, and the reason the surface type supports a stack at
+		// all. --tag-on-bg is translucent in dark mode, so what the reader sees is
+		// the black wash over the selected row's --accent-soft over the aside's
+		// --side. This pair was 2.02:1 in ice before the scrim was tokenised.
+		ink: "--accent", surface: surf("--side", "--accent-soft", "--tag-on-bg"),
+		rule:     ".nav-item.on .tag",
+		evidence: "color: var(--accent); background: var(--tag-on-bg), painted over .nav-item.on's var(--accent-soft), painted over the aside's var(--side)",
+	},
+	{
 		ink: "--accent", surface: surf("--swatch-bg"),
 		rule:     ".pill.on",
 		evidence: "color: var(--accent); button.pill paints background: transparent, and every .pill.on sits in a .toggle-row, which paints background: var(--swatch-bg)",

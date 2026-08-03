@@ -88,6 +88,49 @@ func TestCompositeMatchesAxeReportedBlends(t *testing.T) {
 	}
 }
 
+// The .nav-item.on .tag stack, which is three deep and was the worst contrast in
+// the UI before #121.
+//
+// axe reported this blend as #a3adb6 and this computes #a3acb6 — one step apart
+// in green, and worth being precise about rather than absorbing into a tolerance.
+// Compositing in float and rounding once puts green on 172.41; rounding after
+// each layer instead puts it on 172.5 and then up to 173. The channel sits close
+// enough to the boundary that where you round decides it. Neither is wrong, and
+// the disagreement is worth 0.002 of a contrast ratio, far below anything that
+// could move a 4.5:1 decision. The single-rounding value is asserted because it
+// is what this tool computes; the point of the comparison is that the arithmetic
+// agrees with the browser to within a rounding step, not that it is bit-identical.
+func TestCompositeThreeLayerTagStack(t *testing.T) {
+	tokens := map[string]string{
+		"--side":        "#f3f5f9",
+		"--accent-soft": "rgba(31,119,201,0.12)", // ice, as it was before this branch
+		"--tag-on-bg":   "rgba(0,0,0,.25)",       // the dark-mode scrim, as it was in both modes
+	}
+	got, err := compositeSurface(tokens, surf("--side", "--accent-soft", "--tag-on-bg"))
+	if err != nil {
+		t.Fatalf("compositeSurface: %v", err)
+	}
+	if hex(got) != "#a3acb6" {
+		t.Errorf("three-layer stack = %s, want #a3acb6 (axe reported #a3adb6; see above)", hex(got))
+	}
+	// And the ratio it produces must reproduce the failure that was reported, or
+	// this tool would not have caught the bug it was written to catch.
+	accent := mustColor(t, "#1f77c9")
+	if r := ratio(accent, got); math.Abs(r-2.02) > 0.01 {
+		t.Errorf("accent on the scrimmed tag = %.2f:1, want the 2.02:1 axe measured", r)
+	}
+	// Light mode replaces the translucent scrim with an opaque lift, which is what
+	// makes the same pair pass.
+	tokens["--tag-on-bg"] = "#ffffff"
+	got, err = compositeSurface(tokens, surf("--side", "--accent-soft", "--tag-on-bg"))
+	if err != nil {
+		t.Fatalf("compositeSurface: %v", err)
+	}
+	if r := ratio(mustColor(t, "#1d6eba"), got); r < minRatio {
+		t.Errorf("accent on the lifted tag = %.2f:1, want at least %.1f:1", r, minRatio)
+	}
+}
+
 func TestCompositeSurfaceErrors(t *testing.T) {
 	tokens := map[string]string{
 		"--side":  "#f3f5f9",
@@ -275,6 +318,7 @@ func TestNoFalsePositivesOnACompliantPalette(t *testing.T) {
 		"--input-bg":    "#ffffff",
 		"--swatch-bg":   "#eef1f6",
 		"--tag-bg":      "#f0f3f8",
+		"--tag-on-bg":   "#ffffff",
 		"--ink":         "#1a2130",
 		"--ink-body":    "#333b49",
 		"--faint":       "#5d646f",

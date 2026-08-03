@@ -34,6 +34,7 @@
     /* Semantic surfaces (RFC-0009): named so the light theme can re-map every
        surface, not just the accent. Dark values below; light overrides follow. */
     --chip-bg: #0c0f15; --chip-line: #1a1f28; --tag-bg: #0c0f15; --card-t: #aeb7c4;
+    --tag-on-bg: rgba(0,0,0,.25);
     --stat-k: #525c6a; --stat-v: #dfe6f0; --led-off: #252b34;
     --swatch-bg: #0b0e13; --swatch-on: #12161d;
     --scroll-track: #0a0c10; --scroll-thumb: #232a35;
@@ -68,6 +69,7 @@
     --ink: #1a2130; --ink-head: #0e1420; --ink-body: #333b49; --label: #566072; --muted: #5c6472; --dim: #5c6471; --faint: #5d646f;
     --bad: #cc3333; --warn: #9a5f08;
     --chip-bg: #f0f3f8; --chip-line: #dde3ec; --tag-bg: #f0f3f8; --card-t: #566072;
+    --tag-on-bg: #ffffff;
     --stat-k: #6b7380; --stat-v: #1a2130; --led-off: #c2cad6;
     --swatch-bg: #eef1f6; --swatch-on: #ffffff;
     --scroll-track: #e7ebf2; --scroll-thumb: #c2cad6;
@@ -136,7 +138,13 @@
   .nav-item .sub { display: block; font-family: var(--mono); font-size: 9.5px; letter-spacing: .5px; color: var(--dim); margin-top: 1px; }
   .nav-item.on { background: var(--accent-soft); }
   .nav-item.on .bar { background: var(--accent); }
-  .nav-item.on .tag { border-color: var(--accent); color: var(--accent); background: rgba(0,0,0,.25); }
+  /* The selected tag was scrimmed with a literal rgba(0,0,0,.25), which only ever
+     made sense against a dark row. In light mode it darkened the --accent-soft
+     tint to a muddy grey and put accent-coloured text on it at 2.02:1 in ice and
+     2.30:1 in amber — the worst contrast anywhere in the UI (#121). The scrim is
+     now a token, so each mode says what "recessed" means for it: dark keeps the
+     same black wash, light lifts the chip to --panel instead. */
+  .nav-item.on .tag { border-color: var(--accent); color: var(--accent); background: var(--tag-on-bg); }
   .nav-item.on .label { color: var(--ink-head); font-weight: 600; }
 
   .theme-pick { padding: 14px 18px 18px; border-top: 1px solid var(--side-line); }
