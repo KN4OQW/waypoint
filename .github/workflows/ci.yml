@@ -86,6 +86,22 @@ jobs:
       - name: Check locale catalogs
         run: go run ./tools/localecheck -dir ui/static/locales
 
+  # The palette half of the accessibility gate, and the fast half. The axe job in
+  # a11y.yml is the real check but needs a built daemon and a Chromium download;
+  # this reads the :root blocks out of the two shells and scores every declared
+  # ink/surface pair across three themes and both modes in milliseconds. Nearly
+  # every contrast regression this project has had was a palette edit (#121), and
+  # this catches that class before a reviewer or a scan has to.
+  contrast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Check palette contrast
+        run: go run ./tools/contrastcheck -dir ui/static -strict
+
   # Advisory only (issue #23): flags user-visible English added to the frontend
   # without a catalog key. A heuristic on added lines, deliberately not a gate —
   # see the script header for what it cannot see.

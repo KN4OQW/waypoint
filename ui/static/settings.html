@@ -31,6 +31,7 @@
     --bad: #ff6b6b; --warn: #ff9f45;
     /* Semantic surfaces (RFC-0009): named so light mode can re-map every surface. */
     --chip-bg: #0c0f15; --chip-line: #1a1f28; --tag-bg: #0c0f15; --card-t: #aeb7c4;
+    --tag-on-bg: rgba(0,0,0,.25);
     --stat-k: #525c6a; --stat-v: #dfe6f0; --led-off: #252b34;
     --swatch-bg: #0b0e13; --swatch-on: #12161d;
     --scroll-track: #0a0c10; --scroll-thumb: #232a35;
@@ -43,14 +44,29 @@
   :root[data-theme="amber"] { --accent: #f0a935; --accent-soft: rgba(240,169,53,0.13); --accent-glow: rgba(240,169,53,0.45); }
   :root[data-theme="ice"]   { --accent: #4db8ff; --accent-soft: rgba(77,184,255,0.13); --accent-glow: rgba(77,184,255,0.45); }
   /* Light mode (RFC-0009): dark is default; data-mode="light" re-maps every surface
-     and darkens the accent to clear 4.5:1 on white. Composes with the accent themes. */
+     and darkens the accent to clear 4.5:1 on white. Composes with the accent themes.
+
+     That claim about 4.5:1 was wrong when it was written, and stayed wrong for as
+     long as it did because the only thing that could have caught it was not
+     looking: the axe job was manual-only, and when it did run it was measuring
+     ice rather than phosphor (#121). #12a35a on #ffffff is 3.27:1, and 2.89:1 on
+     the --bg that .btn.primary inverts against. The green now here is the same
+     hue and saturation taken down in lightness until it clears 4.5:1 on --panel,
+     --field, --side and --bg alike; ratios are checked by tools/contrastcheck. */
   :root[data-mode="light"] {
-    --accent: #12a35a; --accent-soft: rgba(18,163,90,0.12); --accent-glow: rgba(18,163,90,0.30);
+    --accent: #0e7c45; --accent-soft: rgba(14,124,69,0.12); --accent-glow: rgba(14,124,69,0.30);
     --bg: #eef1f6; --panel: #ffffff; --panel-line: #dde3ec; --field: #f5f7fb; --field-line: #ccd4e0;
     --side: #f3f5f9; --side-line: #dde3ec; --row-line: #e7ebf2;
-    --ink: #1a2130; --ink-head: #0e1420; --ink-body: #333b49; --label: #566072; --muted: #5c6472; --dim: #616a78; --faint: #6b7380;
+    /* --dim and --faint are darker than the ramp's even spacing would suggest.
+       Both were set by eye against --panel #ffffff, where they cleared 4.5:1, and
+       both are in fact used on the dimmer surfaces: --faint on the aside's --side,
+       and --dim on the --accent-soft tint .nav-item.on paints over it. Measured at
+       4.38:1 and 4.28:1 there (#121). Sized to clear 4.5:1 on the darkest surface
+       each actually lands on, not on the lightest. */
+    --ink: #1a2130; --ink-head: #0e1420; --ink-body: #333b49; --label: #566072; --muted: #5c6472; --dim: #5c6471; --faint: #5d646f;
     --bad: #cc3333; --warn: #9a5f08;
     --chip-bg: #f0f3f8; --chip-line: #dde3ec; --tag-bg: #f0f3f8; --card-t: #566072;
+    --tag-on-bg: #ffffff;
     --stat-k: #6b7380; --stat-v: #1a2130; --led-off: #c2cad6;
     --swatch-bg: #eef1f6; --swatch-on: #ffffff;
     --scroll-track: #e7ebf2; --scroll-thumb: #c2cad6;
@@ -59,7 +75,11 @@
     --pill-bg: #eef1f6; --pill-line: #ccd4e0;
   }
   :root[data-mode="light"][data-theme="amber"] { --accent: #9a5d05; --accent-soft: rgba(154,93,5,0.12); --accent-glow: rgba(154,93,5,0.30); }
-  :root[data-mode="light"][data-theme="ice"]   { --accent: #1f77c9; --accent-soft: rgba(31,119,201,0.12); --accent-glow: rgba(31,119,201,0.30); }
+  /* ice went down the same way and for the same reason: #1f77c9 was 4.09:1 on --bg.
+     amber is left alone — #9a5d05 already clears every light surface (4.71:1 at
+     worst), and darkening it for symmetry would cost contrast in the other
+     direction on .btn.primary for no measured gain. */
+  :root[data-mode="light"][data-theme="ice"]   { --accent: #1d6eba; --accent-soft: rgba(29,110,186,0.12); --accent-glow: rgba(29,110,186,0.30); }
 
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -105,7 +125,13 @@
   .nav-item .sub { display: block; font-family: var(--mono); font-size: 9.5px; letter-spacing: .5px; color: var(--dim); margin-top: 1px; }
   .nav-item.on { background: var(--accent-soft); }
   .nav-item.on .bar { background: var(--accent); }
-  .nav-item.on .tag { border-color: var(--accent); color: var(--accent); background: rgba(0,0,0,.25); }
+  /* The selected tag was scrimmed with a literal rgba(0,0,0,.25), which only ever
+     made sense against a dark row. In light mode it darkened the --accent-soft
+     tint to a muddy grey and put accent-coloured text on it at 2.02:1 in ice and
+     2.30:1 in amber — the worst contrast anywhere in the UI (#121). The scrim is
+     now a token, so each mode says what "recessed" means for it: dark keeps the
+     same black wash, light lifts the chip to --panel instead. */
+  .nav-item.on .tag { border-color: var(--accent); color: var(--accent); background: var(--tag-on-bg); }
   .nav-item.on .label { color: var(--ink-head); font-weight: 600; }
 
   /* Grouped sidebar (D2). Each group header is a disclosure button over its item
@@ -292,7 +318,7 @@
   .tz-hint code { font-family: var(--mono); font-size: 11.5px; color: var(--ink-head); background: var(--field); border: 1px solid var(--field-line); padding: 0 4px; border-radius: 3px; }
   .tz-hint .tz-hint-actions { margin-left: auto; display: flex; gap: 8px; }
   .tz-hint button { font-family: var(--mono); font-size: 12px; cursor: pointer; border-radius: 6px; padding: 5px 12px; }
-  .tz-hint .tz-hint-use { background: var(--accent); color: #000; border: none; }
+  .tz-hint .tz-hint-use { background: var(--accent); color: var(--bg); border: none; }
   .tz-hint .tz-hint-dismiss { background: transparent; color: var(--muted); border: 1px solid var(--field-line); }
 
   .toggle-row { display: flex; align-items: center; justify-content: space-between; background: var(--swatch-bg); border: 1px solid var(--chip-line); border-radius: 8px; padding: 11px 14px; margin-top: 10px; }

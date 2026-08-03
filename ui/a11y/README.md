@@ -2,9 +2,14 @@
 
 Accessibility is a merge gate for Waypoint (issue #7). This harness runs
 [axe-core](https://github.com/dequelabs/axe-core) against the live dashboard and
-every settings/wizard panel, at both nav breakpoints, in all three display themes,
-and fails on any WCAG 2.1 A/AA violation. CI runs it on every pull request
-(`.github/workflows/a11y.yml`).
+every settings/wizard panel, at both nav breakpoints, in all three display themes
+and both display modes, and fails on any WCAG 2.1 A/AA violation. CI runs it on
+every pull request (`.github/workflows/a11y.yml`).
+
+The theme and mode are set on the browser context and must stay that way for the
+whole scan, which is less automatic than it looks — see the comments in
+`scan.mjs` on the `#swatches` exclusion and on `colorScheme`. Both guard against
+the scan quietly measuring a palette other than the one it reports.
 
 ## Run it locally
 

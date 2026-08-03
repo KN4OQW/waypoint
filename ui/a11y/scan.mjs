@@ -17,10 +17,15 @@
 // JSON blob instead of the app. Each context therefore claims the node (or logs in,
 // if a previous run already claimed it) before scanning anything.
 //
+// Both display modes are walked as well as both nav topologies. Dark is the
+// product default (RFC-0009), but the mode is *not* left to the browser: see
+// the note on the context below for why picking it explicitly matters.
+//
 // Env:
 //   BASE                 base URL of a running `waypointd -demo` (default http://127.0.0.1:8073)
 //   PLAYWRIGHT_CHROMIUM  explicit Chromium binary (optional; omit to use Playwright's own)
 //   A11Y_THEMES          comma list of themes to test (default phosphor,amber,ice)
+//   A11Y_MODES           comma list of display modes to test (default dark,light)
 //   A11Y_USER/A11Y_PASS  claim/login credentials for the demo node (defaults below)
 
 import { chromium } from "playwright";
@@ -28,6 +33,7 @@ import { AxeBuilder } from "@axe-core/playwright";
 
 const BASE = process.env.BASE || "http://127.0.0.1:8073";
 const THEMES = (process.env.A11Y_THEMES || "phosphor,amber,ice").split(",").map((s) => s.trim()).filter(Boolean);
+const MODES = (process.env.A11Y_MODES || "dark,light").split(",").map((s) => s.trim()).filter(Boolean);
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
 const USER = process.env.A11Y_USER || "a11y";
 const PASS = process.env.A11Y_PASS || "a11y-scan-passphrase";
@@ -61,7 +67,14 @@ const browser = await chromium.launch(launchOpts);
 let violations = 0;
 let scans = 0;
 
+// Set per context, and prefixed onto every scan label so a failure line names the
+// theme and mode it was measured under. Without it a report of "settings#general
+// — color-contrast" is unactionable: the same panel passes in one palette and
+// fails in another.
+let ctxLabel = "";
+
 function report(label, result) {
+  label = `${ctxLabel} ${label}`;
   scans++;
   const v = result.violations;
   if (!v.length) {
@@ -83,8 +96,19 @@ function report(label, result) {
 async function analyze(page, label) {
   // Toggle every off-state control on, so we also exercise the "enabled" accent
   // styling (pills, mode tiles) that the default render leaves off.
+  //
+  // `.swatch` is excluded, and that exclusion is load-bearing rather than tidy.
+  // The theme swatches and the dark/light toggle are all `aria-pressed` buttons
+  // in #swatches, so the blanket sweep used to click every one of them. Each
+  // swatch's handler writes localStorage("wp-theme"), so the page ended up on
+  // whichever swatch happened to be last in the DOM *and* carried that choice
+  // into every later page in the context. The theme loop below was therefore
+  // decorative: scanning with A11Y_THEMES=phosphor still reported violations
+  // coloured with the ice accent #1f77c9. Measured 2026-08-02, on the run that
+  // produced the 135-violation figure in #121.
   await page.evaluate(() => {
     document.querySelectorAll('.mode-card.off, .pill.off, [aria-pressed="false"]').forEach((b) => {
+      if (b.closest("#swatches")) return;
       if (typeof b.click === "function") b.click();
     });
     // Expand every inline-help block (#135) so its open state is scanned too, not
@@ -131,12 +155,23 @@ async function setGroups(page, expanded) {
   await page.waitForTimeout(150);
 }
 
-for (const theme of THEMES) {
-  console.log(`\n=== theme: ${theme} ===`);
+for (const theme of THEMES) for (const mode of MODES) {
+  console.log(`\n=== theme: ${theme}, mode: ${mode} ===`);
+  ctxLabel = `[${theme}/${mode}]`;
   // ignoreHTTPSErrors: a real node serves the RFC-0012 self-signed device cert, so
   // pointing BASE at one would otherwise fail the handshake before axe sees a page.
-  const context = await browser.newContext({ ignoreHTTPSErrors: true });
-  await context.addInitScript((t) => localStorage.setItem("wp-theme", t), theme);
+  //
+  // colorScheme is pinned rather than left at Playwright's default, which is
+  // `light`. index.html and settings.html resolve an unset "wp-mode" through
+  // prefers-color-scheme, so the default context silently put every page in
+  // light mode — the scan had never once measured the dark palette that is the
+  // product default. wp-mode is seeded too, so the result does not depend on
+  // which of the two signals the page happens to consult first.
+  const context = await browser.newContext({ ignoreHTTPSErrors: true, colorScheme: mode });
+  await context.addInitScript(([t, m]) => {
+    localStorage.setItem("wp-theme", t);
+    localStorage.setItem("wp-mode", m);
+  }, [theme, mode]);
   await authenticate(context);
   const page = await context.newPage();
 
@@ -176,7 +211,7 @@ for (const theme of THEMES) {
 }
 
 await browser.close();
-console.log(`\n${scans} page(s) scanned across ${THEMES.length} theme(s); ${violations} violation(s).`);
+console.log(`\n${scans} page(s) scanned across ${THEMES.length} theme(s) × ${MODES.length} mode(s); ${violations} violation(s).`);
 if (violations) {
   console.error("\nAccessibility gate FAILED — fix the violations above (see helpUrl for guidance).");
   process.exit(1);
