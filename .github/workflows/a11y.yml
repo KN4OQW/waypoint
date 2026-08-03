@@ -1,26 +1,26 @@
 name: a11y
 
-# Accessibility was a merge gate (issue #7): axe-core against the live dashboard
-# and every settings/wizard tab, in all three themes, failing on any WCAG 2.1
-# A/AA violation.
+# Accessibility is a merge gate (issue #7): axe-core against the live dashboard
+# and every settings/wizard tab, in all three themes and both display modes,
+# failing on any WCAG 2.1 A/AA violation.
 #
-# It is currently MANUAL ONLY. The job had been failing on main for reasons that
-# were not about accessibility at all — the daemon could not create its default
-# TLS directory on a runner and exited, and it serves HTTPS while this job probes
-# http:// — so it had never actually scanned anything. With those fixed it scans,
-# and reports 98 pre-existing violations across 51 pages that were masked all
-# along (#121).
+# The automatic triggers were off from #121 until this commit. The job had been
+# failing on main for reasons that were not about accessibility at all — the
+# daemon could not create its default TLS directory on a runner and exited, and it
+# serves HTTPS while this job probes http:// — so it had never actually scanned
+# anything. Fixing that exposed a real backlog, and blocking every unrelated PR on
+# it would have helped nobody.
 #
-# Blocking every unrelated PR on that backlog helps nobody, so the automatic
-# triggers are off until #121 is worked through. Restore the gate by putting back:
-#
-#   push:
-#     branches: [main]
-#   pull_request:
-#
-# Run it meanwhile from the Actions tab, or `gh workflow run a11y.yml`.
+# That backlog is now cleared: 270 pages across three themes and both modes, zero
+# violations. The gate is back on. Note that the headline count roughly doubled
+# when the harness was fixed, because it had been scanning one palette while
+# reporting three — see the comments in ui/a11y/scan.mjs before reading any
+# historical figure in #121 as comparable to a current one.
 
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
