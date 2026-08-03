@@ -42,6 +42,7 @@ jobs:
             arch: armhf
             wp_asset: waypointd-linux-arm6
             helper_asset: waypoint-provision-helper-linux-arm6
+            bus_asset: waypoint-bus-linux-arm6
             goarch: arm
             goarm: "6"
           # arm64 (ARMv8: Pi 3/4 on a 64-bit OS).
@@ -49,6 +50,7 @@ jobs:
             arch: arm64
             wp_asset: waypointd-linux-arm64
             helper_asset: waypoint-provision-helper-linux-arm64
+            bus_asset: waypoint-bus-linux-arm64
             goarch: arm64
             goarm: ""
     steps:
@@ -110,7 +112,7 @@ jobs:
       # Stage the waypointd binary + its minisig where the module reads local
       # artifacts (/filesystem/build-artifacts in the chroot). Tag builds pull the
       # signed vX release asset; a dry run builds + signs from the checked-out source.
-      - name: Stage waypointd + provisioning helper (${{ matrix.arch }})
+      - name: Stage waypointd + provisioning helper + bus daemon (${{ matrix.arch }})
         env:
           GH_TOKEN: ${{ github.token }}
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
@@ -121,6 +123,7 @@ jobs:
           mkdir -p "$art"
           dst="waypointd-linux-${{ matrix.arch }}"   # the name the module fetches
           helper_dst="waypoint-provision-helper-linux-${{ matrix.arch }}"
+          bus_dst="waypoint-bus-linux-${{ matrix.arch }}"
           if [ "${{ github.event_name }}" = "push" ]; then
             tag="${GITHUB_REF_NAME}"
             echo "pulling ${{ matrix.wp_asset }} from release $tag (retry until the Release workflow publishes it)"
@@ -128,6 +131,7 @@ jobs:
               if gh release download "$tag" --repo "${{ github.repository }}" \
                    --pattern "${{ matrix.wp_asset }}" --pattern "${{ matrix.wp_asset }}.minisig" \
                    --pattern "${{ matrix.helper_asset }}" --pattern "${{ matrix.helper_asset }}.minisig" \
+                   --pattern "${{ matrix.bus_asset }}" --pattern "${{ matrix.bus_asset }}.minisig" \
                    --dir "$art" --clobber 2>/dev/null; then
                 break
               fi
@@ -143,9 +147,13 @@ jobs:
               mv "$art/${{ matrix.helper_asset }}" "$art/$helper_dst"
               mv "$art/${{ matrix.helper_asset }}.minisig" "$art/$helper_dst.minisig"
             fi
+            if [ "${{ matrix.bus_asset }}" != "$bus_dst" ]; then
+              mv "$art/${{ matrix.bus_asset }}" "$art/$bus_dst"
+              mv "$art/${{ matrix.bus_asset }}.minisig" "$art/$bus_dst.minisig"
+            fi
           else
-            echo "dry run: building + signing waypointd and the helper from source"
-            for pair in "waypointd:$dst" "waypoint-provision-helper:$helper_dst"; do
+            echo "dry run: building + signing waypointd, the helper and the bus daemon from source"
+            for pair in "waypointd:$dst" "waypoint-provision-helper:$helper_dst" "waypoint-bus:$bus_dst"; do
               cmd="${pair%%:*}"; outname="${pair##*:}"
               ( cd repo && CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} GOARM=${{ matrix.goarm }} \
                   go build -trimpath -ldflags "-s -w -X main.Version=dev-$(git rev-parse --short HEAD)" \
@@ -156,16 +164,18 @@ jobs:
               exit 1
             fi
             printf '%s' "$MINISIGN_SECRET_KEY" > minisign.key
-            for f in "$dst" "$helper_dst"; do
+            for f in "$dst" "$helper_dst" "$bus_dst"; do
               echo "$MINISIGN_PASSWORD" | minisign -S -H -s minisign.key -m "$art/$f" -t "waypoint dry-run $f"
             done
             rm -f minisign.key
           fi
           # Verify every staged binary against the committed public key before we
           # bake it in. The helper is checked too: it runs as root on the node, so
-          # an unverified one would be the least defensible thing in the image.
+          # an unverified one would be the least defensible thing in the image. So
+          # does the bus daemon — it terminates peered traffic from another node.
           minisign -V -p repo/docs/waypoint-release.pub -m "$art/$dst"
           minisign -V -p repo/docs/waypoint-release.pub -m "$art/$helper_dst"
+          minisign -V -p repo/docs/waypoint-release.pub -m "$art/$bus_dst"
           ls -l "$art"
 
       # config.local is CustomPiOS's build-time override file; its vars reach the

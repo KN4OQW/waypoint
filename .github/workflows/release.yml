@@ -46,6 +46,12 @@ jobs:
           helper="waypoint-provision-helper-linux-${suffix}"
           go build -trimpath -ldflags "-s -w -X main.Version=${GITHUB_REF_NAME}" -o "$helper" ./cmd/waypoint-provision-helper
           echo "HELPER=$helper" >> "$GITHUB_ENV"
+          # The RFC-0003 mode-bus daemon, on the same footing: the image module
+          # fetches and verifies it by name, so a release missing it builds an
+          # image whose bus UI has no daemon behind it (issue #109).
+          bus="waypoint-bus-linux-${suffix}"
+          go build -trimpath -ldflags "-s -w -X main.Version=${GITHUB_REF_NAME}" -o "$bus" ./cmd/waypoint-bus
+          echo "BUS=$bus" >> "$GITHUB_ENV"
 
       - name: Sign with minisign (RFC-0013)
         id: sign
@@ -61,7 +67,7 @@ jobs:
           printf '%s' "$MINISIGN_SECRET_KEY" > minisign.key
           # -H = prehashed (BLAKE2b), the variant Waypoint's verifier expects; the
           # trusted comment binds the version + filename into the signature.
-          for f in "$ARTIFACT" "$HELPER"; do
+          for f in "$ARTIFACT" "$HELPER" "$BUS"; do
             echo "$MINISIGN_PASSWORD" | minisign -S -H -s minisign.key \
               -m "$f" \
               -t "waypoint ${GITHUB_REF_NAME} ${f}"
@@ -82,12 +88,19 @@ jobs:
             ${{ env.ARTIFACT }}.minisig
             ${{ env.HELPER }}
             ${{ env.HELPER }}.minisig
+            ${{ env.BUS }}
+            ${{ env.BUS }}.minisig
         # .minisig is uploaded only when signing produced it; a missing file is skipped.
         #
-        # The helper is listed here as well as built and signed above. It was
-        # missed once: the image module fetches it by name from the release, so a
-        # release without it produces a build that waits ten minutes for an asset
-        # that is never coming and then fails inside the chroot.
+        # The helper and the bus daemon are listed here as well as built and signed
+        # above. The helper was missed once: the image module fetches each by name
+        # from the release, so a release without one produces a build that waits ten
+        # minutes for an asset that is never coming and then fails inside the chroot.
+        #
+        # Only waypointd goes in the RFC-0014 update manifest below. These two are
+        # delivered by the image and replaced with the rest of the system; the
+        # updater swaps one file, and adding a second would need a second health
+        # gate and a second boot-check marker to be safe.
 
   # After the per-arch binaries are published, assemble and sign the update manifest
   # the atomic updater fetches (RFC-0014). The sha256 is computed over each

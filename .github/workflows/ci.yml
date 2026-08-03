@@ -32,7 +32,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm }}
           CGO_ENABLED: "0"
-        run: go build -trimpath -ldflags "-s -w -X main.Version=${GITHUB_SHA::8}" ./cmd/waypointd ./cmd/waypoint-provision-helper
+        run: go build -trimpath -ldflags "-s -w -X main.Version=${GITHUB_SHA::8}" ./cmd/waypointd ./cmd/waypoint-provision-helper ./cmd/waypoint-bus
 
   # The lint gate is differential: the repository carries a pre-existing baseline
   # in packages this workstream did not touch, and fixing those inside a feature

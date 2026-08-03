@@ -81,6 +81,33 @@ const (
 	Binary = BinDir + "/waypointd"
 )
 
+// BusBinary is the RFC-0003 mode-bus daemon — one process per enabled bus, run
+// by systemd as waypoint-bus@<id>.service.
+//
+// It is in /usr/bin and NOT in BinDir, which is a deliberate asymmetry with
+// Binary above. BinDir holds exactly the one file the RFC-0014 updater stages
+// and renames; a second binary sitting beside it would imply a swap that never
+// happens, and the boot check would have no marker for it. The bus daemon is
+// delivered with the image and replaced the way the rest of the system is, so it
+// belongs where the image's other non-updater binary already lives —
+// waypoint-provision-helper, installed to /usr/bin by the image module for the
+// same reason.
+const BusBinary = "/usr/bin/waypoint-bus"
+
+// BusConfigFile names one bus's rendered config, an EtcDir entry that
+// waypoint-bus@<id>.service passes to BusBinary with -config. It is a function
+// rather than a constant because there is one file per enabled bus.
+//
+// It lives here rather than beside the renderer that writes it because the
+// systemd template names the same pattern independently, spelled with systemd's
+// own instance token (%i) — two expressions of one filename that no compiler
+// checks against each other. TestBusUnitMatchesPaths in paths_test.go reads the
+// shipped unit and compares it to these constants, which is the only thing that
+// catches them drifting apart. They already did once: the unit was authored
+// against the pre-0.3 /home/pi-star layout and kept naming it after the state
+// tree moved (issue #109).
+func BusConfigFile(id string) string { return "waypoint-bus-" + id + ".json" }
+
 // LegacyStateDir is where StateDir lived through the 0.2 series. Nodes flashed
 // with those images still have their data here, and their systemd units will
 // name this path for the rest of their lives — the image ships the units, and
