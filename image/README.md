@@ -17,9 +17,15 @@ on an SD card and holds a modem open 24/7.
   by sha256; the deb822 source trusts only that keyring (`Signed-By`).
 - **waypointd** at `/usr/local/lib/waypoint/bin/waypointd` (the RFC-0014 updater's
   path), verified at build time against the RFC-0013 release key with minisign.
+- **waypoint-provision-helper** and **waypoint-bus** at `/usr/bin`, verified the
+  same way. Neither is an updater target: that directory above holds only the one
+  file RFC-0014 stages and renames, so these two are delivered with the image and
+  replaced with the rest of the system.
 - **systemd units**: `waypointd.service` (enabled) with the
   `ExecStartPre=-…-update-boot-check` power-loss-revert hook (RFC-0014), plus the
-  gateway units (present but not enabled — waypointd enables each on Apply).
+  gateway units (present but not enabled — waypointd enables each on Apply) and
+  the `waypoint-bus@.service` template (a template has no instance to enable;
+  apply enables `waypoint-bus@<id>` once an operator creates a bus).
 - **mosquitto** — the MQTT data plane the stack publishes on (RFC-0008).
 
 ### No secrets (D5)

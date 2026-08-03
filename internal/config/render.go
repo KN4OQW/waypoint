@@ -253,8 +253,13 @@ func (m *Model) RenderTargets(paths Paths) []RenderTarget {
 // busUnit / busConfigFile name the templated systemd unit and rendered config
 // file for a bus id. memberConfigFile names the member-side provisioning config
 // for a (bus, peer) membership (RFC-0016).
+//
+// busConfigFile delegates to internal/paths rather than spelling the pattern
+// again: the shipped waypoint-bus@.service names the same file with systemd's %i
+// token, and that unit is checked against the paths definition. A second literal
+// here would be outside that check.
 func busUnit(id string) string       { return "waypoint-bus@" + id + ".service" }
-func busConfigFile(id string) string { return "waypoint-bus-" + id + ".json" }
+func busConfigFile(id string) string { return paths.BusConfigFile(id) }
 func memberConfigFile(busID, peerID string) string {
 	return "waypoint-bus-" + busID + "-member-" + peerID + ".json"
 }

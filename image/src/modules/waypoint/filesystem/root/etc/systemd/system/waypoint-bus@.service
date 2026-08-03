@@ -1,0 +1,31 @@
+[Unit]
+Description=Waypoint mode bus %i (RFC-0003 / Addendum A)
+Documentation=https://github.com/KN4OQW/waypoint/blob/main/docs/rfcs/0003a-loopback-handoff.md
+# A DMR bus MULTIPLEXES on DMRGateway (it dials the bus as one [DMR Network N]); a
+# YSF/NXDN bus DISPLACES its gateway (binds the mode's loopback). Order after both
+# so whatever it rides or replaces is settled first. The mutual exclusion with a
+# displaced gateway is enforced by waypointd: the render does not emit the stock
+# gateway's target while a bus displaces it, and apply stops it before the bus
+# starts and disables it for boot — so no per-instance Conflicts= is needed here (a
+# template cannot express one, and the render+apply invariant is stronger).
+After=mosquitto.service waypoint-mmdvm.service waypoint-dmrgateway.service
+Wants=mosquitto.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+# The two paths here are internal/paths.BusBinary and BusConfigFile(%i) under
+# EtcDir; paths_test.go reads this line and fails if they drift. The binary is in
+# /usr/bin, not the updater's /usr/local/lib/waypoint/bin: the bus daemon is
+# delivered with the image and replaced with the rest of the system, while that
+# directory holds only the one file the RFC-0014 updater swaps.
+#
+# %H passes the node's hostname as the bus node id — the id that appears in
+# peering and in the bus's MQTT topics, so renaming a host renames it there too.
+ExecStart=/usr/bin/waypoint-bus -config /var/lib/waypoint/etc/waypoint-bus-%i.json -node %H -dmrids /usr/local/etc/DMRIds.dat
+Restart=on-failure
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

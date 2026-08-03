@@ -109,6 +109,25 @@ minisign -V -p "${WAYPOINT_RELEASE_PUBKEY}" -x "${wp_tmp}/waypoint-provision-hel
     -m "${wp_tmp}/waypoint-provision-helper"
 install -m 0755 "${wp_tmp}/waypoint-provision-helper" /usr/bin/waypoint-provision-helper
 
+# The RFC-0003 mode-bus daemon, one process per enabled bus. It lands in /usr/bin
+# for the same reason as the helper: systemd runs it by absolute path from
+# waypoint-bus@.service, and the RFC-0014 updater does not swap it — it is
+# replaced with the rest of the system.
+#
+# Shipping it is what closes the gap where the bus UI, the render and the apply
+# path were all present on a node with no daemon behind them: an operator could
+# create a bus and apply against a unit whose ExecStart named nothing (issue #109
+# / on-hardware-report D2). The unit template comes from the filesystem overlay
+# with the other units; only the binary is fetched here.
+echo "=== downloading + verifying waypoint-bus (${DEB_ARCH})"
+fetch_artifact "${WAYPOINT_RELEASE_BASE}/waypoint-bus-linux-${DEB_ARCH}" \
+    "waypoint-bus-linux-${DEB_ARCH}"         "${wp_tmp}/waypoint-bus"
+fetch_artifact "${WAYPOINT_RELEASE_BASE}/waypoint-bus-linux-${DEB_ARCH}.minisig" \
+    "waypoint-bus-linux-${DEB_ARCH}.minisig" "${wp_tmp}/waypoint-bus.minisig"
+minisign -V -p "${WAYPOINT_RELEASE_PUBKEY}" -x "${wp_tmp}/waypoint-bus.minisig" \
+    -m "${wp_tmp}/waypoint-bus"
+install -m 0755 "${wp_tmp}/waypoint-bus" /usr/bin/waypoint-bus
+
 # The waypoint group gates the helper's socket. sysusers.d creates it on first
 # boot, but the helper refuses to start without it, so it is created at build
 # time too — a node whose first boot raced sysusers would otherwise come up with
@@ -274,6 +293,12 @@ systemctl enable waypoint-provision-helper.socket
 systemctl enable waypoint-firstboot.service
 # Gateway units are present but NOT enabled: waypointd enables/starts each one when
 # its mode is configured on Apply. A fresh, unclaimed node runs no gateways.
+#
+# waypoint-bus@.service is a template and has no instance to enable here at all —
+# an instance exists only once an operator has created a bus, and apply enables
+# waypoint-bus@<id> then. Enabling the template itself is not a thing systemd can
+# do, which is worth saying because its absence from this list otherwise looks
+# like the same oversight that left the daemon unshipped.
 
 echo "=== removing build-only minisign (waypointd verifies updates natively in Go)"
 apt-get purge -y minisign

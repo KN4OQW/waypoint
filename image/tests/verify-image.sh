@@ -66,6 +66,7 @@ grep -q '^Package: waypoint-stack$' "$status" 2>/dev/null && ok "waypoint-stack 
 grep -q '^Package: waypoint-mmdvmhost$' "$status" 2>/dev/null && ok "waypoint-mmdvmhost installed" || bad "waypoint-mmdvmhost not installed"
 have /usr/bin/MMDVM-Host && ok "/usr/bin/MMDVM-Host present" || bad "/usr/bin/MMDVM-Host missing"
 have /usr/local/lib/waypoint/bin/waypointd && ok "waypointd installed at RFC-0014 path" || bad "waypointd missing"
+have /usr/bin/waypoint-bus && ok "waypoint-bus daemon installed" || bad "waypoint-bus missing (the bus UI would apply against a unit with no binary)"
 grep -q '^Package: mosquitto$' "$status" 2>/dev/null && ok "mosquitto broker installed" || bad "mosquitto not installed"
 
 # 4. units enabled (symlinks in multi-user.target.wants), boot-check hook present
@@ -77,6 +78,19 @@ grep -q 'update-boot-check' "$ROOTFS/etc/systemd/system/waypointd.service" 2>/de
 # Gateway units present but NOT enabled (waypointd enables on Apply).
 have /etc/systemd/system/waypoint-mmdvm.service && ok "gateway units present" || bad "gateway units missing"
 [ -L "$wants/waypoint-mmdvm.service" ] && bad "gateway unit wrongly enabled on a fresh image" || ok "gateways not enabled on a fresh node"
+# The bus template ships beside them. Its ExecStart is checked against
+# internal/paths by TestBusUnitMatchesPaths; what only the built image can show is
+# that the unit and the binary it names arrived together.
+busunit="$ROOTFS/etc/systemd/system/waypoint-bus@.service"
+if [ -f "$busunit" ]; then
+  ok "waypoint-bus@.service template present"
+  grep -q '^ExecStart=/usr/bin/waypoint-bus ' "$busunit" \
+    && ok "bus unit runs the installed /usr/bin/waypoint-bus" \
+    || bad "bus unit ExecStart does not name /usr/bin/waypoint-bus"
+  grep -q '/home/pi-star' "$busunit" \
+    && bad "bus unit names the pre-0.3 /home/pi-star tree, absent on a fresh image" \
+    || ok "bus unit is on the current state path"
+else bad "waypoint-bus@.service template missing"; fi
 
 # Raspberry Pi OS's interactive first-boot user dialog must not run. It is
 # WantedBy=multi-user.target and, on an image that ships no account, loops on a
