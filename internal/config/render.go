@@ -1465,7 +1465,13 @@ func (m *Model) RenderDMRGateway() string {
 		lines = append(lines, bn.rewrites()...)
 		sect(&b, fmt.Sprintf("DMR Network %d", n), lines...)
 	}
-	for _, net := range m.Networks {
+	// Resolved once, before the loop, so the Location line and the rewrite block
+	// can never disagree about which network is the primary.
+	primary := m.effectivePrimaryIndex()
+	for i, net := range m.Networks {
+		if i == primary {
+			net.Primary = true // a copy; the stored model is not rewritten
+		}
 		if net.Type == NetXLX {
 			// XLX talks over a dedicated [XLX Network] section, not a DMR Network
 			// block. Startup reflector, module, and slot are their own fields.

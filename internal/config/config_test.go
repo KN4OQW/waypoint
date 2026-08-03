@@ -1208,9 +1208,19 @@ func TestParrotRoutingGenerated(t *testing.T) {
 // TestPrefixRoutingGenerated checks a non-primary network is reached by its
 // WPSD dial prefix (DMR+ = 8): dialing 8000321 on TS2 strips to TG 321.
 func TestPrefixRoutingGenerated(t *testing.T) {
+	// The primary is explicit here. It used not to be: this fixture was a lone
+	// DMR+ network with the flag clear, which rendered the prefix-8 template
+	// because nothing filled the primary slot. That is now the one case
+	// effectivePrimaryIndex repairs — a sole eligible network becomes the
+	// catch-all — so leaving the fixture alone would have tested the alternate
+	// template by way of a store that no longer renders one. The subject is
+	// unchanged: what a NON-primary DMR+ network looks like beside a primary.
 	m := &Model{
-		DMR:      DMR{ID: "1"},
-		Networks: []Network{{Name: "DMRPlus", Type: NetDMRPlus, Address: "dmrplus.example", Enabled: true}},
+		DMR: DMR{ID: "1"},
+		Networks: []Network{
+			{Name: "DMRPlus", Type: NetDMRPlus, Address: "dmrplus.example", Enabled: true},
+			{Name: "BM_US", Type: NetBrandmeister, Address: "3103.master.brandmeister.network", Primary: true, Enabled: true},
+		},
 	}
 	got := section(m.RenderDMRGateway(), "DMR Network 1")
 	for _, want := range []string{
