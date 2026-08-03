@@ -101,6 +101,59 @@ func alternateRewrites(t dmrTemplate) []string {
 	return out
 }
 
+// effectivePrimaryIndex names the network to route as Primary, as an index into
+// m.Networks, or -1 when the question has no answer.
+//
+// model.go documents the invariant that exactly one network is Primary: the one
+// reached with no dial prefix, whose PassAllTG/PassAllPC catch every talkgroup
+// and private call no other rule claimed. Nothing enforced it. Primary was only
+// ever read — here, in render.go's Location line, in view.go and import.go — so
+// a store where no network carries the flag renders every network from its
+// prefix template, and the file that reaches the daemon contains no PassAll line
+// at all. Every destination then needs a dial prefix and anything unprefixed is
+// dropped, which does not look like a routing setting to an operator; it looks
+// like the node is deaf.
+//
+// Measured on a bench node whose sole BrandMeister network had the flag clear:
+// a plain TG 9 matched no rule, a private call to BrandMeister's SMS service
+// 262995 matched no rule, and — the one that took longest to see — BrandMeister's
+// own private-call REPLY to the radio matched SrcRewrite 1-999999 and was
+// rewritten into a group call to TG 2000001, so a message addressed to the
+// operator's radio arrived addressed to a talkgroup.
+//
+// So: an explicit flag always wins, and is honoured even on a disabled network,
+// which is what the flag meant before this function existed. Failing that, if
+// exactly one network could hold the catch-all, it does — with one network there
+// is nothing else a catch-all could refer to, and the alternative is a node that
+// silently drops most of its traffic. Two or more eligible networks is genuinely
+// ambiguous, because which one holds the catch-all changes where unprefixed
+// traffic lands, so that is left alone rather than guessed at.
+//
+// Eligible excludes XLX (it renders its own [XLX Network] section and takes no
+// rewrites) and the custom types (networkRewrites answers those before it ever
+// consults Primary, so promoting one would change nothing but the Location line).
+func (m *Model) effectivePrimaryIndex() int {
+	for i, n := range m.Networks {
+		if n.Primary {
+			return i
+		}
+	}
+	found := -1
+	for i, n := range m.Networks {
+		if !n.Enabled || n.Type == NetXLX || n.Type == NetCustom || n.Type == "" {
+			continue
+		}
+		if _, ok := dmrTemplates[n.Type]; !ok {
+			continue
+		}
+		if found >= 0 {
+			return -1 // ambiguous: the dial prefixes decide, not us
+		}
+		found = i
+	}
+	return found
+}
+
 // networkRewrites returns the rewrite lines for one network: the verbatim custom
 // escape hatch, the primary catch-all, or the type's prefix template — with any
 // matching DMRRoute overrides appended as direct TGRewrites (which beat PassAll).
