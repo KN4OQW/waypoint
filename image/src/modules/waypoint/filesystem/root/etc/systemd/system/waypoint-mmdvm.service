@@ -3,14 +3,26 @@ Description=Waypoint MMDVM-Host (MQTT)
 After=mosquitto.service
 Wants=mosquitto.service
 
+# The start limiter is disabled rather than tuned. The inherited default (5 starts
+# in 10s) cannot catch a 10s loop anyway, and the failure it DOES have is worse
+# than the churn: a tripped limit leaves an unattended radio appliance stopped
+# until somebody runs `systemctl reset-failed` over SSH.
+StartLimitIntervalSec=0
+
 [Service]
 # Runs the waypoint-stack package binary (/usr/bin) against the INI waypointd
 # renders on Apply. Managed by waypointd: enabled/started when its mode is
 # configured, health-gated on stack updates (RFC-0014). Not enabled at image
 # build — a fresh, unclaimed node runs no gateways until it is configured.
 ExecStart=/usr/bin/MMDVM-Host /var/lib/waypoint/etc/MMDVM-Host.ini
+# Retry forever, slowly. These daemons exit on a startup failure that is usually
+# transient — DMRGateway exits when its master's hostname will not resolve — and at
+# RestartSec=3 that is a ~10s loop, which ran 4,810 times on one unplugged cable.
+# 30s cuts the churn roughly fourfold while keeping recovery inside one supervisor
+# evaluation; waypointd's remediation restarts the unit directly and is not delayed
+# by this timer. systemd 252 on the image, so no RestartSteps= (254+).
 Restart=on-failure
-RestartSec=3
+RestartSec=30
 User=root
 
 [Install]
