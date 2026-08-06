@@ -38,6 +38,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/lcd/hd44780"
 	"github.com/KN4OQW/waypoint/internal/m17hosts"
 	"github.com/KN4OQW/waypoint/internal/minisign"
+	"github.com/KN4OQW/waypoint/internal/mqtt"
 	"github.com/KN4OQW/waypoint/internal/netconfig"
 	"github.com/KN4OQW/waypoint/internal/netwatch"
 	"github.com/KN4OQW/waypoint/internal/nxdnhosts"
@@ -2382,7 +2383,15 @@ func main() {
 			RestartWindow: *supervisorRestartWindow,
 			// Read per cycle, not captured: the data plane rebuilds this connection
 			// when the store's broker moves (#29), and the supervisor has to follow.
-			Commander: s.dp.commander,
+			//
+			// A closure, not the s.dp.commander method value: s.dp is assigned below
+			// this call, and a method value binds its receiver where it is written.
+			// Taking it here captured a nil *dataPlane for the life of the process, so
+			// commander() returned nil on every cycle, the DMR link poll never ran, and
+			// every attachment sat at "no evidence" forever while the status surface
+			// reported it healthy. The closure resolves s.dp when the supervisor
+			// actually asks, which is what the line above always meant.
+			Commander: func() *mqtt.Commander { return s.dp.commander() },
 		})
 		// Update poller (D2 / #15): periodically refresh the stack and waypointd
 		// available-update caches and drive opt-in quiet-window auto-apply. Live mode
