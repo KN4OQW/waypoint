@@ -238,6 +238,56 @@ func TestDMRProblems(t *testing.T) {
 		}
 	})
 
+	// The full (Duplex, Slot1, Slot2) matrix against CDMRNetwork::read. Slot 1 is
+	// dropped outright on simplex by the DMO rule, then each slot is dropped when
+	// its flag is false, so inbound survives only via slot 2, or via slot 1 when
+	// the node is duplex. Three of the eight cells can carry nothing.
+	t.Run("slot matrix", func(t *testing.T) {
+		for _, tc := range []struct {
+			name                 string
+			duplex, slot1, slot2 bool
+			dead                 bool
+		}{
+			{"simplex, slot 2 only (the conventional hotspot)", false, false, true, false},
+			{"simplex, both slots on", false, true, true, false},
+			{"simplex, slot 1 only -- the 2026-08-06 incident", false, true, false, true},
+			{"simplex, both slots off", false, false, false, true},
+			{"duplex, both slots on", true, true, true, false},
+			{"duplex, slot 1 only", true, true, false, false},
+			{"duplex, slot 2 only", true, false, true, false},
+			{"duplex, both slots off", true, false, false, true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				m := allModesOn()
+				m.General.Duplex, m.DMRNet.Slot1, m.DMRNet.Slot2 = tc.duplex, tc.slot1, tc.slot2
+				// A duplex node on one frequency trips the station-wide duplex check,
+				// which is a different finding; keep a split so only slots are in play.
+				if tc.duplex {
+					m.Modem.TXFreqHz = "433800000"
+				}
+				got := find(m.ModeProblems(), ModeDMR, "dmrnet.slot2")
+				if tc.dead {
+					requireProblem(t, m.ModeProblems(), ModeDMR, "dmrnet.slot2", SeverityWarning)
+					return
+				}
+				if len(got) != 0 {
+					t.Errorf("healthy slot configuration reported as dead: %s", got[0].Message)
+				}
+			})
+		}
+	})
+
+	// The slot flags gate only the network side, so they are not a fault when DMR
+	// itself is off -- ModeProblems never reaches dmrProblems in that case.
+	t.Run("slots ignored when DMR is disabled", func(t *testing.T) {
+		m := allModesOn()
+		m.Modes.DMR = false
+		m.General.Duplex, m.DMRNet.Slot1, m.DMRNet.Slot2 = false, true, false
+		if got := find(m.ModeProblems(), ModeDMR, "dmrnet.slot2"); len(got) != 0 {
+			t.Errorf("slot finding raised while DMR is disabled: %s", got[0].Message)
+		}
+	})
+
 	// A gateway with nothing to log into: every network row disabled. Warning, not
 	// error — the node is correctly configured, it just has no upstream yet, which
 	// is a legitimate state during setup.
