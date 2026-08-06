@@ -287,6 +287,26 @@ func (m *Model) dmrProblems() []ModeProblem {
 		}
 	}
 
+	// [DMR Network] Slot1/Slot2 gate the network->RF direction and nothing else:
+	// MMDVM-Host hands them to CDMRNetwork alone (MMDVM-Host.cpp:2072-2073), whose
+	// read() is their only consumer. RF->network is untouched, and that asymmetry
+	// is what makes a dead slot configuration so quiet — the node keeps reaching
+	// the master and appearing on last-heard while nothing comes back, with every
+	// health surface green.
+	//
+	// read() drops slot 1 outright when the node is not duplex ("DMO mode slot
+	// disabling", DMRNetwork.cpp:147-149), then drops each slot whose flag is
+	// false (:151-154). Inbound is therefore possible only when slot 2 is enabled,
+	// or when duplex and slot 1 are both on — leaving three dead combinations.
+	switch {
+	case !m.DMRNet.Slot1 && !m.DMRNet.Slot2:
+		add("dmrnet.slot2", SeverityWarning,
+			"Both DMR timeslots are disabled, so MMDVM-Host drops every inbound network frame. The node still transmits and appears on the master's last-heard, but nothing reaches the radios.")
+	case !m.DMRNet.Slot2 && !m.General.Duplex:
+		add("dmrnet.slot2", SeverityWarning,
+			"Timeslot 2 is disabled on a simplex node. MMDVM-Host drops slot 1 on simplex and slot 2 is switched off, so every inbound network frame is dropped. The node still transmits and appears on the master's last-heard, but nothing reaches the radios.")
+	}
+
 	// A DMR node with no network is a gateway with nothing to log into. It starts,
 	// it stays up, and it carries no traffic. Bus attachments count: RFC-0003 lets
 	// a bus stand in for a network, and dmrBusNetworks is the same enumeration
