@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -11,6 +15,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/hub"
 	"github.com/KN4OQW/waypoint/internal/status"
+	"github.com/KN4OQW/waypoint/internal/supervisor"
 )
 
 // statusView serves GET /api/status: the authoritative live status the aggregator
@@ -127,27 +132,90 @@ func writeWSFrame(c *websocket.Conn, kind string, data any) error {
 // the supervisor already owns the units, so their systemd state is authoritative —
 // no dying-daemon message to miss. Runs in live mode only (a demo node runs no
 // gateways).
-func (s *server) runLivenessProbe(ctx context.Context, interval time.Duration) {
-	last := map[string]bool{}
+func (s *server) runLivenessProbe(ctx context.Context, interval time.Duration, watch *supervisor.RestartWatch) {
+	type state struct {
+		up         bool
+		looping    bool
+		loopDetail string
+	}
+	last := map[string]state{}
+	// NRestarts is sampled far less often than liveness. The probe ticks every
+	// second by default so a killed gateway shows within the #5 acceptance, and
+	// spawning a `systemctl show` per unit at that rate would cost more than the
+	// thing it is watching. A loop that takes ten seconds a cycle is still caught
+	// in well under a minute at this cadence.
+	const restartSampleEvery = 15 * time.Second
+	var lastSample time.Time
+
 	check := func() {
 		m, err := config.Load(s.store)
 		if err != nil {
 			return
 		}
+		now := time.Now().UTC()
+		sampleRestarts := watch != nil && now.Sub(lastSample) >= restartSampleEvery
+		if sampleRestarts {
+			lastSample = now
+		}
+		live := map[string]bool{}
 		for _, unit := range restartSet(m.RenderTargets(s.paths)) {
 			if unit == "" {
 				continue
 			}
 			name := friendlyUnit(unit)
+			live[name] = true
 			_, aerr := systemctlRun("is-active", "--quiet", unit)
 			up := aerr == nil
-			if prev, seen := last[name]; !seen || prev != up {
-				last[name] = up
+
+			// The loop verdict carries between samples. The probe ticks every second
+			// and only samples restarts every fifteen, and a crash-looping unit's
+			// is-active flaps as it dies and comes back — so recomputing the detail
+			// from `up` alone on the intervening ticks would overwrite the crash-loop
+			// message within a second of it being set, which is exactly what it did.
+			cur := state{up: up, looping: last[name].looping, loopDetail: last[name].loopDetail}
+			if sampleRestarts {
+				n, ok := unitRestartCount(unit)
+				if !ok {
+					// A unit whose restart count cannot be read is not reported as
+					// healthy on that basis; say so once rather than silently skipping.
+					restartNote("cannot read NRestarts for %s; crash-loop detection is blind to it", unit)
+				} else {
+					loop, looping := watch.Observe(unit, n, now)
+					restartNote("%s NRestarts=%d looping=%v", unit, n, looping)
+					cur.looping = looping
+					cur.loopDetail = ""
+					if looping {
+						// Say it plainly and keep the numbers: an operator seeing
+						// "running" on a daemon that has restarted forty times in ten
+						// minutes has been told nothing useful.
+						cur.loopDetail = fmt.Sprintf("restarting repeatedly — %d restarts in %s",
+							loop.Restarts, loop.Window)
+					}
+				}
+			}
+
+			if prev, seen := last[name]; !seen || prev != cur {
+				last[name] = cur
+				// A thrashing unit reports the loop whichever half of the cycle this
+				// tick caught it in: "not running" for a daemon that will be back in
+				// three seconds is true and useless.
 				t, detail := status.TypeGWUp, "running"
-				if !up {
+				switch {
+				case cur.looping:
+					t, detail = status.TypeGWUp, cur.loopDetail
+				case !up:
 					t, detail = status.TypeGWDown, "not running"
 				}
-				s.hub.Publish(hub.Event{Time: time.Now().UTC(), Type: t, Network: name, Detail: detail})
+				s.hub.Publish(hub.Event{Time: now, Type: t, Network: name, Detail: detail})
+			}
+		}
+		// A unit the config no longer renders keeps no verdict: its history would
+		// otherwise outlive the gateway it described.
+		if sampleRestarts && watch != nil {
+			for name := range last {
+				if !live[name] {
+					delete(last, name)
+				}
 			}
 		}
 	}
@@ -170,4 +238,45 @@ func friendlyUnit(unit string) string {
 	u := strings.TrimSuffix(unit, ".service")
 	u = strings.TrimPrefix(u, "waypoint-")
 	return u
+}
+
+// restartNote logs a crash-loop sampling fact once per distinct message, so a
+// permanently blind detector says so instead of looking like a quiet one.
+var restartDiag struct {
+	mu   sync.Mutex
+	last map[string]string
+}
+
+func restartNote(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	key := msg
+	if i := strings.IndexByte(msg, ' '); i > 0 {
+		key = msg[:i] // one slot per unit, so a changing count still logs
+	}
+	restartDiag.mu.Lock()
+	defer restartDiag.mu.Unlock()
+	if restartDiag.last == nil {
+		restartDiag.last = map[string]string{}
+	}
+	if restartDiag.last[key] == msg {
+		return
+	}
+	restartDiag.last[key] = msg
+	log.Printf("crashloop: %s", msg)
+}
+
+// unitRestartCount reads systemd's NRestarts for a unit: how many times it has
+// been restarted automatically since it was last started by hand. Absent or
+// unparseable is reported as unknown rather than zero — zero is a claim ("this
+// unit is not thrashing") and a failed read is not entitled to make it.
+func unitRestartCount(unit string) (int, bool) {
+	out, err := systemctlRun("show", unit, "-p", "NRestarts", "--value")
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
 }

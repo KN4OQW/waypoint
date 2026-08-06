@@ -271,19 +271,24 @@ func TestAssessReasons(t *testing.T) {
 		obs     Observation
 		healthy bool
 		reason  string
+		session Tri
 	}{
-		{"unit down", Observation{Unit: TriNo, Endpoint: TriYes, Login: TriYes}, false, "the gateway is not running"},
-		{"endpoint gone", Observation{Unit: TriYes, Endpoint: TriNo, Login: TriYes}, false, "the endpoint is unreachable"},
-		{"login refused", Observation{Unit: TriYes, Endpoint: TriYes, Login: TriNo}, false, "not logged in"},
-		{"logged in", Observation{Unit: TriYes, Endpoint: TriYes, Login: TriYes}, true, "logged in"},
-		{"reachable only", Observation{Unit: TriYes, Endpoint: TriYes, Login: TriUnknown}, true, "reachable"},
-		{"nothing known", Observation{Unit: TriYes, Endpoint: TriUnknown, Login: TriUnknown}, true, "running"},
+		{"unit down", Observation{Unit: TriNo, Endpoint: TriYes, Login: TriYes}, false, "the gateway is not running", TriNo},
+		{"endpoint gone", Observation{Unit: TriYes, Endpoint: TriNo, Login: TriYes}, false, "the endpoint is unreachable", TriNo},
+		{"login refused", Observation{Unit: TriYes, Endpoint: TriYes, Login: TriNo}, false, "not logged in", TriNo},
+		{"logged in", Observation{Unit: TriYes, Endpoint: TriYes, Login: TriYes}, true, "logged in", TriYes},
+		// Reachable is evidence about the endpoint, not the session: healthy enough
+		// to leave alone, but nothing has vouched for a login.
+		{"reachable only", Observation{Unit: TriYes, Endpoint: TriYes, Login: TriUnknown}, true, "reachable, session unconfirmed", TriUnknown},
+		// The case that used to publish "running". Healthy in the do-not-act sense,
+		// unknown in the what-do-we-say sense.
+		{"nothing known", Observation{Unit: TriYes, Endpoint: TriUnknown, Login: TriUnknown}, true, "awaiting session evidence", TriUnknown},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			ok, reason := assess(c.obs)
-			if ok != c.healthy || reason != c.reason {
-				t.Errorf("assess = (%v, %q), want (%v, %q)", ok, reason, c.healthy, c.reason)
+			ok, reason, session := assess(c.obs)
+			if ok != c.healthy || reason != c.reason || session != c.session {
+				t.Errorf("assess = (%v, %q, %v), want (%v, %q, %v)", ok, reason, session, c.healthy, c.reason, c.session)
 			}
 		})
 	}
@@ -321,4 +326,73 @@ func TestDeadUnitIsRemediated(t *testing.T) {
 	if d.Reason != "the gateway is not running" {
 		t.Errorf("reason = %q", d.Reason)
 	}
+}
+
+// The session tri-state across its lifecycle. Up answers "should we act"; Session
+// answers "what do we actually know". They are allowed to disagree, and the whole
+// point of the field is the case where they do.
+func TestSessionEvidenceLifecycle(t *testing.T) {
+	p := testPolicy()
+
+	// A supervisor that has just started has heard nothing. It must not restart
+	// anything on that basis, and it must not claim the session is up either.
+	//
+	// Named for the bench incident: waypointd was restarted while DMRGateway held
+	// an established BM session, so no login transition was ever observed. The old
+	// code published "running" here and the node looked healthy for as long as the
+	// evidence path stayed broken.
+	t.Run("waypointd-restart-mid-session", func(t *testing.T) {
+		m := NewMonitor(testAttachment(), p)
+		d := m.Step(Observation{Now: t0, WANUp: true, Unit: TriYes, Endpoint: TriUnknown, Login: TriUnknown})
+		if !d.Claim.Up {
+			t.Errorf("a fresh supervisor claimed the attachment down: %s", d.Claim.Detail)
+		}
+		if d.Claim.Session != TriUnknown {
+			t.Errorf("session = %v, want TriUnknown before any evidence arrives", d.Claim.Session)
+		}
+		if d.Claim.Detail == "running" {
+			t.Error(`detail "running" is a process fact standing in for a session verdict`)
+		}
+	})
+
+	for _, tc := range []struct {
+		name    string
+		obs     Observation
+		up      bool
+		session Tri
+	}{
+		{"evidence promotes out of unknown",
+			Observation{Now: t0, WANUp: true, Unit: TriYes, Login: TriYes}, true, TriYes},
+		{"explicit refusal is evidenced-down",
+			Observation{Now: t0, WANUp: true, Unit: TriYes, Login: TriNo}, false, TriNo},
+		{"a dead unit is evidenced-down",
+			Observation{Now: t0, WANUp: true, Unit: TriNo, Login: TriUnknown}, false, TriNo},
+		{"reachability alone does not evidence a session",
+			Observation{Now: t0, WANUp: true, Unit: TriYes, Endpoint: TriYes, Login: TriUnknown}, true, TriUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewMonitor(testAttachment(), p)
+			d := m.Step(tc.obs)
+			if d.Claim.Up != tc.up {
+				t.Errorf("up = %v, want %v (%s)", d.Claim.Up, tc.up, d.Claim.Detail)
+			}
+			if d.Claim.Session != tc.session {
+				t.Errorf("session = %v, want %v (%s)", d.Claim.Session, tc.session, d.Claim.Detail)
+			}
+		})
+	}
+
+	// Evidence is not permanent. Once the daemon stops vouching for the link, the
+	// claim decays back to unknown rather than resting on a login observed long ago.
+	t.Run("evidence decays back to unknown", func(t *testing.T) {
+		m := NewMonitor(testAttachment(), p)
+		up := m.Step(Observation{Now: t0, WANUp: true, Unit: TriYes, Login: TriYes})
+		if up.Claim.Session != TriYes {
+			t.Fatalf("setup: session = %v, want TriYes", up.Claim.Session)
+		}
+		later := m.Step(Observation{Now: t0.Add(time.Hour), WANUp: true, Unit: TriYes, Login: TriUnknown})
+		if later.Claim.Session != TriUnknown {
+			t.Errorf("session = %v, want TriUnknown once the daemon stops vouching", later.Claim.Session)
+		}
+	})
 }

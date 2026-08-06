@@ -709,7 +709,7 @@ func TestStatusAndLivenessProbe(t *testing.T) {
 
 	// One probe pass emits gateway_up/down per unit.
 	pctx, pcancel := context.WithCancel(context.Background())
-	go s.runLivenessProbe(pctx, 20*time.Millisecond)
+	go s.runLivenessProbe(pctx, 20*time.Millisecond, nil)
 	// Wait for the fold to see the dmrgateway-down event.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {

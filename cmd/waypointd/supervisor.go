@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"math/rand"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/KN4OQW/waypoint/internal/config"
@@ -32,6 +34,28 @@ type supervisorOptions struct {
 	Commander func() *mqtt.Commander
 }
 
+// linkStateDiag remembers the last reason the poll produced nothing, so a
+// permanent fault logs once instead of every cycle. A supervisor that cannot ask
+// its question is indistinguishable, from the outside, from one whose answer is
+// "unknown" — and on the bench that state persisted for the life of the process
+// with nothing in the journal to say why. One line per distinct condition is the
+// difference between a diagnosis and an afternoon.
+var linkStateDiag struct {
+	mu   sync.Mutex
+	last string
+}
+
+func linkStateNote(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	linkStateDiag.mu.Lock()
+	defer linkStateDiag.mu.Unlock()
+	if linkStateDiag.last == msg {
+		return
+	}
+	linkStateDiag.last = msg
+	log.Printf("supervisor: %s", msg)
+}
+
 // dmrLinkState asks DMRGateway which of its masters are still connected, and maps
 // its positional answer onto network names.
 //
@@ -44,6 +68,14 @@ type supervisorOptions struct {
 func (s *server) dmrLinkState(cmd *mqtt.Commander) map[string]supervisor.Tri {
 	m, err := config.Load(s.store)
 	if err != nil {
+		linkStateNote("cannot read the config store for link state: %v", err)
+		return nil
+	}
+	if cmd == nil {
+		// The data plane has not built a command client yet, or never did. Silent
+		// before this line, and permanent when it happens: every attachment stays at
+		// unknown for the life of the process.
+		linkStateNote("no MQTT command client; DMR link state stays unknown")
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -51,6 +83,8 @@ func (s *server) dmrLinkState(cmd *mqtt.Commander) map[string]supervisor.Tri {
 
 	reply, ok := cmd.Ask(ctx, config.MQTTNameDMRGateway, "status")
 	if !ok {
+		linkStateNote("%s did not answer the status command; DMR link state stays unknown",
+			config.MQTTNameDMRGateway)
 		return nil // no answer is no news
 	}
 	slots := supervisor.ParseDMRGatewayStatusReply(reply)
@@ -61,6 +95,15 @@ func (s *server) dmrLinkState(cmd *mqtt.Commander) map[string]supervisor.Tri {
 			out[names[i]] = state
 		}
 	}
+	if len(out) == 0 {
+		// The daemon answered but nothing mapped: either the reply named no netN
+		// slots, or it named more than the store knows about (mid-apply). Either way
+		// the answer is real and the mapping is not, which is worth saying out loud.
+		linkStateNote("status reply %q mapped onto none of %d configured DMR networks",
+			reply, len(names))
+		return out
+	}
+	linkStateNote("DMR link state: %v", out)
 	return out
 }
 
@@ -92,13 +135,14 @@ func (s *server) runSupervisor(ctx context.Context, opts supervisorOptions) {
 			UnitActive: s.unitLiveness,
 			LinkState: func() map[string]supervisor.Tri {
 				if opts.Commander == nil {
+					linkStateNote("no commander resolver wired; DMR link state stays unknown")
 					return nil
 				}
-				cmd := opts.Commander()
-				if cmd == nil {
-					return nil // the data plane has not come up yet
-				}
-				return s.dmrLinkState(cmd)
+				// A nil client is passed through rather than short-circuited here:
+				// "the data plane has not come up yet" is indistinguishable from
+				// "it never will", and the second one is permanent. dmrLinkState is
+				// where that gets said out loud, once.
+				return s.dmrLinkState(opts.Commander())
 			},
 			Confirm: func(network string, at time.Time) {
 				if s.agg != nil {

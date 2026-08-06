@@ -38,6 +38,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/lcd/hd44780"
 	"github.com/KN4OQW/waypoint/internal/m17hosts"
 	"github.com/KN4OQW/waypoint/internal/minisign"
+	"github.com/KN4OQW/waypoint/internal/mqtt"
 	"github.com/KN4OQW/waypoint/internal/netconfig"
 	"github.com/KN4OQW/waypoint/internal/netwatch"
 	"github.com/KN4OQW/waypoint/internal/nxdnhosts"
@@ -1972,6 +1973,12 @@ func main() {
 	supervisorRemediate := flag.Bool("supervisor-remediate", true, "let the resilience supervisor restart a gateway that has lost its upstream link; false observes and reports only (#22)")
 	supervisorMaxRestarts := flag.Int("supervisor-max-restarts", supervisor.DefaultMaxRestarts, "global backstop: most gateway restarts the supervisor may perform inside -supervisor-restart-window")
 	supervisorRestartWindow := flag.Duration("supervisor-restart-window", supervisor.DefaultRestartWindow, "the window -supervisor-max-restarts is counted over")
+	// Distinct from the two above: those bound the restarts WAYPOINT performs.
+	// These two watch the restarts SYSTEMD performs, which no budget of ours ever
+	// sees — the failure mode where a daemon exits on its own and is restarted
+	// forever while every health surface reads green.
+	crashLoopThreshold := flag.Int("crashloop-threshold", supervisor.DefaultCrashLoopThreshold, "automatic systemd restarts inside -crashloop-window before a gateway is reported as crash-looping")
+	crashLoopWindow := flag.Duration("crashloop-window", supervisor.DefaultCrashLoopWindow, "the window -crashloop-threshold is counted over")
 	mqttUser := flag.String("mqtt-user", "", "MQTT username (optional)")
 	mqttPass := flag.String("mqtt-pass", "", "MQTT password (optional)")
 	mmdvmINI := flag.String("mmdvm-ini", paths.EtcDir+"/MMDVM-Host.ini", "MMDVM-Host.ini render target (the file the daemon reads)")
@@ -2370,7 +2377,10 @@ func main() {
 		// Supervisor liveness probe: emits gateway_up/gateway_down so a killed or
 		// restarted gateway shows truth within the probe interval — the #5 acceptance,
 		// from systemd state (not log scraping). Live mode only (a demo runs no gateways).
-		go s.runLivenessProbe(context.Background(), *probeInterval)
+		go s.runLivenessProbe(context.Background(), *probeInterval, &supervisor.RestartWatch{
+			Threshold: *crashLoopThreshold,
+			Window:    *crashLoopWindow,
+		})
 		// Network resilience (#22): watch every upstream attachment the config
 		// declares, keep the node honest about them, and restart a gateway that has
 		// lost one and cannot get it back on its own. Live mode only — a demo node
@@ -2382,7 +2392,15 @@ func main() {
 			RestartWindow: *supervisorRestartWindow,
 			// Read per cycle, not captured: the data plane rebuilds this connection
 			// when the store's broker moves (#29), and the supervisor has to follow.
-			Commander: s.dp.commander,
+			//
+			// A closure, not the s.dp.commander method value: s.dp is assigned below
+			// this call, and a method value binds its receiver where it is written.
+			// Taking it here captured a nil *dataPlane for the life of the process, so
+			// commander() returned nil on every cycle, the DMR link poll never ran, and
+			// every attachment sat at "no evidence" forever while the status surface
+			// reported it healthy. The closure resolves s.dp when the supervisor
+			// actually asks, which is what the line above always meant.
+			Commander: func() *mqtt.Commander { return s.dp.commander() },
 		})
 		// Update poller (D2 / #15): periodically refresh the stack and waypointd
 		// available-update caches and drive opt-in quiet-window auto-apply. Live mode
