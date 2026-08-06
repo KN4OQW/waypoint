@@ -137,6 +137,7 @@
   "dash.gateways.label": "Estado de los daemons de gateway",
   "dash.gateways.running": "en ejecución ✓",
   "dash.gateways.stopped": "no en ejecución ✗",
+  "dash.gateways.unknown": "unknown ?",
   "dash.intro": "Actividad en vivo de este nodo. Cada fila llega por <code>/api/events</code> — sin raspado de logs.",
   "dash.lastheard.ber": "BER",
   "dash.lastheard.berValue": "{n}%",

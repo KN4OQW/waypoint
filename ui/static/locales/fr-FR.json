@@ -127,6 +127,7 @@
   "dash.gateways.label": "Statut du démon passerelle",
   "dash.gateways.running": "en cours d'exécution ✓",
   "dash.gateways.stopped": "arrêté ✗",
+  "dash.gateways.unknown": "unknown ?",
   "dash.intro": "Activité en direct pour ce nœud. Chaque ligne arrive via <code>/api/events</code> — aucun analyse de fichiers de journal.",
   "dash.lastheard.ber": "BER",
   "dash.lastheard.berValue": "{n}%",
