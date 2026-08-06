@@ -64,6 +64,21 @@ const (
 type Claim struct {
 	Up     bool
 	Detail string
+
+	// Session is what is actually KNOWN about the upstream session, as opposed to
+	// what Up asserts. TriYes and TriNo mean something vouched for the link one way
+	// or the other; TriUnknown means nothing has, and is the honest answer for a
+	// supervisor that has just started or whose evidence has gone stale.
+	//
+	// Up and Session deliberately disagree in one direction: an attachment nothing
+	// has reported a problem about stays Up (restarting it on the strength of a
+	// probe that has not run would be worse than waiting) while its Session is
+	// TriUnknown. Before this existed, that case was published as "running" — a
+	// process-liveness word standing in for session truth — and a node whose
+	// evidence path was broken looked identical to one that was logged in. Reporting
+	// unknown is the whole point: it is the difference between "we checked" and "we
+	// have not heard".
+	Session Tri
 }
 
 // Decision is one step's output.
@@ -167,7 +182,7 @@ func (m *Monitor) Step(o Observation) Decision {
 		m.unhealthySince, m.healthySince = time.Time{}, time.Time{}
 	}
 
-	healthy, reason := assess(o)
+	healthy, reason, session := assess(o)
 
 	if healthy {
 		m.unhealthySince = time.Time{}
@@ -177,14 +192,14 @@ func (m *Monitor) Step(o Observation) Decision {
 		if o.Now.Sub(m.healthySince) >= m.policy.SustainedOK {
 			m.bo.Reset()
 		}
-		return Decision{Action: ActNone, Claim: Claim{Up: true, Detail: reason}, Reason: reason}
+		return Decision{Action: ActNone, Claim: Claim{Up: true, Detail: reason, Session: session}, Reason: reason}
 	}
 
 	m.healthySince = time.Time{}
 	if m.unhealthySince.IsZero() {
 		m.unhealthySince = o.Now
 	}
-	claim := Claim{Up: false, Detail: reason}
+	claim := Claim{Up: false, Detail: reason, Session: session}
 
 	switch {
 	case o.Now.Before(m.cooldownUntil):
@@ -239,19 +254,28 @@ func (m *Monitor) Settled(now time.Time) {
 // assess is the health verdict for one observation: unhealthy on positive bad
 // news only, so an attachment nothing has reported on yet is left alone rather
 // than restarted on the strength of a probe that has not run.
-func assess(o Observation) (bool, string) {
+//
+// The returned Tri is what is KNOWN about the session, which is not the same
+// question as the bool. The bool decides whether to act; the Tri decides what to
+// say. They part company on the last case: nothing has reported a problem, so we
+// do not act — but nothing has vouched for the link either, so we must not claim
+// it is up. Answering "running" there (a systemd fact) where a session verdict
+// belongs is what let a node with a dead evidence path look healthy indefinitely.
+func assess(o Observation) (bool, string, Tri) {
 	switch {
 	case o.Unit == TriNo:
-		return false, "the gateway is not running"
+		return false, "the gateway is not running", TriNo
 	case o.Endpoint == TriNo:
-		return false, "the endpoint is unreachable"
+		return false, "the endpoint is unreachable", TriNo
 	case o.Login == TriNo:
-		return false, "not logged in"
+		return false, "not logged in", TriNo
 	case o.Login == TriYes:
-		return true, "logged in"
+		return true, "logged in", TriYes
 	case o.Endpoint == TriYes:
-		return true, "reachable"
+		// The endpoint answered but the daemon has not vouched for a login. That is
+		// real evidence of reachability and none at all of a session.
+		return true, "reachable, session unconfirmed", TriUnknown
 	default:
-		return true, "running"
+		return true, "awaiting session evidence", TriUnknown
 	}
 }
