@@ -127,6 +127,7 @@
   "dash.gateways.label": "ゲートウェイデーモンステータス",
   "dash.gateways.running": "実行中 ✓",
   "dash.gateways.stopped": "停止中 ✗",
+  "dash.gateways.unknown": "unknown ?",
   "dash.intro": "このノードのライブアクティビティ。すべての行は <code>/api/events</code> 経由で取得され、ログスクレイピングは行われません。",
   "dash.lastheard.ber": "BER",
   "dash.lastheard.berValue": "{n}%",

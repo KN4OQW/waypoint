@@ -127,6 +127,7 @@
   "dash.gateways.label": "Gateway daemon status",
   "dash.gateways.running": "running ✓",
   "dash.gateways.stopped": "not running ✗",
+  "dash.gateways.unknown": "unknown ?",
   "dash.intro": "Live activity for this node. Every row arrives over <code>/api/events</code> — no log scraping.",
   "dash.lastheard.ber": "BER",
   "dash.lastheard.berValue": "{n}%",

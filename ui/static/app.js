@@ -181,13 +181,25 @@ function renderLastHeard() {
 // add a network and always drew it with a ✓, so a link that dropped stayed green
 // forever and a reloaded tab replayed an ancient "link" event out of history and
 // believed it. One server-side truth, self-healing, is the whole point of the
+// Link state comes from linkstate.js (WPLink), which is where the three-state
+// read and its fallbacks live so ui/tests can drive them without a DOM.
+const linkClass = (l) => WPLink.linkClass(l);
+const linkMark = (l) => WPLink.linkMark(l);
+const linkWord = (l) => WPLink.linkWord(l);
+
+function gatewayWord(g) {
+  const s = WPLink.linkState(g);
+  if (s === WPLink.UNKNOWN) return t("dash.gateways.unknown");
+  return s === WPLink.UP ? t("dash.gateways.running") : t("dash.gateways.stopped");
+}
+
 // status pipeline (RFC-0008); the event stream's job here is the log, not state.
 function renderNetworks(nets) {
   const items = Object.entries(nets || {}).sort((a, b) => a[0].localeCompare(b[0]));
   $("#networks-empty").hidden = items.length > 0;
   $("#networks").innerHTML = items.map(([name, l]) =>
-    `<li class="${l.up ? "" : "down"}"><span class="dot" aria-hidden="true"></span>${esc(name)}` +
-    `<span class="state">${esc(l.detail || (l.up ? "linked" : "not linked"))} ${l.up ? "✓" : "✗"}</span></li>`
+    `<li class="${linkClass(l)}"><span class="dot" aria-hidden="true"></span>${esc(name)}` +
+    `<span class="state">${esc(l.detail || linkWord(l))} ${linkMark(l)}</span></li>`
   ).join("");
 }
 
@@ -288,8 +300,8 @@ function renderGateways(gws) {
   const items = Object.entries(gws || {}).sort((a, b) => a[0].localeCompare(b[0]));
   $("#gateways-empty").hidden = items.length > 0;
   $("#gateways").innerHTML = items.map(([name, g]) =>
-    `<li class="${g.up ? "" : "down"}"><span class="dot" aria-hidden="true"></span>${esc(name)}` +
-    `<span class="state">${esc(g.up ? t("dash.gateways.running") : t("dash.gateways.stopped"))}</span></li>`
+    `<li class="${linkClass(g)}"><span class="dot" aria-hidden="true"></span>${esc(name)}` +
+    `<span class="state">${esc(g.detail || gatewayWord(g))}</span></li>`
   ).join("");
 }
 
