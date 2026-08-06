@@ -254,6 +254,10 @@
      never colour alone (the ✓/✗ is what carries it without colour vision). */
   .netlist li.down { color: var(--muted); }
   .netlist li.down .dot { background: var(--bad); box-shadow: 0 0 7px rgba(255,107,107,.5); }
+  /* Unknown is its own colour on purpose. Painting it green claims a link nobody
+     vouched for; painting it red reports an outage that may not exist. */
+  .netlist li.unknown { color: var(--muted); }
+  .netlist li.unknown .dot { background: var(--warn); box-shadow: 0 0 7px rgba(255,159,69,.5); }
 
   .foot { padding: 18px 34px 30px; font-family: var(--mono); font-size: 10px; color: var(--faint); letter-spacing: .3px; }
   .foot code { color: var(--dim); }
@@ -356,6 +360,7 @@
 </div>
 
 <script src="i18n.js"></script>
+<script src="linkstate.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
