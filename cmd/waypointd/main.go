@@ -1973,6 +1973,12 @@ func main() {
 	supervisorRemediate := flag.Bool("supervisor-remediate", true, "let the resilience supervisor restart a gateway that has lost its upstream link; false observes and reports only (#22)")
 	supervisorMaxRestarts := flag.Int("supervisor-max-restarts", supervisor.DefaultMaxRestarts, "global backstop: most gateway restarts the supervisor may perform inside -supervisor-restart-window")
 	supervisorRestartWindow := flag.Duration("supervisor-restart-window", supervisor.DefaultRestartWindow, "the window -supervisor-max-restarts is counted over")
+	// Distinct from the two above: those bound the restarts WAYPOINT performs.
+	// These two watch the restarts SYSTEMD performs, which no budget of ours ever
+	// sees — the failure mode where a daemon exits on its own and is restarted
+	// forever while every health surface reads green.
+	crashLoopThreshold := flag.Int("crashloop-threshold", supervisor.DefaultCrashLoopThreshold, "automatic systemd restarts inside -crashloop-window before a gateway is reported as crash-looping")
+	crashLoopWindow := flag.Duration("crashloop-window", supervisor.DefaultCrashLoopWindow, "the window -crashloop-threshold is counted over")
 	mqttUser := flag.String("mqtt-user", "", "MQTT username (optional)")
 	mqttPass := flag.String("mqtt-pass", "", "MQTT password (optional)")
 	mmdvmINI := flag.String("mmdvm-ini", paths.EtcDir+"/MMDVM-Host.ini", "MMDVM-Host.ini render target (the file the daemon reads)")
@@ -2371,7 +2377,10 @@ func main() {
 		// Supervisor liveness probe: emits gateway_up/gateway_down so a killed or
 		// restarted gateway shows truth within the probe interval — the #5 acceptance,
 		// from systemd state (not log scraping). Live mode only (a demo runs no gateways).
-		go s.runLivenessProbe(context.Background(), *probeInterval)
+		go s.runLivenessProbe(context.Background(), *probeInterval, &supervisor.RestartWatch{
+			Threshold: *crashLoopThreshold,
+			Window:    *crashLoopWindow,
+		})
 		// Network resilience (#22): watch every upstream attachment the config
 		// declares, keep the node honest about them, and restart a gateway that has
 		// lost one and cannot get it back on its own. Live mode only — a demo node
