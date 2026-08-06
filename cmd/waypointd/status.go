@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -132,8 +134,9 @@ func writeWSFrame(c *websocket.Conn, kind string, data any) error {
 // gateways).
 func (s *server) runLivenessProbe(ctx context.Context, interval time.Duration, watch *supervisor.RestartWatch) {
 	type state struct {
-		up      bool
-		looping bool
+		up         bool
+		looping    bool
+		loopDetail string
 	}
 	last := map[string]state{}
 	// NRestarts is sampled far less often than liveness. The probe ticks every
@@ -164,30 +167,43 @@ func (s *server) runLivenessProbe(ctx context.Context, interval time.Duration, w
 			_, aerr := systemctlRun("is-active", "--quiet", unit)
 			up := aerr == nil
 
-			cur := state{up: up, looping: last[name].looping}
+			// The loop verdict carries between samples. The probe ticks every second
+			// and only samples restarts every fifteen, and a crash-looping unit's
+			// is-active flaps as it dies and comes back — so recomputing the detail
+			// from `up` alone on the intervening ticks would overwrite the crash-loop
+			// message within a second of it being set, which is exactly what it did.
+			cur := state{up: up, looping: last[name].looping, loopDetail: last[name].loopDetail}
 			if sampleRestarts {
-				if n, ok := unitRestartCount(unit); ok {
+				n, ok := unitRestartCount(unit)
+				if !ok {
+					// A unit whose restart count cannot be read is not reported as
+					// healthy on that basis; say so once rather than silently skipping.
+					restartNote("cannot read NRestarts for %s; crash-loop detection is blind to it", unit)
+				} else {
 					loop, looping := watch.Observe(unit, n, now)
+					restartNote("%s NRestarts=%d looping=%v", unit, n, looping)
 					cur.looping = looping
+					cur.loopDetail = ""
 					if looping {
 						// Say it plainly and keep the numbers: an operator seeing
 						// "running" on a daemon that has restarted forty times in ten
 						// minutes has been told nothing useful.
-						detail := fmt.Sprintf("restarting repeatedly — %d restarts in %s",
+						cur.loopDetail = fmt.Sprintf("restarting repeatedly — %d restarts in %s",
 							loop.Restarts, loop.Window)
-						if prev, seen := last[name]; !seen || prev != cur {
-							s.hub.Publish(hub.Event{Time: now, Type: status.TypeGWUp, Network: name, Detail: detail})
-							last[name] = cur
-						}
-						continue
 					}
 				}
 			}
 
 			if prev, seen := last[name]; !seen || prev != cur {
 				last[name] = cur
+				// A thrashing unit reports the loop whichever half of the cycle this
+				// tick caught it in: "not running" for a daemon that will be back in
+				// three seconds is true and useless.
 				t, detail := status.TypeGWUp, "running"
-				if !up {
+				switch {
+				case cur.looping:
+					t, detail = status.TypeGWUp, cur.loopDetail
+				case !up:
 					t, detail = status.TypeGWDown, "not running"
 				}
 				s.hub.Publish(hub.Event{Time: now, Type: t, Network: name, Detail: detail})
@@ -222,6 +238,31 @@ func friendlyUnit(unit string) string {
 	u := strings.TrimSuffix(unit, ".service")
 	u = strings.TrimPrefix(u, "waypoint-")
 	return u
+}
+
+// restartNote logs a crash-loop sampling fact once per distinct message, so a
+// permanently blind detector says so instead of looking like a quiet one.
+var restartDiag struct {
+	mu   sync.Mutex
+	last map[string]string
+}
+
+func restartNote(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	key := msg
+	if i := strings.IndexByte(msg, ' '); i > 0 {
+		key = msg[:i] // one slot per unit, so a changing count still logs
+	}
+	restartDiag.mu.Lock()
+	defer restartDiag.mu.Unlock()
+	if restartDiag.last == nil {
+		restartDiag.last = map[string]string{}
+	}
+	if restartDiag.last[key] == msg {
+		return
+	}
+	restartDiag.last[key] = msg
+	log.Printf("crashloop: %s", msg)
 }
 
 // unitRestartCount reads systemd's NRestarts for a unit: how many times it has

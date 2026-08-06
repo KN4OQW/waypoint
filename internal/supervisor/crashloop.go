@@ -17,9 +17,11 @@ import (
 // restarted anything.
 //
 // The evidence is systemd's NRestarts counter, sampled by the liveness probe that
-// already walks these units. It counts automatic restarts and resets when a unit
-// is started or restarted by hand, so a decrease means "somebody intervened", not
-// "time went backwards".
+// already walks these units. It counts automatic restarts and resets whenever the
+// unit is restarted outright, so a decrease means "something restarted it", not
+// "time went backwards" — and since that is itself a restart, it is counted rather
+// than treated as a clean slate. See Observe for why that matters here
+// specifically.
 //
 // Why a rate and not a total: a node that has been up for a year has legitimately
 // restarted a gateway a few times. Nine restarts spread over that year is health;
@@ -83,10 +85,17 @@ func (w *RestartWatch) window() time.Duration {
 // waypointd may have started long after the restarts it is reading about, and
 // counting history it did not witness would fire on every daemon start.
 //
-// A counter that has gone DOWN means the unit was started or restarted by hand,
-// which resets systemd's count. That is an intervention, not evidence, so the
-// history is dropped and the unit gets a fresh baseline — otherwise the operator's
-// own fix would look like more thrashing.
+// A counter that has gone DOWN means the unit was restarted outright, which resets
+// systemd's count — and that restart is itself evidence, so the history is KEPT and
+// the reset counts as one more. The alternative was tried and is worse: this
+// supervisor restarts a gateway that has lost its link, and on the bench that reset
+// NRestarts from 23 to 1 and wiped the loop verdict. A daemon thrashing badly
+// enough for waypointd to intervene would have laundered its own evidence through
+// the intervention, every time, and reported healthy throughout.
+//
+// The cost is that a genuine operator fix leaves the finding standing until the
+// window rolls off. That is the right way round: it was thrashing a minute ago,
+// and saying so for another few minutes is honest where forgetting is not.
 func (w *RestartWatch) Observe(unit string, nrestarts int, now time.Time) (CrashLoop, bool) {
 	if unit == "" || nrestarts < 0 {
 		return CrashLoop{}, false
@@ -103,8 +112,11 @@ func (w *RestartWatch) Observe(unit string, nrestarts int, now time.Time) (Crash
 	case !seen:
 		return CrashLoop{}, false // baseline only
 	case nrestarts < prev:
-		delete(w.times, unit) // manual intervention reset the counter
-		return CrashLoop{}, false
+		// The counter reset, so the unit was restarted: count that restart, plus
+		// however many it has already racked up since.
+		for i := 0; i <= nrestarts; i++ {
+			w.times[unit] = append(w.times[unit], now)
+		}
 	case nrestarts > prev:
 		// One timestamp per restart, so a probe that missed a few cycles still
 		// counts what happened between the samples rather than collapsing it to one.

@@ -80,19 +80,18 @@ func TestRestartWatch4810RestartsAllGreen(t *testing.T) {
 }
 
 func TestRestartWatchEdges(t *testing.T) {
-	// A counter that goes down means somebody restarted the unit by hand, which
-	// resets systemd's count. That is an intervention, and treating it as more
-	// thrashing would make the operator's own fix look like the fault.
-	t.Run("a manual restart resets rather than accumulates", func(t *testing.T) {
+	// A counter reset does not launder the history. waypointd's own supervisor
+	// restarts a gateway that has lost its link, and that resets NRestarts -- on the
+	// bench it went 23 to 1 and wiped the verdict. A daemon thrashing badly enough
+	// to be remediated would otherwise erase its own evidence through the
+	// remediation, every time.
+	t.Run("a counter reset counts as a restart rather than erasing history", func(t *testing.T) {
 		w := &RestartWatch{Threshold: 3, Window: time.Hour}
-		w.Observe(testUnit, 10, ct0)
-		w.Observe(testUnit, 12, ct0.Add(time.Minute))
-		if _, looping := w.Observe(testUnit, 0, ct0.Add(2*time.Minute)); looping {
-			t.Error("a counter reset was reported as a loop")
-		}
-		// And the baseline restarts from there: two more restarts is still below 3.
-		if _, looping := w.Observe(testUnit, 2, ct0.Add(3*time.Minute)); looping {
-			t.Error("history survived a manual restart")
+		w.Observe(testUnit, 10, ct0)                  // baseline
+		w.Observe(testUnit, 12, ct0.Add(time.Minute)) // +2
+		// The reset itself is the third restart, which reaches the threshold.
+		if _, looping := w.Observe(testUnit, 0, ct0.Add(2*time.Minute)); !looping {
+			t.Error("a reset erased the history instead of counting as a restart")
 		}
 	})
 
