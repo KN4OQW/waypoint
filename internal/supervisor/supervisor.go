@@ -485,5 +485,23 @@ func (s *Supervisor) publishClaim(a Attachment, d Decision, now time.Time) {
 		Type:    t,
 		Network: a.Name,
 		Detail:  d.Claim.Detail,
+		// The verdict travels with the prose. Detail already said "awaiting session
+		// evidence" in so many words; this is the same fact in a form a consumer can
+		// branch on without reading English.
+		State: linkState(d.Claim.Session),
 	})
+}
+
+// linkState renders a session verdict as the status package's wire string. It
+// lives here rather than on Tri because Tri is used for unit and endpoint state
+// too, where "up"/"down" would be the wrong words.
+func linkState(t Tri) string {
+	switch t {
+	case TriYes:
+		return status.StateUp
+	case TriNo:
+		return status.StateDown
+	default:
+		return status.StateUnknown
+	}
 }

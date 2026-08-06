@@ -45,7 +45,15 @@ type Transmission struct {
 // confirmed: a re-confirmation of an already-up link leaves it alone, so "linked
 // since 09:14" stays true across a probe that re-asserts it every few seconds.
 type Link struct {
-	Up     bool      `json:"up"`
+	// Up is the legacy boolean and stays for compatibility with clients written
+	// before State existed. It cannot express "we have not heard", so it reports
+	// true for an unknown link -- do not gate on it; gate on State.
+	Up bool `json:"up"`
+	// State is the authoritative verdict: StateUp and StateDown mean something
+	// vouched for the link one way or the other, StateUnknown means nothing has.
+	// Detail is prose for a human and is not a machine interface; anything that
+	// branches on link health reads this field.
+	State  string    `json:"state"`
 	Detail string    `json:"detail,omitempty"`
 	Since  time.Time `json:"since"`
 
@@ -58,6 +66,19 @@ type Link struct {
 	// not churn the topics.
 	expiresAt time.Time
 }
+
+// The three link states. Lower-case strings, matching Transmission.Direction and
+// the event type names — the wire format everywhere else in this package.
+const (
+	// StateUp: something vouched for this link.
+	StateUp = "up"
+	// StateDown: something reported it broken.
+	StateDown = "down"
+	// StateUnknown: nothing has said either way. A fresh waypointd reports this
+	// until evidence arrives, and evidence decays back to it. Rendering it as
+	// either up or down is the mistake this field exists to prevent.
+	StateUnknown = "unknown"
+)
 
 // Feed is the health of the MMDVM-Host MQTT feed that everything else derives from.
 type Feed struct {
@@ -308,7 +329,7 @@ func applyEvent(s Status, e hub.Event, txTTL time.Duration) Status {
 			// actually re-confirming it — see ConfirmLink — because a link nobody can
 			// re-check must keep its last known state rather than decay to "down" on a
 			// timer that says nothing about the link.
-			s.Networks = setLink(s.Networks, e.Network, e.Type != TypeLinkDown, e.Detail, e.Time, time.Time{})
+			s.Networks = setLink(s.Networks, e.Network, e.Type != TypeLinkDown, e.State, e.Detail, e.Time, time.Time{})
 		}
 	case TypeLinkRemoved:
 		if e.Network != "" {
@@ -320,7 +341,7 @@ func applyEvent(s Status, e hub.Event, txTTL time.Duration) Status {
 	case TypeGWUp, TypeGWDown:
 		name := firstNonEmpty(e.Network, e.Mode)
 		if name != "" {
-			s.Gateways = setLink(s.Gateways, name, e.Type == TypeGWUp, e.Detail, e.Time, time.Time{})
+			s.Gateways = setLink(s.Gateways, name, e.Type == TypeGWUp, e.State, e.Detail, e.Time, time.Time{})
 		}
 	case TypeFeedUp, TypeFeedDown:
 		s.Feed = Feed{Connected: e.Type == TypeFeedUp, Detail: e.Detail, Since: e.Time}
@@ -333,7 +354,7 @@ func applyEvent(s Status, e hub.Event, txTTL time.Duration) Status {
 			// is a source the feed's loss says nothing about.
 			for name, l := range s.Networks {
 				if l.Up {
-					s.Networks = setLink(s.Networks, name, false, "unconfirmed — MMDVM-Host feed down", e.Time, time.Time{})
+					s.Networks = setLink(s.Networks, name, false, StateUnknown, "unconfirmed — MMDVM-Host feed down", e.Time, time.Time{})
 				}
 			}
 		}
@@ -345,13 +366,22 @@ func applyEvent(s Status, e hub.Event, txTTL time.Duration) Status {
 // A re-confirmation is not a state change: without this, a supervisor that
 // re-asserts a link every few seconds would keep resetting "linked since" and the
 // dashboard could never show how long a link had held.
-func setLink(m map[string]Link, name string, up bool, detail string, at, expiresAt time.Time) map[string]Link {
+func setLink(m map[string]Link, name string, up bool, state, detail string, at, expiresAt time.Time) map[string]Link {
 	out := cloneLinks(m)
+	if state == "" {
+		// A caller with no verdict to offer gets the boolean's meaning, not a
+		// silent "unknown": the gateway liveness probe genuinely knows whether the
+		// unit is running, and that is evidence.
+		state = StateUp
+		if !up {
+			state = StateDown
+		}
+	}
 	since := at
-	if prev, ok := m[name]; ok && prev.Up == up {
+	if prev, ok := m[name]; ok && prev.Up == up && prev.State == state {
 		since = prev.Since
 	}
-	out[name] = Link{Up: up, Detail: detail, Since: since, expiresAt: expiresAt}
+	out[name] = Link{Up: up, State: state, Detail: detail, Since: since, expiresAt: expiresAt}
 	return out
 }
 
@@ -371,7 +401,7 @@ func expire(s Status, now time.Time, linkTTL time.Duration) Status {
 	}
 	for name, l := range s.Networks {
 		if l.Up && !l.expiresAt.IsZero() && now.After(l.expiresAt) {
-			s.Networks = setLink(s.Networks, name, false, "unconfirmed for "+linkTTL.String(), now, time.Time{})
+			s.Networks = setLink(s.Networks, name, false, StateUnknown, "unconfirmed for "+linkTTL.String(), now, time.Time{})
 		}
 	}
 	return s

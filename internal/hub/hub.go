@@ -24,6 +24,11 @@ type Event struct {
 	BER     float64   `json:"ber,omitempty"`     // percent, on rf_voice_end
 	RSSI    int       `json:"rssi,omitempty"`    // dBm, on rf_voice_end
 	Detail  string    `json:"detail,omitempty"`
+	// State is the machine-readable link verdict ("up"/"down"/"unknown") that
+	// accompanies Detail's prose on link_up/link_down. Empty on every other event
+	// type, and empty from producers that have only a boolean to offer — the
+	// status aggregator falls back to the boolean's meaning in that case.
+	State string `json:"state,omitempty"`
 }
 
 const backlogSize = 200

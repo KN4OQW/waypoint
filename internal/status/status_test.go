@@ -1,6 +1,7 @@
 package status
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -315,5 +316,64 @@ func TestOnChange(t *testing.T) {
 	a.Apply(hub.Event{Type: TypeRFEnd, Time: t0})
 	if last.TX != prev.TX {
 		t.Error("listener fired after cancel")
+	}
+}
+
+// The three link states over the wire. `state` is what a consumer branches on;
+// `up` is the legacy boolean and is deliberately true for an unknown link, which
+// is exactly why nothing may gate on it.
+func TestLinkStateSerialization(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		link      Link
+		wantState string
+		wantUp    bool
+	}{
+		{"evidenced up", Link{Up: true, State: StateUp, Detail: "logged in"}, "up", true},
+		{"evidenced down", Link{Up: false, State: StateDown, Detail: "not logged in"}, "down", false},
+		// The case that did not exist before the tri-state: healthy enough to leave
+		// alone, but nothing has vouched for it.
+		{"unknown", Link{Up: true, State: StateUnknown, Detail: "awaiting session evidence"}, "unknown", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := json.Marshal(tc.link)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(b, &got); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if got["state"] != tc.wantState {
+				t.Errorf("state = %v, want %q", got["state"], tc.wantState)
+			}
+			if got["up"] != tc.wantUp {
+				t.Errorf("up = %v, want %v", got["up"], tc.wantUp)
+			}
+			// state is never omitted: a missing field is indistinguishable from a
+			// daemon too old to have one, and the fallback for that is the boolean.
+			if _, ok := got["state"]; !ok {
+				t.Error("state was omitted from the payload")
+			}
+		})
+	}
+}
+
+// A producer with only a boolean to offer still yields a usable state, so an
+// event source that predates the field does not land every link on "unknown".
+func TestSetLinkDefaultsStateFromTheBoolean(t *testing.T) {
+	now := time.Now()
+	up := setLink(nil, "n", true, "", "running", now, time.Time{})
+	if up["n"].State != StateUp {
+		t.Errorf("state = %q, want %q", up["n"].State, StateUp)
+	}
+	down := setLink(nil, "n", false, "", "not running", now, time.Time{})
+	if down["n"].State != StateDown {
+		t.Errorf("state = %q, want %q", down["n"].State, StateDown)
+	}
+	// An explicit verdict always wins over the boolean's guess.
+	unk := setLink(nil, "n", true, StateUnknown, "awaiting session evidence", now, time.Time{})
+	if unk["n"].State != StateUnknown {
+		t.Errorf("state = %q, want %q", unk["n"].State, StateUnknown)
 	}
 }
