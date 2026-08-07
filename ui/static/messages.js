@@ -141,18 +141,37 @@ async function load() {
 
 // The relay is what makes any of this work, and it is off by default. A page that
 // silently did nothing would send an operator to the logs; this says so up front.
+//
+// The relay's state comes from /api/status, not from the configuration. Two
+// reasons, and the second was measured rather than reasoned: the status plane
+// reports whether the relay is actually RUNNING, which is the question, and the
+// configuration API does not expose the dmrnet section at all — reading a flag
+// from it reported "off" on a node that was transmitting perfectly well.
 async function loadNode() {
   try {
     const c = await (await fetch("/api/config")).json();
-    const id = (c.dmr && c.dmr.id) || (c.general && c.general.id) || "";
+    // [DMR] Id first, then the station id, whose view field is dmr_id and not id.
+    const id = (c.dmr && c.dmr.id) || (c.general && c.general.dmr_id) || "";
     $("#st-id").textContent = id || "—";
-    const on = !!(c.dmrnet && c.dmrnet.shim_enabled);
+  } catch (e) { /* unauthenticated or offline; the gate will have redirected */ }
+  await loadRelay();
+}
+
+// RELAY_LINK is the name waypointd publishes the relay under (cmd/waypointd
+// dmrshim.go). A node with the relay switched off publishes no such link at all,
+// which is the "off" case rather than a missing one.
+const RELAY_LINK = "DMR Message Relay";
+
+async function loadRelay() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    const link = (s.networks || {})[RELAY_LINK];
+    const state = link ? WPLink.linkState(link) : "down";
+    const on = state === "up" || state === "unknown";
     $("#st-relay").textContent = on ? t("messages.relay.on") : t("messages.relay.off");
     $("#st-relay").className = "v" + (on ? " accent" : "");
-    if (!on) {
-      say(t("messages.relay.hint"), true);
-    }
-  } catch (e) { /* unauthenticated or offline; the gate will have redirected */ }
+    if (!on && $("#send-note").dataset.sticky !== "1") say(t("messages.relay.hint"), true);
+  } catch (e) { /* the LED already reports an unreachable node */ }
 }
 
 function connect() {
@@ -178,6 +197,7 @@ function boot() {
   // A slow poll as well as the event poke: it keeps the connection LED honest
   // when nothing is happening, and recovers a list that a dropped event missed.
   setInterval(load, 15000);
+  setInterval(loadRelay, 15000);
 }
 
 // The shell chrome first, then the page. Both wait for the catalogs for the same
