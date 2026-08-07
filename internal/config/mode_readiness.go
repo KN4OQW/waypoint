@@ -250,6 +250,8 @@ func (m *Model) dmrProblems() []ModeProblem {
 	}
 	// The message relay, when it was asked for and cannot be wired up.
 	m.dmrShimProblems(add)
+	// And the one piece of guidance here that is a guess rather than a fact.
+	m.staticTalkgroupHint(add)
 
 	// The DMR ID. [DMR] Id overrides [General] Id (the same precedence
 	// DMRNetworkOrder resolves with), and DMRGateway sends it in the homebrew RPTL

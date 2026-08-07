@@ -246,11 +246,22 @@ func SetModem(s *store.Store, raw []byte, by string) error {
 	return s.Set("modem", &m, by)
 }
 
-// Severity ranks a warning. Error means the configuration cannot work on this
-// hardware; warning means it probably is not what the operator meant.
+// Severity ranks a finding, from "this is broken" down to "this is worth knowing".
+//
+//   - Error: the configuration cannot work. Something will not come up, or will
+//     come up and carry nothing.
+//   - Warning: it probably is not what the operator meant. The node works; the
+//     result is likely to surprise them.
+//   - Info: the configuration is fine and there is something about it worth
+//     knowing anyway. This tier exists for guidance that is HEURISTIC — where the
+//     mechanism is real but whether it applies to this node cannot be determined
+//     from the configuration alone. The other two tiers are reserved for facts,
+//     and a guess wearing a warning's colours is how an operator learns to ignore
+//     warnings.
 const (
 	SeverityError   = "error"
 	SeverityWarning = "warning"
+	SeverityInfo    = "info"
 )
 
 // HardwareWarning is one disagreement between the configuration and what the

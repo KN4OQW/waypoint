@@ -1030,5 +1030,9 @@
   "messages.state.received": "received",
   "messages.state.failed": "failed",
   "messages.state.unknown": "unknown",
-  "messages.log.region": "Text messages"
+  "messages.log.region": "Text messages",
+  "readiness.head": "READINESS",
+  "readiness.willNotWork": "Will not work",
+  "readiness.checkThis": "Check this",
+  "readiness.worthKnowing": "Worth knowing"
 }
