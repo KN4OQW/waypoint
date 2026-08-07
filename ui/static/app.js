@@ -1,4 +1,6 @@
-/* Waypoint dashboard: a plain-JS consumer of the public API. Everything renders
+/* Waypoint dashboard: a plain-JS consumer of the public API.
+   The sidebar chrome it shares with every other page — theme, language, callsign
+   chip — lives in chrome.js so there is one copy rather than one per page. Everything renders
    from /api/health + the /api/events SSE stream. Shares the settings page's
    Nocturne shell and theme (localStorage "wp-theme") so the two read as one app. */
 "use strict";
@@ -42,62 +44,6 @@ function tgLabel(mode, dest) {
   return name ? `${dest} · ${name}` : dest;
 }
 
-// Theme is shared with the settings page via localStorage "wp-theme".
-const THEMES = [
-  { key: "phosphor", color: "#35d07f", attr: "" },
-  { key: "amber",    color: "#f0a935", attr: "amber" },
-  { key: "ice",      color: "#4db8ff", attr: "ice" },
-];
-function applyTheme(key) {
-  const th = THEMES.find((x) => x.key === key) || THEMES[0];
-  if (th.attr) document.documentElement.setAttribute("data-theme", th.attr);
-  else document.documentElement.removeAttribute("data-theme");
-}
-// Dark is the default; "light" is a mode that composes with the accent theme
-// (RFC-0009). Persisted separately so both survive a reload.
-function currentMode() {
-  const m = localStorage.getItem("wp-mode");
-  if (m) return m;
-  return (window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
-}
-function applyMode(mode) {
-  if (mode === "light") document.documentElement.setAttribute("data-mode", "light");
-  else document.documentElement.removeAttribute("data-mode");
-}
-function renderThemes() {
-  const box = $("#swatches");
-  box.innerHTML = "";
-  const cur = localStorage.getItem("wp-theme") || "phosphor";
-  const mode = currentMode();
-  // Dark/Light toggle first, then the accent swatches.
-  const toggle = document.createElement("button");
-  toggle.type = "button";
-  toggle.className = "swatch mode-toggle" + (mode === "light" ? " light" : "");
-  toggle.title = mode === "light" ? t("theme.switchToDark") : t("theme.switchToLight");
-  toggle.setAttribute("aria-label", t("theme.toggleLight"));
-  toggle.setAttribute("aria-pressed", String(mode === "light"));
-  toggle.textContent = mode === "light" ? t("theme.light") : t("theme.dark");
-  toggle.onclick = () => {
-    const next = currentMode() === "light" ? "dark" : "light";
-    localStorage.setItem("wp-mode", next);
-    applyMode(next);
-    renderThemes();
-  };
-  box.appendChild(toggle);
-  THEMES.forEach((th) => {
-    const s = document.createElement("button");
-    s.type = "button";
-    s.className = "swatch" + (th.key === cur ? " on" : "");
-    const themeName = t("theme." + th.key);
-    s.title = themeName;
-    s.setAttribute("aria-label", t("theme.swatchLabel", { theme: themeName }));
-    s.setAttribute("aria-pressed", String(th.key === cur));
-    s.innerHTML = `<span class="dot" style="background:${th.color}" aria-hidden="true"></span>`;
-    s.onclick = () => { applyTheme(th.key); localStorage.setItem("wp-theme", th.key); renderThemes(); };
-    box.appendChild(s);
-  });
-}
-
 function fmtTime(iso) {
   return new Date(iso).toLocaleTimeString(WPI18n.currentLanguage(), { hour12: false });
 }
@@ -121,21 +67,9 @@ async function loadHealth() {
   }
 }
 
-// The callsign chip mirrors the settings sidebar; sourced from the config API.
-async function loadCallsign() {
-  try {
-    const c = await (await fetch("/api/config")).json();
-    const cs = (c.general && c.general.callsign) || "";
-    if (cs) $("#side-callsign").textContent = cs;
-  } catch { /* offline — leave the placeholder */ }
-}
-
 function setConn(up) {
   state.up = up; // remembered so a language change can re-render it without a poll
-  $("#conn-led").className = "conn-led " + (up ? "up" : "down");
-  $("#conn-txt").textContent = up ? t("status.connected") : t("status.disconnected");
-  $("#side-led").className = "led" + (up ? "" : " down");
-  $("#side-online").textContent = up ? t("sidebar.online") : t("sidebar.offline");
+  WPChrome.setConn(up); // the LEDs and the sidebar chip are shell, not dashboard
 }
 
 function setMode(mode) {
@@ -331,7 +265,6 @@ async function loadStatus() {
 
 // The language picker sits under the theme swatches, and is populated from the
 // catalog index rather than a list in here.
-function mountLanguagePicker() { WPI18n.renderPicker($("#lang-pick")); }
 
 // i18n.js re-applies the static data-i18n markup on a language change; what it
 // cannot know is which of those elements JavaScript has since overwritten with
@@ -339,8 +272,8 @@ function mountLanguagePicker() { WPI18n.renderPicker($("#lang-pick")); }
 // data-i18n, so a language change resets them to "connecting…" — re-assert the
 // state we actually last saw instead of waiting out the 2s poll.
 addEventListener("wp-lang-changed", () => {
-  mountLanguagePicker();
-  renderThemes(); // the swatches carry titles and aria-labels
+  WPChrome.mountLanguagePicker();
+  WPChrome.renderThemes(); // the swatches carry titles and aria-labels
   if (state.up !== null) setConn(state.up);
   renderOnAir();
   loadHealth(); // the footer's "waypointd {version}" is interpolated, not markup
@@ -349,8 +282,8 @@ addEventListener("wp-lang-changed", () => {
 // Theme and mode are pure CSS attributes, and the inline script in the page head
 // already applied them before first paint, so they do not wait on anything. The
 // swatch UI itself does: it carries labels.
-applyMode(currentMode());
-applyTheme(localStorage.getItem("wp-theme") || "phosphor");
+WPChrome.applyMode(WPChrome.currentMode());
+WPChrome.applySavedTheme();
 
 // Everything below renders text, so it waits for the catalogs. Starting it
 // earlier would lose a race twice over: t() would answer with bare keys before
@@ -360,10 +293,10 @@ applyTheme(localStorage.getItem("wp-theme") || "phosphor");
 // inside i18n.js — so this is a delay of one same-origin fetch, not a new way
 // for the dashboard to fail to load.
 WPI18n.ready.then(() => {
-  renderThemes();
-  mountLanguagePicker();
+  WPChrome.renderThemes();
+  WPChrome.mountLanguagePicker();
   loadHealth();
-  loadCallsign();
+  WPChrome.loadCallsign();
   loadNames(); // DMR talkgroup names, for inline resolution (RFC-0010)
   loadHistory().then(connect); // seed persistent history, then attach the live tail
   loadStatus(); // server-computed truth (feed, on-air self-heal, gateways)
