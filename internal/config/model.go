@@ -621,6 +621,18 @@ type DMRNet struct {
 	// the active mode after network traffic, as opposed to DMR.ModeHang's RF side.
 	// Blank omits the key, same as the RF timers.
 	ModeHang string `json:"mode_hang"`
+
+	// ShimEnabled puts waypointd's DMR relay between MMDVM-Host and DMRGateway,
+	// which is what lets the node originate a data burst toward a radio. It is
+	// opt-in: with it off the two daemons talk to each other directly and DMR
+	// survives waypointd being stopped, which is how every node behaves today.
+	// See internal/config/dmrshim.go for the wiring and the reasoning.
+	ShimEnabled bool `json:"shim_enabled"`
+	// ShimHostPort and ShimGatewayPort are the relay's two binds. Blank takes the
+	// defaults (62033/62034); they exist so a node with something already on those
+	// ports can move them without a rebuild.
+	ShimHostPort    string `json:"shim_host_port"`
+	ShimGatewayPort string `json:"shim_gateway_port"`
 }
 
 // Modes carries the per-mode enable flags.

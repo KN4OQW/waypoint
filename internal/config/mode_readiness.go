@@ -248,6 +248,8 @@ func (m *Model) dmrProblems() []ModeProblem {
 	add := func(field, sev, msg string) {
 		out = append(out, ModeProblem{Mode: ModeDMR, Field: field, Severity: sev, Message: msg})
 	}
+	// The message relay, when it was asked for and cannot be wired up.
+	m.dmrShimProblems(add)
 
 	// The DMR ID. [DMR] Id overrides [General] Id (the same precedence
 	// DMRNetworkOrder resolves with), and DMRGateway sends it in the homebrew RPTL
