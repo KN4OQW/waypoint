@@ -13,7 +13,9 @@ correspondence, and no public route serves one. See
 
 ## Before it works
 
-Three things have to be true, and two of them are not in this API.
+Three things have to be true, and two of them are not in this API. The operator
+walk-through, with the troubleshooting, is
+[Text messaging](https://github.com/KN4OQW/waypoint/wiki/Text-messaging).
 
 **1. The DMR message relay must be on.** waypointd sits between MMDVM-Host and
 DMRGateway on the loopback so it can originate a frame; without it there is
