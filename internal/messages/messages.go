@@ -65,11 +65,26 @@ const BurstInterval = 60 * time.Millisecond
 // wait after a transmission ends.
 const IdleWindow = 400 * time.Millisecond
 
-// MaxChannelWait bounds that wait. A channel that has been busy for a minute is
-// not about to go quiet because we waited longer, and a message queued behind it
-// should say so rather than sit there. The commonest cause on a simplex node is a
-// static talkgroup, which never stops.
-const MaxChannelWait = 60 * time.Second
+// ChannelWaitPerAttempt bounds one wait for a clear slot. It is not the total: a
+// message that runs out of patience goes back on the queue rather than dying, and
+// MaxSendAttempts bounds how many times that happens.
+//
+// Splitting it this way is what lets a busy channel delay one message without
+// stalling every message behind it. With a single sender goroutine, a message
+// that blocked for the whole budget would hold the queue for the whole budget.
+const ChannelWaitPerAttempt = 60 * time.Second
+
+// MaxSendAttempts is how many times a message will wait for a clear channel
+// before it is given up on, so the total is about five minutes.
+//
+// Sixty seconds was the original single ceiling and it was too short, measured
+// rather than guessed: on the bench a 37-second transmission was followed
+// immediately by BrandMeister releasing a backlog of queued replies for another
+// 43 seconds, and a message posted during it died on a channel that was busy for
+// entirely ordinary reasons. Five minutes covers that with room to spare while
+// still ending, because a channel that has been solid for five minutes has
+// something wrong with it that waiting will not fix.
+const MaxSendAttempts = 5
 
 // QueueDepth is how many messages may be waiting to transmit. Each takes a second
 // or two of air time, so a deep queue is minutes of transmission nobody is
@@ -136,6 +151,7 @@ type Service struct {
 
 	// The inbound capture (inbound.go): one reassembler per direction, the tap it
 	// is attached through, and what it has seen.
+	attempts  map[int64]int // message id -> waits for a clear channel so far
 	rx        map[dmrshim.Direction]*dmrdata.Reassembler
 	capOn     Relay
 	capRemove func()
@@ -270,13 +286,14 @@ func (s *Service) transmit(ctx context.Context, id int64) {
 		return
 	}
 
-	// Wait for the slot before claiming to be transmitting. A message that waits
-	// thirty seconds for a busy channel and then fails should never have read as
-	// "transmitting" for those thirty seconds.
+	// Wait for the slot before claiming to be transmitting. A message that waits a
+	// minute for a busy channel and then goes back on the queue should never have
+	// read as "transmitting" for that minute.
 	if err := s.waitForIdle(ctx, w.Slot); err != nil {
-		fail(err.Error())
+		s.retryOrFail(ctx, id, m, err, fail)
 		return
 	}
+	s.forget(id)
 
 	if m, err = s.store.Advance(id, events.StateTransmitting, ""); err != nil {
 		log.Printf("messages: %v", err)
@@ -308,17 +325,71 @@ func (s *Service) transmit(ctx context.Context, id int64) {
 	s.publish(m)
 }
 
+// retryOrFail puts a message that could not get a clear channel back on the
+// queue, or gives up on it once it has had its attempts.
+//
+// Requeuing rather than failing is the point. A message that never reached the
+// air is exactly the one worth trying again, and marking it failed threw away the
+// operator's text over a channel that was busy for ordinary reasons — a long
+// transmission and a backlog of network replies were enough to do it on the
+// bench. It goes to the BACK of the queue, so a message behind it gets its turn
+// rather than waiting out the whole budget.
+func (s *Service) retryOrFail(ctx context.Context, id int64, m events.Message, waitErr error, fail func(string)) {
+	if ctx.Err() != nil {
+		fail("the daemon is shutting down")
+		return
+	}
+	n := s.countAttempt(id)
+	if n >= MaxSendAttempts {
+		s.forget(id)
+		fail(fmt.Sprintf("%v; gave up after %d attempts over %s",
+			waitErr, n, time.Duration(n)*ChannelWaitPerAttempt))
+		return
+	}
+	select {
+	case s.queue <- id:
+		log.Printf("messages: message %d to %d is waiting for a clear channel (attempt %d of %d)",
+			id, m.Peer, n, MaxSendAttempts)
+	default:
+		// The queue filled while this message was waiting. Better to say so than to
+		// drop it silently.
+		s.forget(id)
+		fail(fmt.Sprintf("%v; could not requeue, %v", waitErr, ErrQueueFull))
+	}
+}
+
+// countAttempt records and returns how many times a message has tried.
+//
+// In memory, not in the store: attempts are about this process's patience, not
+// about the message, and a daemon that restarts should give a queued message a
+// fresh start rather than inheriting a count from before the restart.
+func (s *Service) countAttempt(id int64) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.attempts == nil {
+		s.attempts = map[int64]int{}
+	}
+	s.attempts[id]++
+	return s.attempts[id]
+}
+
+func (s *Service) forget(id int64) {
+	s.mu.Lock()
+	delete(s.attempts, id)
+	s.mu.Unlock()
+}
+
 // waitForIdle blocks until the timeslot has been quiet for IdleWindow, or gives up.
 func (s *Service) waitForIdle(ctx context.Context, slot int) error {
 	s.attachTap()
-	deadline := s.now().Add(MaxChannelWait)
+	deadline := s.now().Add(ChannelWaitPerAttempt)
 	for {
 		if s.idleFor(slot) >= IdleWindow {
 			return nil
 		}
 		if !s.now().Before(deadline) {
 			return fmt.Errorf("timeslot %d has been busy for %s; the channel never went quiet "+
-				"(a static talkgroup on a simplex node will do this)", slot, MaxChannelWait)
+				"(a static talkgroup on a simplex node will do this)", slot, ChannelWaitPerAttempt)
 		}
 		if ctx.Err() != nil {
 			return errors.New("the daemon is shutting down")

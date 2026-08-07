@@ -101,7 +101,7 @@ because there is no fact past it.
 | Reason contains | What happened |
 |---|---|
 | `relay is not running` | The DMR message relay is off. See above. |
-| `has been busy` | The timeslot never went quiet within 60 seconds. On a simplex node this is usually a static talkgroup flooding the channel — check BrandMeister SelfCare. |
+| `has been busy` | The timeslot never went quiet. A message that cannot get a clear channel is put back on the queue and tried again — up to five times, about five minutes — before it fails, so this means the channel was solid for that whole time. On a simplex node it is usually a static talkgroup flooding it; check BrandMeister SelfCare. |
 | `burst N of M` | Transmission stopped partway. The receiving radio has a header whose blocks never arrived. |
 | `waiting to transmit` | The queue was full. |
 
