@@ -99,6 +99,19 @@ func RunPrune(ctx context.Context, s *Store, interval time.Duration, retentionDa
 			if n > 0 {
 				log.Printf("events: pruned %d event(s) older than %d day(s)", n, days)
 			}
+			// Messages age out on the same window: they are traffic records in the
+			// traffic database, and a second retention setting for the same question
+			// is a second thing for an operator to get wrong. Counted separately in
+			// the log, because "pruned 4000 events" and "pruned 3 messages" are very
+			// different pieces of news.
+			nm, err := s.PruneMessages(cutoff)
+			if err != nil {
+				log.Printf("events: message prune failed: %v", err)
+				continue
+			}
+			if nm > 0 {
+				log.Printf("events: pruned %d message(s) older than %d day(s)", nm, days)
+			}
 		}
 	}
 }
