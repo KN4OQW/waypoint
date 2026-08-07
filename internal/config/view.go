@@ -339,13 +339,23 @@ type ViewModem struct {
 }
 
 type ViewDMR struct {
-	Enable         bool   `json:"enable"`
-	ColorCode      string `json:"color_code"`
-	Slot1          bool   `json:"slot1"`
-	Slot2          bool   `json:"slot2"`
-	EmbeddedLCOnly bool   `json:"embedded_lc_only"`
-	DumpTAData     bool   `json:"dump_ta_data"`
-	Beacons        bool   `json:"beacons"`
+	Enable    bool   `json:"enable"`
+	ColorCode string `json:"color_code"`
+	Slot1     bool   `json:"slot1"`
+	Slot2     bool   `json:"slot2"`
+	// ShimEnabled puts waypointd's DMR message relay between MMDVM-Host and
+	// DMRGateway, which is what makes text messages possible. It lives on the
+	// dmrnet store section, like the timeslots above, and belongs on this tab for
+	// the same reason they do.
+	//
+	// It was missing from this view entirely until the hardware validation, so the
+	// only way to switch the relay on was to edit the store by hand — and the
+	// messages page, reading the flag from here, reported the relay off on a node
+	// that was transmitting.
+	ShimEnabled    bool `json:"shim_enabled"`
+	EmbeddedLCOnly bool `json:"embedded_lc_only"`
+	DumpTAData     bool `json:"dump_ta_data"`
+	Beacons        bool `json:"beacons"`
 	// SelfOnly is WPSD's "Node Lock" moved into the DMR panel: Private (locked to
 	// this node's own DMR ID) when true, Public (allows other DMR IDs) when false.
 	// It is the single [DMR] SelfOnly bit — the "Node Lock" and "allow other DMR
@@ -476,6 +486,7 @@ func (m *Model) View(src Sources) *View {
 			ColorCode:      m.DMR.ColorCode,
 			Slot1:          m.DMRNet.Slot1,
 			Slot2:          m.DMRNet.Slot2,
+			ShimEnabled:    m.DMRNet.ShimEnabled,
 			EmbeddedLCOnly: m.DMR.EmbeddedLCOnly,
 			DumpTAData:     m.DMR.DumpTAData,
 			Beacons:        m.DMR.Beacons,
