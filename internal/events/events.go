@@ -33,11 +33,12 @@ import (
 //
 //	1 — the event log.
 //	2 — plus the text-message record (messages.go).
+//	3 — plus that record's dialect column.
 //
 // The upgrade from 1 to 2 adds a table and touches nothing that existed, so it
 // needs no data migration and an older build reading a v2 database still finds
 // every event where it left it.
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // Store is a handle to the event-history database. It is the only writer.
 type Store struct {
@@ -111,6 +112,10 @@ CREATE INDEX IF NOT EXISTS idx_events_type   ON events (type, ts_ms);`
 			return fmt.Errorf("events: database schema v%d is newer than this build (v%d); refusing to run", ver, SchemaVersion)
 		}
 		if ver < SchemaVersion {
+			// v2 -> v3 adds a column to an existing table, which CREATE TABLE IF NOT
+			// EXISTS cannot do. The error is ignored on purpose: it fires when the
+			// column is already there, which is every case except the upgrade itself.
+			_, _ = s.db.Exec(`ALTER TABLE messages ADD COLUMN dialect TEXT NOT NULL DEFAULT ''`)
 			// The DDL above is idempotent and has already brought the database up to
 			// date, so this only records the fact. Recording it matters: without the
 			// write the row stayed at v1 forever, and the rollback guard above could

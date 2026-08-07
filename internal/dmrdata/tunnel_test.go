@@ -23,7 +23,7 @@ func TestBodyRoundTrip(t *testing.T) {
 		{"the longest message allowed", strings.Repeat("A", MaxTextUnits), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			body, blocks, pad, err := buildBody(3180202, 262995, tc.text, 42, tc.group)
+			body, blocks, pad, err := buildBody(3180202, 262995, tc.text, 42, tc.group, DialectTMS)
 			if err != nil {
 				t.Fatalf("buildBody: %v", err)
 			}
@@ -36,6 +36,9 @@ func TestBodyRoundTrip(t *testing.T) {
 			msg, err := parseBody(body)
 			if err != nil {
 				t.Fatalf("parseBody: %v", err)
+			}
+			if msg.Dialect != DialectTMS {
+				t.Errorf("dialect = %q, want %q", msg.Dialect, DialectTMS)
 			}
 			if msg.Text != tc.text {
 				t.Errorf("text = %q, want %q", msg.Text, tc.text)
@@ -56,14 +59,14 @@ func TestBodyRoundTrip(t *testing.T) {
 // A surrogate pair costs two units, so the rune limit and the unit limit are not
 // the same number. The bound that matters is the one the length field imposes.
 func TestTextLengthLimit(t *testing.T) {
-	if _, _, _, err := buildBody(1, 2, strings.Repeat("A", MaxTextUnits+1), 0, false); !errors.Is(err, ErrTextTooLong) {
+	if _, _, _, err := buildBody(1, 2, strings.Repeat("A", MaxTextUnits+1), 0, false, DialectTMS); !errors.Is(err, ErrTextTooLong) {
 		t.Errorf("one unit over: err = %v, want ErrTextTooLong", err)
 	}
 	// Sixty-two emoji are 124 units — over the limit despite being only 62 runes.
-	if _, _, _, err := buildBody(1, 2, strings.Repeat("👍", 62), 0, false); !errors.Is(err, ErrTextTooLong) {
+	if _, _, _, err := buildBody(1, 2, strings.Repeat("👍", 62), 0, false, DialectTMS); !errors.Is(err, ErrTextTooLong) {
 		t.Errorf("62 surrogate pairs: err = %v, want ErrTextTooLong", err)
 	}
-	if _, _, _, err := buildBody(1, 2, strings.Repeat("👍", 61), 0, false); err != nil {
+	if _, _, _, err := buildBody(1, 2, strings.Repeat("👍", 61), 0, false, DialectTMS); err != nil {
 		t.Errorf("61 surrogate pairs (122 units): err = %v, want nil", err)
 	}
 }
@@ -74,7 +77,7 @@ func TestTextLengthLimit(t *testing.T) {
 // told the message went fine. FuzzBuildMessage found this.
 func TestInvalidUTF8IsRefused(t *testing.T) {
 	for _, bad := range []string{"\xc3", "hello \xff world", "\xed\xa0\x80"} {
-		if _, _, _, err := buildBody(1, 2, bad, 0, false); !errors.Is(err, ErrInvalidText) {
+		if _, _, _, err := buildBody(1, 2, bad, 0, false, DialectTMS); !errors.Is(err, ErrInvalidText) {
 			t.Errorf("%q: err = %v, want ErrInvalidText", bad, err)
 		}
 	}
@@ -84,7 +87,7 @@ func TestInvalidUTF8IsRefused(t *testing.T) {
 // Prove that at the limit it is still a single octet, so the bound is derived from
 // the format and not from taste.
 func TestMaxTextUnitsKeepsTheLengthFieldInRange(t *testing.T) {
-	body, _, _, err := buildBody(1, 2, strings.Repeat("A", MaxTextUnits), 0, false)
+	body, _, _, err := buildBody(1, 2, strings.Repeat("A", MaxTextUnits), 0, false, DialectTMS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,14 +113,14 @@ func TestParseRecordedETSIBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseBody: %v", err)
 	}
-	want := Message{Src: 3180202, Dst: 3180202, Seq: 2, Text: "HELLO"}
+	want := Message{Src: 3180202, Dst: 3180202, Seq: 2, Text: "HELLO", Dialect: DialectETSI}
 	if got != want {
 		t.Errorf("= %+v\nwant %+v", got, want)
 	}
 }
 
 func TestParseBodyRejections(t *testing.T) {
-	good, _, _, err := buildBody(3180202, 262995, "hello", 1, false)
+	good, _, _, err := buildBody(3180202, 262995, "hello", 1, false, DialectTMS)
 	if err != nil {
 		t.Fatal(err)
 	}

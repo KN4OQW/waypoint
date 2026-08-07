@@ -210,6 +210,7 @@ func (s *Service) Send(peer uint32, text string, group bool) (events.Message, er
 
 	m, err := s.store.Enqueue(events.Message{
 		Peer: peer, Local: w.LocalID, Group: group, Text: text,
+		Dialect: s.dialectFor(peer),
 	})
 	if err != nil {
 		return events.Message{}, err
@@ -229,6 +230,25 @@ func (s *Service) Send(peer uint32, text string, group bool) (events.Message, er
 	}
 	s.publish(m)
 	return m, nil
+}
+
+// dialectFor is the short-data format to address a peer in: whatever they were
+// last heard speaking, or nothing, which BuildMessage reads as the default.
+//
+// This is what lets a mixed fleet work without configuration. The same radio
+// speaks TMS with its channel set to M-SMS and ETSI with it set to DMR Standard,
+// so the format belongs to the correspondent and not to this node — and every
+// message they send announces it.
+//
+// A peer nobody has heard from gets the default, which is the dialect proven on
+// air rather than the one merely reproduced from a capture.
+func (s *Service) dialectFor(peer uint32) string {
+	d, err := s.store.PeerDialect(peer)
+	if err != nil {
+		log.Printf("messages: reading the dialect for %d: %v", peer, err)
+		return ""
+	}
+	return d
 }
 
 // Run transmits queued messages until ctx is cancelled. One goroutine, one message
@@ -280,6 +300,7 @@ func (s *Service) transmit(ctx context.Context, id int64) {
 	bursts, err := dmrdata.BuildMessage(dmrdata.SendOptions{
 		Src: m.Local, Dst: m.Peer, Text: m.Text, Group: m.Group,
 		Seq: uint16(id), Preambles: w.Preambles, ColorCode: w.ColorCode, Duplex: w.Duplex,
+		Dialect: dmrdata.Dialect(m.Dialect),
 	})
 	if err != nil {
 		fail(err.Error())

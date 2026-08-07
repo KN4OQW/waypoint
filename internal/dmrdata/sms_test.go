@@ -191,7 +191,7 @@ func TestTMSClassOctetsAreNotInterpreted(t *testing.T) {
 	if body[30] != 0xE0 || body[33] != 0x64 {
 		t.Fatalf("recorded TMS octets are %02x/%02x, want e0/64", body[30], body[33])
 	}
-	mine, _, _, err := buildBody(262995, 3180202, "x", 0, false)
+	mine, _, _, err := buildBody(262995, 3180202, "x", 0, false, DialectTMS)
 	if err != nil {
 		t.Fatal(err)
 	}

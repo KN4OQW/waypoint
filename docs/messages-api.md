@@ -82,6 +82,33 @@ channel to go quiet.
 
 ---
 
+## Two dialects, and how the node picks one
+
+DMR short data has two formats in the wild, and which one a radio speaks is a
+**channel setting on that radio**, not a property of the network:
+
+| | port | header |
+|---|---|---|
+| **M-SMS** (Motorola TMS) | 4007 | 6-octet TMS header before the text |
+| **DMR Standard** (ETSI) | 5016 | none |
+
+A message in the wrong one is received, decoded and discarded with nothing shown.
+
+The node does not ask you which to use. **It learns**: every message a radio sends
+announces its format, so the dialect is recorded against that peer and used when
+replying. A fleet with both kinds of radio on one frequency works with no
+configuration. A peer nobody has heard from yet gets M-SMS, and the `dialect` field
+on a message says which was used.
+
+Private-call messages are addressed to one radio, so a mixed fleet does not
+interfere with itself. A **talkgroup** message is one transmission in one dialect,
+so only the radios speaking that dialect will display it.
+
+**M-SMS is proven on air here; DMR Standard is not.** Its builder reproduces a real
+radio's own transmission byte for byte, checksums included, but this node has never
+yet sent one *to* a radio. Hytera's proprietary short data is not implemented at
+all — no captures, so nothing to build from.
+
 ## Message states
 
 ```

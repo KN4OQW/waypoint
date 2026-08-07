@@ -32,6 +32,11 @@ type SendOptions struct {
 	// base-station sync. MMDVM-Host overwrites both for the node's own settings.
 	ColorCode byte
 	Duplex    bool
+	// Dialect is the short-data format to build. Empty means DialectTMS, which is
+	// the one proven on air; DialectETSI is byte-verified against a capture of a
+	// radio emitting it but has never been sent TO a radio, so a caller choosing it
+	// is choosing something untested on that path.
+	Dialect Dialect
 }
 
 // ErrBadAddress is returned for a DMR ID that does not fit the 24 bits the
@@ -48,7 +53,7 @@ func BuildMessage(o SendOptions) ([]Burst, error) {
 	if o.Src > 0xFFFFFF || o.Dst > 0xFFFFFF {
 		return nil, ErrBadAddress
 	}
-	body, blocks, pad, err := buildBody(o.Src, o.Dst, o.Text, o.Seq, o.Group)
+	body, blocks, pad, err := buildBody(o.Src, o.Dst, o.Text, o.Seq, o.Group, o.Dialect)
 	if err != nil {
 		return nil, err
 	}
