@@ -22,6 +22,8 @@ on:
     paths:
       - docs/recovery.md
       - docs/translations.md
+      - docs/messaging.md
+      - docs/messages-api.md
       - .github/workflows/wiki.yml
   workflow_dispatch:
 
@@ -49,7 +51,7 @@ jobs:
           # source-file:wiki-page-name. The page name is its filename, so
           # "Regaining-access" renders as "Regaining access" and gives a URL
           # somebody can be told over the air.
-          PAGES="docs/recovery.md:Regaining-access docs/translations.md:Translating-Waypoint"
+          PAGES="docs/recovery.md:Regaining-access docs/translations.md:Translating-Waypoint docs/messaging.md:Text-messaging docs/messages-api.md:Text-messaging-API"
 
           for entry in $PAGES; do
             src="${entry%%:*}"
