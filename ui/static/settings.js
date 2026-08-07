@@ -709,6 +709,36 @@ function toggleRow(sec, key, name) {
   return `<div class="toggle-row"><span class="name">${esc(name)}</span><button type="button" class="pill ${on ? "on" : "off"}" data-toggle="${esc(sec)}.${esc(key)}" aria-pressed="${on}" aria-label="${esc(name)}">${on ? "ON" : "OFF"}</button></div>`;
 }
 function note(html) { return `<div class="note">${html}</div>`; }
+
+// findingsCard renders per-mode readiness findings (config.mode_problems), which
+// the API has served since the readiness guard landed and nothing displayed.
+//
+// Three severities, three treatments, and the third one matters: "info" is
+// guidance whose mechanism is real but whose applicability Waypoint cannot
+// determine — so it is rendered in the accent colour and labelled "Worth
+// knowing", never in the amber a genuine misconfiguration gets. A guess dressed as
+// a warning is how an operator learns to ignore warnings.
+//
+// Findings with no mode are station-wide and belong to whoever asks; a mode panel
+// shows only its own.
+function findingsCard(mode) {
+  const all = ((state.config || {}).mode_problems || []).filter((p) => p && p.mode === mode);
+  if (!all.length) return "";
+  const rank = { error: 0, warning: 1, info: 2 };
+  const items = all
+    .slice()
+    .sort((a, b) => (rank[a.severity] ?? 1) - (rank[b.severity] ?? 1))
+    .map((p) => {
+      const kind = p.severity === "error" ? "bad" : p.severity === "info" ? "info" : "warn";
+      const label = kind === "bad" ? msg("readiness.willNotWork")
+        : kind === "info" ? msg("readiness.worthKnowing")
+        : msg("readiness.checkThis");
+      return `<li class="hw-warn ${kind}"><span class="hw-warn-k">${esc(label)}</span> ` +
+        `<span class="hw-warn-f">${esc(p.field)}</span><div>${esc(p.message)}</div></li>`;
+    })
+    .join("");
+  return card(msg("readiness.head"), `<ul class="hw-warns">${items}</ul>`);
+}
 // extLink renders an external dashboard/manager link — a pure UI affordance (no
 // daemon config), matching WPSD's BrandMeister/TGIF/SystemX links.
 function extLink(href, text) { return `<a class="ext" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(text)} ↗</a>`; }
@@ -835,7 +865,7 @@ function panelDmr() {
     input("dmr", "mode_hang", { label: msg("dmr.modeHang"), unit: "sec" }) +
     input("dmrnet", "mode_hang", { label: msg("dmr.netModeHang"), unit: "sec" }));
   return `<div class="grid2">${master}<div class="stack">${slots}${timers}</div></div>` +
-    note(msg("dmr.hangTimerClamp"));
+    note(msg("dmr.hangTimerClamp")) + findingsCard("dmr");
 }
 
 function panelModes() {

@@ -158,8 +158,14 @@ func TestFrequencyBoundIsDeliberatelyWide(t *testing.T) {
 	m.Modem.RXFreqHz, m.Modem.TXFreqHz = "144390000", "144390000"
 	m.General.Duplex = false
 	m.Modes.POCSAG = false // its paging channel is on 70cm; a 2m node is a real finding
-	if got := m.ModeProblems(); len(got) != 0 {
-		t.Errorf("a 2 m simplex node reported problems:\n%s", format(got))
+	// Scoped to the FREQUENCY fields, which is what this test is about. It used to
+	// assert that the model produced no findings at all, which made it a catch-all
+	// that any unrelated new check broke — the static-talkgroup hint fires on this
+	// model quite correctly, because it is simplex and has a network.
+	for _, p := range m.ModeProblems() {
+		if strings.Contains(p.Field, "freq") {
+			t.Errorf("a 2 m simplex node was reported against a frequency field:\n%s", format([]ModeProblem{p}))
+		}
 	}
 }
 

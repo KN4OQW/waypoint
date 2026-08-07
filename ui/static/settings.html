@@ -437,6 +437,10 @@
   .hw-warn:last-child { margin-bottom: 0; }
   .hw-warn.bad { border-left-color: var(--bad); }
   .hw-warn.warn { border-left-color: var(--warn); }
+  /* Info is deliberately NOT amber. It carries guidance that is heuristic — the
+     mechanism is real but Waypoint cannot tell whether it applies to this node —
+     and a guess in a warning's colours teaches an operator to ignore warnings. */
+  .hw-warn.info { border-left-color: var(--accent); }
   .hw-warn-k { font-family: var(--mono); font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; }
 
   /* Firmware flashing progress (#19). The percentage is written in the label as
@@ -473,6 +477,7 @@
   .cal-axis { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
   .hw-warn.bad .hw-warn-k { color: var(--bad); }
   .hw-warn.warn .hw-warn-k { color: var(--warn); }
+  .hw-warn.info .hw-warn-k { color: var(--accent); }
   .hw-warn-f { font-family: var(--mono); font-size: 10px; color: var(--dim); }
   .mono-sm { font-family: var(--mono); font-size: 11px; }
 
