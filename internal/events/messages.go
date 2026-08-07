@@ -119,6 +119,11 @@ type Message struct {
 	Group bool `json:"group"`
 	// Text is the message body.
 	Text string `json:"text"`
+	// Dialect is the short-data format this message used ("tms" or "etsi"), as
+	// internal/dmrdata names them. On an inbound message it is what the radio
+	// spoke; on an outbound one it is what was sent. Empty on rows written before
+	// the column existed, which is the same as "we do not know".
+	Dialect string `json:"dialect,omitempty"`
 	// State is where it has got to. Reason is why, and is only ever set on failed.
 	State  MessageState `json:"state"`
 	Reason string       `json:"reason,omitempty"`
@@ -138,6 +143,7 @@ CREATE TABLE IF NOT EXISTS messages (
   local      INTEGER NOT NULL,
   group_call INTEGER NOT NULL DEFAULT 0,
   body       TEXT NOT NULL,
+  dialect    TEXT NOT NULL DEFAULT '',
   state      TEXT NOT NULL,
   reason     TEXT NOT NULL DEFAULT '',
   created_ms INTEGER NOT NULL,
@@ -173,9 +179,9 @@ func (s *Store) insertMessage(m Message) (Message, error) {
 	m.CreatedAt, m.UpdatedAt = now, now
 
 	res, err := s.db.Exec(`INSERT INTO messages
-		(direction, peer, local, group_call, body, state, reason, created_ms, updated_ms)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		string(m.Direction), m.Peer, m.Local, boolInt(m.Group), m.Text,
+		(direction, peer, local, group_call, body, dialect, state, reason, created_ms, updated_ms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		string(m.Direction), m.Peer, m.Local, boolInt(m.Group), m.Text, m.Dialect,
 		string(m.State), m.Reason, now.UnixMilli(), now.UnixMilli())
 	if err != nil {
 		return Message{}, err
@@ -333,6 +339,25 @@ func (s *Store) PruneMessages(before time.Time) (int64, error) {
 	return res.RowsAffected()
 }
 
+// PeerDialect reports the short-data format a peer was last heard speaking, or ""
+// if this node has never received one from them.
+//
+// The radio tells us its dialect every time it transmits, which is the only
+// reliable way to know: it is a channel setting on the radio, not a property of
+// the network, and a fleet can hold a mixture. Reading the most recent inbound
+// message beats a separate table — the answer is already stored, and one that
+// moved with the traffic is the point.
+func (s *Store) PeerDialect(peer uint32) (string, error) {
+	var d string
+	err := s.db.QueryRow(
+		`SELECT dialect FROM messages WHERE peer = ? AND direction = ? AND dialect != ''
+		 ORDER BY created_ms DESC, id DESC LIMIT 1`, peer, string(Inbound)).Scan(&d)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return d, err
+}
+
 // CountMessages returns the number of stored messages. Used by tests and
 // diagnostics.
 func (s *Store) CountMessages() (int, error) {
@@ -341,8 +366,8 @@ func (s *Store) CountMessages() (int, error) {
 	return n, err
 }
 
-const messageSelect = `SELECT id, direction, peer, local, group_call, body, state, reason,
-	created_ms, updated_ms FROM messages`
+const messageSelect = `SELECT id, direction, peer, local, group_call, body, dialect, state,
+	reason, created_ms, updated_ms FROM messages`
 
 // scanner is what QueryRow and Rows have in common, so one scan serves both.
 type scanner interface{ Scan(dest ...any) error }
@@ -354,8 +379,8 @@ func scanMessage(sc scanner) (Message, error) {
 		groupCall            int
 		createdMs, updatedMs int64
 	)
-	if err := sc.Scan(&m.ID, &dir, &m.Peer, &m.Local, &groupCall, &m.Text, &state,
-		&m.Reason, &createdMs, &updatedMs); err != nil {
+	if err := sc.Scan(&m.ID, &dir, &m.Peer, &m.Local, &groupCall, &m.Text, &m.Dialect,
+		&state, &m.Reason, &createdMs, &updatedMs); err != nil {
 		return Message{}, err
 	}
 	m.Direction, m.State, m.Group = Direction(dir), MessageState(state), groupCall != 0

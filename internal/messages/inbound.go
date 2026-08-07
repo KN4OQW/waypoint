@@ -189,6 +189,11 @@ func (s *Service) recordCaptured(c captured) {
 		Local: c.msg.Dst,
 		Group: c.msg.Group,
 		Text:  c.msg.Text,
+		// The radio just told us which short-data format it speaks. That is worth
+		// keeping: it is a channel setting on the radio rather than a property of
+		// the network, so the only way to know is to be told, and a reply in the
+		// wrong one is received and discarded without a word.
+		Dialect: string(c.msg.Dialect),
 	})
 	s.mu.Lock()
 	if err != nil {

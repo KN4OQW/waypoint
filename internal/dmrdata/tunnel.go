@@ -63,6 +63,64 @@ const (
 	portETSI = 5016
 )
 
+// Dialect is which of the two short-data formats a message uses.
+//
+// It is a property of the RADIO, not of the network or of this node: the same
+// BTECH speaks TMS with its channel set to M-SMS and ETSI with it set to DMR
+// Standard, and a fleet can hold a mixture. A message built in the wrong one is
+// received, decoded, and thrown away by the radio without a word.
+type Dialect string
+
+const (
+	// DialectTMS is Motorola TMS on port 4007: a 6-octet TMS header between the
+	// UDP header and the text. The only dialect proven on air here.
+	DialectTMS Dialect = "tms"
+	// DialectETSI is the ETSI DMR-Standard service on port 5016, with no TMS
+	// header at all. Built from a capture of a radio emitting it and byte-verified
+	// against that capture, but never yet sent TO a radio - see BuildMessage.
+	DialectETSI Dialect = "etsi"
+)
+
+// port and headerLen are the two things that actually differ between them.
+func (d Dialect) port() uint16 {
+	if d == DialectETSI {
+		return portETSI
+	}
+	return portTMS
+}
+
+func (d Dialect) headerLen() int {
+	if d == DialectETSI {
+		return udpHeaderLen
+	}
+	return udpHeaderLen + tmsHeaderLen
+}
+
+// crlf is the four octets that precede the text.
+//
+// The two dialects disagree about byte order here, and only here: TMS writes CR
+// and LF as little-endian UTF-16 (0d00 0a00), matching its text, while ETSI writes
+// them big-endian (000d 000a) with its text still little-endian. Both are taken
+// from real captures — a BrandMeister message to the radio and the radio's own
+// DMR-Standard transmission — and neither is what the other would predict. The
+// byte-exact reproduction test is what caught it.
+func (d Dialect) crlf() [4]byte {
+	if d == DialectETSI {
+		return [4]byte{0x00, 0x0D, 0x00, 0x0A}
+	}
+	return [4]byte{0x0D, 0x00, 0x0A, 0x00}
+}
+
+// ttl is the IP TTL each dialect was observed carrying. Neither value has any
+// evident purpose - a tunnelled datagram is not routed - so both are reproduced
+// rather than reasoned about.
+func (d Dialect) ttl() byte {
+	if d == DialectETSI {
+		return 0x01
+	}
+	return 0x40
+}
+
 // Tunnel layout. Offsets are from the start of the reassembled body.
 const (
 	ipHeaderLen  = 20
@@ -77,7 +135,6 @@ const (
 	blockOctets   = PayloadBytes
 	protocolUDP   = 17
 	ipVersionIHL  = 0x45
-	defaultTTL    = 0x40 // what the radio itself emits
 	tmsClassByte  = 0xA0 // TMS octet 2 on every message the radio accepts
 	tmsOptionByte = 0x04 // TMS octet 5, likewise
 )
@@ -99,7 +156,7 @@ const MaxTextUnits = 123
 // seq becomes both the IP identification field and the TMS message number; the
 // radio echoes neither, so it exists to make retransmissions distinguishable in a
 // capture rather than to drive any protocol behaviour.
-func buildBody(src, dst uint32, text string, seq uint16, group bool) (body []byte, blocks, pad int, err error) {
+func buildBody(src, dst uint32, text string, seq uint16, group bool, dialect Dialect) (body []byte, blocks, pad int, err error) {
 	if !utf8.ValidString(text) {
 		return nil, 0, 0, ErrInvalidText
 	}
@@ -108,8 +165,8 @@ func buildBody(src, dst uint32, text string, seq uint16, group bool) (body []byt
 		return nil, 0, 0, ErrTextTooLong
 	}
 
-	udpLen := len(units)*2 + udpHeaderLen + tmsHeaderLen + crlfLen
-	total := len(units)*2 + bodyOverhead
+	udpLen := len(units)*2 + dialect.headerLen() + crlfLen
+	total := udpLen + ipHeaderLen + crc32Len
 	pad = (blockOctets - total%blockOctets) % blockOctets
 	total += pad
 	blocks = total / blockOctets
@@ -120,7 +177,7 @@ func buildBody(src, dst uint32, text string, seq uint16, group bool) (body []byt
 	b[0] = ipVersionIHL
 	binary.BigEndian.PutUint16(b[2:], uint16(udpLen+ipHeaderLen))
 	binary.BigEndian.PutUint16(b[4:], seq)
-	b[8] = defaultTTL
+	b[8] = dialect.ttl()
 	b[9] = protocolUDP
 	b[12] = 0x0C
 	putU24(b[13:], src)
@@ -133,23 +190,27 @@ func buildBody(src, dst uint32, text string, seq uint16, group bool) (body []byt
 	binary.BigEndian.PutUint16(b[10:], onesComplementSum(b[:ipHeaderLen]))
 
 	// --- UDP header, checksum filled in below once the payload exists.
-	binary.BigEndian.PutUint16(b[20:], portTMS)
-	binary.BigEndian.PutUint16(b[22:], portTMS)
+	binary.BigEndian.PutUint16(b[20:], dialect.port())
+	binary.BigEndian.PutUint16(b[22:], dialect.port())
 	binary.BigEndian.PutUint16(b[24:], uint16(udpLen))
 
-	// --- TMS header. Octet 0-1 is the length of what follows it; the proven
-	// construction writes only the low octet, and MaxTextUnits keeps it in range.
-	b[29] = byte(udpLen - 10)
-	b[30] = tmsClassByte
-	b[32] = 0x80 | byte(seq&0x7F)
-	b[33] = tmsOptionByte
+	// --- TMS header, on the dialect that has one. Octet 0-1 is the length of what
+	// follows it; the proven construction writes only the low octet, and
+	// MaxTextUnits keeps it in range.
+	if dialect != DialectETSI {
+		b[29] = byte(udpLen - 10)
+		b[30] = tmsClassByte
+		b[32] = 0x80 | byte(seq&0x7F)
+		b[33] = tmsOptionByte
+	}
 
 	// --- Body: CRLF then the text, all UTF-16LE. The CRLF is not decoration —
 	// BrandMeister emits it too, and it is part of what the radio parses.
-	binary.LittleEndian.PutUint16(b[34:], '\r')
-	binary.LittleEndian.PutUint16(b[36:], '\n')
+	textAt := ipHeaderLen + dialect.headerLen() + crlfLen
+	crlf := dialect.crlf()
+	copy(b[textAt-crlfLen:], crlf[:])
 	for i, u := range units {
-		binary.LittleEndian.PutUint16(b[textOffset+i*2:], u)
+		binary.LittleEndian.PutUint16(b[textAt+i*2:], u)
 	}
 
 	binary.BigEndian.PutUint16(b[26:], udpChecksum(b, udpLen))
@@ -165,6 +226,9 @@ type Message struct {
 	Group bool
 	Seq   uint16
 	Text  string
+	// Dialect is the format this message arrived in. It is the radio telling us
+	// which one it speaks, which is the only reliable way to know.
+	Dialect Dialect
 }
 
 // parseBody decodes a reassembled body, verifying the CRC-32 before it believes
@@ -187,15 +251,16 @@ func parseBody(body []byte) (Message, error) {
 		return Message{}, ErrMalformedBody
 	}
 
-	var hdrLen int
+	var dialect Dialect
 	switch binary.BigEndian.Uint16(body[22:]) {
 	case portTMS:
-		hdrLen = udpHeaderLen + tmsHeaderLen
+		dialect = DialectTMS
 	case portETSI:
-		hdrLen = udpHeaderLen
+		dialect = DialectETSI
 	default:
 		return Message{}, ErrMalformedBody
 	}
+	hdrLen := dialect.headerLen()
 
 	// Bounds come from the datagram's own length field, checked against what
 	// actually arrived: a header that overstates its payload must not be able to
@@ -214,11 +279,12 @@ func parseBody(body []byte) (Message, error) {
 		units = append(units, binary.LittleEndian.Uint16(body[i:]))
 	}
 	return Message{
-		Src:   u24(body[13:]),
-		Dst:   u24(body[17:]),
-		Group: body[16] == 0xE1,
-		Seq:   binary.BigEndian.Uint16(body[4:]),
-		Text:  string(utf16.Decode(units)),
+		Src:     u24(body[13:]),
+		Dst:     u24(body[17:]),
+		Group:   body[16] == 0xE1,
+		Seq:     binary.BigEndian.Uint16(body[4:]),
+		Text:    string(utf16.Decode(units)),
+		Dialect: dialect,
 	}, nil
 }
 
