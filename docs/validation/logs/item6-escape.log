@@ -1,0 +1,124 @@
+2026-08-07 21:03:53.934 MMDVM-Host is stopping
+2026-08-07 21:03:54.892 Modem Parameters
+2026-08-07 21:03:54.893     Protocol: uart
+2026-08-07 21:03:54.893     UART Port: /dev/serial0
+2026-08-07 21:03:54.893     UART Speed: 115200
+2026-08-07 21:03:54.893     RX Invert: no
+2026-08-07 21:03:54.893     TX Invert: no
+2026-08-07 21:03:54.893     PTT Invert: no
+2026-08-07 21:03:54.893     TX Delay: 100ms
+2026-08-07 21:03:54.893     RX Offset: 0Hz
+2026-08-07 21:03:54.893     TX Offset: 0Hz
+2026-08-07 21:03:54.893     RX DC Offset: 0
+2026-08-07 21:03:54.893     TX DC Offset: 0
+2026-08-07 21:03:54.893     RF Level: 100.0%
+2026-08-07 21:03:54.893     DMR Delay: 0 (0.0ms)
+2026-08-07 21:03:54.893     RX Level: 50.0%
+2026-08-07 21:03:54.893     CW Id TX Level: 50.0%
+2026-08-07 21:03:54.893     D-Star TX Level: 50.0%
+2026-08-07 21:03:54.893     DMR TX Level: 50.0%
+2026-08-07 21:03:54.893     YSF TX Level: 50.0%
+2026-08-07 21:03:54.893     P25 TX Level: 50.0%
+2026-08-07 21:03:54.893     NXDN TX Level: 50.0%
+2026-08-07 21:03:54.893     M17 TX Level: 0.0%
+2026-08-07 21:03:54.893     POCSAG TX Level: 50.0%
+2026-08-07 21:03:54.893     FM TX Level: 50.0%
+2026-08-07 21:03:54.893     TX Frequency: 433800000Hz (433800000Hz)
+2026-08-07 21:03:54.893     RX Frequency: 438800000Hz (438800000Hz)
+2026-08-07 21:03:54.893     Use COS as Lockout: no
+2026-08-07 21:03:54.893 Opening the MMDVM
+2026-08-07 21:03:56.911 MMDVM protocol version: 1, description: MMDVM_HS_Dual_Hat-v1.6.1 20230526 14.7456MHz dual ADF7021 FW by CA6JAU GitID #da73668
+2026-08-07 21:03:56.911 Modes: D-Star DMR YSF P25 NXDN M17 POCSAG
+2026-08-07 21:03:56.931 Opening network connections
+2026-08-07 21:03:56.931 DMR Network Parameters
+2026-08-07 21:03:56.931     Gateway Address: 127.0.0.1
+2026-08-07 21:03:56.931     Gateway Port: 62031
+2026-08-07 21:03:56.931     Local Address: 127.0.0.1
+2026-08-07 21:03:56.931     Local Port: 62032
+2026-08-07 21:03:56.932     Jitter: 360ms
+2026-08-07 21:03:56.932     Slot 1: disabled
+2026-08-07 21:03:56.932     Slot 2: enabled
+2026-08-07 21:03:56.932     Mode Hang: 300s
+2026-08-07 21:03:56.932 Info Parameters
+2026-08-07 21:03:56.932     Callsign: KN4OQW
+2026-08-07 21:03:56.932     RX Frequency: 438800000Hz
+2026-08-07 21:03:56.932     TX Frequency: 433800000Hz
+2026-08-07 21:03:56.932     Power: 1W
+2026-08-07 21:03:56.932 DMR, Opening DMR Network
+2026-08-07 21:03:56.932 Opening UDP port on 62032
+2026-08-07 21:03:56.932 POCSAG Network Parameters
+2026-08-07 21:03:56.932     Gateway Address: 127.0.0.1
+2026-08-07 21:03:56.932     Gateway Port: 4800
+2026-08-07 21:03:56.932     Local Address: 127.0.0.1
+2026-08-07 21:03:56.932     Local Port: 3800
+2026-08-07 21:03:56.932     Mode Hang: 3s
+2026-08-07 21:03:56.932 Opening POCSAG network connection
+2026-08-07 21:03:56.932 Opening UDP port on 3800
+2026-08-07 21:03:56.932 CW Id Parameters
+2026-08-07 21:03:56.932     Time: 10 mins
+2026-08-07 21:03:56.932     Callsign: KN4OQW
+2026-08-07 21:03:56.932 RSSI
+2026-08-07 21:03:56.932     Mapping File: /usr/local/etc/RSSI.dat
+2026-08-07 21:03:56.932 Cannot open the RSSI data file - /usr/local/etc/RSSI.dat
+2026-08-07 21:03:56.932 DMR Id Lookups
+2026-08-07 21:03:56.932     File: /usr/local/etc/DMRIds.dat
+2026-08-07 21:03:56.932     Reload: 24 hours
+2026-08-07 21:03:56.932 Loading ID lookup table from /usr/local/etc/DMRIds.dat
+2026-08-07 21:04:00.201 Loaded 310364 IDs to lookup table - /usr/local/etc/DMRIds.dat
+2026-08-07 21:04:00.201 Starting protocol handlers
+2026-08-07 21:04:00.202 DMR RF Parameters
+2026-08-07 21:04:00.202     Id: 3180202
+2026-08-07 21:04:00.202     Color Code: 2
+2026-08-07 21:04:00.202     Self Only: no
+2026-08-07 21:04:00.202     Embedded LC Only: no
+2026-08-07 21:04:00.202 Started the DMR Id lookup reload thread
+2026-08-07 21:04:00.202     Dump Talker Alias Data: no
+2026-08-07 21:04:00.202     Prefixes: 0
+2026-08-07 21:04:00.202     Call Hang: 4s
+2026-08-07 21:04:00.202     TX Hang: 4s
+2026-08-07 21:04:00.202     Mode Hang: 300s
+2026-08-07 21:04:00.202     OVCM: off
+2026-08-07 21:04:00.202     DMR Roaming Beacons Type: network
+2026-08-07 21:04:00.202     DMR Roaming Beacons Duration: 3s
+2026-08-07 21:04:00.202 POCSAG RF Parameters
+2026-08-07 21:04:00.202     Frequency: 439987500Hz
+2026-08-07 21:04:12.809 Message to 0002504, func Numeric: "210400   070826"
+2026-08-07 21:04:12.809 Data to MMDVM
+2026-08-07 21:04:12.809 0000:  7C D2 15 D8 00 27 25 37 A4 01 02 C1 81 99 86 A4    *|....'%7........*
+2026-08-07 21:04:12.809 0010:  F0 0A 36 4B 7A 89 C1 97 7A 89 C1 97 7A 89 C1 97    *..6Kz...z...z...*
+2026-08-07 21:04:12.809 0020:  7A 89 C1 97 7A 89 C1 97 7A 89 C1 97 7A 89 C1 97    *z...z...z...z...*
+2026-08-07 21:04:12.809 0030:  7A 89 C1 97 7A 89 C1 97 7A 89 C1 97 7A 89 C1 97    *z...z...z...z...*
+2026-08-07 21:04:12.809 0040:  7A 89 C1 97                                        *z...*
+2026-08-07 21:04:12.809 POCSAG, transmitted 1 frame(s) of data from 1 message(s)
+2026-08-07 21:04:12.820 Message to 0000200, func Alphanumeric: XTIME=2104070826XTIME=2104070826
+2026-08-07 21:04:12.820 Data to MMDVM
+2026-08-07 21:04:12.820 0000:  7C D2 15 D8 00 03 3C 47 8D 2B 27 2B EC D1 BC 11    *|.....<G.+'+....*
+2026-08-07 21:04:12.820 0010:  C9 A3 07 E5 E2 C1 BD 80 B0 61 CA 33 99 B0 D5 2D    *.........a.3...-*
+2026-08-07 21:04:12.820 0020:  AB 26 CD 7A D1 BC 99 1F A3 06 2C A4 C1 BB 07 1E    *.&.z......,.....*
+2026-08-07 21:04:12.820 0030:  E1 C9 9D 2C B0 00 01 36 7A 89 C1 97 7A 89 C1 97    *...,...6z...z...*
+2026-08-07 21:04:12.820 0040:  7A 89 C1 97                                        *z...*
+2026-08-07 21:04:12.820 POCSAG, transmitted 1 frame(s) of data from 1 message(s)
+2026-08-07 21:04:12.831 Message to 0000216, func Alphanumeric: YYYYMMDDHHMMSS260807210400
+2026-08-07 21:04:12.831 Data to MMDVM
+2026-08-07 21:04:12.831 0000:  7C D2 15 D8 00 03 7F 4C CD 9B 36 21 E6 D9 B6 E3    *|......L..6!....*
+2026-08-07 21:04:12.831 0010:  A4 48 8F 87 91 36 6C C4 CE 5C A9 26 99 B0 66 A2    *.H...6l..\.&..f.*
+2026-08-07 21:04:12.831 0020:  9C 1B B2 1E A6 8C 18 FE 8B 06 08 51 C0 00 04 DC    *...........Q....*
+2026-08-07 21:04:12.831 0030:  7A 89 C1 97 7A 89 C1 97 7A 89 C1 97 7A 89 C1 97    *z...z...z...z...*
+2026-08-07 21:04:12.831 0040:  7A 89 C1 97                                        *z...*
+2026-08-07 21:04:12.831 POCSAG, transmitted 1 frame(s) of data from 1 message(s)
+2026-08-07 21:06:00.080 Message to 0000208, func Alphanumeric: XTIME=2306070826XTIME=2306070826
+2026-08-07 21:06:00.080 Data to MMDVM
+2026-08-07 21:06:00.080 0000:  7C D2 15 D8 00 03 59 A0 8D 2B 27 2B EC D1 BC 11    *|.....Y..+'+....*
+2026-08-07 21:06:00.080 0010:  C9 B3 00 7A E6 C1 BB 09 B0 61 CA 33 99 B0 D5 2D    *...z.....a.3...-*
+2026-08-07 21:06:00.080 0020:  AB 26 CD 7A D1 BC 99 1F B3 06 68 2B C1 BB 07 1E    *.&.z......h+....*
+2026-08-07 21:06:00.080 0030:  E1 C9 9D 2C B0 00 01 36 7A 89 C1 97 7A 89 C1 97    *...,...6z...z...*
+2026-08-07 21:06:00.080 0040:  7A 89 C1 97                                        *z...*
+2026-08-07 21:06:00.080 POCSAG, transmitted 1 frame(s) of data from 1 message(s)
+2026-08-07 21:06:00.209 Message to 0000224, func Alphanumeric: YYYYMMDDHHMMSS260807230600
+2026-08-07 21:06:00.209 Data to MMDVM
+2026-08-07 21:06:00.209 0000:  7C D2 15 D8 00 03 9C BE CD 9B 36 21 E6 D9 B6 E3    *|.........6!....*
+2026-08-07 21:06:00.209 0010:  A4 48 8F 87 91 36 6C C4 CE 5C A9 26 99 B0 66 A2    *.H...6l..\.&..f.*
+2026-08-07 21:06:00.209 0020:  9C 1B B2 1E A6 CC 1B 22 9B 06 0F D5 C0 00 04 DC    *......."........*
+2026-08-07 21:06:00.209 0030:  7A 89 C1 97 7A 89 C1 97 7A 89 C1 97 7A 89 C1 97    *z...z...z...z...*
+2026-08-07 21:06:00.209 0040:  7A 89 C1 97                                        *z...*
+2026-08-07 21:06:00.209 POCSAG, transmitted 1 frame(s) of data from 1 message(s)

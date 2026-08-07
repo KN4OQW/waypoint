@@ -1,0 +1,122 @@
+2026-08-07 20:44:05.444 Preamble CSBK
+2026-08-07 20:44:05.444 0000:  BD 00 80 10 30 86 AA 30 86 AA 73 0B                *....0..0..s.*
+2026-08-07 20:44:05.444 DMR Slot 2, received network Data Preamble CSBK (16 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:44:05.505 Preamble CSBK
+2026-08-07 20:44:05.506 0000:  BD 00 80 0F 30 86 AA 30 86 AA CE 99                *....0..0....*
+2026-08-07 20:44:05.506 DMR Slot 2, received network Data Preamble CSBK (15 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:44:05.567 Preamble CSBK
+2026-08-07 20:44:05.567 0000:  BD 00 80 0E 30 86 AA 30 86 AA 76 F8                *....0..0..v.*
+2026-08-07 20:44:05.567 DMR Slot 2, received network Data Preamble CSBK (14 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:44:05.629 Preamble CSBK
+2026-08-07 20:44:05.629 0000:  BD 00 80 0D 30 86 AA 30 86 AA AE 7A                *....0..0...z*
+2026-08-07 20:44:05.629 DMR Slot 2, received network Data Preamble CSBK (13 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:44:05.685 Preamble CSBK
+2026-08-07 20:44:05.685 0000:  BD 00 80 0C 30 86 AA 30 86 AA 16 1B                *....0..0....*
+2026-08-07 20:44:05.685 DMR Slot 2, received network Data Preamble CSBK (12 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:44:05.747 Preamble CSBK
+2026-08-07 20:44:05.747 0000:  BD 00 80 0B 30 86 AA 30 86 AA 0F 5F                *....0..0..._*
+2026-08-07 20:44:05.747 DMR Slot 2, received network Data Preamble CSBK (11 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:44:05.808 Preamble CSBK
+2026-08-07 20:44:05.808 0000:  BD 00 80 0A 30 86 AA 30 86 AA B7 3E                *....0..0...>*
+2026-08-07 20:44:05.808 DMR Slot 2, received network Data Preamble CSBK (10 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:44:05.870 Preamble CSBK
+2026-08-07 20:44:05.870 0000:  BD 00 80 09 30 86 AA 30 86 AA 6F BC                *....0..0..o.*
+2026-08-07 20:44:05.870 DMR Slot 2, received network Data Preamble CSBK (9 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:44:05.931 Preamble CSBK
+2026-08-07 20:44:05.931 0000:  BD 00 80 08 30 86 AA 30 86 AA D7 DD                *....0..0....*
+2026-08-07 20:44:05.931 DMR Slot 2, received network Data Preamble CSBK (8 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:44:05.987 DMR, Unconfirmed Data Header
+2026-08-07 20:44:05.988 0000:  02 40 30 86 AA 30 86 AA 86 00 A4 66                *.@0..0.....f*
+2026-08-07 20:44:05.988 DMR Slot 2, received network data header from KN4OQW to KN4OQW, 6 blocks
+2026-08-07 20:44:06.049 DMR Slot 2, Data 1/2
+2026-08-07 20:44:06.049 0000:  45 00 00 44 00 01 00 00 40 11 54 F4                *E..D....@.T.*
+2026-08-07 20:44:06.111 DMR Slot 2, Data 1/2
+2026-08-07 20:44:06.111 0000:  0C 30 86 AA 0C 30 86 AA 0F A7 0F A7                *.0...0......*
+2026-08-07 20:44:06.173 DMR Slot 2, Data 1/2
+2026-08-07 20:44:06.173 0000:  00 30 56 5C 00 26 A0 00 81 04 0D 00                *.0V\.&......*
+2026-08-07 20:44:06.230 DMR Slot 2, Data 1/2
+2026-08-07 20:44:06.230 0000:  0A 00 57 00 41 00 59 00 50 00 4F 00                *..W.A.Y.P.O.*
+2026-08-07 20:44:06.292 DMR Slot 2, Data 1/2
+2026-08-07 20:44:06.292 0000:  49 00 4E 00 54 00 20 00 54 00 45 00                *I.N.T. .T.E.*
+2026-08-07 20:44:06.354 DMR Slot 2, Data 1/2
+2026-08-07 20:44:06.354 0000:  53 00 54 00 20 00 31 00 DD 92 47 AD                *S.T. .1...G.*
+2026-08-07 20:44:06.354 DMR Slot 2, ended network data transmission
+2026-08-07 20:45:03.229 Preamble CSBK
+2026-08-07 20:45:03.229 0000:  BD 00 80 22 30 86 AA 30 86 AA 4A 65                *..."0..0..Je*
+2026-08-07 20:45:03.229 DMR Slot 2, received network Data Preamble CSBK (34 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:45:03.286 Preamble CSBK
+2026-08-07 20:45:03.286 0000:  BD 00 80 21 30 86 AA 30 86 AA 92 E7                *...!0..0....*
+2026-08-07 20:45:03.287 DMR Slot 2, received network Data Preamble CSBK (33 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:45:03.348 Preamble CSBK
+2026-08-07 20:45:03.348 0000:  BD 00 80 20 30 86 AA 30 86 AA 2A 86                *... 0..0..*.*
+2026-08-07 20:45:03.348 DMR Slot 2, received network Data Preamble CSBK (32 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:45:03.410 Preamble CSBK
+2026-08-07 20:45:03.410 0000:  BD 00 80 1F 30 86 AA 30 86 AA F9 E2                *....0..0....*
+2026-08-07 20:45:03.410 DMR Slot 2, received network Data Preamble CSBK (31 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:45:03.471 Preamble CSBK
+2026-08-07 20:45:03.471 0000:  BD 00 80 1E 30 86 AA 30 86 AA 41 83                *....0..0..A.*
+2026-08-07 20:45:03.471 DMR Slot 2, received network Data Preamble CSBK (30 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:45:03.533 Preamble CSBK
+2026-08-07 20:45:03.533 0000:  BD 00 80 1D 30 86 AA 30 86 AA 99 01                *....0..0....*
+2026-08-07 20:45:03.533 DMR Slot 2, received network Data Preamble CSBK (29 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:45:03.589 Preamble CSBK
+2026-08-07 20:45:03.589 0000:  BD 00 80 1C 30 86 AA 30 86 AA 21 60                *....0..0..!`*
+2026-08-07 20:45:03.589 DMR Slot 2, received network Data Preamble CSBK (28 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:45:03.651 Preamble CSBK
+2026-08-07 20:45:03.651 0000:  BD 00 80 1B 30 86 AA 30 86 AA 38 24                *....0..0..8$*
+2026-08-07 20:45:03.651 DMR Slot 2, received network Data Preamble CSBK (27 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:45:03.712 Preamble CSBK
+2026-08-07 20:45:03.712 0000:  BD 00 80 1A 30 86 AA 30 86 AA 80 45                *....0..0...E*
+2026-08-07 20:45:03.712 DMR Slot 2, received network Data Preamble CSBK (26 to follow) from KN4OQW to KN4OQW
+2026-08-07 20:45:03.774 DMR, Unconfirmed Data Header
+2026-08-07 20:45:03.774 0000:  02 40 30 86 AA 30 86 AA 98 00 84 1A                *.@0..0......*
+2026-08-07 20:45:03.774 DMR Slot 2, received network data header from KN4OQW to KN4OQW, 24 blocks
+2026-08-07 20:45:03.836 DMR Slot 2, Data 1/2
+2026-08-07 20:45:03.836 0000:  45 00 01 1C 00 02 00 00 40 11 54 1B                *E.......@.T.*
+2026-08-07 20:45:03.897 DMR Slot 2, Data 1/2
+2026-08-07 20:45:03.897 0000:  0C 30 86 AA 0C 30 86 AA 0F A7 0F A7                *.0...0......*
+2026-08-07 20:45:03.953 DMR Slot 2, Data 1/2
+2026-08-07 20:45:03.954 0000:  01 08 E8 AF 00 FE A0 00 82 04 0D 00                *............*
+2026-08-07 20:45:04.015 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.015 0000:  0A 00 57 00 41 00 59 00 50 00 4F 00                *..W.A.Y.P.O.*
+2026-08-07 20:45:04.077 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.077 0000:  49 00 4E 00 54 00 20 00 4D 00 41 00                *I.N.T. .M.A.*
+2026-08-07 20:45:04.139 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.139 0000:  58 00 20 00 58 00 58 00 58 00 58 00                *X. .X.X.X.X.*
+2026-08-07 20:45:04.195 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.195 0000:  58 00 58 00 58 00 58 00 58 00 58 00                *X.X.X.X.X.X.*
+2026-08-07 20:45:04.258 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.258 0000:  58 00 58 00 58 00 58 00 58 00 58 00                *X.X.X.X.X.X.*
+2026-08-07 20:45:04.320 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.320 0000:  58 00 58 00 58 00 58 00 58 00 58 00                *X.X.X.X.X.X.*
+2026-08-07 20:45:04.381 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.381 0000:  58 00 58 00 58 00 58 00 58 00 58 00                *X.X.X.X.X.X.*
+2026-08-07 20:45:04.442 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.443 0000:  58 00 58 00 58 00 58 00 58 00 58 00                *X.X.X.X.X.X.*
+2026-08-07 20:45:04.504 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.504 0000:  58 00 58 00 58 00 58 00 58 00 58 00                *X.X.X.X.X.X.*
+2026-08-07 20:45:04.560 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.560 0000:  58 00 58 00 58 00 58 00 58 00 58 00                *X.X.X.X.X.X.*
+2026-08-07 20:45:04.621 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.621 0000:  58 00 58 00 58 00 58 00 58 00 58 00                *X.X.X.X.X.X.*
+2026-08-07 20:45:04.682 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.682 0000:  58 00 58 00 58 00 58 00 58 00 58 00                *X.X.X.X.X.X.*
+2026-08-07 20:45:04.744 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.744 0000:  58 00 58 00 58 00 58 00 58 00 58 00                *X.X.X.X.X.X.*
+2026-08-07 20:45:04.805 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.805 0000:  58 00 58 00 58 00 58 00 58 00 58 00                *X.X.X.X.X.X.*
+2026-08-07 20:45:04.866 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.866 0000:  58 00 58 00 58 00 58 00 58 00 58 00                *X.X.X.X.X.X.*
+2026-08-07 20:45:04.922 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.922 0000:  58 00 58 00 58 00 58 00 58 00 58 00                *X.X.X.X.X.X.*
+2026-08-07 20:45:04.983 DMR Slot 2, Data 1/2
+2026-08-07 20:45:04.984 0000:  58 00 58 00 58 00 58 00 58 00 58 00                *X.X.X.X.X.X.*
+2026-08-07 20:45:05.045 DMR Slot 2, Data 1/2
+2026-08-07 20:45:05.045 0000:  58 00 58 00 58 00 58 00 58 00 58 00                *X.X.X.X.X.X.*
+2026-08-07 20:45:05.107 DMR Slot 2, Data 1/2
+2026-08-07 20:45:05.107 0000:  58 00 58 00 58 00 58 00 58 00 58 00                *X.X.X.X.X.X.*
+2026-08-07 20:45:05.169 DMR Slot 2, Data 1/2
+2026-08-07 20:45:05.169 0000:  58 00 58 00 58 00 20 00 45 00 4E 00                *X.X.X. .E.N.*
+2026-08-07 20:45:05.226 DMR Slot 2, Data 1/2
+2026-08-07 20:45:05.227 0000:  44 00 31 00 32 00 33 00 C5 06 1A 44                *D.1.2.3....D*
+2026-08-07 20:45:05.227 DMR Slot 2, ended network data transmission
