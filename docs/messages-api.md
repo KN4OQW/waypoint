@@ -159,6 +159,34 @@ data.
 
 ---
 
+## Received messages, and the "2" in front of an ID
+
+The node records the text messages that cross it, both ways: what a radio sent
+toward the network, and what the network sent back. On a hotspot those are all the
+operator's own. On a repeater carrying other people's traffic they are not — worth
+knowing if you run one. Nothing here is public; see the note at the top.
+
+If an inbound message shows a sender like `2262993` where you expected `262993`,
+that is a **DMRGateway dial prefix, not a fault in the message**. A BrandMeister
+network rendered as *non-primary* gets prefix 2 and the rule
+
+```
+SrcRewrite4=2,1,2,2000001,999999
+```
+
+which maps source id N to 2000000 + N, so 262993 arrives as 2262993 and a reply
+must be dialled that way. That is correct behaviour when the node really has
+several networks: the prefix is how you say which one you meant.
+
+It is only wrong when BrandMeister is the node's *only* network, where there is no
+other network for a catch-all to refer to and no prefix should be needed.
+`effectivePrimaryIndex` promotes a sole eligible network to primary even with the
+Primary flag clear, so a single-network node renders the catch-all and IDs pass
+through untouched. If you see the prefix on a single-network node, the fix is to
+re-Apply so the gateway config is regenerated.
+
+---
+
 ## Retention
 
 Messages age out on the node's event-history retention window (Station Settings,
