@@ -182,8 +182,12 @@ It is only wrong when BrandMeister is the node's *only* network, where there is 
 other network for a catch-all to refer to and no prefix should be needed.
 `effectivePrimaryIndex` promotes a sole eligible network to primary even with the
 Primary flag clear, so a single-network node renders the catch-all and IDs pass
-through untouched. If you see the prefix on a single-network node, the fix is to
-re-Apply so the gateway config is regenerated.
+through untouched.
+
+A rendered INI only changes on **Apply**, so a node that was running before that
+fix keeps its prefixed rules until the next one. If you see the prefix on a
+single-network node, press Apply and check `DMRGateway.ini` for `SrcRewrite4` —
+its absence is what "fixed" looks like.
 
 ---
 
