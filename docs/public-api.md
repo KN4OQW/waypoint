@@ -62,6 +62,9 @@ them:
 - software, daemon or firmware versions
 - local or peer IP addresses, hostnames, ports
 - any configuration value, and any control at all
+- **text messages** — neither their content, their correspondents, nor the fact
+  that any were sent or received. Messages are correspondence; the public surface
+  has no route that serves them and no response type that carries them
 
 The operator additionally controls each module and each reach-card field
 separately, and can suppress specific callsigns from every public output. A field

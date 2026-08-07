@@ -37,6 +37,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/lcd"
 	"github.com/KN4OQW/waypoint/internal/lcd/hd44780"
 	"github.com/KN4OQW/waypoint/internal/m17hosts"
+	"github.com/KN4OQW/waypoint/internal/messages"
 	"github.com/KN4OQW/waypoint/internal/minisign"
 	"github.com/KN4OQW/waypoint/internal/mqtt"
 	"github.com/KN4OQW/waypoint/internal/netconfig"
@@ -86,6 +87,10 @@ type server struct {
 	// nil check on the owner; the relay INSIDE it is nil whenever the feature is
 	// switched off, which is the default.
 	relay *dmrRelay
+	// msgs is the text-message service: it records what was sent and received and
+	// transmits queued messages one at a time through the relay. Nil when there is
+	// no event store to record into, and the API answers 503 rather than pretending.
+	msgs *messages.Service
 	// listenAddr is the HTTPS address the daemon was told to serve on. It is shown
 	// READ-ONLY on the System tab: it is deployment-owned via the packaged systemd
 	// unit, and editing it live would move the UI out from under the browser doing
@@ -1801,6 +1806,7 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/config", s.configView)
 	mux.HandleFunc("/api/config/apply", s.configApply)
 	mux.HandleFunc("/api/config/", s.configView) // PUT /api/config/{section}
+	s.messagesRoutes(mux)                        // text messages (messages.go)
 	mux.HandleFunc("/api/overrides", s.overridesView)
 	mux.HandleFunc("/api/buses/validate", s.busesValidate)     // dry-run attach validator (RFC-0003 §2)
 	mux.HandleFunc("/api/buses/migrate", s.busesMigrate)       // seed buses from the dormant bridges (§4)
@@ -2413,6 +2419,9 @@ func main() {
 		// tick, so a node with the feature switched off — the default — starts it,
 		// finds nothing to do, and costs one config read every fifteen seconds.
 		go s.runDMRRelay(context.Background(), dmrRelayInterval)
+		// The message service transmits through that relay, so it starts after it.
+		// It costs a goroutine parked on an empty queue when nobody sends anything.
+		s.startMessages(context.Background())
 		// Update poller (D2 / #15): periodically refresh the stack and waypointd
 		// available-update caches and drive opt-in quiet-window auto-apply. Live mode
 		// only. Ticks every 15 min so it reliably lands in the one-hour quiet window; a

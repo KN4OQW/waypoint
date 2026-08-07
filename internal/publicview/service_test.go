@@ -155,6 +155,11 @@ func TestPublicStructsCarryNothingElse(t *testing.T) {
 func TestNeverPublicFieldNamesAbsent(t *testing.T) {
 	banned := []string{
 		"Duration", "Seconds", "BER", "RSSI", "Loss", "Errors",
+		// Text messages are correspondence. Neither the content, the correspondent
+		// nor the existence of a message may reach an anonymous visitor, so the
+		// names a message would arrive under are banned outright rather than left
+		// to whoever adds the next field.
+		"Message", "Messages", "Text", "Body", "SMS", "Correspondent",
 		"Version", "Firmware", "IP", "Address", "Host", "Peer",
 		"Lat", "Lon", "Latitude", "Longitude", "Coord",
 		"Config", "Password", "Token", "Secret", "Log", "Audit",
