@@ -179,11 +179,26 @@ for (const theme of THEMES) for (const mode of MODES) {
     console.log(`  -- viewport: ${vp.key} (${vp.size.width}px) --`);
     await page.setViewportSize(vp.size);
 
-    // Dashboard. Its nav is a two-item row at both widths, but the shell CSS is
+    // Dashboard. Its nav is a three-item row at both widths, but the shell CSS is
     // shared, so it is worth a look in each.
     await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(500); // let the SSE feed paint a few rows
     await analyze(page, `${vp.key} dashboard`);
+
+    // Messages. Scanned in both its states: the compose form as it loads, and
+    // again with an over-length body, because the budget and the error note are
+    // the two things on the page that change colour to mean something.
+    await page.goto(BASE + "/messages.html", { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(400);
+    await analyze(page, `${vp.key} messages`);
+    await page.evaluate(() => {
+      const box = document.querySelector("#msg-text");
+      if (!box) return;
+      box.value = "A".repeat(200);
+      box.dispatchEvent(new Event("input"));
+    }).catch(() => {});
+    await page.waitForTimeout(150);
+    await analyze(page, `${vp.key} messages (over length)`);
 
     // Every rendered panel: each top-level tab, and each Modes sub-tab.
     for (const t of TARGETS) {
