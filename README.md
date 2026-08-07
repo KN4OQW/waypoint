@@ -66,24 +66,12 @@ one without touching a reflector or the internet.
 
 ### Text messages, sent by the node itself
 
-Type a message on the node and it goes out over your own RF to a radio — no
-BrandMeister, no reflector, nothing upstream involved. Messages the node sees in
-either direction are recorded and served over an authenticated API, so a club
-bot or a script can read and send them. Sending waits for a clear timeslot,
-because MMDVM-Host *discards* a network frame that arrives over somebody's
-transmission rather than queuing it, and a message thrown at a busy channel is
-silently lost.
-
-Nothing here claims more than it knows: unconfirmed DMR data carries no
-acknowledgement, so a sent message reads **sent**, never *delivered*. It is
-**off by default** — relaying the DMR loopback puts Waypoint in the path of
-every DMR frame, which is a trade you should make deliberately. Messages are
-never public and appear in no public-view response.
-
-One thing no hotspot can do for you: the receiving radio's channel must be set
-to **M-SMS format with APRS Receive OFF**. Anytone and BTECH firmware treats the
-two as mutually exclusive, and with APRS receive on the radio decodes the
-message, lights up, and discards it. See [docs/messages-api.md](docs/messages-api.md).
+Send a DMR text message to a radio over your own RF — no BrandMeister, no reflector.
+Messages crossing the node either way are recorded and served over an authenticated
+API, and are never published. A sent message reads **sent**, not *delivered*, because
+unconfirmed DMR data carries no acknowledgement. Off by default, since it puts
+Waypoint in the path of every DMR frame. Your radio's channel needs **M-SMS format
+with APRS Receive off** — see [docs/messages-api.md](docs/messages-api.md).
 
 ### The dashboard tells the truth
 
@@ -129,23 +117,14 @@ certificate, so your claim password never crosses the network in the clear.
 
 **Active development.** The config core, the full mode stack, cross-mode buses, LAN
 peering, host networking, modem detection, firmware flashing, guided calibration,
-DMR text messaging and the public page are in place, with per-mode, two-node and
-on-hardware runs validated on the bench. All eight mode daemons are built, signed,
+[DMR text messaging](docs/validation/messages-hardware.md) and the public page are in
+place, with per-mode, two-node and on-hardware runs validated on the bench — against
+a real radio, and written up including what did not go as planned. All eight mode
+daemons are built, signed,
 published and — as of the POCSAG close-out
 ([#33](https://github.com/KN4OQW/waypoint/issues/33)) — *delivered*: installed over
 apt by Waypoint's own updater on a real node, which is a different claim from "the
 package exists" and is the one that had never been tested.
-
-Text messaging went the same route. The codec is a port of the g4klx FEC and PDU
-layers checked byte-for-byte against them, but the SMS dialect above it came from
-no specification — it was reverse-engineered from captures, because the published
-formats describe several plausible alternatives and the radio accepts none of them.
-It is validated end to end on the bench: messages displayed on a real BTECH 6X2 Pro
-at one block and at the 123-unit maximum, inbound captured while the same
-message still reached BrandMeister, and voice through the relay at **0% packet loss
-and BER 0.0%** — identical to the same node without it. The run is written up,
-including the two items that did *not* go as planned, in
-[docs/validation/messages-hardware.md](docs/validation/messages-hardware.md).
 
 The first flashable SD-card image ships as **`v1-initialimg`**, built end-to-end by
 public CI for arm64 and armhf. The
@@ -171,7 +150,7 @@ root with **A/B slots and automatic rollback**
 - Peering is **LAN-only by design** — no WAN/Internet mesh, no owner failover.
 - `v1-initialimg` is an **initial** image: flashable and complete, but early. Treat it as a beta while it takes on hardware miles.
 - **Open defects the bench found and we have not yet fixed** are worth knowing before you lean on a mode: no YSF startup reflector links, because the picker stores a name YSFGateway cannot resolve ([#146](https://github.com/KN4OQW/waypoint/issues/146)); a DMR transmission to a secondary network kills the next one to the primary ([#144](https://github.com/KN4OQW/waypoint/issues/144)); and an unset frequency crash-loops YSFGateway and MMDVM-Host with no visible cause instead of being refused up front ([#145](https://github.com/KN4OQW/waypoint/issues/145), [#215](https://github.com/KN4OQW/waypoint/issues/215), [#216](https://github.com/KN4OQW/waypoint/issues/216)).
-- **Accessibility is a merge gate, and it passes.** It had been passing *vacuously* — the daemon never started under the `axe` job, so nothing was scanned. Fixing that exposed 98 violations across 51 pages ([#121](https://github.com/KN4OQW/waypoint/issues/121)), largely light-mode contrast; those are now cleared. The current full run is **294 pages across three themes and both light and dark, zero violations**. That is a floor, not a certificate: axe catches what axe catches, and no automated scan is a substitute for someone using the thing with a screen reader.
+- **Accessibility is a merge gate, and it passes** — 294 pages across three themes and both light and dark, zero violations ([#121](https://github.com/KN4OQW/waypoint/issues/121) cleared a backlog of 98). That is a floor, not a certificate: no automated scan substitutes for using the thing with a screen reader.
 
 Reference bench hardware: MMDVM_HS_Dual_Hat (STM32F103, dual ADF7021) on a Raspberry
 Pi 3, running Waypoint's own [MMDVM_HS](https://github.com/KN4OQW/MMDVM_HS) firmware
