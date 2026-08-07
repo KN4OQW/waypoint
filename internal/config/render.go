@@ -678,12 +678,22 @@ func (m *Model) RenderMMDVM() string {
 
 	// ModeHang here is the net-side counterpart of [DMR] ModeHang and omits when
 	// blank for the same reason (General fan-out, see the [DMR] comment above).
+	// GatewayPort is the one value the relay moves on this side: MMDVM-Host keeps
+	// binding LocalPort and starts sending to the relay instead of straight to
+	// DMRGateway. It also validates the SOURCE of what comes back against this
+	// exact address:port (DMRNetwork.cpp, CUDPSocket::match), so the relay must
+	// reply from here or every frame is dropped as "an invalid source".
+	shim := m.DMRShim()
+	dmrGatewayPort := def(m.DMRNet.GatewayPort, defaultDMRGatewayLocalPort)
+	if shim.Enabled {
+		dmrGatewayPort = shim.HostBindPort
+	}
 	dmrNetLines := []string{
 		kb("Enable", m.Modes.DMR),
 		kv("LocalAddress", "127.0.0.1"),
-		kv("LocalPort", def(m.DMRNet.LocalPort, "62032")),
+		kv("LocalPort", def(m.DMRNet.LocalPort, defaultDMRHostLocalPort)),
 		kv("GatewayAddress", def(m.DMRNet.GatewayAddress, "127.0.0.1")),
-		kv("GatewayPort", def(m.DMRNet.GatewayPort, "62031")),
+		kv("GatewayPort", dmrGatewayPort),
 		kv("Jitter", def(m.DMRNet.Jitter, "360")),
 		kb("Slot1", m.DMRNet.Slot1),
 		kb("Slot2", m.DMRNet.Slot2),
@@ -1409,11 +1419,20 @@ func (m *Model) RenderDMRGateway() string {
 	var b strings.Builder
 	b.WriteString(generatedHeader)
 
+	// RptPort is the relay's other side: DMRGateway keeps binding LocalPort and
+	// starts sending to the relay instead of straight to MMDVM-Host. Same source
+	// validation applies in this direction, so the two values move together or not
+	// at all -- which is why both come from the one DMRShim resolution.
+	gwShim := m.DMRShim()
+	rptPort := def(m.DMRNet.LocalPort, defaultDMRHostLocalPort)
+	if gwShim.Enabled {
+		rptPort = gwShim.GatewayBindPort
+	}
 	sect(&b, "General",
 		kv("RptAddress", "127.0.0.1"),
-		kv("RptPort", def(m.DMRNet.LocalPort, "62032")),
+		kv("RptPort", rptPort),
 		kv("LocalAddress", "127.0.0.1"),
-		kv("LocalPort", def(m.DMRNet.GatewayPort, "62031")),
+		kv("LocalPort", def(m.DMRNet.GatewayPort, defaultDMRGatewayLocalPort)),
 		kv("Timeout", "10"),
 		kv("Daemon", "0"),
 	)

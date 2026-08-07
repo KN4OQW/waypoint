@@ -81,6 +81,11 @@ type server struct {
 	// the operator changes the data plane (dataplane.go). Nil in demo mode and in
 	// tests, where reconfigure is a no-op.
 	dp *dataPlane
+	// relay owns the opt-in DMR loopback relay (dmrshim.go): the seam that lets the
+	// node originate a data burst toward a radio. Always non-nil so callers need no
+	// nil check on the owner; the relay INSIDE it is nil whenever the feature is
+	// switched off, which is the default.
+	relay *dmrRelay
 	// listenAddr is the HTTPS address the daemon was told to serve on. It is shown
 	// READ-ONLY on the System tab: it is deployment-owned via the packaged systemd
 	// unit, and editing it live would move the UI out from under the browser doing
@@ -2170,7 +2175,8 @@ func main() {
 	s := &server{
 		hub: hub.New(), demo: *demoMode, started: time.Now(),
 		store: st, storePath: *storePath, evStore: ev,
-		agg: status.New(status.DefaultTxTTL, *linkTTL),
+		agg:   status.New(status.DefaultTxTTL, *linkTTL),
+		relay: &dmrRelay{},
 		paths: config.Paths{
 			MMDVM: *mmdvmINI, DMRGateway: *dmrgwINI, YSFGateway: *ysfgwINI, DGIdGateway: *dgidgwINI,
 			P25Gateway: *p25gwINI, NXDNGateway: *nxdngwINI, DStarGateway: *dstargwINI, M17Gateway: *m17gwINI,
@@ -2402,6 +2408,11 @@ func main() {
 			// actually asks, which is what the line above always meant.
 			Commander: func() *mqtt.Commander { return s.dp.commander() },
 		})
+		// The DMR loopback relay (dmrshim.go). Live mode only: a demo node runs no
+		// MMDVM-Host to sit between. It reconciles itself against the store on a
+		// tick, so a node with the feature switched off — the default — starts it,
+		// finds nothing to do, and costs one config read every fifteen seconds.
+		go s.runDMRRelay(context.Background(), dmrRelayInterval)
 		// Update poller (D2 / #15): periodically refresh the stack and waypointd
 		// available-update caches and drive opt-in quiet-window auto-apply. Live mode
 		// only. Ticks every 15 min so it reliably lands in the one-hour quiet window; a
