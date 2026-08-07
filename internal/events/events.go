@@ -7,9 +7,14 @@
 // It is deliberately its own database, a sibling of the config store (RFC-0001),
 // not a table inside it: event traffic is far higher churn than configuration and
 // its retention lifecycle is independent, so keeping it separate isolates both the
-// write lock and the nightly prune from the config surface. The schema mirrors
-// hub.Event exactly, so persistence is a straight projection and the history
-// endpoint re-emits the identical wire shape the SSE stream and UI already speak.
+// write lock and the nightly prune from the config surface. The events schema
+// mirrors hub.Event exactly, so persistence is a straight projection and the
+// history endpoint re-emits the identical wire shape the SSE stream and UI already
+// speak.
+//
+// It also holds the text-message record (messages.go). That is traffic too, with
+// the same churn and the same retention question, so it shares this database's one
+// handle, one writer and one prune loop rather than opening a third file.
 package events
 
 import (
@@ -25,7 +30,14 @@ import (
 // SchemaVersion is the events store's schema version, tracked independently of
 // the config store so the two migrate on their own cadences. The daemon refuses
 // to open a database from a newer version (rollback safety).
-const SchemaVersion = 1
+//
+//	1 — the event log.
+//	2 — plus the text-message record (messages.go).
+//
+// The upgrade from 1 to 2 adds a table and touches nothing that existed, so it
+// needs no data migration and an older build reading a v2 database still finds
+// every event where it left it.
+const SchemaVersion = 2
 
 // Store is a handle to the event-history database. It is the only writer.
 type Store struct {
@@ -83,7 +95,7 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_ts     ON events (ts_ms);
 CREATE INDEX IF NOT EXISTS idx_events_source ON events (source, ts_ms);
 CREATE INDEX IF NOT EXISTS idx_events_type   ON events (type, ts_ms);`
-	if _, err := s.db.Exec(ddl); err != nil {
+	if _, err := s.db.Exec(ddl + messagesDDL); err != nil {
 		return err
 	}
 
@@ -97,6 +109,14 @@ CREATE INDEX IF NOT EXISTS idx_events_type   ON events (type, ts_ms);`
 	case nil:
 		if ver > SchemaVersion {
 			return fmt.Errorf("events: database schema v%d is newer than this build (v%d); refusing to run", ver, SchemaVersion)
+		}
+		if ver < SchemaVersion {
+			// The DDL above is idempotent and has already brought the database up to
+			// date, so this only records the fact. Recording it matters: without the
+			// write the row stayed at v1 forever, and the rollback guard above could
+			// never fire because no database ever claimed a version it did not have.
+			_, err = s.db.Exec(`UPDATE meta SET schema_version = ? WHERE id = 1`, SchemaVersion)
+			return err
 		}
 		return nil
 	default:
