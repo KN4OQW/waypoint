@@ -20,13 +20,21 @@ on:
   push:
     branches: [main]
     paths:
+      - docs/wiki-home.md
       - docs/recovery.md
       - docs/translations.md
+      - docs/messaging.md
+      - docs/messages-api.md
       - .github/workflows/wiki.yml
   workflow_dispatch:
 
+# contents: write, not read. A wiki is part of the repository's contents, and with
+# read the job clones the public wiki happily and then fails on push with
+#   remote: Permission to <repo>.wiki.git denied to github-actions[bot]
+# It did exactly that on every run since the first, which is why the pages below
+# had drifted from their sources by the time anybody noticed.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   publish:
@@ -49,7 +57,7 @@ jobs:
           # source-file:wiki-page-name. The page name is its filename, so
           # "Regaining-access" renders as "Regaining access" and gives a URL
           # somebody can be told over the air.
-          PAGES="docs/recovery.md:Regaining-access docs/translations.md:Translating-Waypoint"
+          PAGES="docs/wiki-home.md:Home docs/recovery.md:Regaining-access docs/translations.md:Translating-Waypoint docs/messaging.md:Text-messaging docs/messages-api.md:Text-messaging-API"
 
           for entry in $PAGES; do
             src="${entry%%:*}"
