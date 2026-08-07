@@ -192,7 +192,15 @@ func (f *flasher) running() bool { return f.snapshot().Running() }
 
 // --- the job ------------------------------------------------------------
 
-// start begins a flash in the background, returning the new job.
+// start begins a flash in the background, returning a COPY of the new job.
+//
+// A copy, not the live pointer. The background goroutine mutates the job through
+// publish and again when the flash ends, both under the mutex — and the caller is
+// an HTTP handler that JSON-encodes what it is given, without the mutex and on
+// another goroutine. Handing out the live pointer made the encode race every
+// progress update, which the race detector reports intermittently against
+// TestFlashStart and friends. snapshot() already returns a copy for the same
+// reason; this is the one path that did not.
 func (f *flasher) start(req flash.Request, release func()) (*flashJob, error) {
 	f.mu.Lock()
 	if f.job.Running() {
@@ -207,24 +215,38 @@ func (f *flasher) start(req flash.Request, release func()) (*flashJob, error) {
 		Before:  req.Identity.Firmware,
 	}
 	f.job = job
+	// Taken under the lock, before anything can touch the job.
+	snap := *job
 	f.mu.Unlock()
 
 	go func() {
+		// Belt and braces: run releases the token itself, before the job reads
+		// finished. This catches the case where it never gets that far.
 		defer release()
 		// The job's deadline is its own, not the request's: an operator closing
 		// the tab must not abandon a modem mid-write.
 		ctx, cancel := context.WithTimeout(context.Background(), flashJobTimeout)
 		defer cancel()
-		f.run(ctx, req, job)
+		f.run(ctx, req, job, release)
 	}()
-	return job, nil
+	return &snap, nil
 }
 
-func (f *flasher) run(ctx context.Context, req flash.Request, job *flashJob) {
+// run performs the flash and records the outcome. release frees the hardware
+// token; it is idempotent (hwOps.acquire wraps it in a sync.Once) so the caller
+// can defer it as well.
+//
+// The token is released BEFORE the job is marked ended, because "ended" is what a
+// client polls on. Releasing afterwards left a window in which the job read
+// finished and the hardware was still held, so a client that started a second
+// flash the moment the first reported done got ErrBusy from a job that no longer
+// existed. TestTheHardwareTokenIsReleasedWhenAJobFails was failing on that window.
+func (f *flasher) run(ctx context.Context, req flash.Request, job *flashJob, release func()) {
 	f.event("flash_started", req.Identity.BoardID, "firmware flash started")
 
 	res, err := f.eng.Flash(ctx, req, f.publish)
 
+	release()
 	now := time.Now().UTC()
 	f.mu.Lock()
 	job.Ended = &now
