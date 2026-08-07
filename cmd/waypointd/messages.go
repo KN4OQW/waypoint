@@ -200,6 +200,10 @@ func (s *server) startMessages(ctx context.Context) {
 		},
 		s.messageWiring)
 	go s.msgs.Run(ctx)
+	// The inbound capture watches the same relay. It is a tap and cannot hold a
+	// frame up, so radio-to-network messages keep working exactly as before —
+	// see internal/messages/inbound.go.
+	s.msgs.StartCapture(ctx)
 }
 
 // messageWiring reads the node's DMR settings for one message. Read per message

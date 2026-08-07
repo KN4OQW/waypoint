@@ -125,13 +125,21 @@ type Service struct {
 	// Apply, and a captured nil would mean messages never worked again.
 	relay func() Relay
 
-	queue chan int64
+	queue    chan int64
+	captured chan captured
 
 	mu      sync.Mutex
 	lastSaw map[int]time.Time // slot -> when traffic was last seen on it
 	removes []func()
-	relayOn Relay     // the relay the tap is currently attached to
+	relayOn Relay     // the relay the idle watch is attached to
 	watchAt time.Time // when the current tap started watching; zero = not watching
+
+	// The inbound capture (inbound.go): one reassembler per direction, the tap it
+	// is attached through, and what it has seen.
+	rx        map[dmrshim.Direction]*dmrdata.Reassembler
+	capOn     Relay
+	capRemove func()
+	cap       Capture
 
 	// now and sleep are the clock, replaced in tests so a suite does not spend
 	// real seconds pacing bursts.
@@ -142,14 +150,19 @@ type Service struct {
 // New builds the service. It does not start transmitting; call Run.
 func New(store *events.Store, h *hub.Hub, relay func() Relay, wiring func() (Wiring, error)) *Service {
 	return &Service{
-		store:   store,
-		hub:     h,
-		wiring:  wiring,
-		relay:   relay,
-		queue:   make(chan int64, QueueDepth),
-		lastSaw: map[int]time.Time{},
-		now:     time.Now,
-		sleep:   time.Sleep,
+		store:    store,
+		hub:      h,
+		wiring:   wiring,
+		relay:    relay,
+		queue:    make(chan int64, QueueDepth),
+		captured: make(chan captured, capturedQueue),
+		lastSaw:  map[int]time.Time{},
+		rx: map[dmrshim.Direction]*dmrdata.Reassembler{
+			dmrshim.ToGateway: {},
+			dmrshim.ToHost:    {},
+		},
+		now:   time.Now,
+		sleep: time.Sleep,
 	}
 }
 
