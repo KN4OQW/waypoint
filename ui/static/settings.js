@@ -313,7 +313,7 @@ function buildEdit(c) {
     display: displayFrom(c.display || {}),
     lcd: lcdFrom(c.lcd || {}),
     dmr:     { color_code: d.color_code, id: d.id, embedded_lc_only: !!d.embedded_lc_only, dump_ta_data: !!d.dump_ta_data, beacons: !!d.beacons, self_only: !!d.self_only },
-    dmrnet:  { slot1: !!d.slot1, slot2: !!d.slot2 },
+    dmrnet:  { slot1: !!d.slot1, slot2: !!d.slot2, shim_enabled: !!d.shim_enabled },
     modes:   Object.fromEntries((c.modes || []).map((m) => [m.key, !!m.enabled])),
     ysf:     ysfFrom(c.ysf || {}),
     // password starts blank (blank = keep the stored one); has_password drives the placeholder.
@@ -855,6 +855,13 @@ function panelDmr() {
     toggleRow("dmrnet", "slot2", msg("dmr.timeSlot2Enabled")) +
     toggleRow("dmr", "embedded_lc_only", msg("dmr.embeddedLcOnly")) +
     nodeLockRow());
+  // The message relay is off by default and deliberately so: with it on, waypointd
+  // is in the path of every DMR frame, and a waypointd restart costs about three
+  // and a half seconds of DMR (measured on the bench). The note says that rather
+  // than leaving an operator to find it out.
+  const relay = card(msg("dmr.messageRelay"),
+    toggleRow("dmrnet", "shim_enabled", msg("dmr.messageRelayEnabled")) +
+    note(msg("dmr.messageRelayNote")));
   // Hang timers render into MMDVM-Host's [DMR] (call_hang/tx_hang/mode_hang) and
   // [DMR Network] (the "dmrnet" store section's mode_hang). Left blank they emit
   // no key at all, so the global mode hang on the General tab keeps governing —
@@ -864,7 +871,10 @@ function panelDmr() {
     input("dmr", "tx_hang", { label: msg("dmr.txHang"), unit: "sec" }) +
     input("dmr", "mode_hang", { label: msg("dmr.modeHang"), unit: "sec" }) +
     input("dmrnet", "mode_hang", { label: msg("dmr.netModeHang"), unit: "sec" }));
-  return `<div class="grid2">${master}<div class="stack">${slots}${timers}</div></div>` +
+  // Both wanted: the relay control sits in the right-hand stack with the other
+  // cards, and the readiness findings go under the whole panel where they can
+  // comment on any of it.
+  return `<div class="grid2">${master}<div class="stack">${slots}${timers}${relay}</div></div>` +
     note(msg("dmr.hangTimerClamp")) + findingsCard("dmr");
 }
 

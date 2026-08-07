@@ -197,6 +197,9 @@
   "dmr.timeSlot1Enabled": "Time Slot 1 activado",
   "dmr.timeSlot2Enabled": "Time Slot 2 activado",
   "dmr.timeSlotsAdvanced": "TIME SLOTS Y AVANZADO",
+  "dmr.messageRelay": "TEXT MESSAGES",
+  "dmr.messageRelayEnabled": "Message relay enabled",
+  "dmr.messageRelayNote": "Lets this node send and receive DMR text messages, by relaying the loopback between MMDVM-Host and DMRGateway. Off by default: with it on, waypointd carries every DMR frame, so restarting it costs a few seconds of DMR. Leave it off if you do not use messaging.",
 
   "dstar.blankAnonymous": "en blanco = anónimo",
   "dstar.dPlusLogin": "Login D-Plus",
