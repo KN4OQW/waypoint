@@ -695,6 +695,32 @@ function input(sec, key, opts = {}) {
   if (opts.unit) return row(opts.label, `<div class="unit">${inp}<span class="u">${esc(opts.unit)}</span></div>`);
   return row(opts.label, inp);
 }
+// What a blank value renders as in MMDVM-Host.ini, mirroring render.go's def()
+// calls: config.DefaultDMRColorCode for [DMR] ColorCode, and "0" for [M17] CAN
+// (render.go:613 and render.go:653). These are what the dropdowns show for an
+// unset field, because that is the code the node is actually running on.
+const DMR_COLOR_CODE_DEFAULT = "1";
+const M17_CAN_DEFAULT = "0";
+
+// codeRow is input()'s counterpart for a numeric field whose domain is fixed and
+// tiny — the DMR colour code and the M17 CAN, both four-bit. There is nothing to
+// type, so it renders a <select>; WPCodes.codeOptions (codes.js) decides what is
+// in the list and what is selected, including the two cases that matter — a blank
+// store value showing the code the node actually runs on, and an out-of-range
+// imported value staying visible rather than being silently displayed as
+// something else.
+//
+// The select carries data-sec/data-key like any other field, so the existing
+// input-event delegation writes it to the store and enhanceHelp attaches the help
+// disclosure with no extra wiring. aria-label repeats the row label because
+// row()'s <label> has no `for` to bind it to the control.
+function codeRow(sec, key, opts = {}) {
+  const max = opts.max == null ? WPCodes.FOUR_BIT_MAX : opts.max;
+  const { options, selected } = WPCodes.codeOptions((edit[sec] || {})[key], max, opts.fallback);
+  const cls = opts.accent ? "accent" : "";
+  const o = options.map((v) => `<option value="${esc(v)}"${v === selected ? " selected" : ""}>${esc(v)}</option>`).join("");
+  return row(opts.label, `<select class="${cls}" data-sec="${esc(sec)}" data-key="${esc(key)}" aria-label="${esc(opts.label)}">${o}</select>`);
+}
 // Toggles render as real <button>s (keyboard-operable, Enter/Space) with
 // aria-pressed exposing on/off state to screen readers — so status is never
 // carried by the accent colour alone. The descriptive label is the button's
@@ -848,7 +874,7 @@ function baudRow() {
 function panelDmr() {
   const master = card(msg("dmr.dmrMaster"),
     toggle("modes", "dmr", msg("dmr.enabled")) +
-    input("dmr", "color_code", { label: msg("dmr.colorCode"), accent: true }) +
+    codeRow("dmr", "color_code", { label: msg("dmr.colorCode"), fallback: DMR_COLOR_CODE_DEFAULT, accent: true }) +
     input("dmr", "id", { label: msg("dmr.dmrId") }));
   const slots = card(msg("dmr.timeSlotsAdvanced"),
     toggleRow("dmrnet", "slot1", msg("dmr.timeSlot1Enabled")) +
@@ -1283,13 +1309,14 @@ function panelBrandmeister() {
       ${row(msg("bm.timeSlot"), slotSelect(xl && xl.xlx_slot, `data-netf="xlx" data-nkey="xlx_slot"`))}
     </section>`;
 
-  const cc = d.color_code || "1";
-  let ccOpts = "";
-  for (let i = 0; i <= 15; i++) ccOpts += `<option value="${i}"${String(i) === String(cc) ? " selected" : ""}>${i}</option>`;
+  // The colour code appears on this tab as well as the DMR panel, and both are the
+  // same store field: one builder, so the two cannot drift and an out-of-range
+  // imported value is preserved on whichever tab the operator opens first.
+  const ccRow = codeRow("dmr", "color_code", { label: msg("bm.dmrColorCode"), fallback: DMR_COLOR_CODE_DEFAULT });
   const general = `<section class="card">
       <div class="card-head"><span class="sq"></span><span class="t">${msg("bm.generalDmrSettings")}</span></div>
       <div class="toggle-row"><span class="name">${msg("bm.dmrRoamingBeacon")}</span><button type="button" class="pill ${d.beacons ? "on" : "off"}" data-toggle="dmr.beacons" aria-pressed="${!!d.beacons}" aria-label="${esc(msg("bm.dmrRoamingBeacon"))}">${d.beacons ? "ON" : "OFF"}</button></div>
-      ${row(msg("bm.dmrColorCode"), `<select data-sec="dmr" data-key="color_code">${ccOpts}</select>`)}
+      ${ccRow}
       <div class="toggle-row"><span class="name">${msg("bm.dmrEmbeddedlconly")}</span><button type="button" class="pill ${d.embedded_lc_only ? "on" : "off"}" data-toggle="dmr.embedded_lc_only" aria-pressed="${!!d.embedded_lc_only}" aria-label="${esc(msg("bm.dmrEmbeddedlconly"))}">${d.embedded_lc_only ? "ON" : "OFF"}</button></div>
       <div class="toggle-row"><span class="name">${msg("bm.dmrDumptadata")}</span><button type="button" class="pill ${d.dump_ta_data ? "on" : "off"}" data-toggle="dmr.dump_ta_data" aria-pressed="${!!d.dump_ta_data}" aria-label="${esc(msg("bm.dmrDumptadata"))}">${d.dump_ta_data ? "ON" : "OFF"}</button></div>
       ${nodeLockRow()}
@@ -2542,7 +2569,7 @@ function panelM17() {
     ["H", "R"].map((v) => `<option value="${v}"${v === suffix ? " selected" : ""}>${esc(v === "H" ? msg("m17.suffixHotspot") : msg("m17.suffixRepeater"))}</option>`).join("") + `</select>`;
   const gateway = card(msg("common.gateway"),
     toggle("modes", "m17", "M17", msg("common.enabled"), msg("common.disabled")) +
-    input("m17", "can", { label: msg("m17.can"), accent: true }) +
+    codeRow("m17", "can", { label: msg("m17.can"), fallback: M17_CAN_DEFAULT, accent: true }) +
     row(msg("common.startupReflector"), `<input data-sec="m17gw" data-key="startup" list="m17-refs" value="${esc(gw.startup || "")}" placeholder="${esc(msg("m17.m17M17CBlank"))}"><datalist id="m17-refs">${opts}</datalist>`) +
     row(msg("m17.nodeSuffix"), suffixSel) +
     toggleRow("m17gw", "voice", msg("common.voiceAnnouncements")));
