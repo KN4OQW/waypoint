@@ -26,11 +26,14 @@ OS Lite Bookworm + the full stack):
 1. Download `waypoint-<version>-bookworm-<arch>.img.xz` and `SHA256SUMS` from the
    [latest release](https://github.com/KN4OQW/waypoint/releases/latest), and
    verify them: `sha256sum -c SHA256SUMS` and `minisign -Vm SHA256SUMS -P <release key>`.
-2. Flash with **Raspberry Pi Imager** (Use custom → the `.img.xz`). In Imager's
-   advanced options set your **Wi-Fi and a username/password** — the image ships
-   no default login.
-3. Boot the Pi, browse to **`https://<address>/`**, and complete the one-time
-   claim to set your Waypoint admin account.
+2. Flash it with **Raspberry Pi Imager** (Use custom → the `.img.xz`), balenaEtcher
+   or `dd`. Nothing needs configuring at flash time — the image ships no login of
+   any kind and sets itself up on first boot.
+3. Power it up and join the **`Waypoint-Setup-XXXX`** network it raises, or reach
+   it over Ethernet at `https://raspberrypi.local/`. The wizard asks for a
+   hostname, a recovery account and your Wi-Fi, then locks root.
+4. Browse to `https://<your-hostname>.local/` and complete the one-time claim to
+   set your Waypoint admin account.
 
 Pick **arm64** on a Pi 3/4, **armhf** for a Pi Zero 2 W / 2 / 3 (32-bit). Pi Zero
 W and Pi 1 are not supported. Full flashing and first-boot walk-through:
