@@ -371,6 +371,119 @@ func (s *server) dmrTalkgroups(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(tgs)
 }
 
+// dmrIDLookupLimit caps how many rows one lookup returns. It is generous enough
+// that a real operator never meets it — the worst callsign in the August 2026
+// export carries seventy IDs — and low enough that a picker stays a picker. The
+// response says when it bit; the page does not silently show a prefix.
+const dmrIDLookupLimit = 100
+
+// dmrIDLookupResponse is GET /api/dmr/ids?callsign=…
+type dmrIDLookupResponse struct {
+	// Callsign is what was actually looked up: trimmed and upper-cased, and with a
+	// portable suffix dropped when that was the only way to find anything. The page
+	// shows it, so an operator who typed KN4OQW/P can see it answered on KN4OQW.
+	Callsign string `json:"callsign"`
+	// Records is every issued ID behind that callsign, ascending. Never null: an
+	// empty list is a legitimate answer and the page renders it as "no match".
+	Records []dmrids.Record `json:"records"`
+	// Truncated reports that the scan stopped at the limit.
+	Truncated bool `json:"truncated,omitempty"`
+	// Available reports whether the ID table is on disk at all. A node that has
+	// never reached the internet has no table, and "no suggestions because there is
+	// nothing to search" is a different thing to tell an operator than "your
+	// callsign is not in the database" — the first is fixable from the Updates tab,
+	// the second means going to radioid.net.
+	Available bool `json:"available"`
+}
+
+// dmrIDLookup answers "which DMR IDs are issued to this callsign" from the cached
+// DMRIds.dat, so the settings page can offer the operator their own ID instead of
+// sending them to radioid.net to copy it by hand (#140).
+//
+// It adds no outbound request. The table it reads is the one dmrids.Run already
+// refreshes for the gateways' callsign resolution, under the same operator-visible
+// off switch; this is a second reader of a file that was already there.
+//
+// The callsign is validated to a callsign shape before it reaches the scanner.
+// That is not about the scanner — LookupCallsign only ever returns whole rows it
+// matched exactly, so no query can make it emit something else — it is about not
+// standing up an endpoint that walks a 6.6 MB file for arbitrary input.
+func (s *server) dmrIDLookup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONStatus(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	cs := strings.TrimSpace(r.URL.Query().Get("callsign"))
+	if cs == "" {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "callsign is required"})
+		return
+	}
+	if !callsignShaped(cs) {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "not a callsign: " + cs})
+		return
+	}
+	recs, truncated, err := dmrids.LookupCallsign(s.dmrIDs, cs, dmrIDLookupLimit)
+	if err != nil {
+		// An unreadable table is the node's problem, not the request's: report it
+		// without naming the path, the same rule the public ID-database probe
+		// follows.
+		log.Printf("dmr id lookup: reading the id table failed: %v", err)
+		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": "the DMR ID table could not be read"})
+		return
+	}
+	answered := strings.ToUpper(cs)
+	if len(recs) > 0 {
+		answered = recs[0].Callsign // the suffix fallback may have answered on the base call
+	}
+	if recs == nil {
+		recs = []dmrids.Record{}
+	}
+	writeJSON(w, dmrIDLookupResponse{
+		Callsign:  answered,
+		Records:   recs,
+		Truncated: truncated,
+		Available: dmrIDTablePresent(s.dmrIDs),
+	})
+}
+
+// dmrIDTablePresent reports whether there is an ID table to search. It stats
+// rather than parses: the question is "has this node ever downloaded the table",
+// and re-reading megabytes to answer it would undo the point of streaming.
+func dmrIDTablePresent(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && !fi.IsDir() && fi.Size() > 0
+}
+
+// callsignShaped accepts what an amateur callsign can look like, loosely: letters
+// and digits, optionally one `/P`-style portable or `-L` gateway suffix. The
+// export's longest callsign is eight characters and its only punctuation is those
+// two separators (12 rows out of 310,364), so the bounds are drawn wide of what
+// the table actually holds rather than tight to it.
+func callsignShaped(cs string) bool {
+	base, suffix, hasSuffix := strings.Cut(cs, "/")
+	if !hasSuffix {
+		base, suffix, hasSuffix = strings.Cut(cs, "-")
+	}
+	if !alnum(base) || len(base) < 3 || len(base) > 10 {
+		return false
+	}
+	if hasSuffix && (!alnum(suffix) || len(suffix) < 1 || len(suffix) > 4) {
+		return false
+	}
+	return true
+}
+
+func alnum(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // ysfReflectors serves the cached YSF reflector hostlist for the settings-page
 // startup-reflector picker (GET /api/ysf/reflectors).
 func (s *server) ysfReflectors(w http.ResponseWriter, _ *http.Request) {
@@ -1831,6 +1944,7 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/hostlists", s.hostlistStatus)
 	mux.HandleFunc("/api/hostlists/refresh", s.hostlistRefresh)
 	mux.HandleFunc("/api/dmr/talkgroups", s.dmrTalkgroups) // TG name list (RFC-0010)
+	mux.HandleFunc("/api/dmr/ids", s.dmrIDLookup)          // callsign -> issued DMR IDs (#140)
 	// Modem hardware: identity, detection, and adoption into the config (#18).
 	mux.HandleFunc("/api/hardware", s.hardware)
 	mux.HandleFunc("/api/hardware/detect", s.hardwareDetect)

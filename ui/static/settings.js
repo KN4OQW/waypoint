@@ -692,7 +692,13 @@ function input(sec, key, opts = {}) {
   const raw = (edit[sec] || {})[key];
   const disp = opts.kind === "mhz" ? mhz(raw) : (raw == null ? "" : raw);
   const cls = opts.accent ? "accent" : "";
-  const inp = `<input class="${cls}" data-sec="${esc(sec)}" data-key="${esc(key)}" data-kind="${opts.kind || "str"}" value="${esc(disp)}">`;
+  // A placeholder is for a field whose blank state MEANS something an operator
+  // cannot otherwise see — what an unset override inherits, say. It never carries
+  // information that exists nowhere else: placeholder text disappears the moment
+  // anything is typed and several screen readers skip it entirely, so whatever it
+  // says is said again in the row's help or note.
+  const ph = opts.placeholder ? ` placeholder="${esc(opts.placeholder)}"` : "";
+  const inp = `<input class="${cls}" data-sec="${esc(sec)}" data-key="${esc(key)}" data-kind="${opts.kind || "str"}"${ph} value="${esc(disp)}">`;
   if (opts.unit) return row(opts.label, `<div class="unit">${inp}<span class="u">${esc(opts.unit)}</span></div>`);
   return row(opts.label, inp);
 }
@@ -782,7 +788,7 @@ function nodeLockRow() {
 function panelGeneral() {
   const left = card(msg("general.stationIdentity"),
     input("general", "callsign", { label: msg("general.callsign") }) +
-    input("general", "id", { label: msg("general.dmrId") }) +
+    idLookupRow() +
     input("general", "location", { label: msg("general.location") }) +
     input("general", "url", { label: msg("general.dashboardUrl") }));
   const radio = card(msg("general.radioFrequency"),
@@ -872,11 +878,39 @@ function baudRow() {
   return row(msg("baudRow.baudrate"), `<select data-sec="modem" data-key="uart_speed">${opts}</select>`);
 }
 
+// dmrIDNote spells out which DMR ID this node actually logs in with.
+//
+// The field above it is an OVERRIDE, and for a long time nothing said so: General →
+// Station Identity and Modes → DMR both showed a control labelled plainly "DMR ID",
+// they write different store fields (General.ID and DMR.ID), and the renderer takes
+// firstNonEmpty(DMR.ID, General.ID) — so editing one and expecting the other to
+// follow was a reasonable thing to do and quietly wrong (#140). The label now says
+// "override", the placeholder shows what a blank field inherits, and this note
+// states the answer outright, because the relationship is exactly the kind of thing
+// an operator should not have to reconstruct from two labels.
+//
+// It reads the working copy, not the view, so it tracks an unsaved edit — what it
+// says is what Apply is about to render into [DMR] Id.
+function dmrIDNote() {
+  const own = ((edit.dmr || {}).id || "").trim();
+  const station = ((edit.general || {}).id || "").trim();
+  if (own) return note(msg("dmr.dmrIdOverridden", { id: `<b>${esc(own)}</b>`, station: esc(station) || esc(msg("dmr.dmrIdUnset")) }));
+  if (station) return note(msg("dmr.dmrIdInherited", { id: `<b>${esc(station)}</b>` }));
+  return note(msg("dmr.dmrIdNowhere"));
+}
+
 function panelDmr() {
+  const station = ((edit.general || {}).id || "").trim();
   const master = card(msg("dmr.dmrMaster"),
     toggle("modes", "dmr", msg("dmr.enabled")) +
     codeRow("dmr", "color_code", { label: msg("dmr.colorCode"), fallback: DMR_COLOR_CODE_DEFAULT, accent: true }) +
-    input("dmr", "id", { label: msg("dmr.dmrId") }));
+    input("dmr", "id", {
+      label: msg("dmr.dmrIdOverride"),
+      // Nothing to inherit means nothing to promise: with no station ID set, a
+      // placeholder saying what this field falls back to would be a lie.
+      placeholder: station ? msg("dmr.dmrIdInherits", { id: station }) : "",
+    }) +
+    dmrIDNote());
   const slots = card(msg("dmr.timeSlotsAdvanced"),
     toggleRow("dmrnet", "slot1", msg("dmr.timeSlot1Enabled")) +
     toggleRow("dmrnet", "slot2", msg("dmr.timeSlot2Enabled")) +
@@ -1249,6 +1283,128 @@ function shortErr(err) {
 
 let dmrMasters = []; // cached /api/dmr/masters, for the master dropdowns
 let dmrTGs = [];     // cached /api/dmr/talkgroups, for the searchable TG picker (RFC-0010)
+
+// --- DMR ID lookup (#140) -------------------------------------------------
+// Result of the last callsign -> DMR ID lookup against /api/dmr/ids, which reads
+// the DMRIds.dat the node already downloads for the gateways. Page state only: it
+// is never saved, and choosing a row goes through setField like any other edit,
+// so nothing here bypasses Apply.
+//
+// The lookup NEVER writes the ID by itself, not even when the table returns a
+// single unambiguous row. A callsign can have several IDs issued to it — most of
+// the multi-ID callsigns in the table are one operator's block of consecutive
+// numbers, and only that operator knows which one this node uses — so the page
+// offers and the operator chooses. Guessing here would be a wrong number logged
+// into a live network, which is worse than a lookup that saved nobody a keystroke.
+let idLookup = { status: "idle", callsign: "", records: [], truncated: false, available: true };
+// Which callsign the automatic lookup has already been spent on. The lookup scans
+// a 6.6 MB file, so the panel fires it at most once per callsign per page load,
+// and only when the DMR ID field is empty — a node that is already configured
+// never pays for it at all.
+let idLookupAuto = "";
+// Set when the operator asked, so the result takes focus and is read out. The
+// automatic suggestion deliberately does not: moving focus because a panel
+// finished rendering would yank an operator out of whatever they were doing.
+let idLookupAnnounce = false;
+
+async function runIDLookup(cs, announce) {
+  const call = String(cs || "").trim();
+  if (!call) {
+    idLookup = { status: "nocall", callsign: "", records: [], truncated: false, available: true };
+    idLookupAnnounce = !!announce;
+    repaintGeneral();
+    return;
+  }
+  // Mark the callsign spent here rather than only at the automatic call site, so a
+  // manual press does not leave the automatic path free to scan the same file
+  // again on the very next render.
+  idLookupAuto = call.toUpperCase();
+  idLookup = { status: "busy", callsign: call, records: [], truncated: false, available: true };
+  repaintGeneral();
+  try {
+    const r = await fetch("/api/dmr/ids?callsign=" + encodeURIComponent(call));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const body = await r.json();
+    idLookup = {
+      status: "done",
+      // The server answers with what it actually searched: a suffixed callsign
+      // falls back to the base call, and the operator should see which one the
+      // answer is about rather than wonder.
+      callsign: body.callsign || call,
+      records: body.records || [],
+      truncated: !!body.truncated,
+      available: !!body.available,
+    };
+  } catch (err) {
+    idLookup = { status: "error", callsign: call, records: [], truncated: false, available: true, error: shortErr(err) };
+  }
+  idLookupAnnounce = !!announce;
+  repaintGeneral();
+}
+
+// repaintGeneral re-renders only while the General tab is the one on screen. The
+// lookup is asynchronous and the operator is free to walk away from it mid-scan; a
+// result landing afterwards must not rebuild whatever panel they moved to.
+function repaintGeneral() {
+  if (state.tab === "general") renderPanel();
+}
+
+// idLookupRow is the General tab's DMR ID field: the ordinary text input, a button
+// that asks the table what IDs the callsign has, and the answer underneath.
+//
+// It is hand-built rather than input()+something because the result has to live
+// inside the same .row — enhanceHelp attaches "help.general.id" to that row, and a
+// second row would give the field two help disclosures.
+function idLookupRow() {
+  const cur = (edit.general || {}).id == null ? "" : (edit.general || {}).id;
+  const call = ((edit.general || {}).callsign || "").trim();
+  // Fire the automatic suggestion for an unconfigured node. Deferred out of the
+  // render: runIDLookup re-renders, and re-entering renderPanel from inside itself
+  // would build the panel on top of the one being returned.
+  // idLookupAuto alone guards the re-entry: runIDLookup marks the callsign spent
+  // before its first render, so the busy repaint cannot start a second scan.
+  if (!cur && call && idLookupAuto !== call.toUpperCase()) setTimeout(() => runIDLookup(call, false), 0);
+  const control =
+    `<div class="idfind">` +
+      `<input data-sec="general" data-key="id" data-kind="str" value="${esc(cur)}">` +
+      `<button type="button" class="btn ghost idfind-go" data-idlookup="1">${esc(msg("general.findMyId"))}</button>` +
+    `</div>`;
+  return `<div class="row"><label>${esc(msg("general.dmrId"))}</label>${control}${idLookupOut(cur)}</div>`;
+}
+
+// idLookupOut renders the answer. Every branch says what happened AND what to do
+// about it: an empty table is fixed on this node, an unlisted callsign is fixed at
+// radioid.net, and those are not the same errand.
+function idLookupOut(cur) {
+  const L = idLookup;
+  if (L.status === "idle") return "";
+  const call = esc(L.callsign);
+  const box = (html) => `<div class="idfind-out" id="id-lookup-out" tabindex="-1" role="status">${html}</div>`;
+  switch (L.status) {
+    case "nocall":
+      return box(esc(msg("general.idLookupNoCallsign")));
+    case "busy":
+      return box(esc(msg("general.idLookupBusy")));
+    case "error":
+      return box(esc(msg("general.idLookupFailed")) + (L.error ? ` <span class="idfind-dim">${esc(L.error)}</span>` : ""));
+  }
+  if (!L.available) return box(msg("general.idLookupNoTable"));
+  if (!L.records.length) return box(msg("general.idLookupNoMatch", { callsign: `<b>${call}</b>`, radioid: extLink("https://radioid.net/", "radioid.net") }));
+
+  const head = L.records.length === 1
+    ? msg("general.idLookupOne", { callsign: `<b>${call}</b>` })
+    : msg("general.idLookupMany", { callsign: `<b>${call}</b>`, count: L.records.length });
+  const tail = L.truncated ? ` ${esc(msg("general.idLookupTruncated", { count: L.records.length }))}` : "";
+  const rows = L.records.map((r) => {
+    const id = String(r.id);
+    const name = r.name ? `<span class="idfind-name">${esc(r.name)}</span>` : "";
+    const action = id === String(cur)
+      ? `<span class="idfind-cur">${esc(msg("general.idLookupInUse"))}</span>`
+      : `<button type="button" class="btn ghost" data-iduse="${esc(id)}" aria-label="${esc(msg("general.idLookupUse", { id }))}">${esc(msg("general.idLookupUseShort"))}</button>`;
+    return `<li><span class="idfind-id">${esc(id)}</span>${name}${action}</li>`;
+  }).join("");
+  return box(`<p class="idfind-head">${head}${tail}</p><ul class="idfind-list">${rows}</ul>`);
+}
 
 const slotSelect = (sel, attrs) =>
   `<select class="mini" ${attrs}><option value="1"${String(sel) === "1" ? " selected" : ""}>TS1</option><option value="2"${String(sel) !== "1" ? " selected" : ""}>TS2</option></select>`;
@@ -3745,6 +3901,16 @@ function renderPanel() {
   // as that label's control when it assigns for/id pairs.
   enhanceHelp(box);
   enhanceTzPickers(box);
+  // A DMR ID lookup the operator ASKED for takes focus, so the answer is read out
+  // and reachable without hunting for it. renderPanel replaces the panel wholesale,
+  // so a role="status" region is new markup rather than a changed one and cannot be
+  // relied on to announce; moving focus is what actually works here. The automatic
+  // suggestion never sets the flag — see idLookupAnnounce.
+  if (idLookupAnnounce) {
+    idLookupAnnounce = false;
+    const out = document.getElementById("id-lookup-out");
+    if (out) out.focus();
+  }
 }
 
 // enhanceTzPickers upgrades every [data-tzpicker] mount in the freshly rendered
@@ -4740,6 +4906,17 @@ document.getElementById("panels").addEventListener("click", (e) => {
     const body = document.getElementById(id);
     if (body) body.classList.toggle("sr-only", !open);
     hb.setAttribute("aria-expanded", String(open));
+    return;
+  }
+  // --- DMR ID lookup (#140) ---
+  // The button asks the cached table what IDs the General callsign has; a row's
+  // Use button commits one through setField, so it is an ordinary unsaved edit
+  // that Apply writes like any other.
+  if (e.target.closest("[data-idlookup]")) { runIDLookup((edit.general || {}).callsign, true); return; }
+  const idu = e.target.closest("[data-iduse]");
+  if (idu) {
+    setField("general", "id", idu.dataset.iduse);
+    renderPanel(); // the list re-renders with the chosen row marked as the one in use
     return;
   }
   // --- Modes sub-tab strip (D4) ---

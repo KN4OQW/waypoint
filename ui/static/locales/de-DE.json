@@ -190,7 +190,6 @@
   "display.trxMode": "TRX-Modus",
 
   "dmr.colorCode": "Color Code",
-  "dmr.dmrId": "DMR-ID",
   "dmr.dmrMaster": "DMR-MASTER",
   "dmr.embeddedLcOnly": "Nur Embedded LC",
   "dmr.enabled": "Aktiviert",

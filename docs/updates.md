@@ -433,6 +433,25 @@ A refresh triggered here runs the same fetch the scheduler runs, under the same
 per-list lock, so a manual refresh and the daily tick can never race on a cache
 file. A list already refreshing reports `busy` rather than being run twice.
 
+### Looking a DMR ID up from a callsign
+
+`DMRIds.dat` is downloaded for the gateways' callsign resolution, and the settings
+page reads the same cache to answer the question a new operator actually has:
+*what is my DMR ID?* **Find my ID** on the General tab resolves the callsign
+against the table and offers what it finds, rather than sending the operator to
+radioid.net to copy a number across by hand (#140).
+
+- `GET /api/dmr/ids?callsign=KN4OQW` → `{ "callsign", "records": [{id, callsign,
+  name}], "truncated", "available" }`. `records` is ordered by ID and is never
+  `null`; `available` is false when the node has never downloaded the table, which
+  is a different answer to an operator than "your callsign is not listed".
+
+This adds no outbound request — it is a second reader of a file that was already
+being fetched, under the same operator-visible off switch. The lookup streams the
+file rather than loading it: the table parses to 35.5 MB of live heap, which is not
+memory a Pi Zero should spend to answer one question. A callsign with several IDs
+issued to it is common, and the page always offers the choice; it never picks one.
+
 ## What is not here yet
 
 - **A/B image slots (Phase 3)** — the same verify/confirm/rollback state machine

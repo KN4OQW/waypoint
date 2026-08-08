@@ -107,7 +107,7 @@ WPSD splits classic Pi-Star's single General panel into "General Configuration" 
 |---|---|---|---|---|
 | System Hostname | `hostnamectl` (host) | — | pending | host/OS domain, not an INI — config-coverage §4. |
 | Gateway Callsign | `[General] Callsign` | `general.callsign` | done | |
-| DMR/CCS7 ID *(WPSD; Pi-Star "CCS7/DMR ID")* | `[General] Id`, `[DMR] Id` | `general.id` | done | `dmr.id` overrides for DMR; falls back to `general.id`. |
+| DMR/CCS7 ID *(WPSD; Pi-Star "CCS7/DMR ID")* | `[General] Id`, `[DMR] Id` | `general.id` | done | `dmr.id` overrides for DMR; falls back to `general.id`. The two fields are labelled to say so — "DMR ID" on General, "DMR ID override" on the DMR panel with the inherited value in its placeholder (#140). General offers **Find my ID**, which resolves the callsign against the cached `DMRIds.dat`. |
 | NXDN ID | `[NXDN Network]` id | — | pending | separate NXDN radio ID not modeled. |
 | Radio Frequency (RX) | `[Info] RXFrequency` | `modem.rx_freq_hz` | done | Hz in store, MHz in UI. |
 | Radio Frequency (TX) | `[Info] TXFrequency` | `modem.tx_freq_hz` | done | |

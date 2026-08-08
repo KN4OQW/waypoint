@@ -298,6 +298,33 @@
   .row .accent { color: var(--accent); }
   .unit { display: flex; align-items: center; gap: 8px; }
   .unit .u { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+
+  /* DMR ID lookup (#140). The answer spans the whole row underneath the field,
+     like .row-help, because a callsign with several IDs issued to it is a list and
+     not a hint. Colours come from the same tokens as .row-help so the two blocks
+     under one field read as one surface rather than two competing ones. */
+  .idfind { display: flex; align-items: center; gap: 8px; }
+  .idfind .idfind-go { flex: none; white-space: nowrap; padding: 9px 13px; }
+  .idfind-out { grid-column: 1 / -1; margin: 9px 0 2px; padding: 10px 12px; border-radius: 8px;
+    background: var(--chip-bg); border: 1px solid var(--chip-line); border-left: 2px solid var(--accent);
+    font-size: 12.5px; line-height: 1.55; color: var(--ink-body); }
+  .idfind-out b { color: var(--ink-head); }
+  .idfind-out:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .idfind-head { margin: 0; }
+  .idfind-dim { color: var(--muted); }
+  /* The list scrolls rather than growing without bound. Measured against the real
+     table: N0SZ has 61 IDs and ZL6AREC has 70, and rendered flat that pushes
+     Location and Dashboard URL off the bottom of the card. The region stays
+     keyboard-reachable because every row carries its own Use button. */
+  .idfind-list { list-style: none; margin: 9px 0 0; padding: 0; max-height: 232px; overflow-y: auto; }
+  .idfind-list li { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-top: 1px solid var(--row-line); }
+  .idfind-list li:first-child { border-top: 0; }
+  .idfind-id { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--ink-head); letter-spacing: .5px; }
+  .idfind-name { flex: 1; color: var(--muted); }
+  /* "In use" marks the row already in the field. It is text, never a colour or a
+     tick alone, so the distinction survives for anyone who cannot see the accent. */
+  .idfind-cur { margin-left: auto; font-family: var(--mono); font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); }
+  .idfind-list .btn { margin-left: auto; flex: none; padding: 6px 12px; }
   /* Timezone combobox (tzpicker.js, #139). The input matches .row input; the
      listbox floats over the card so the filtered zones don't push the layout. */
   .tz-combo { position: relative; width: 100%; }

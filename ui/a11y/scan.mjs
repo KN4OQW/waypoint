@@ -142,6 +142,37 @@ async function open(page, tab, sub) {
   await page.waitForTimeout(250);
 }
 
+// Put the General tab's DMR ID lookup (#140) into its answered state and scan
+// that, because the default render never shows it: the block only exists after a
+// callsign has been looked up, so the ordinary settings#general pass walks past
+// the list, its Use buttons and its "in use" marker without seeing any of them.
+//
+// The state is seeded directly rather than by typing a callsign and pressing the
+// button. A real lookup needs a DMRIds.dat on the machine, which CI does not have
+// and should not need for an accessibility scan; seeding also pins the awkward
+// cases — a row already in use, and a truncated list — that a live table would
+// only produce for particular callsigns. If the settings page ever stops carrying
+// these globals the evaluate throws, the catch swallows it, and the scan degrades
+// to the plain panel rather than failing for the wrong reason.
+async function openIDLookup(page) {
+  await page.evaluate(() => {
+    edit.general = Object.assign({}, edit.general, { callsign: "N0SZ", id: "3101901" });
+    idLookup = {
+      status: "done",
+      callsign: "N0SZ",
+      records: [
+        { id: 3101900, callsign: "N0SZ", name: "Rocky" },
+        { id: 3101901, callsign: "N0SZ", name: "Rocky" },
+        { id: 3101902, callsign: "N0SZ", name: "" },
+      ],
+      truncated: true,
+      available: true,
+    };
+    renderPanel();
+  }).catch(() => {});
+  await page.waitForTimeout(150);
+}
+
 // Drive every sidebar group to the wanted state through its own disclosure button,
 // so the scan exercises the real control rather than poking at stored state. Each
 // click re-renders the nav; the captured buttons keep working because the handler
@@ -204,6 +235,13 @@ for (const theme of THEMES) for (const mode of MODES) {
     for (const t of TARGETS) {
       await open(page, t.tab, t.sub);
       await analyze(page, `${vp.key} settings#${t.sub ? `${t.tab}/${t.sub}` : t.tab}`);
+      // The General tab has a second state worth scanning: the DMR ID lookup with
+      // an answer in it. Done after the plain pass so the panel above is scanned
+      // as it actually loads.
+      if (t.tab === "general" && !t.sub) {
+        await openIDLookup(page);
+        await analyze(page, `${vp.key} settings#general (ID lookup answered)`);
+      }
     }
 
     if (vp.key === "desktop") {
