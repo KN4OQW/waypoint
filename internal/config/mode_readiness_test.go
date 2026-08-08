@@ -656,10 +656,11 @@ func TestAdvisoryFindingsWithholdNoDaemon(t *testing.T) {
 	// registered requirements as well as findings, which the next test covers.
 	m.DMR.ColorCode, m.P25.NAC, m.NXDN.RAN, m.M17.CAN = "20", "zzz", "99", "99"
 	m.FM.AccessMode = "9"
-	// Frequencies stay in this set: they are reported, and #216 asks for them to be
-	// registered as well, but they are not registered today. If that changes, this
-	// line is the one that fails and says so.
-	m.Modem.RXFreqHz, m.Modem.TXFreqHz = "", ""
+	// The frequencies used to be wrecked here too, with a note saying they were
+	// reported and not registered and that this line would fail if that changed.
+	// It changed (#215/#216): they stop MMDVM-Host and YSFGateway from starting at
+	// all, so they are registered now and belong to the both-reported-and-withheld
+	// set below, not to this one. The fixture's frequencies stay.
 
 	if !m.HasModeErrors() {
 		t.Fatal("the wrecked model reported no errors; the rest of this test proves nothing")
