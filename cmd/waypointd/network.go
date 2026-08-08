@@ -83,7 +83,10 @@ func (s *server) newNetGuard() *netconfig.Guard {
 // netRun is the production status/apply command runner: it executes the command
 // and returns combined output. Shelling out to nmcli/timedatectl/busctl matches how
 // the rest of Waypoint drives the host (systemctl restarts, i2cdetect).
-func netRun(name string, args ...string) (string, error) {
+//
+// A var rather than a func so a test can drive an apply handler end to end without
+// renaming the machine it is running on.
+var netRun = func(name string, args ...string) (string, error) {
 	out, err := exec.Command(name, args...).CombinedOutput()
 	return string(out), err
 }
@@ -138,8 +141,43 @@ func (s *server) networkHostApply(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "host apply: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// A rename here has the same consequence it has during first-boot setup: the
+	// operator is told to browse to a new name, and a certificate still naming the
+	// old one meets them with a mismatch warning. So the same remint runs on this
+	// path — see remintCertFor.
+	reminted := s.remintCertFor(m.Host.Hostname)
 	log.Printf("host settings applied (changed=%v): hostname=%q timezone=%q ntp=%v", changed, m.Host.Hostname, m.Host.Timezone, m.NTP.Enabled)
-	writeJSON(w, map[string]any{"applied": true, "changed": changed})
+	writeJSON(w, map[string]any{"applied": true, "changed": changed, "cert_reminted": reminted})
+}
+
+// remintCertFor keeps the device certificate naming the host the node answers to,
+// and reports whether it had to mint a new one.
+//
+// It is called with the configured hostname rather than gated on whether the apply
+// reported a change, for two reasons. `ApplyHost` reports one aggregate bool over
+// hostname, timezone and NTP, so gating on it would remint after an unrelated
+// timezone edit and skip nothing useful. And `Holder.Ensure` is the idempotence
+// check already — it returns immediately when the held certificate covers the
+// name — so an unchanged hostname costs a map lookup, while a certificate that
+// drifted for any other reason (a hostname set out of band, a certificate restored
+// from an older node) is repaired instead of left wrong until the next rename.
+//
+// A blank hostname means "leave it" everywhere else in this domain, and it means
+// the same here: normalizing it would mint for the `waypoint` fallback and throw
+// away the name the node actually has.
+func (s *server) remintCertFor(hostname string) bool {
+	if s.certs == nil || strings.TrimSpace(hostname) == "" {
+		return false
+	}
+	regenerated, err := s.certs.Ensure(hostname)
+	switch {
+	case err != nil:
+		log.Printf("waypointd: could not remint the device certificate for %q: %v", hostname, err)
+		return false
+	case regenerated:
+		log.Printf("waypointd: device certificate reminted for %q — reconnect over https and trust it once", hostname)
+	}
+	return regenerated
 }
 
 // networkTimezones serves GET /api/network/timezones: the tz-database zone list

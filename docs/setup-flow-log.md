@@ -425,6 +425,12 @@ only via the wizard's hostname step — a hostname changed later through
 belongs to the network-config surface rather than first-boot setup, and I have not
 touched it.
 
+> **Since closed.** That gap was tracked as issue #119 and fixed on the network
+> side: `networkHostApply` now runs the same remint, both paths share one
+> implementation (`server.remintCertFor`), and the response carries
+> `cert_reminted` so the Network tab can warn about the re-trust. See
+> `docs/config-coverage.md` §4.
+
 ---
 
 ## 9 — `feat/custom-toml-fastpath`: the power-user fast path

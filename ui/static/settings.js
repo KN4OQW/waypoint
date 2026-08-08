@@ -4466,7 +4466,15 @@ async function applyHost() {
     if (!r.ok) throw new Error((await r.text()).trim());
     const j = await r.json();
     netHostDirty = false;
-    banner(j.changed ? "Host settings applied." : "Host settings already in effect (no change).", "ok");
+    // A rename remints the device certificate, so the operator has to trust it
+    // once more at the new address. Say so here rather than letting them discover
+    // it as a browser warning after following our own instructions.
+    if (j.cert_reminted) {
+      const host = (netEdit.host.hostname || "").trim();
+      banner("Host settings applied. This node is now https://" + host + ".local/ — its certificate was reissued for the new name, so your browser will ask you to trust it once more.", "ok");
+    } else {
+      banner(j.changed ? "Host settings applied." : "Host settings already in effect (no change).", "ok");
+    }
   } catch (err) {
     banner("Host apply failed: " + String(err.message || err), "bad");
   } finally {

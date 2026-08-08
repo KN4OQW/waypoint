@@ -177,6 +177,17 @@ change-gated `systemctl restart`, and hostname/timezone are idempotent
 `hostnamectl`/`timedatectl` exec calls (the third apply mechanism — no rendered
 file). All are idempotent: re-applying the values already in effect is a no-op.
 
+**A rename remints the device certificate.** `POST /api/network/host/apply` calls
+`tlscert.Holder.Ensure` with the configured hostname, the same remint the
+first-boot wizard runs when the operator names the node — otherwise the operator
+follows the node's own instruction to `https://<new-name>.local/` and meets a
+name-mismatch warning. `Ensure` is the idempotence check itself (it returns
+immediately when the held certificate already covers the name), so the call is
+unconditional rather than gated on the apply's aggregate `changed`, and a
+certificate that drifted from the hostname for any other reason is repaired here
+too. The response carries `cert_reminted`, and the Network tab uses it to tell the
+operator they will be asked to trust the certificate once more.
+
 **Phase-1 stub closure.** The original parity plan (§5, dashboard/system) listed
 *station-ID/legal helpers* and left **hostname/timezone** as unfinished Phase-1
 stubs. Those are now closed here: hostname and timezone are modeled
