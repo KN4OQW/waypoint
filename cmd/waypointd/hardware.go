@@ -90,6 +90,12 @@ type hardwareView struct {
 	Boards     []boardView              `json:"boards"`
 	Configured hardwareConfigured       `json:"configured"`
 	Warnings   []config.HardwareWarning `json:"warnings"`
+	// Panel is the last character-display detection (#136). It rides on the
+	// hardware surface rather than a route of its own because this is the payload
+	// the settings UI already loads on every visit, and the LCD tab's question —
+	// "is there a display here that the config does not mention?" — is answered by
+	// comparing these two records, not by a second fetch.
+	Panel config.PanelState `json:"panel"`
 	// UART is the GPIO serial port's availability on a Raspberry Pi. It is the
 	// answer to the question detection cannot answer for itself: a hat on a
 	// stock Raspberry Pi OS install is electrically fine and completely mute,
@@ -153,11 +159,18 @@ func (s *server) hardwareSnapshot() (hardwareView, error) {
 	if hz, err := strconv.Atoi(m.Modem.TCXOHz); err == nil {
 		cfg.TCXOLabel = modem.TCXOLabel(hz)
 	}
+	// A missing panel record is the never-looked state, not an error: this surface
+	// predates panel detection, so every node upgraded into it has one.
+	panel, err := config.GetPanelState(s.store)
+	if err != nil {
+		return hardwareView{}, err
+	}
 	return hardwareView{
 		Detected:   st,
 		Boards:     boardViews(),
 		Configured: cfg,
 		Warnings:   config.HardwareWarnings(m, st),
+		Panel:      panel,
 		UART:       uartReport(),
 	}, nil
 }

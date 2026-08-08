@@ -146,6 +146,10 @@ var allRoutes = []route{
 	{"POST", "/api/hardware/detect"},
 	{"POST", "/api/hardware/adopt"},
 	{"POST", "/api/hardware/uart"},
+	// The character panel's detect/adopt (#136). Adopting turns a display on and
+	// writes the lcd section, so it belongs behind the wall like every other write.
+	{"POST", "/api/lcd/detect"},
+	{"POST", "/api/lcd/adopt"},
 	{"GET", "/api/network/status"},
 	{"GET", "/api/network/wifi/scan"},
 	{"GET", "/api/network/timezones"},

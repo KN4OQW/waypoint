@@ -248,6 +248,9 @@ New tab `lcd` (label "LCD", after Setup). `panelLCD()`:
 4. **Where the driver's I2C address/geometry seeds from** — offer a "copy from the
    `display` HD44780 fields" convenience, or fully independent? Proposed:
    independent, with defaults; no coupling to the inert section.
+   *Settled, and by a third answer neither option anticipated: the bus itself.
+   The address is seeded from a probe the operator adopts (§12); the geometry
+   still is not, because no probe can tell a 16×2 from a 20×4.*
 5. **New dep `golang.org/x/sys`** — acceptable to add + pin? (Pure Go, ubiquitous,
    no cgo.)
 
@@ -262,3 +265,44 @@ New tab `lcd` (label "LCD", after Setup). `panelLCD()`:
 4. UI: `lcd` tab + page builder.
 5. `internal/lcd/hd44780`: real PCF8574 device (`x/sys/unix`). *(hardware-gated —
    validate on the test box)*
+
+## 12. Panel detection and adoption (#136)
+
+*Added after the driver shipped. The design above assumed the operator would type
+the bus and address; #136 is what happened when they had already been found.*
+
+`hd44780.Detect` was written for first-boot setup — a node with no config and
+nobody to write one still needs to say something on the glass, so `runSetupPanel`
+probes rather than being told. The result went no further than that screen. An
+operator could watch setup on a display and then open the LCD tab to be told the
+driver was off and asked for a bus and an address the daemon already knew.
+
+The fix is the shape `internal/config/hardware.go` already argues for, applied to
+the panel: **detected hardware and configured hardware stay separate, and the
+crossing between them is a named operation.**
+
+- **`panel_state`** — a machine-written store key holding the last probe: what
+  answered, when, and which detection the config was last taken from. Outside
+  `Model.sections()`, so no `PUT /api/config/panel_state` exists — a record of what
+  the bus said is not a preference. It is a *separate key* from `hardware_state`
+  rather than another field on it: the modem probe is an expensive,
+  operator-triggered act that can take the node off the air, the panel probe is a
+  handful of one-byte reads that runs unattended at startup, and sharing a row
+  would mean one read-modify-writing under the other.
+- **`config.AdoptPanel`** — the crossing. Writes `i2c_bus`, `i2c_address` and
+  `enabled` into the `lcd` section, returns the list of fields it moved, and passes
+  `ValidateLCD` on the way. Pages and geometry are left alone: a PCF8574 address
+  cannot reveal how many rows the panel has, and guessing would silently rewrite
+  the operator's pages.
+- **Routes** — `POST /api/lcd/detect` (sweep now, record) and `POST /api/lcd/adopt`
+  (write it in, then `reloadLCD` so the panel lights without a restart). Both feed
+  `GET /api/hardware`, which already carries the modem's detection and is what the
+  settings UI loads on every visit, so the LCD tab needs no fetch of its own.
+- **Unattended probes** — `runSetupPanel` now keeps what it finds, and a node whose
+  driver is off probes once at startup. Both only *record*. Neither writes the
+  `lcd` section.
+
+The daemon never enables the driver on its own. RFC-0001 makes the store
+operator-authoritative, and a display that switches itself on because something
+ACKed at 0x27 is the same class of surprise as a probe that reconfigures a working
+modem. Detection makes an offer; adopting it is a click with a name on it.

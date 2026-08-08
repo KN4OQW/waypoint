@@ -1836,6 +1836,10 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/hardware/detect", s.hardwareDetect)
 	mux.HandleFunc("/api/hardware/adopt", s.hardwareAdopt)
 	mux.HandleFunc("/api/hardware/uart", s.hardwareUART) // free the GPIO serial port
+	// The character panel's half of the same split (#136): look for a display, and
+	// write what was found into the lcd section on the operator's word.
+	mux.HandleFunc("/api/lcd/detect", s.lcdDetect)
+	mux.HandleFunc("/api/lcd/adopt", s.lcdAdopt)
 	// Firmware flashing (#19 / RFC-0019). Byte-level progress is its own SSE
 	// stream rather than hub events: the hub is persisted, and a progress bar is
 	// not worth five hundred rows on an SD card.
@@ -2371,6 +2375,13 @@ func main() {
 		NetwatchInterval: *netwatchInterval,
 	})
 	s.initPeering(context.Background(), *peeringDir, *peeringBootstrapAddr)
+
+	// Look for a panel the operator has wired but never declared (#136). After
+	// initSetupAP, because the unprovisioned node's display belongs to the setup
+	// screen and this stands down for it.
+	if m, err := config.Load(s.store); err == nil {
+		s.probeForPanel(m)
+	}
 
 	if *demoMode {
 		go demo.Run(context.Background(), s.hub)
