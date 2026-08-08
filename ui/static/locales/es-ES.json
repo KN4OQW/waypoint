@@ -634,7 +634,7 @@
   "masterSelect.hostListLoading2": "cargando lista de hosts…",
   "masterSelect.selectMaster": "— seleccionar master —",
 
-  "modem.hostBlocked": "MMDVM-Host no se inicia hasta que estos valores estén definidos. Sin un puerto de módem no hay nada que abrir, y una estación no puede transmitir sin indicativo ni ID. Todos los modos dependen de él: no habrá nada en el aire hasta completarlo.",
+  "modem.hostBlocked": "MMDVM-Host no se inicia hasta que estos valores estén definidos. Sin un puerto de módem no hay nada que abrir, a cero el módem rechaza la frecuencia y el host se detiene, y una estación no puede transmitir sin indicativo ni ID. Todos los modos dependen de él: no habrá nada en el aire hasta completarlo.",
   "modes.cardLabel": "Modo {mode}",
   "modes.modeEnable": "ACTIVAR MODO",
   "modes.modeSettings": "AJUSTES DEL MODO",
