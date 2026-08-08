@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -251,6 +252,176 @@ func TestTier2_GatewaysAcceptRenderedConfigs(t *testing.T) {
 			t.Logf("PASS: pinned %s accepted the generated %s and owns :%d", tc.daemon, tc.conf, tc.bindPort)
 		})
 	}
+}
+
+// The frequency survey: which daemons actually die when the node has no RF
+// frequency set, established against the pinned binaries rather than read off
+// upstream's source.
+//
+// This exists because a narrower version of the same question was answered wrongly
+// once already. gateway_requirements.go concluded DAPNETGateway was the only daemon
+// that exits before opening anything, having searched upstream for `return 1` and
+// not for `assert` — and a bench node then turned up YSFGateway crash-looping on
+// exactly that (#215, restart counter 2,127). The correction is not to read the
+// sources more carefully; it is to stop reading them for this class of claim.
+//
+// Four rendered configs carry [Info] frequencies (render.go): MMDVM-Host.ini,
+// YSFGateway.ini, DGIdGateway.ini and M17Gateway.ini. Three of them are here.
+// MMDVM-HOST IS NOT, and that gap is the honest limit of this test: build.sh does
+// not build it (nothing in Tier 2 drives a modem), so the claim that it dies on an
+// unset frequency rests on the bench journal in #216 — `Received a NAK to the
+// SET_FREQ command from the modem`, exit 1 — and not on anything here. If Tier 2
+// ever gains a modem stand-in, this is where that claim belongs.
+//
+// The daemons that render no frequency at all are in the table too, as controls. A
+// survey that only visits the daemons it suspects is how the last one went wrong,
+// and "P25Gateway does not care" is worth pinning: it is what makes withholding
+// YSFGateway a statement about YSFGateway rather than about frequencies generally.
+func TestTier2_UnsetFrequencyDaemonSurvey(t *testing.T) {
+	const freq = "438800000" // the bench node's 70cm simplex pair, as benchModel sets it
+
+	for _, tc := range []struct {
+		name     string
+		daemon   string      // binary name, as build.sh drops it
+		conf     string      // rendered file name, as the device carries it
+		mode     config.Mode // whose gateway this is, for the registry assertions
+		render   func(*config.Model) string
+		bindPort int
+		dgid     bool     // render the DG-ID variant of the YSF slot
+		rx, tx   string   // what the modem section carries for this case
+		dies     bool     // measured against the pinned binary, not read off upstream
+		wants    []string // store paths the daemon's death makes required
+	}{
+		// YSFGateway, three ways. Both #145 and #215 describe this as a TRANSMIT
+		// frequency requirement, and both are incomplete: CWiresX::setInfo asserts
+		// on line 103 AND line 104, so either frequency alone kills it. The
+		// requirement therefore names both fields, and these two half-set cases are
+		// why — without them the registry would let a node set TX, watch the daemon
+		// come up blocked-free, and crash-loop on RX.
+		{name: "neither frequency", daemon: "YSFGateway", conf: "YSFGateway.ini", mode: config.ModeYSF, render: (*config.Model).RenderYSFGateway,
+			bindPort: ysfGwPort, rx: "", tx: "", dies: true, wants: []string{"modem.rx_freq_hz", "modem.tx_freq_hz"}},
+		{name: "transmit set, receive unset", daemon: "YSFGateway", conf: "YSFGateway.ini", mode: config.ModeYSF, render: (*config.Model).RenderYSFGateway,
+			bindPort: ysfGwPort, rx: "", tx: freq, dies: true, wants: []string{"modem.rx_freq_hz"}},
+		{name: "receive set, transmit unset", daemon: "YSFGateway", conf: "YSFGateway.ini", mode: config.ModeYSF, render: (*config.Model).RenderYSFGateway,
+			bindPort: ysfGwPort, rx: freq, tx: "", dies: true, wants: []string{"modem.tx_freq_hz"}},
+
+		// The other file that carries [Info] frequencies and is buildable here. It is
+		// the YSF mode's OTHER gateway, so this row is also what grounds the
+		// requirement's DG-ID exemption: same mode, same [Info] section, no Wires-X.
+		{name: "neither frequency", daemon: "DGIdGateway", conf: "DGIdGateway.ini", mode: config.ModeYSF, render: (*config.Model).RenderDGIdGateway,
+			bindPort: ysfGwPort, dgid: true, rx: "", tx: "", dies: false},
+		{name: "neither frequency", daemon: "M17Gateway", conf: "M17Gateway.ini", mode: config.ModeM17, render: (*config.Model).RenderM17Gateway,
+			bindPort: m17GwPort, rx: "", tx: "", dies: false},
+
+		// Controls: no frequency reaches these files at all.
+		{name: "neither frequency", daemon: "P25Gateway", conf: "P25Gateway.ini", mode: config.ModeP25, render: (*config.Model).RenderP25Gateway,
+			bindPort: p25GwPort, rx: "", tx: "", dies: false},
+		{name: "neither frequency", daemon: "NXDNGateway", conf: "NXDNGateway.ini", mode: config.ModeNXDN, render: (*config.Model).RenderNXDNGateway,
+			bindPort: nxdnGwPort, rx: "", tx: "", dies: false},
+		{name: "neither frequency", daemon: "dstargateway", conf: "dstargateway.cfg", mode: config.ModeDStar, render: (*config.Model).RenderDStarGateway,
+			bindPort: dstarGwPort, rx: "", tx: "", dies: false},
+	} {
+		t.Run(tc.daemon+"/"+tc.name, func(t *testing.T) {
+			m := benchModel()
+			m.Modem.RXFreqHz, m.Modem.TXFreqHz = tc.rx, tc.tx
+			m.YSFGW.EnableDGId = tc.dgid
+
+			if ownsUDP(tc.bindPort) {
+				t.Fatalf("UDP :%d is already in use before %s started", tc.bindPort, tc.daemon)
+			}
+			conf := writeConf(t, tc.conf, localise(t, localHostlist(t, tc.render(m))))
+			run := start(t, tc.daemon, conf)
+			exited, code := run.exitedWithin(startupGrace)
+
+			switch {
+			case tc.dies && !exited:
+				t.Fatalf("%s is still running with no frequency — it no longer dies on one, and any requirement Waypoint registers for it now withholds a daemon that would work:\n%s",
+					tc.daemon, run.log.String())
+			case !tc.dies && exited:
+				t.Fatalf("%s exited (%d) with no frequency — it has GAINED a frequency requirement Waypoint does not register, so it will crash-loop on a node that has not set one:\n%s",
+					tc.daemon, code, run.log.String())
+			case tc.dies:
+				// A daemon that cannot start must be one Waypoint does not start, and
+				// the block must name the fields that would fix it — otherwise the
+				// operator gets a daemon that is silently absent instead of one that
+				// silently crash-loops, which is no better.
+				missing := blockedFields(m, tc.mode)
+				if missing == nil {
+					t.Fatalf("%s died (exit %d) and Waypoint does not withhold it, so a node in this state crash-loops:\n%s",
+						tc.daemon, code, run.log.String())
+				}
+				for _, want := range tc.wants {
+					if !slices.Contains(missing, want) {
+						t.Errorf("%s died for want of %s, but the block names only %v", tc.daemon, want, missing)
+					}
+				}
+				t.Logf("PASS: %s died (exit %d), and Waypoint withholds it naming %v", tc.daemon, code, missing)
+				return
+			}
+
+			// A survivor must NOT be withheld — the direction that keeps the registry
+			// from growing invented requirements. Every daemon here runs with no
+			// frequency at all, so blocking one would take a working gateway off a
+			// working node. Scoped to this mode: MMDVM-Host is legitimately blocked in
+			// all of these models (the node has no frequency for the modem to tune),
+			// and that is a different claim, made in the modem case below.
+			if missing := blockedFields(m, tc.mode); missing != nil {
+				t.Fatalf("%s runs fine with no frequency, but Waypoint withholds it for %v", tc.daemon, missing)
+			}
+
+			// A survivor has to have got far enough to bind its loopback. "Did not
+			// exit within four seconds" on its own would also be true of a daemon
+			// wedged before it opened anything, and that is not the claim.
+			if !ownsUDP(tc.bindPort) {
+				t.Fatalf("%s stayed up with no frequency but never bound :%d, so it did not really start:\n%s",
+					tc.daemon, tc.bindPort, run.log.String())
+			}
+			t.Logf("PASS: %s started and bound :%d with no frequency set", tc.daemon, tc.bindPort)
+		})
+	}
+
+	// MMDVM-Host, which no run above covers and none can: build.sh does not build
+	// it, so what follows asserts only that Waypoint withholds it and names the
+	// frequencies. That the host actually dies without them is #216's bench
+	// finding — `Received a NAK to the SET_FREQ command from the modem`, exit 1,
+	// restart counter in the hundreds, with DisplayLevel=0 hiding the cause — and
+	// it is the one claim in this file resting on a journal rather than a run.
+	// Anyone adding a modem stand-in to Tier 2 should promote it.
+	t.Run("MMDVM-Host/withheld on the bench finding alone", func(t *testing.T) {
+		// A modem port on both models: benchModel carries none (nothing in Tier 2
+		// opens a modem), and without one MMDVM-Host is withheld for that instead,
+		// which would make the frequency claim below vacuous in one direction and
+		// wrong in the other.
+		withPort := func(rx, tx string) *config.Model {
+			m := benchModel()
+			m.Modem.Port, m.Modem.RXFreqHz, m.Modem.TXFreqHz = "/dev/ttyACM0", rx, tx
+			return m
+		}
+
+		missing := blockedFields(withPort("", ""), config.ModeModem)
+		for _, want := range []string{"modem.rx_freq_hz", "modem.tx_freq_hz"} {
+			if !slices.Contains(missing, want) {
+				t.Errorf("MMDVM-Host block names %v, want it to include %s", missing, want)
+			}
+		}
+		if got := blockedFields(withPort("438800000", "438800000"), config.ModeModem); got != nil {
+			t.Errorf("MMDVM-Host is withheld from a node that has both frequencies: %v", got)
+		}
+		t.Logf("PASS: MMDVM-Host is withheld naming %v, and runs with the frequencies set (daemon behaviour: #216, not measured here)", missing)
+	})
+}
+
+// blockedFields returns the store paths Waypoint says are missing for one mode's
+// gateway, or nil when that gateway is not withheld at all. Scoped per mode
+// because most models here legitimately block MMDVM-Host as well, and a test
+// asking "is this gateway withheld" must not be answered by a different one.
+func blockedFields(m *config.Model, mode config.Mode) []string {
+	for _, r := range m.UnmetGatewayRequirements() {
+		if r.Mode == mode {
+			return r.Missing
+		}
+	}
+	return nil
 }
 
 // The accountability test: where internal/config/mode_readiness.go claims a

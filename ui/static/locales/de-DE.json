@@ -634,7 +634,7 @@
   "masterSelect.hostListLoading2": "Hostliste lädt…",
   "masterSelect.selectMaster": "— Master wählen —",
 
-  "modem.hostBlocked": "MMDVM-Host wird erst gestartet, wenn diese Werte gesetzt sind. Ohne Modem-Port gibt es nichts zu öffnen, und eine Station darf ohne Rufzeichen und ID nicht senden. Alle Betriebsarten hängen davon ab — bis dahin ist nichts auf Sendung.",
+  "modem.hostBlocked": "MMDVM-Host wird erst gestartet, wenn diese Werte gesetzt sind. Ohne Modem-Port gibt es nichts zu öffnen, bei null lehnt das Modem die Frequenz ab und der Host beendet sich, und eine Station darf ohne Rufzeichen und ID nicht senden. Alle Betriebsarten hängen davon ab — bis dahin ist nichts auf Sendung.",
   "modes.cardLabel": "{mode}-Modus",
   "modes.modeEnable": "MODUS AKTIVIEREN",
   "modes.modeSettings": "MODUS-EINSTELLUNGEN",

@@ -14,13 +14,21 @@ import (
 //   - ValidateModem / ValidateStationID / ValidateBuses REFUSE a save. They cover
 //     values that are wrong on their face — a board that does not exist, a level
 //     outside 0-100 — where accepting the write helps nobody.
-//   - UnmetGatewayRequirements WITHHOLDS a daemon. It covers the one case where a
-//     gateway reads a value at startup, finds it unset, and exits before opening
-//     anything, so starting it is a restart loop (gateway_requirements.go).
+//   - UnmetGatewayRequirements WITHHOLDS a daemon. It covers the cases where a
+//     gateway reads a value at startup, finds it unset, and exits or aborts before
+//     opening anything, so starting it is a restart loop (gateway_requirements.go).
 //   - ModeProblems, here, REPORTS. It covers the configurations that save fine and
 //     start fine and then do not work on the air: the node comes up, every unit is
 //     active, the dashboard is green, and the operator debugs their radio or their
 //     reflector for an evening.
+//
+// The three are not a partition, and a value may sit in more than one. The RF
+// frequencies are in all the ways that matter: unset, they withhold MMDVM-Host and
+// YSFGateway (#215/#216); merely implausible — 438 where 438000000 was meant —
+// they are only reported, because the daemons start on them. That overlap is the
+// design working. The registry is what stops a crash loop; the report is the only
+// thing that tells the operator WHICH control to fill in, since a withheld daemon
+// is otherwise just a unit that is not running.
 //
 // HardwareWarnings is the same shape for the same reason, and answers a different
 // question: it compares the configuration against what the attached modem said
@@ -328,21 +336,49 @@ func (m *Model) dmrProblems() []ModeProblem {
 func (m *Model) ysfProblems() []ModeProblem {
 	var out []ModeProblem
 
-	// YSFGateway builds Wires-X unconditionally, and CWiresX::setInfo asserts
-	// txFrequency > 0 — so a profile with no modem frequency does not misbehave,
-	// it aborts the daemon at startup. This is issue #145, found by the Tier 2
-	// harness, and it is why test/tier2's YSF models carry explicit frequencies.
+	// YSFGateway builds Wires-X unconditionally, and CWiresX::setInfo asserts on
+	// BOTH frequencies (WiresX.cpp:103 and :104) — so a profile with no modem
+	// frequency does not misbehave, it aborts the daemon at startup. This is issue
+	// #145, found by the Tier 2 harness, and it is why test/tier2's YSF models carry
+	// explicit frequencies.
 	//
-	// The DG-ID path is exempt: DGIdGateway has no Wires-X and no such assert. That
+	// The DG-ID path is exempt: DGIdGateway has no Wires-X and no such assert, and
+	// the survey starts it with no frequency and watches it bind :4200. That
 	// distinction is the reason this is a separate finding from the station-wide
 	// frequency error rather than a louder version of it — the consequence differs
-	// by which YSF gateway the node renders, and the operator needs to know their
-	// daemon will not start at all.
-	if _, ok := freqHz(m.Modem.TXFreqHz); !ok && !m.YSFGW.EnableDGId {
-		out = append(out, ModeProblem{
-			Mode: ModeYSF, Field: "modem.tx_freq_hz", Severity: SeverityError,
-			Message: "YSFGateway aborts at startup when the transmit frequency is unset — it builds Wires-X unconditionally and CWiresX::setInfo asserts the frequency is non-zero (#145). The unit will restart-loop, not run.",
-		})
+	// by which YSF gateway the node renders.
+	//
+	// What this finding must NOT say any more is that the unit restart-loops. It did
+	// until #215 registered the requirement; now the daemon is withheld, so the
+	// operator-visible symptom is a gateway that is deliberately not running, and
+	// this message is what names the field that would start it. A finding that
+	// describes the old symptom sends people to look for a crash loop that is not
+	// there.
+	//
+	// It fires on freqHz rather than the registry's narrower frequencyStops on
+	// purpose: an implausible-but-nonzero frequency does not block the daemon, and
+	// this is the only mechanism that says anything about it. So the report is a
+	// superset of the block, which is the intended relationship.
+	//
+	// Both frequencies are reported, not just the transmit one. #145 and #215 each
+	// describe this as a transmit-frequency requirement and each is incomplete: with
+	// TX set and RX empty the daemon aborts on :104 instead of :103, which is the
+	// same dead gateway by the other assert.
+	if !m.YSFGW.EnableDGId {
+		for _, f := range []struct{ field, label, val string }{
+			{"modem.tx_freq_hz", "transmit", m.Modem.TXFreqHz},
+			{"modem.rx_freq_hz", "receive", m.Modem.RXFreqHz},
+		} {
+			if _, ok := freqHz(f.val); ok {
+				continue
+			}
+			out = append(out, ModeProblem{
+				Mode: ModeYSF, Field: f.field, Severity: SeverityError,
+				Message: fmt.Sprintf(
+					"YSFGateway cannot start without the %s frequency — it builds Wires-X unconditionally and CWiresX::setInfo asserts both frequencies are non-zero (#145). Waypoint holds the gateway back rather than let it abort in a restart loop, so System Fusion stays off the air until this is set.",
+					f.label),
+			})
+		}
 	}
 	return out
 }

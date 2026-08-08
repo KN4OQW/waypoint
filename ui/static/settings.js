@@ -2677,7 +2677,11 @@ function panelYSF() {
     toggleRow("ysfgw", "ycs_network", msg("ysf.linkStartupReflectorDg")) +
     toggleRow("ysfgw", "upper_hostfiles", msg("ysf.uppercaseReflectorNamesHostlist")));
   const hint = ysfRefs.length ? "" : note(msg("ysf.reflectorListNotLoaded"));
-  return `${supply}<div class="grid2">${gateway}<div class="stack">${behaviour}${timers}${networks}${dgid}</div></div>${hint}`;
+  // YSFGateway is withheld on a node with no RF frequency (#215): it asserts on
+  // both of them and would otherwise abort every three seconds. Without this card
+  // the only evidence would be a gateway that is not running, on a panel whose
+  // every control looks correctly set — the frequencies live on the General tab.
+  return `${supply}<div class="grid2">${gateway}<div class="stack">${blockedGatewayCard("ysf")}${behaviour}${timers}${networks}${dgid}</div></div>${hint}`;
 }
 
 function panelP25() {
@@ -2813,7 +2817,7 @@ function blockedGatewayCard(mode) {
     // The explanation is per mode: POCSAG's daemon crash-loops without its key,
     // while the modem host is held back so the station never transmits without an
     // identity. A generic line covers any requirement added later.
-    const why = { pocsag: "pocsag.gatewayBlockedAuthKey", modem: "modem.hostBlocked" }[b.mode] || "common.gatewayBlockedGeneric";
+    const why = { pocsag: "pocsag.gatewayBlockedAuthKey", modem: "modem.hostBlocked", ysf: "ysf.gatewayBlockedFrequency" }[b.mode] || "common.gatewayBlockedGeneric";
     return `<li class="hw-warn bad"><span class="hw-warn-k">${esc(msg("common.willNotStart"))}</span> ${fields}<div>${esc(msg(why))}</div></li>`;
   }).join("");
   return card(msg("common.gatewayNotRunning"), `<ul class="hw-warns">${items}</ul>`);

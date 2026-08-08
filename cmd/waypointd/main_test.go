@@ -385,14 +385,16 @@ func TestOverridesEndpoint(t *testing.T) {
 	ovr := t.TempDir()
 	// The override report walks the RENDERED targets, and rendering is gated on the
 	// mode enables plus a runnable modem host — so an unconfigured store renders
-	// nothing and there is no mmdvm.d fragment to report.
+	// nothing and there is no mmdvm.d fragment to report. "Runnable" includes the RF
+	// frequencies: MMDVM-Host is withheld at 0 Hz, because the modem NAKs SET_FREQ
+	// and the host exits (#216, gateway_requirements.go).
 	if err := st.Set("modes", config.Modes{DMR: true}, "seed"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Set("general", config.General{Callsign: "KN4OQW", ID: "3180202"}, "seed"); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Set("modem", config.Modem{Port: "/dev/ttyAMA0"}, "seed"); err != nil {
+	if err := st.Set("modem", config.Modem{Port: "/dev/ttyAMA0", RXFreqHz: "438800000", TXFreqHz: "438800000"}, "seed"); err != nil {
 		t.Fatal(err)
 	}
 	s := &server{

@@ -106,8 +106,13 @@ func TestDisplaceDropsGatewayTarget(t *testing.T) {
 	// the modes off the gateway targets would be absent for the unrelated reason
 	// that nobody asked for them — the assertions would pass without testing
 	// anything.
+	// The frequencies are not incidental scaffolding: without them YSFGateway is
+	// a WITHHELD target rather than a displaced one (gateway_requirements.go), and
+	// every assertion below would pass for the wrong reason.
+	rf := Modem{RXFreqHz: "438800000", TXFreqHz: "438800000"}
 	ysfBus := &Model{
 		Modes:       Modes{YSF: true, NXDN: true},
+		Modem:       rf,
 		Buses:       []Bus{{ID: "a", Enabled: true}},
 		Attachments: []Attachment{{BusID: "a", Mode: ModeYSF}, {BusID: "a", Mode: ModeNXDN}},
 	}
@@ -128,7 +133,7 @@ func TestDisplaceDropsGatewayTarget(t *testing.T) {
 	}
 
 	// No bus ⇒ the gateway targets are back (the modes are still on).
-	none := units(&Model{Modes: Modes{YSF: true, NXDN: true}})
+	none := units(&Model{Modes: Modes{YSF: true, NXDN: true}, Modem: rf})
 	if !none[unitYSFGateway] || !none[unitNXDNGateway] {
 		t.Fatal("with no bus, the stock gateway targets must be present")
 	}
