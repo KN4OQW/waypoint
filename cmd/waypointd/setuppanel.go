@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/KN4OQW/waypoint/internal/captive"
+	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/lcd"
 	"github.com/KN4OQW/waypoint/internal/lcd/hd44780"
 )
@@ -33,8 +34,16 @@ func (s *server) runSetupPanel(ctx context.Context) {
 		// I2C disabled there is not even a bus to look at. One quiet line so the
 		// journal explains a display that stayed dark when one *was* wired.
 		log.Printf("waypointd: no setup display detected (%v); setup is web-only", err)
+		s.recordPanel(nil)
 		return
 	}
+	// Keep the answer (#136). This probe runs on the one boot where a panel is
+	// most likely to be undeclared, and for a long time its result went no further
+	// than this screen — so an operator who watched setup on a display then found
+	// the LCD tab reporting no display at all. Recorded before the open attempt,
+	// because a panel that ACKs and then refuses to open is still a panel the
+	// operator should be told about.
+	s.recordPanel(&config.PanelFound{Bus: found.Bus, Addr: found.Addr})
 	dev, err := hd44780.Open(found.Bus, found.Addr)
 	if err != nil {
 		log.Printf("waypointd: setup display at %s answered a probe but would not open: %v", found, err)

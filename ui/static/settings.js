@@ -247,6 +247,7 @@ let calBusy = false;
 let calStream = null;       // EventSource on /api/cal/events while a sweep runs
 let calLive = null;         // the newest progress frame, for the live readout
 let hwBusy = false;         // a detect/adopt/repair is in flight
+let lcdBusy = false;        // a panel detect/adopt is in flight (#136)
 let profileBusy = false;    // an activate/save/import is in flight (disables the buttons)
 let importScan = null;      // last /api/import/scan result {report, preview} (RFC-0007)
 let importInput = null;     // remembered scan input to replay on Import: {dir} or {files: FileList}
@@ -1086,6 +1087,43 @@ function lcdLegend() {
   return `<details class="lcd-legend"><summary>${msg("lcdLegend.tokenReference")}</summary><dl>${items}</dl></details>`;
 }
 
+// lcdDetectedCard is this tab's half of the detected/configured split (#136).
+//
+// The bug it answers is not that Waypoint could not find the panel — it found it
+// at first boot — but that the finding never reached the config, so an operator
+// watched setup on a display and then met a tab reporting no display at all. This
+// card is where the two records meet: what the bus said, what the config says, and
+// a button for the case where they disagree.
+//
+// It does not enable anything by itself. The store is the operator's (RFC-0001),
+// so a detected panel is an offer, and adopting it is a click with a name on it.
+function lcdDetectedCard() {
+  const p = (hardware && hardware.panel) || {};
+  const f = p.found || null;
+  const l = edit.lcd || {};
+  const matches = !!f && !!l.enabled && l.i2c_bus === f.bus && l.i2c_address === f.addr;
+  let inner = "";
+  if (!p.checked_at && !f) {
+    inner = note(msg("lcdDetect.neverLooked"));
+  } else if (!f) {
+    inner = note(msg("lcdDetect.nothingAnswered", { when: fmtWhen(p.checked_at) }));
+  } else {
+    inner = row(msg("lcdDetect.panelFound"), `<span class="accent">${esc(f.bus)} @ ${esc(f.addr)}</span>`);
+    if (matches) {
+      inner += note(msg("lcdDetect.alreadyDriving"));
+    } else if (dirty.has("lcd")) {
+      // Adopting writes the lcd section and reloads it, which would take unsaved
+      // page edits with it. Saying so beats quietly discarding somebody's work.
+      inner += note(msg("lcdDetect.saveOrDiscardFirst"));
+    } else {
+      inner += `<div class="row"><label></label><button type="button" id="lcd-adopt" class="btn accent"${lcdBusy ? " disabled" : ""}>${esc(msg("lcdDetect.usePanel"))}</button></div>` +
+        note(msg("lcdDetect.adoptWritesBusAddress"));
+    }
+  }
+  inner += `<div class="row"><label></label><button type="button" id="lcd-detect" class="btn primary"${lcdBusy ? " disabled" : ""}>${esc(lcdBusy ? msg("lcdDetect.looking") : msg("lcdDetect.lookForPanel"))}</button></div>`;
+  return card(msg("lcdDetect.attachedPanel"), inner);
+}
+
 function panelLCD() {
   const l = edit.lcd || (edit.lcd = lcdFrom({}));
   const rows = Math.max(1, parseInt(l.rows, 10) || 4);
@@ -1103,7 +1141,7 @@ function panelLCD() {
   const disabled = l.enabled ? "" : note(msg("lcd.driverDisabledPagesAre"));
   const pages = (l.pages || []).map((p, i) => pageCard(p, i, rows, cols, (l.pages || []).length)).join("");
   const add = `<button type="button" class="btn ghost mini-btn" id="lcd-add-page">${msg("lcd.addPage")}</button>`;
-  return `<div class="grid2">${panel}<div class="stack">${help}${lcdLegend()}${disabled}</div></div>` +
+  return `<div class="grid2">${panel}<div class="stack">${lcdDetectedCard()}${help}${lcdLegend()}${disabled}</div></div>` +
     `<div class="stack" style="margin-top:16px;">${pages || note(msg("lcd.noPagesYetAdd"))}${add}</div>`;
 }
 
@@ -3451,7 +3489,10 @@ async function loadHardware() {
   } catch {
     hardware = null;
   }
-  if (state.tab === "hardware" || state.tab === "general") renderPanel();
+  // The LCD tab reads this too — the detected panel (#136) rides on the same
+  // surface, so a tab open when the fetch lands must repaint or it shows the
+  // never-looked state over a record that has just arrived.
+  if (state.tab === "hardware" || state.tab === "general" || state.tab === "lcd") renderPanel();
 }
 
 // detectModem probes for a modem. stopHost authorises taking the port away from
@@ -3517,6 +3558,53 @@ async function adoptBoard() {
     banner(String(err.message || err), "bad");
   }
   hwBusy = false;
+  renderPanel();
+}
+
+// lookForPanel sweeps the I2C buses for a character display (#136). It refreshes
+// the whole hardware surface because that is where the panel record rides, and
+// because the LCD tab reads the same object the hardware tab does.
+async function lookForPanel() {
+  if (lcdBusy) return;
+  lcdBusy = true;
+  renderPanel();
+  try {
+    const r = await fetch("/api/lcd/detect", { method: "POST" });
+    if (!r.ok) throw new Error((await r.text()).trim());
+    hardware = await r.json();
+    const f = hardware.panel && hardware.panel.found;
+    banner(f ? msg("lcdDetect.foundBanner", { where: f.bus + " @ " + f.addr }) : msg("lcdDetect.noneBanner"), f ? "ok" : "bad");
+  } catch (err) {
+    banner(String(err.message || err), "bad");
+  }
+  lcdBusy = false;
+  renderPanel();
+}
+
+// adoptPanel writes the detected panel into the lcd section and lights it. The
+// config is reloaded afterwards for the same reason adoptBoard reloads it: the
+// section it just changed is the one this tab is editing, and leaving the form
+// showing "disabled" over a running panel is the disagreement the whole feature
+// exists to end.
+async function adoptPanel() {
+  if (lcdBusy) return;
+  lcdBusy = true;
+  renderPanel();
+  try {
+    const r = await fetch("/api/lcd/adopt", { method: "POST" });
+    if (!r.ok) throw new Error((await r.text()).trim());
+    const body = await r.json();
+    hardware = body.hardware;
+    const changed = (body.adopted && body.adopted.changed) || [];
+    banner(changed.length ? msg("lcdDetect.adoptedBanner", { changed: changed.join(", ") }) : msg("lcdDetect.alreadyConfigured"), "ok");
+    lcdBusy = false;
+    await load();          // the lcd section changed underneath this tab's form
+    await loadHardware();
+    return;
+  } catch (err) {
+    banner(String(err.message || err), "bad");
+  }
+  lcdBusy = false;
   renderPanel();
 }
 
@@ -4720,6 +4808,9 @@ document.getElementById("panels").addEventListener("click", (e) => {
   if (e.target.id === "hw-detect") { detectModem(false); return; }
   if (e.target.id === "hw-adopt") { adoptBoard(); return; }
   if (e.target.id === "hw-uart") { fixUART(); return; }
+  // --- character panel (#136) ---
+  if (e.target.id === "lcd-detect") { lookForPanel(); return; }
+  if (e.target.id === "lcd-adopt") { adoptPanel(); return; }
   // --- modem firmware (#19) ---
   if (e.target.id === "fw-flash") { flashFirmware(); return; }
   if (e.target.id === "fw-refresh") { refreshCatalog(); return; }
