@@ -1,91 +1,228 @@
-# Flashing the Waypoint image
+# Flashing Waypoint and setting up your node
 
 Waypoint ships a ready-to-flash SD-card image built on Raspberry Pi OS Lite
-(Bookworm). It contains the digital-voice stack, `waypointd` (dashboard +
-supervisor + self-updater), and a hardened, appliance-grade OS posture. The image
-carries **no default password and no pre-configured identity** — you set those up,
-and the node is claimed over its web UI on first boot.
+(Bookworm), containing the digital-voice stack, `waypointd` (dashboard,
+supervisor and self-updater), and a hardened, appliance-grade OS posture.
 
-## Supported hardware
+The image has **no default password and no identity of its own**. A freshly
+flashed node boots, raises its own temporary Wi-Fi network, asks you five
+questions, and then hands you a dashboard to claim. Nothing is pre-seeded, so
+there is nothing to change afterwards and nothing an attacker already knows.
 
-| Board | Tier | Image |
-|---|---|---|
-| Pi Zero 2 W | ARMv7 | armhf (32-bit) |
-| Pi 2 | ARMv7 | armhf |
-| Pi 3 / 3+ | ARMv7 or ARMv8 | armhf or arm64 |
-| Pi 4 | ARMv7 or ARMv8 | armhf or arm64 |
+You need a supported Pi, an SD card (8 GB or larger is comfortable), your modem
+board, and a phone or laptop. Ethernet is convenient but not required.
 
-**Not supported: Pi Zero W and Pi 1** (ARMv6). Debian/Raspberry Pi OS armhf
-targets ARMv7 and will not boot on ARMv6 — use [Pi-Star](https://www.pistar.uk/)
-on that hardware. Pick **arm64** on a Pi 3/4 for the best performance; **armhf**
-runs on every supported board.
+| Board | Image to pick |
+|---|---|
+| Pi 4, Pi 3 / 3+ | **arm64** (best performance) or armhf |
+| Pi Zero 2 W, Pi 2 | **armhf** |
+| Pi Zero W, Pi 1 | *not supported* — see below |
 
-## 1. Verify the download
+**Pi Zero W and Pi 1 will not work.** They are ARMv6, and Debian's armhf port
+targets ARMv7; the image will not boot. Use [Pi-Star](https://www.pistar.uk/) on
+that hardware.
 
-Every release ships `SHA256SUMS` (signed with the RFC-0013 release key) alongside
-the images. Verify both the checksum and the signature before flashing.
+---
+
+## 1. Download the image
+
+Everything is on the **[latest release](https://github.com/KN4OQW/waypoint/releases/latest)**
+page. Take the `.img.xz` for your architecture plus `SHA256SUMS` and
+`SHA256SUMS.minisig`:
+
+    waypoint-<version>-bookworm-arm64.img.xz
+    waypoint-<version>-bookworm-armhf.img.xz
+
+There is one release per version and it carries both images, so "the latest
+image" is always whatever `releases/latest` points at. Do not unpack the `.xz` —
+every flashing tool below reads it compressed.
+
+## 2. Verify it before you flash
+
+An SD-card image runs as root on a radio you leave switched on. Check it.
 
 ```console
-# Checksum:
 $ sha256sum -c SHA256SUMS
-waypoint-v1.0.0-bookworm-arm64.img.xz: OK
+waypoint-v0.2.0-shuri-bookworm-arm64.img.xz: OK
 
-# Signature (the public key is docs/waypoint-release.pub in the repo):
 $ minisign -Vm SHA256SUMS -P RWRecbiMg67TbiFHluBimEaWz3fXBqGcDo4WZyfN4LHazgHxu2n2sfKd
 Signature and comment signature verified
-Trusted comment: waypoint v1.0.0 image SHA256SUMS
+Trusted comment: waypoint v0.2.0-shuri image SHA256SUMS
 ```
 
-A failed check means a corrupt or tampered download — do not flash it.
+`SHA256SUMS` covers both architectures, so if you downloaded only one you will
+also see a `No such file or directory` line for the other. That is expected —
+what matters is that the file you *do* have says `OK`. A checksum that fails, or
+a signature that does not verify, means a corrupt or tampered download: delete it
+and fetch it again. The public key is also in the repository as
+[`docs/waypoint-release.pub`](https://github.com/KN4OQW/waypoint/blob/main/docs/waypoint-release.pub), and the signing arrangement
+is described in [docs/signing.md](https://github.com/KN4OQW/waypoint/blob/main/docs/signing.md).
 
-## 2. Flash with Raspberry Pi Imager
+## 3. Write it to the card
 
-Use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) with the
-downloaded `.img.xz` as a **custom image**:
+Any of these is fine, because Waypoint sets itself up on first boot and needs
+nothing configured at flash time:
 
-1. **Choose OS → Use custom** → select `waypoint-<version>-bookworm-<arch>.img.xz`.
-2. **Choose Storage** → your SD card.
-3. Click the **gear / "Edit settings"** (advanced options) and set:
-   - **Hostname** (e.g. `waypoint`).
-   - **Wi-Fi** — SSID, password, and your country (or leave off for Ethernet).
-   - **Username and password** — this is *your* login for the Pi. The image ships
-     none, so **you must set one here** (Bookworm requires a user). Waypoint's own
-     web login is separate and set during claim (below).
-   - Locale / timezone as you like.
-4. **Write**.
+- **[Raspberry Pi Imager](https://www.raspberrypi.com/software/)** — *Choose OS →
+  Use custom* → the `.img.xz`.
+- **[balenaEtcher](https://etcher.balena.io/)** — select the `.img.xz` and flash.
+- **`dd`**, if you already know the incantation and which device your card is.
 
-> Why set the user here? The image contains no `pi:raspberry` default and does not
-> disable Imager's first-boot user seeding — so the only credentials on the device
-> are the ones you enter. If you skip this, the Pi has no OS login (the Waypoint
-> web UI still comes up, but you cannot SSH in).
+Imager will probably not offer you its advanced options (hostname, Wi-Fi, user)
+for this image, and you do not need them. Imager 2.x only presents that panel for
+images it has an OS manifest for, which a `.img.xz` you downloaded yourself does
+not have. The wizard on the node asks for all of it instead — which is also why a
+card written with plain `dd` works exactly as well.
 
-## 3. First boot + claim
+## 4. First boot
 
-Insert the card, connect the modem HAT, and power on.
+Fit the card, connect the modem board, and power up. **The first boot takes one
+to three minutes** while Raspberry Pi OS expands the filesystem and `waypointd`
+mints the node's own TLS certificate.
 
-- **First boot takes ~1–3 minutes.** Raspberry Pi OS runs its one-time firstrun
-  (creates your user, expands the filesystem, applies Wi-Fi), then `waypointd`
-  starts, **mints a self-signed TLS device certificate** (RFC-0012 — near
-  instant), and comes up **unclaimed**.
-- Find the node's address (your router's DHCP list, or `waypoint.local` via mDNS)
-  and browse to **`https://<address>/`** (HTTP on port 80 redirects to HTTPS).
-- Your browser will warn about the self-signed certificate — expected for a
-  local appliance. Proceed; the cert's SANs cover the device hostname, `.local`
-  name, and its IP.
-- You land on the **claim screen**: set the Waypoint admin username + password.
-  This is the account that manages the hotspot; it is **not** the OS user from
-  step 2. Once claimed, the device is yours — the claim flow cannot be re-run
-  without a reset.
-- Configure your modem, DMR/YSF/P25/… networks, and Wi-Fi/identity from the
-  dashboard. Enabling a mode renders its config and starts its gateway on Apply.
+Then the node is waiting for you, and there are two ways to reach it.
 
-## 4. Updates (what happens after)
+**Over the setup access point.** A node that has not been set up raises its own
+Wi-Fi network — this happens whether or not it also has Ethernet:
 
-- **The OS** patches itself: `unattended-upgrades` applies **security** updates
-  only, never the kernel/bootloader/firmware, and never reboots on its own.
-- **Waypoint's software** updates on your terms: the dashboard's **Updates** tab
-  shows available stack/`waypointd` versions; you apply them with a click (or
-  opt into an automatic quiet-window). Every update is health-gated and rolls
-  back automatically if the modem does not come back up (RFC-0014).
+    SSID     Waypoint-Setup-XXXX     (last four of the board serial)
+    Address  http://10.42.0.1/
 
-See [docs/updates.md](updates.md) for the full two-path update model.
+Join it from a phone. Your phone's own captive-portal sheet should open the
+wizard by itself; if it does not, browse to `http://10.42.0.1/`. The four-digit
+suffix is there for the case where several unconfigured nodes are powered up in
+one room.
+
+**Over Ethernet.** A freshly flashed node still answers to Raspberry Pi OS's
+default name, so browse to **`https://raspberrypi.local/`** (or find its address
+in your router's DHCP list). Your browser will warn about the self-signed
+certificate — expected for a local appliance, and you will only be asked once per
+node. Choosing a proper hostname is the wizard's first question.
+
+The setup network is up for as long as it is needed and no longer: it goes away
+the moment the node joins your Wi-Fi, immediately when setup completes, and after
+thirty minutes if nobody ever associates. In that last case it stays down until
+the next boot, so if you flashed a card and came back an hour later, power-cycle
+the node.
+
+### Locking down the setup network
+
+It is open by default, which means anyone in radio range can reach the wizard
+during those few minutes. The first device to load the page holds the session and
+everyone else gets a refusal, but that is not authentication and does not pretend
+to be.
+
+If that bothers you — a hamfest, an apartment block — put a file called
+**`waypoint-setup.txt`** on the small boot partition of the card before first
+boot, containing one line:
+
+    psk=my-setup-passphrase
+
+Eight to sixty-three characters. A malformed file is ignored with a warning and
+the network still comes up open, deliberately: a node that refuses to raise its
+setup network over a typo is a node you cannot reach at all.
+
+## 5. The setup wizard
+
+Five screens, and the progress rail at the top shows where you are. Every step is
+idempotent, so anything you retry converges rather than failing on "already
+exists".
+
+**Name this node.** The hostname you pick is how you will reach it —
+`hs-shack` gives you `https://hs-shack.local/`. `raspberrypi`, `waypoint` and
+`localhost` are refused, because two nodes keeping a shared default answer to the
+same `.local` address and you get whichever replied first.
+
+**Recovery account.** This is the Linux login you will SSH in with, and it always
+gets sudo — it exists to administer a node whose root account is about to be
+locked, so one that could not become root would be decoration. An **SSH public
+key is the recommended credential**: you cannot forget a key you already hold, and
+a public key is not a secret, so handing it over an open Wi-Fi network gives
+nothing away. A password works as the fallback, but on the setup access point it
+travels in the clear — change it once the node is on your own network.
+
+If the card came out of somebody else's node, this screen also lists every
+existing administrator account it can find, with what each one carries, and a
+checkbox — unchecked — to remove it. Treat that as a way to clear the obvious and
+not as an audit: it finds accounts in the sudo group and cannot find a modified
+binary, a systemd unit or a key added to root. **If this board came from someone
+else, reflashing the card is the only way to know what is on it.**
+
+**SSH key**, if you set a password rather than a key on the previous screen. You
+can skip it.
+
+**Connect to Wi-Fi**, offered only when you are on the setup access point — a node
+you reached over Ethernet already has a network and is not asked. It lists what
+the node can see, and you can type a name for a network that does not broadcast
+one. This is the last screen before the point of no return, which is the point:
+finishing gives up the setup access point for good, so a Wi-Fi-only node that has
+not joined a network by then has no way back onto one.
+
+**Lock root and finish.** Root is locked behind the recovery account, the SSH
+policy is settled, and the node records that it is set up.
+
+Both the Wi-Fi join and the finish take the setup network away, so the page tells
+you what to expect *before* it acts rather than leaving you on a reply that can
+never arrive. After a join: if it worked, rejoin your own Wi-Fi and carry on at
+the new address; if it failed, the setup network comes back within about a minute
+and the wizard picks up where it left off.
+
+Progress is written to the node before each step returns, so losing the
+connection mid-setup costs you nothing — reconnect and you resume at the first
+step you had not finished.
+
+## 6. Claim the dashboard
+
+Setup says what the node is; claiming says who administers it. They are separate,
+and the claim always happens over HTTPS on your own network.
+
+Browse to `https://<your-hostname>.local/` and you land on the **claim screen**.
+Set the Waypoint admin username and password — this is the dashboard account, and
+it is not the recovery account you just created. The first person to reach an
+unclaimed node claims it, so do it now rather than leaving it sitting there.
+
+**Waypoint passwords cannot be recovered.** They are stored as an argon2id hash
+and nothing on the node can turn one back into a password. What you can do is
+prove you own the hardware; the three routes are in
+[docs/recovery.md](https://github.com/KN4OQW/waypoint/blob/main/docs/recovery.md).
+
+## 7. After the claim
+
+Configure the node from the dashboard: station identity and frequencies on the
+General tab, then your modem, then the modes you want. Enabling a mode renders its
+configuration and starts its gateway when you press Apply.
+
+The OS then patches itself — `unattended-upgrades` applies security updates only,
+never the kernel or firmware, and never reboots on its own. Waypoint's own
+software updates on your terms from the **Updates** tab, health-gated and rolled
+back automatically if the modem does not come back. See
+[docs/updates.md](https://github.com/KN4OQW/waypoint/blob/main/docs/updates.md).
+
+## Setting up without the wizard
+
+If you are bringing up your fifth node, building a batch for a club, or
+reflashing the same box while chasing a bug, you have the card in a reader
+anyway. Drop a **`waypoint.toml`** on the boot partition naming the hostname,
+the account and the Wi-Fi, and the node provisions itself on first boot with no
+access point and no typing. It runs the same wizard steps and the same
+validators, it does not claim the node, and it deletes the file once it has used
+it. The schema and the full list of what it will and will not do are in
+[docs/provisioning.md](https://github.com/KN4OQW/waypoint/blob/main/docs/provisioning.md#the-fast-path-provisioning-from-the-boot-partition).
+
+## When you cannot find the node
+
+- **No `Waypoint-Setup-` network.** Either setup has already been completed on
+  this card, or the thirty-minute window expired — power-cycle the node and look
+  again within half an hour.
+- **`raspberrypi.local` does not resolve.** Some networks and some Windows
+  installations do not do mDNS. Use the address from your router's DHCP list.
+- **The page says the node has not been set up yet.** That is the wizard's gate
+  answering the dashboard's API. Go to `/` and finish setup.
+- **The browser refuses to load it.** Waypoint serves HTTPS with a certificate
+  the node signed itself, which every browser objects to the first time. Proceed
+  past the warning — the alternative would be a hotspot that took your claim
+  password in the clear.
+- **A node that used to work and has vanished** after a router change or an SSID
+  rename raises its setup access point again by itself, about ten minutes after
+  it loses its route out. It stays set up and stays claimed; join the network and
+  hand it the new Wi-Fi.

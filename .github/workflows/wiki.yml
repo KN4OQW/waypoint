@@ -20,6 +20,8 @@ on:
   push:
     branches: [main]
     paths:
+      - docs/wiki-home.md
+      - docs/image.md
       - docs/recovery.md
       - docs/translations.md
       - docs/messaging.md
@@ -51,7 +53,7 @@ jobs:
           # source-file:wiki-page-name. The page name is its filename, so
           # "Regaining-access" renders as "Regaining access" and gives a URL
           # somebody can be told over the air.
-          PAGES="docs/recovery.md:Regaining-access docs/translations.md:Translating-Waypoint docs/messaging.md:Text-messaging docs/messages-api.md:Text-messaging-API"
+          PAGES="docs/wiki-home.md:Home docs/image.md:Basic-setup docs/recovery.md:Regaining-access docs/translations.md:Translating-Waypoint docs/messaging.md:Text-messaging docs/messages-api.md:Text-messaging-API"
 
           for entry in $PAGES; do
             src="${entry%%:*}"

@@ -177,15 +177,25 @@ Helper codes map onto HTTP so an operator can tell the two cases apart:
 An out-of-order step also returns `expected_step`, so a client that has lost its
 place gets directions rather than only a refusal.
 
-## Still to come
+### The frontend
 
-- The wizard's frontend. `GET /` currently serves a self-contained placeholder
-  page naming the next step; the real UI replaces it.
-- The AP/join steps. `APUp`, `APDown`, `NetJoin`, and the checkpoint calls exist
-  in the helper but are not yet wired into the wizard flow.
-- Installing the helper binary and its units from the image module
-  (`image/src/modules/waypoint/start_chroot_script`).
-- Adding waypointd's service user to the `waypoint` group.
+`internal/wizard/setup.html`, embedded in the daemon and served by the gate for
+`/`, `/index.html` and `/setup`. It is one self-contained file with no build step,
+no framework and no external request, because it is delivered over the setup
+access point to a phone with no route to the internet and frequently inside a
+captive-portal sheet — where a CDN font is not a style preference but a page that
+does not load.
+
+The Wi-Fi join is offered by that page rather than by the server's step sequence.
+It is not part of the ordered flow: a node on Ethernet never needs it, so making
+it a step would mean a step most nodes skip. The page offers it once, immediately
+before `lock`, and only when the node is actually on its own access point —
+finishing gives that access point up for good, so a Wi-Fi-only node that has not
+joined a network by then has no way back onto one.
+
+Both the join and the finish take the setup network away, so the page states both
+outcomes before it acts. Waiting on a response that cannot arrive is what leaves
+an operator staring at a spinner.
 
 ## The setup access point
 

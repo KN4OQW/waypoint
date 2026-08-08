@@ -7,7 +7,7 @@ another tool.
 This API is **authenticated**, like every other `/api` route that is not the claim
 handshake. It is not part of the public view and never will be: a message is
 correspondence, and no public route serves one. See
-[Public API](public-api.md#what-is-published-and-what-is-not).
+[Public API](https://github.com/KN4OQW/waypoint/blob/main/docs/public-api.md#what-is-published-and-what-is-not).
 
 ---
 
