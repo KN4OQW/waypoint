@@ -21,8 +21,11 @@ receive on, the radio decodes your message, lights up as though something arrive
 and silently discards it. There is no error and nothing in any log. If messages
 "nearly work" — the radio reacts but shows nothing — this is why.
 
-**Your node needs a DMR ID.** `Settings → Modes → DMR → DMR ID`, or the station ID
-on the General tab if you have not set a separate one.
+**Your node needs a DMR ID.** `Settings → General → Station Identity → DMR ID` is
+the one almost everybody wants; `Settings → Modes → DMR → DMR ID override` is a
+per-mode override that most nodes leave blank. If you do not know your ID, fill in
+your callsign on the General tab and press **Find my ID** — it reads the DMR ID
+table the node already downloads and offers whatever is issued to that callsign.
 
 **The message relay has to be on.** See the next section.
 

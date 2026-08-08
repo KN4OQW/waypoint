@@ -773,3 +773,136 @@ func TestDMRTalkgroupsEndpoint(t *testing.T) {
 		t.Errorf("empty cache should serve [], got %q", b)
 	}
 }
+
+// GET /api/dmr/ids?callsign= answers "which DMR IDs are issued to this callsign"
+// from the cached table, which is what lets the settings page offer an operator
+// their own ID instead of sending them to radioid.net (#140).
+func TestDMRIDLookupEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "DMRIds.dat")
+	if err := os.WriteFile(path, []byte(
+		"3180202\tKN4OQW\tClint\n"+
+			"3101900\tN0SZ\tRocky\n"+
+			"3101901\tN0SZ\tRocky\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{dmrIDs: path}
+
+	get := func(q string) (int, dmrIDLookupResponse) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		s.dmrIDLookup(rec, httptest.NewRequest("GET", "/api/dmr/ids?callsign="+q, nil))
+		var got dmrIDLookupResponse
+		if rec.Code == 200 {
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return rec.Code, got
+	}
+
+	// Several IDs behind one callsign is the case the picker exists for.
+	code, got := get("n0sz")
+	if code != 200 {
+		t.Fatalf("status %d", code)
+	}
+	if len(got.Records) != 2 || got.Records[0].ID != 3101900 || got.Records[1].ID != 3101901 {
+		t.Fatalf("records = %+v, want both N0SZ ids ascending", got.Records)
+	}
+	if got.Callsign != "N0SZ" {
+		t.Errorf("callsign = %q, want the upper-cased N0SZ", got.Callsign)
+	}
+	if !got.Available || got.Truncated {
+		t.Errorf("available=%v truncated=%v, want true/false", got.Available, got.Truncated)
+	}
+
+	// A portable suffix answers on the base callsign, and says so.
+	if code, got = get("KN4OQW%2FP"); code != 200 || len(got.Records) != 1 || got.Callsign != "KN4OQW" {
+		t.Fatalf("KN4OQW/P: status %d, %+v; want the base KN4OQW row", code, got)
+	}
+
+	// A callsign that is simply not in the table is an empty list, not an error —
+	// and records is never null, so the page can iterate it without a guard.
+	code, got = get("NOCALL")
+	if code != 200 || len(got.Records) != 0 {
+		t.Fatalf("NOCALL: status %d, %+v; want 200 and no records", code, got)
+	}
+	if !bytes.Contains(mustBody(t, s, "NOCALL"), []byte(`"records":[]`)) {
+		t.Error("records must serialise as [], never null")
+	}
+	if !got.Available {
+		t.Error("the table is present; a miss must not read as a missing table")
+	}
+}
+
+// A node that never reached the internet has no table. "Nothing to search" is a
+// different thing to tell an operator than "your callsign is not in the database",
+// so the response distinguishes them rather than serving one empty list for both.
+func TestDMRIDLookupWithoutTable(t *testing.T) {
+	s := &server{dmrIDs: filepath.Join(t.TempDir(), "nope.dat")}
+	rec := httptest.NewRecorder()
+	s.dmrIDLookup(rec, httptest.NewRequest("GET", "/api/dmr/ids?callsign=KN4OQW", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var got dmrIDLookupResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Available {
+		t.Error("available should be false when there is no table on disk")
+	}
+	if len(got.Records) != 0 {
+		t.Errorf("records = %+v, want none", got.Records)
+	}
+}
+
+// The limit is reported, never silently applied: an operator seeing a hundred rows
+// has to know whether that is all of them.
+func TestDMRIDLookupReportsTruncation(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i <= dmrIDLookupLimit; i++ {
+		fmt.Fprintf(&b, "%d\tZL6AREC\tClub\n", 5300000+i)
+	}
+	path := filepath.Join(t.TempDir(), "DMRIds.dat")
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{dmrIDs: path}
+
+	rec := httptest.NewRecorder()
+	s.dmrIDLookup(rec, httptest.NewRequest("GET", "/api/dmr/ids?callsign=ZL6AREC", nil))
+	var got dmrIDLookupResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Records) != dmrIDLookupLimit || !got.Truncated {
+		t.Fatalf("got %d records truncated=%v, want %d and true", len(got.Records), got.Truncated, dmrIDLookupLimit)
+	}
+}
+
+// Input the scanner should never see: the endpoint refuses it rather than walking
+// a 6.6 MB file for anything an anonymous-shaped query asks.
+func TestDMRIDLookupRejectsNonCallsigns(t *testing.T) {
+	s := &server{dmrIDs: filepath.Join(t.TempDir(), "DMRIds.dat")}
+	for _, q := range []string{"", "%20%20", "KN4OQW%20OR%201", "..%2F..%2Fetc", "AB", strings.Repeat("A", 40), "KN4OQW%2F", "KN4OQW%2FPORTABLE"} {
+		rec := httptest.NewRecorder()
+		s.dmrIDLookup(rec, httptest.NewRequest("GET", "/api/dmr/ids?callsign="+q, nil))
+		if rec.Code != 400 {
+			t.Errorf("callsign=%q: status %d, want 400", q, rec.Code)
+		}
+	}
+	// And the method gate: this reads, so only GET.
+	rec := httptest.NewRecorder()
+	s.dmrIDLookup(rec, httptest.NewRequest("POST", "/api/dmr/ids?callsign=KN4OQW", nil))
+	if rec.Code != 405 {
+		t.Errorf("POST: status %d, want 405", rec.Code)
+	}
+}
+
+func mustBody(t *testing.T, s *server, q string) []byte {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	s.dmrIDLookup(rec, httptest.NewRequest("GET", "/api/dmr/ids?callsign="+q, nil))
+	return rec.Body.Bytes()
+}
