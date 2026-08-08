@@ -309,30 +309,111 @@ func TestDMRProblems(t *testing.T) {
 // YSF: the frequency assert that takes the daemon down rather than merely
 // misconfiguring it (#145), and the DG-ID path that is exempt from it.
 func TestYSFProblems(t *testing.T) {
-	t.Run("YSFGateway aborts without a transmit frequency", func(t *testing.T) {
-		m := allModesOn()
-		m.Modem.TXFreqHz = ""
-		m.YSFGW.EnableDGId = false
+	// EITHER frequency, not just the transmit one. CWiresX::setInfo asserts on
+	// WiresX.cpp:103 and :104, so a node with TX set and RX empty is the same dead
+	// gateway by the other assert — #145 and #215 both describe it as a transmit
+	// requirement and both are incomplete.
+	for _, tc := range []struct {
+		name, field string
+		clear       func(*Model)
+	}{
+		{"transmit", "modem.tx_freq_hz", func(m *Model) { m.Modem.TXFreqHz = "" }},
+		{"receive", "modem.rx_freq_hz", func(m *Model) { m.Modem.RXFreqHz = "" }},
+	} {
+		t.Run("YSFGateway cannot start without the "+tc.name+" frequency", func(t *testing.T) {
+			m := allModesOn()
+			tc.clear(m)
+			m.YSFGW.EnableDGId = false
 
-		got := m.ModeProblems()
-		p := requireProblem(t, got, ModeYSF, "modem.tx_freq_hz", SeverityError)
-		if !strings.Contains(p.Message, "abort") {
-			t.Errorf("the YSF finding does not say the daemon aborts: %s", p.Message)
-		}
-		// The station-wide finding is still there and is a different claim: the
-		// modem never tunes. Both are true and the operator needs both.
-		requireProblem(t, got, "", "modem.tx_freq_hz", SeverityError)
-	})
+			got := m.ModeProblems()
+			p := requireProblem(t, got, ModeYSF, tc.field, SeverityError)
+			// The message must describe the symptom the operator will actually see.
+			// Since #215 the daemon is WITHHELD, so it does not abort and does not
+			// restart-loop; a message still describing a crash loop sends people
+			// looking for one that is not there.
+			if !strings.Contains(p.Message, "holds the gateway back") {
+				t.Errorf("the YSF finding does not say the gateway is held back: %s", p.Message)
+			}
+			// The station-wide finding is still there and is a different claim: the
+			// modem never tunes. Both are true and the operator needs both.
+			requireProblem(t, got, "", tc.field, SeverityError)
+		})
+	}
 
 	// DGIdGateway has no Wires-X and no such assert, so the daemon-abort finding
 	// must not fire on the DG-ID path — reporting a restart loop that will not
 	// happen is exactly the invented requirement this package refuses to add.
 	t.Run("the DG-ID path has no such assert", func(t *testing.T) {
 		m := allModesOn()
-		m.Modem.TXFreqHz = ""
+		m.Modem.TXFreqHz, m.Modem.RXFreqHz = "", ""
 		m.YSFGW.EnableDGId = true
-		if got := find(m.ModeProblems(), ModeYSF, "modem.tx_freq_hz"); len(got) != 0 {
-			t.Errorf("the YSFGateway abort was reported for a DG-ID node: %s", got[0].Message)
+		for _, f := range []string{"modem.tx_freq_hz", "modem.rx_freq_hz"} {
+			if got := find(m.ModeProblems(), ModeYSF, f); len(got) != 0 {
+				t.Errorf("the YSFGateway abort was reported for a DG-ID node: %s", got[0].Message)
+			}
+		}
+	})
+}
+
+// The RF frequencies are BOTH reported and registered, the same overlap the
+// identity values have, and for the same reason: the registry stops the crash
+// loop and the report is the only thing that names the control to fill in.
+//
+// The two must agree on WHEN, but not on WHAT — and the gap is the point of this
+// test. UnmetGatewayRequirements is narrower: it fires only where the daemon
+// actually cannot start (atoi == 0), while ModeProblems also covers a frequency
+// that is merely implausible. A block that grew to match the report would withhold
+// daemons that run.
+func TestFrequenciesAreBothReportedAndWithheld(t *testing.T) {
+	t.Run("unset: reported and withheld", func(t *testing.T) {
+		m := allModesOn()
+		m.Modem.Port = "/dev/ttyAMA0" // so the block below is about frequency alone
+		m.Modem.RXFreqHz, m.Modem.TXFreqHz = "", ""
+
+		requireProblem(t, m.ModeProblems(), "", "modem.rx_freq_hz", SeverityError)
+		requireProblem(t, m.ModeProblems(), "", "modem.tx_freq_hz", SeverityError)
+
+		for _, want := range []struct {
+			mode   Mode
+			unit   string
+			fields []string
+		}{
+			{ModeModem, unitMMDVM, []string{"modem.rx_freq_hz", "modem.tx_freq_hz"}},
+			{ModeYSF, unitYSFGateway, []string{"modem.rx_freq_hz", "modem.tx_freq_hz"}},
+		} {
+			var found *GatewayRequirement
+			for i, r := range m.UnmetGatewayRequirements() {
+				if r.Mode == want.mode {
+					found = &m.UnmetGatewayRequirements()[i]
+				}
+			}
+			if found == nil {
+				t.Fatalf("%s is not withheld with no frequency set", want.mode)
+			}
+			if found.Unit != want.unit {
+				t.Errorf("%s block names unit %q, want %q", want.mode, found.Unit, want.unit)
+			}
+			for _, f := range want.fields {
+				if !slices.Contains(found.Missing, f) {
+					t.Errorf("%s block names %v, want it to include %s", want.mode, found.Missing, f)
+				}
+			}
+		}
+	})
+
+	// A frequency in megahertz is a real fault and is reported as one. It is NOT
+	// withheld: atoi gives 438, the assert passes, and the daemon starts. Blocking
+	// it would take a running gateway off a node whose operator typed the wrong
+	// unit — the "a check that fires on a good configuration is worse than no
+	// check" rule, applied to the stronger power.
+	t.Run("implausible: reported, not withheld", func(t *testing.T) {
+		m := allModesOn()
+		m.Modem.Port = "/dev/ttyAMA0"
+		m.Modem.RXFreqHz, m.Modem.TXFreqHz = "438", "438"
+
+		requireProblem(t, m.ModeProblems(), "", "modem.rx_freq_hz", SeverityWarning)
+		if reqs := m.UnmetGatewayRequirements(); len(reqs) != 0 {
+			t.Errorf("an implausible but non-zero frequency withheld a daemon that starts on it: %+v", reqs)
 		}
 	})
 }
