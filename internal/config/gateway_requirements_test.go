@@ -371,3 +371,205 @@ func TestDisplacedGatewayStaysOutOfTheBootSet(t *testing.T) {
 		t.Errorf("a displaced YSF gateway must be boot-disabled; got %v", got)
 	}
 }
+
+// YSFGateway's RF frequency requirement (#145 / #215). CWiresX::setInfo asserts on
+// WiresX.cpp:103 and :104, so EITHER frequency alone aborts the daemon — the
+// half-set cases are the ones a transmit-only reading of the issues would miss.
+//
+// The values come from measurements against the pinned binary, recorded at
+// frequencyStops and executed by test/tier2's TestTier2_UnsetFrequencyDaemonSurvey.
+// What is asserted here is that this package draws the line in the same place.
+func TestUnmetGatewayRequirementsYSFFrequency(t *testing.T) {
+	ysf := func(m *Model) *GatewayRequirement {
+		for i, r := range m.UnmetGatewayRequirements() {
+			if r.Mode == ModeYSF {
+				return &m.UnmetGatewayRequirements()[i]
+			}
+		}
+		return nil
+	}
+
+	for _, tc := range []struct {
+		name        string
+		rx, tx      string
+		wantMissing []string // nil ⇒ the gateway must NOT be withheld
+	}{
+		{"neither set", "", "", []string{"modem.rx_freq_hz", "modem.tx_freq_hz"}},
+		{"receive unset", "", "438800000", []string{"modem.rx_freq_hz"}},
+		{"transmit unset", "438800000", "", []string{"modem.tx_freq_hz"}},
+		{"whitespace", "  ", "  ", []string{"modem.rx_freq_hz", "modem.tx_freq_hz"}},
+		{"literal zero", "0", "0", []string{"modem.rx_freq_hz", "modem.tx_freq_hz"}},
+		{"padded zero", "00", "00", []string{"modem.rx_freq_hz", "modem.tx_freq_hz"}},
+		{"not a number", "abc", "abc", []string{"modem.rx_freq_hz", "modem.tx_freq_hz"}},
+		{"hex, which atoi reads as 0", "0x10", "0x10", []string{"modem.rx_freq_hz", "modem.tx_freq_hz"}},
+
+		// The clean cases, and they are the ones that matter most: a rule that
+		// fires on a working node is worse than no rule. Everything below produces
+		// a non-zero atoi, which is the whole of what the daemon checks.
+		{"both set", "438800000", "438800000", nil},
+		{"megahertz typed into a hertz field", "438", "438", nil},
+		{"a decimal point, which atoi truncates", "438.8", "438.8", nil},
+		{"trailing rubbish after the digits", "438800000abc", "438800000abc", nil},
+		{"leading whitespace", " 438800000", " 438800000", nil},
+		{"explicitly signed", "+438800000", "+438800000", nil},
+		// Negative is the uncomfortable one: atoi yields -1, the daemon stores it
+		// in an unsigned and the assert passes on a garbage frequency. It starts,
+		// so it is not withheld. mode_readiness reports it.
+		{"negative", "-1", "-1", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := fixture()
+			m.Modes.YSF, m.YSFGW.EnableDGId = true, false
+			m.Modem.RXFreqHz, m.Modem.TXFreqHz = tc.rx, tc.tx
+
+			got := ysf(m)
+			if tc.wantMissing == nil {
+				if got != nil {
+					t.Fatalf("YSFGateway withheld from a node it would start on: %+v", got)
+				}
+				if !m.GatewayRuns(ModeYSF) {
+					t.Error("GatewayRuns(ysf) is false for a configuration the daemon accepts")
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("YSFGateway not withheld, so this configuration crash-loops")
+			}
+			if got.Unit != unitYSFGateway {
+				t.Errorf("Unit = %q, want %q", got.Unit, unitYSFGateway)
+			}
+			if !slices.Equal(got.Missing, tc.wantMissing) {
+				t.Errorf("Missing = %v, want %v", got.Missing, tc.wantMissing)
+			}
+			if m.GatewayRuns(ModeYSF) {
+				t.Error("GatewayRuns(ysf) is true for a configuration that aborts the daemon")
+			}
+		})
+	}
+
+	// DGIdGateway has no Wires-X and starts with no frequency at all (measured in
+	// Tier 2), so the DG-ID slot lifts the block. This is the same swap that moves
+	// the render target, which is why it is expressed as one condition and not two.
+	t.Run("the DG-ID slot is exempt", func(t *testing.T) {
+		m := fixture()
+		m.Modes.YSF, m.YSFGW.EnableDGId = true, true
+		m.Modem.RXFreqHz, m.Modem.TXFreqHz = "", ""
+		if got := ysf(m); got != nil {
+			t.Fatalf("DGIdGateway withheld for a frequency it does not read: %+v", got)
+		}
+		if !m.GatewayRuns(ModeYSF) {
+			t.Error("the DG-ID gateway must run without frequencies")
+		}
+	})
+
+	// A mode that is off is withholding nothing — the same rule the rest of the
+	// registry follows, restated here because YSF's block keys on two sections.
+	t.Run("YSF off reports nothing", func(t *testing.T) {
+		m := fixture()
+		m.Modes.YSF = false
+		m.Modem.RXFreqHz, m.Modem.TXFreqHz = "", ""
+		if got := ysf(m); got != nil {
+			t.Fatalf("a disabled mode was reported: %+v", got)
+		}
+	})
+}
+
+// The apply-path consequences for YSF, mirroring the DAPNET case: no render
+// target, stopped, and out of the boot set — with the other enabled modes left
+// alone, because a withheld YSF gateway is not an excuse to take a node off air.
+func TestBlockedYSFGatewayIsDroppedStoppedAndBootDisabled(t *testing.T) {
+	paths := testPaths()
+	m := fixture()
+	m.Modes.YSF, m.YSFGW.EnableDGId = true, false
+	m.Modem.RXFreqHz, m.Modem.TXFreqHz = "", ""
+
+	if slices.Contains(restartUnitsOf(m, paths), unitYSFGateway) {
+		t.Error("a YSF gateway that cannot start still rendered a target")
+	}
+	if got := m.BlockedGatewayUnits(); !slices.Contains(got, unitYSFGateway) {
+		t.Errorf("BlockedGatewayUnits() = %v, want it to name %q", got, unitYSFGateway)
+	}
+	if got := m.BootDisableUnits(paths); !slices.Contains(got, unitYSFGateway) {
+		t.Errorf("BootDisableUnits() = %v, want it to name %q", got, unitYSFGateway)
+	}
+	if got := m.BootEnableUnits(paths); slices.Contains(got, unitYSFGateway) {
+		t.Errorf("BootEnableUnits() = %v still enables a withheld gateway", got)
+	}
+
+	// With the frequencies set it comes back, which is what makes the above a
+	// statement about the frequencies rather than about the fixture.
+	m.Modem.RXFreqHz, m.Modem.TXFreqHz = "438800000", "438800000"
+	if !slices.Contains(restartUnitsOf(m, paths), unitYSFGateway) {
+		t.Errorf("the YSF gateway did not come back with frequencies set: %v", restartUnitsOf(m, paths))
+	}
+}
+
+// The invariant that replaces a renderer-level error: if YSFGateway.ini is
+// rendered at all, the frequencies in it are ones the daemon starts on.
+//
+// Issue #145 proposed making the renderer refuse instead. That was not done, and
+// this is why it did not need to be: renderers are pure func(*Model) string and
+// that purity is load-bearing (RenderTarget holds one, WriteFiles calls them
+// blind), so an error return would change every call site to catch a case the
+// registry makes unreachable — a withheld gateway is never rendered at all.
+//
+// What that argument needs is a test, or the two mechanisms drift and a future
+// change to one of them reopens the bug quietly. This is that test: it walks the
+// same frequency values the registry table uses, and asserts the implication
+// directly rather than trusting the two to stay in step.
+// It deliberately does NOT call frequencyStops to judge the rendered value. Doing
+// so would make the test self-referential — a frequencyStops that returned false
+// for everything would satisfy both the gate and the assertion — so the fatal
+// values are listed literally, exactly as the pinned YSFGateway was measured to
+// abort on them.
+func TestRenderedYSFConfigNeverCarriesAStoppingFrequency(t *testing.T) {
+	// Measured against YSFClients @ 2b480aa: each of these reaches CWiresX::setInfo
+	// as 0 and trips the assert on WiresX.cpp:103/:104.
+	fatal := []string{"", " ", "  ", "0", "00", "abc", "0x10"}
+
+	paths := testPaths()
+	var everRendered, everWithheld bool
+	for _, v := range []string{"", "  ", "0", "00", "abc", "0x10", "438", "438.8", "438800000", "438800000abc", " 438800000", "+438800000", "-1"} {
+		m := fixture()
+		m.Modes.YSF, m.YSFGW.EnableDGId = true, false
+		m.Modem.RXFreqHz, m.Modem.TXFreqHz = v, v
+
+		var rendered bool
+		for _, tgt := range m.RenderTargets(paths) {
+			if tgt.Unit == unitYSFGateway {
+				rendered = true
+			}
+		}
+		if !rendered {
+			everWithheld = true
+			continue // withheld, which is the other half of the invariant
+		}
+		everRendered = true
+
+		ini := m.RenderYSFGateway()
+		for _, key := range []string{"RXFrequency", "TXFrequency"} {
+			if got := iniValue(t, ini, key); slices.Contains(fatal, got) {
+				t.Errorf("YSFGateway.ini was rendered with %s=%q, which aborts the daemon", key, got)
+			}
+		}
+	}
+	// Both branches must have been taken, or the loop proved nothing: all-withheld
+	// would make the assertion unreachable, all-rendered would mean the gate never
+	// fired.
+	if !everRendered || !everWithheld {
+		t.Errorf("the table exercised only one branch (rendered=%v withheld=%v)", everRendered, everWithheld)
+	}
+}
+
+// iniValue pulls one key's value out of a rendered INI. Deliberately dumb: it is
+// checking what a daemon's line-oriented parser sees, not re-implementing one.
+func iniValue(t *testing.T, ini, key string) string {
+	t.Helper()
+	for _, line := range strings.Split(ini, "\n") {
+		if name, val, ok := strings.Cut(line, "="); ok && strings.TrimSpace(name) == key {
+			return val
+		}
+	}
+	t.Fatalf("rendered config carries no %s key", key)
+	return ""
+}
