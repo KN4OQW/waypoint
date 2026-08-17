@@ -140,15 +140,25 @@ For each alert that passes the policy:
   and the log line. So a group-addressed data transmission is not blocked by the
   host. See `bot-data-plane.md` §E.
 
+- **Group-addressed SMS displays on the radio. Confirmed on the bench
+  2026-08-17.** This was the largest open risk, because it depends on the
+  receiving radio's RX group list rather than on anything Waypoint controls, and
+  a negative would have forced delivery to fan out to last-heard stations
+  individually.
+
+  `POST /api/messages {"dmr_id":9,"text":...,"group":true}` on a node with
+  ColorCode 1 and both slots enabled produced a message on a BTECH 6X2 Pro with
+  TG 9 in its RX group list, and the node recorded `state: sent`. The whole
+  outbound chain ran: API, message service, burst synthesis, shim injection,
+  MMDVM-Host, RF, display. That is the weather delivery path with different text
+  in it, so the delivery layer can be built on group addressing.
+
+  Not tested: a talkgroup **absent** from the radio's RX list, which is the case
+  that decides what an operator must tell their users to configure. Worth ten
+  minutes before the feature ships.
+
 ### What is NOT proven, and gates the feature
 
-- **Whether a group-addressed SMS actually displays on a receiving radio.** This
-  depends on the radio's RX group list, not on anything Waypoint controls. It is
-  the single largest open risk and it is ten minutes at the bench: send a group
-  SMS to a TG in the radio's RX list, then to one that is not, and record what
-  the radio shows. **Do this before building the delivery layer**, because the
-  answer decides whether group addressing is viable at all or whether delivery
-  has to fan out to last-heard stations individually.
 - **Slot selection.** MMDVM-Host drops frames on a disabled slot before anything
   logs it (`DMRNetwork.cpp:147-154`), and simplex suppresses slot 1 outright.
   The transmit path must choose its slot from the rendered configuration and
