@@ -598,6 +598,27 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 	// Event-history retention validates on save (retention_days must be >= 0;
 	// 0 = keep forever), so route it through SetHistory rather than the generic
 	// merge (RFC-0004).
+	// The weather section carries the feed password and a policy that has to be
+	// coherent before it can transmit anything, so it is routed through SetWX
+	// rather than the generic merge.
+	if section == "wx" {
+		if err := config.SetWX(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// Station coordinates are validated as a pair -- a latitude without a
+	// longitude is a half-finished edit, not a position.
+	if section == "station_location" {
+		if err := config.SetStationLocation(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if section == "history" {
 		if err := config.SetHistory(s.store, body, "api"); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
