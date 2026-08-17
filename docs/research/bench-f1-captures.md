@@ -66,6 +66,28 @@ preamble CSBK. A capture of a text message should be preambles, then one
 header, then blocks. If you see `voice`, the radio sent a voice call and the
 capture missed the message.
 
+### Reading an empty capture
+
+"No DMRD frames matched" has two completely different causes and they look
+identical from the summary. Tell them apart by the file size:
+
+| pcap size | Meaning |
+|---|---|
+| 24 bytes | tcpdump captured nothing at all — the filter, the interface or sudo is wrong |
+| larger, but no DMRD | the loopback is alive and **nothing was transmitted** |
+
+The second case is not an empty wire. The two daemons keep the link up on their
+own: MMDVM-Host sends a 119-byte `DMRC` config and DMRGateway answers a 4-byte
+`DMRP` ping, one pair every 10 seconds, each appearing on both legs. Measured
+2026-08-17 — an idle 180 s window held exactly 72 packets and no DMRD.
+
+So a capture of ~8 KB with no DMRD means the tooling worked and the radio did
+not transmit inside the window. Re-run and key the radio; do not go looking at
+the GPS configuration yet.
+
+That keepalive pair is also a free transparency check: every `DMRC` appearing as
+both `62032->62033` and `62034->62031` is the relay forwarding byte-for-byte.
+
 ---
 
 ## §B — inbound M-SMS to a bot-range ID
