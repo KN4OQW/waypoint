@@ -227,11 +227,46 @@ positions can be decoded. The transport half needs nothing new — the relay's
 taps already see a copy of every frame and cannot stop one, so passive
 observation of 900999 is free and BrandMeister APRS keeps working untouched.
 
+### BLOCKED 2026-08-17 — the radio is not transmitting a position report
+
+Three capture windows (3, 5 and 8 minutes) covering six PTT releases with the
+beacon set to fire at PTT-end, rate-limited to once per 30 s, and with the radio
+moved to a window for a GPS fix. Across both legs every single frame was
+`3180202 -> 9990` or `9990 -> 3180202` — the Parrot test calls and their echoes.
+Zero data-header, rate-1/2 or preamble bursts, and no other destination ID.
+
+The events DB agrees independently: the PTTs appear as `rf_voice_*` rows and no
+data transmission does. That is a real check rather than an absence of evidence,
+because MMDVM-Host emits the same `"start"` JSON action for an RF data header as
+for voice (`DMRSlot.cpp:468`), so a beacon would have been recorded.
+
+So this is a codeplug problem on the 6X2 Pro, not a hotspot or tooling one. Two
+settings must BOTH be right and either alone produces exactly this silence:
+
+- the channel's **APRS Report / Digital APRS** switch is on, and
+- the channel selects a **Digital APRS System** — a channel can have reporting
+  enabled with no system bound to it.
+
+Quickest discriminator: the radio's manual one-touch position send, which
+bypasses both PTT and the 30 s limiter. Nothing on the wire from that, on a
+channel with a fix, means the system is not bound to the channel.
+
+**Do §B first.** It needs no GPS and no APRS configuration, it produces the
+fixture F3's golden test needs, and it answers §C — which is the question
+gating whether INTERCEPT can be built at all. §D is the lower-value half and
+should not hold up the visit.
+
 ### Radio setup
 
-Configure DMR GPS reporting as for BrandMeister APRS — destination **900999**,
-private call, TS2. Record the exact codeplug fields, including the report
-interval. APRS Receive may be ON for this one; note that it is.
+Configure DMR GPS reporting as for BrandMeister APRS — private call, TS2. Record
+the exact codeplug fields, including the report interval and the destination ID.
+
+**Do not take the destination from this document.** The runbook says 900999 and
+the operator's radio is set to 310999; nothing in the codebase independently
+asserts either, so the ID is whatever the capture shows the radio actually
+sending. The observe set is configuration, so the design follows the radio
+rather than the other way round — there is no reason to retune a working APRS
+setup to match a number no evidence supports.
 
 ### Run
 
