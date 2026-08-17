@@ -171,11 +171,19 @@ so the only way in is to *be* that address (`shim.go:4-13`).
 
 ## B. Inbound SMS capture — NOT DONE
 
-**Blocked. Requires a human at the radio.** Capturing a private M-SMS to
-9000001 needs someone to key the BTECH 6X2 Pro; I cannot transmit. The bench box
-also refused key auth this session (`rescue@172.16.50.13: Permission denied
-(publickey,password)` — password auth only, and no `sshpass` on this machine),
-so even the tcpdump side needs an interactive hand.
+**Blocked on the radio only.** Capturing a private M-SMS to 9000001 needs
+someone to key the BTECH 6X2 Pro. Everything around that is now built and
+verified against the live node — see
+[bench-f1-captures.md](bench-f1-captures.md) for the procedure, and
+`tools/dmrdcapture` for the capture driver and the pcap→fixture converter.
+
+Two corrections to what was believed about the bench, both verified 2026-08-17:
+`tcpdump` **is** installed (an older note said apt was restricted and nothing on
+the box could capture packets), and the node is **already running the relay** —
+`GatewayPort=62033` / `RptPort=62034`, four sockets confirmed with `ss`, up
+since Aug 12. So the loopback is in its shimmed wiring today and every burst
+crosses the wire twice, once per leg. That is measured, not predicted: a probe
+capture showed each frame as both `62032->62033` and `62034->62031`.
 
 What can be said without it:
 
@@ -238,6 +246,28 @@ answer is "confirmed", the ACK synthesis is F3 item 2 and the latency budget is
 real (see §0.1 — this is why the intercept classifier should not take an MQTT
 round trip). If the answer is "unconfirmed", D-F9 is moot and F3 keeps only the
 `AckFor(tx) → nil` seam.
+
+### C.1 If the answer is "confirmed", F3 is much larger than budgeted
+
+Worth stating separately, because D-F9 frames this as an ACK question and it is
+not only that. Confirmed data is a distinct data packet format, not a flag on
+the one already supported:
+
+```go
+// internal/dmrdata/header.go:30-33
+DPFUnconfirmedData DPF = 0x02 // the only format this package builds
+DPFConfirmedData   DPF = 0x03 // per-block CRC-9 and an ARQ exchange; declined
+```
+
+`parseDataHeader` returns `ErrUnsupportedPDU` for it (`header.go:78-80`), and
+the reassembler counts it as `Unsupported` and drops the transfer
+(`sms.go:139`). So if the radio sends bot-addressed SMS as confirmed data, the
+current codec **cannot read it at all** — the work is per-block CRC-9 and the
+ARQ exchange, not a response PDU bolted onto the existing path.
+
+`tools/dmrdcapture -decode` reports exactly this distinction off the §B capture,
+so the answer costs one command once the capture exists. See
+[bench-f1-captures.md](bench-f1-captures.md) §C.1.
 
 The 6X2 Pro's per-channel *Confirmed Data* setting should be recorded in the
 capture README either way, because it changes the answer and it is a codeplug
@@ -486,6 +516,15 @@ inherits this requirement.
 6. **The gatekeeper must choose the injection slot from the rendered config**, and
    refuse visibly when no slot is available. §G.2.
 7. **F4 should extract the existing idle gate, not rewrite it.** §F.1.
+8. **If §C comes back "confirmed", F3 grows a confirmed-data reassembler** —
+   per-block CRC-9 and an ARQ exchange, not just an ACK. Re-scope F3 before
+   starting it. §C.1.
 
 Outstanding bench work, in the order it should be done: §B (M-SMS inbound
-capture) → §C (confirmed-data answer) → §D (900999 position capture).
+capture) → §C (confirmed-data answer, free once §B exists) → §D (900999
+position capture). The procedure, the radio settings and the exact commands are
+in [bench-f1-captures.md](bench-f1-captures.md).
+
+One live hazard that procedure calls out and is worth repeating here: the bench
+renders `Slot1=0`, so **everything must happen on timeslot 2** or MMDVM-Host
+drops it before anything logs (§G.2).

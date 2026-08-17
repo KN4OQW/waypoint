@@ -23,3 +23,9 @@ image/src/image-*/
 # config (settings.json, agents, skills) is a reasonable thing to commit later,
 # and a blanket ignore would silently swallow it.
 /.claude/worktrees/
+
+# Raw bench captures (tools/dmrdcapture/bench-capture.sh writes here). The pcaps
+# are working material: a fixture is committed to internal/*/testdata/ only after
+# it has been trimmed and given a header saying how it was taken and what was
+# sanitized. A stray multi-megabyte pcap of live traffic is neither.
+/capture/

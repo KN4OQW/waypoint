@@ -1,0 +1,243 @@
+# F1 bench captures — run procedure
+
+The three sections of the bot data plane investigation that need a hand on the
+radio: §B (inbound M-SMS), §C (the confirmed-data question) and §D (900999
+positions). See [bot-data-plane.md](bot-data-plane.md) for why each is being
+asked and what turns on the answer.
+
+Everything else in F1 is settled from source and needs nothing here.
+
+---
+
+## Before you start
+
+**Verified on the bench 2026-08-17**, so these are observations rather than
+assumptions:
+
+- `tcpdump` **is** installed (`/usr/bin/tcpdump`). An older note said apt was
+  restricted and nothing on the box could capture packets; that is no longer
+  true, and the AF_PACKET-sniffer workaround it recommended is unnecessary.
+- `sqlite3` is installed, at `/usr/bin/sqlite3`.
+- ssh is **password auth only** — `rescue@172.16.50.13`. There is no key.
+- The **relay is already running** and has been since Aug 12, so the loopback is
+  in its shimmed wiring right now:
+
+  | | port | who binds it |
+  |---|---|---|
+  | MMDVM-Host `LocalPort` | 62032 | MMDVM-Host |
+  | relay host-facing | 62033 | waypointd |
+  | relay gateway-facing | 62034 | waypointd |
+  | DMRGateway `LocalPort` | 62031 | DMRGateway |
+
+- **Every burst therefore appears on the wire twice**, once per leg. This is
+  confirmed, not predicted — a probe capture showed each frame as both
+  `62032->62033` and `62034->62031`. Use `-from 62032` for the radio→network
+  leg and `-from 62031` for network→radio.
+
+### The two settings that decide whether any of this works
+
+- **`Slot1=0`, `Slot2=1`** in the rendered `MMDVM-Host.ini`. TS1 network traffic
+  is dropped by MMDVM-Host before anything logs it (`DMRNetwork.cpp:147-154`).
+  **Everything must happen on timeslot 2.** Put the SMS test channel on TS2.
+- Station is `KN4OQW` / `3180202`, colour code 2, `Duplex=1`.
+
+---
+
+## The tool
+
+```sh
+# from a waypoint worktree, on the workstation
+export BENCH_PASS='...'
+tools/dmrdcapture/bench-capture.sh <label> [seconds]
+```
+
+It starts tcpdump on the node, prints **KEY THE RADIO NOW**, waits, pulls the
+pcap back to `capture/<label>.pcap`, prints every frame it saw, and writes
+`capture/<label>.txt` in the committed fixture format.
+
+Read the summary before trusting the fixture. It prints one line per frame:
+
+```
+62032->62033 ts2 private 3180202 -> 9000001 data type 0x6
+```
+
+`data type 0x6` is `DT_DATA_HEADER`, `0x7` is `DT_RATE_12_DATA`, `0x3` is a
+preamble CSBK. A capture of a text message should be preambles, then one
+header, then blocks. If you see `voice`, the radio sent a voice call and the
+capture missed the message.
+
+---
+
+## §B — inbound M-SMS to a bot-range ID
+
+**What this settles:** that the existing codec parses a radio-originated TMS
+message, and it produces the fixture F3's golden test needs. The tree already
+has an inbound ETSI/DMR-Standard capture from this radio
+(`internal/dmrdata/testdata/capture-radio-etsi.txt`) and 42 stored inbound TMS
+messages **from BrandMeister** — but nothing radio-originated in M-SMS, which
+is the dialect the bot path will mostly meet.
+
+### Radio setup (BTECH DMR-6X2 Pro)
+
+Record every one of these in the fixture header; they change the answer and
+they are codeplug fields, not protocol constants.
+
+| Setting | Value | Why |
+|---|---|---|
+| Channel timeslot | **TS2** | `Slot1=0`; TS1 is dropped silently |
+| Channel colour code | **2** | must match the node |
+| SMS Format | **M-SMS** | this is the dialect being captured |
+| APRS Receive | **OFF** | keeps beacons out of the capture |
+| Confirmed Data | **record whatever it is** | this is the §C variable |
+
+### Run
+
+```sh
+tools/dmrdcapture/bench-capture.sh sms_rx_to_9000001 60
+```
+
+When it prints KEY THE RADIO NOW: send a **private** message to DMR ID
+**9000001**, with a short, distinctive body. Use something you will recognise
+in a decode and write down exactly what you typed — `F1 SMS TEST` is fine.
+
+Watch the radio's display and **write down what it says**: sent / delivered /
+failed, and whether it retries. That observation is §C's evidence, so do not
+skip it.
+
+### Then
+
+```sh
+# what the node made of it, if the codec already handles this dialect
+sshpass -p "$BENCH_PASS" ssh -q -o PreferredAuthentications=password \
+  -o PubkeyAuthentication=no rescue@172.16.50.13 \
+  'echo "$BENCH_PASS" | sudo -S -p "" sqlite3 -header /var/lib/waypoint/events.db \
+   "select id,direction,peer,local,dialect,body from messages order by id desc limit 3;"'
+```
+
+A row with `peer=3180202`, `local=9000001` and `dialect=tms` means the codec
+decoded it with no work needed and the fixture is confirmation rather than
+discovery. **No row** means either the message did not decode or it did not
+reach the tap — the pcap tells you which, and that difference is the finding.
+
+Commit the trimmed fixture to `internal/dmrdata/testdata/` following the header
+convention already in that directory: what it is, how it was taken, the
+codeplug state, what was typed, and the sanitisation note (own RadioID only).
+
+---
+
+## §C — is it confirmed data?
+
+**This is the question that gates INTERCEPT.** If the radio sends bot-addressed
+SMS as confirmed data and we terminate the frame at the shim, we have removed
+the only party that could ever answer it — the network never sees it — and the
+radio retries against a wall.
+
+Two halves, and the first is free once §B is captured.
+
+### C.1 — read it off the data header
+
+Confirmed vs unconfirmed is the **DPF nibble** in octet 0 of the data header —
+`DPFUnconfirmedData = 0x02`, `DPFConfirmedData = 0x03`
+(`internal/dmrdata/header.go:30-33`). It is not a "response requested" bit.
+
+Run the capture through the tree's own reassembler:
+
+```sh
+go run ./tools/dmrdcapture -in capture/sms_rx_to_9000001.pcap -from 62032 -decode
+```
+
+Read the outcome off the stats line:
+
+| Result | Meaning |
+|---|---|
+| `Messages: 1` and the text you typed | **Unconfirmed.** D-F9 is moot; F3 keeps only the `AckFor(tx) → nil` seam. |
+| `Unsupported: 1`, no message | **Confirmed** (or another declined format). D-F9 is live — and see below. |
+| `BadCRC` / `Unusable` | the capture is lossy, not the radio's fault; recapture. |
+| `NoSync` | a broken transmitter, not a format question. |
+
+**If it comes back `Unsupported`, that is a bigger finding than "we must send an
+ACK".** `parseDataHeader` rejects confirmed data outright
+(`header.go:78-80`), so the current codec cannot decode a confirmed message at
+all — the bot path would need confirmed-data reassembly (per-block CRC-9 and the
+ARQ exchange), not just an ACK. That is a substantially larger F3 than the
+runbook budgets for, and it should be said out loud before F3 starts rather than
+discovered inside it.
+
+Note the existing outbound path states plainly that nothing acknowledges its
+messages (`internal/dmrdata/sms.go:29-31`) — but that is evidence about
+Waypoint→radio, not radio→Waypoint. Do not let it stand in for this
+measurement.
+
+### C.2 — what the radio does when nobody answers
+
+Only needed if C.1 says confirmed.
+
+Today the frame is **not** intercepted: it is forwarded to DMRGateway and on to
+BrandMeister, so the radio's behaviour right now is the "network carried it"
+case. To observe the intercepted case before intercept exists, take the network
+away and repeat §B:
+
+```sh
+sshpass -p "$BENCH_PASS" ssh -q -o PreferredAuthentications=password \
+  -o PubkeyAuthentication=no rescue@172.16.50.13 \
+  'echo "$BENCH_PASS" | sudo -S -p "" systemctl stop waypoint-dmrgateway'
+```
+
+Send the same message again and record: how many retries, how far apart, and
+what the display finally says. Then start it again:
+
+```sh
+sshpass -p "$BENCH_PASS" ssh -q -o PreferredAuthentications=password \
+  -o PubkeyAuthentication=no rescue@172.16.50.13 \
+  'echo "$BENCH_PASS" | sudo -S -p "" systemctl start waypoint-dmrgateway'
+```
+
+This is not the same as intercept — with DMRGateway stopped the relay's
+gateway-facing writes fail rather than being suppressed — but the radio cannot
+tell the difference, and the radio's behaviour is the thing being measured.
+
+---
+
+## §D — 900999 position beacon
+
+**What this settles:** the payload format of an Anytone GPS-over-DMR report, so
+positions can be decoded. The transport half needs nothing new — the relay's
+taps already see a copy of every frame and cannot stop one, so passive
+observation of 900999 is free and BrandMeister APRS keeps working untouched.
+
+### Radio setup
+
+Configure DMR GPS reporting as for BrandMeister APRS — destination **900999**,
+private call, TS2. Record the exact codeplug fields, including the report
+interval. APRS Receive may be ON for this one; note that it is.
+
+### Run
+
+```sh
+tools/dmrdcapture/bench-capture.sh position_900999 180
+```
+
+Beacon at least twice inside the window — two reports from a stationary radio
+tell you which bytes are the fix and which are a counter or a timestamp, and
+one report tells you nothing.
+
+### Decoding
+
+**Do not assign a field a meaning by inspection.** Match it against a citable
+open decoder first — the HBLink3 / KF7EEL `gps_data` lineage decodes Anytone
+GPS-over-DMR and is the ground truth to check against. A partial decode with
+the unknown bytes mapped is a valid deliverable; a guess is not.
+
+If the format matches nothing citable, stop and report that. §D's stop
+condition is explicit about this.
+
+---
+
+## Order
+
+§B first — it produces the capture §C.1 reads, so doing §C first means going
+back to the radio. §D is independent and can be done in the same visit.
+
+Expect roughly: §B ten minutes, §C.1 free, §C.2 ten minutes if needed, §D
+fifteen. The decoding afterwards is workstation work and does not need the
+bench.
