@@ -1,0 +1,39 @@
+# REAL: radio -> network, one message, Motorola TMS framing on port 4007 — what a
+# 6X2 Pro emits when its channel SMS format is M-SMS. The sibling fixture
+# capture-radio-etsi.txt is the same radio with the format set to DMR Standard.
+#
+# Addressed to 9000001, a node-local bot-range ID that exists nowhere. The
+# transfer crosses the loopback anyway, which is the premise the bot framework's
+# intercept rests on: nothing has to answer for the frames to be observable.
+#
+# UNCONFIRMED data (DPF 0x02), and that is the point of the fixture as much as the
+# text is. parseDataHeader declines DPFConfirmedData outright, so a clean decode is
+# itself the evidence — it settles D-F9 and keeps the inbound codec small.
+#
+# Captured off the bench modem loopback 2026-08-17, MMDVM-Host -> DMRGateway leg
+# only (the relay is in the path on that node, so every burst is on the wire twice
+# and the other leg would duplicate every line here). One burst per line:
+# <data-type from the DMRD flags byte> <33 bytes hex>.
+#
+# Five preamble CSBKs (03), one data header (06), six rate-1/2 blocks (07).
+# Decodes to "TFRT WAYPOINT". Note five preambles, not the nine this package sends
+# by default — the radio is more frugal than DefaultPreambles assumes.
+#
+# Bench: Pi 3 + MMDVM_HS_Dual_Hat, KN4OQW / 3180202, colour code 2, timeslot 2
+# (Slot1=0 on that node). Radio: BTECH DMR-6X2 Pro, SMS Format M-SMS.
+#
+# Sanitization: 3180202 is the maintainer's own public RadioID and 9000001 is
+# node-local and belongs to nobody, so neither is third-party PII. Rewriting either
+# would invalidate every checksum in the file.
+03 4c5d01499170102ccce942f288ddff57d75df5dc628607b0d1e96ee107d82399f2
+03 4c1d01cb906c1234ced8ceb288ddff57d75df5dc62f6278091096d4102182a99c4
+03 4c79014b9174120ccab9c61088ddff57d75df5dc623e072091c96d810a983019c0
+03 4c3901c990681014c8884a5088ddff57d75df5dc624e2710d1296e210f583919f6
+03 4c3e014b90e01034cac946f288ddff57d75df5dc62864788d3a86cc10b9c2891c0
+06 52bb0612d4ce7bc113d42ec0899dff57d75df5d592e88d10415623e5974480b0f7
+07 008a811d428810fc00f04a4009fdff57d75df5d63d3c414c02e10440134151004f
+07 49f82fdc840488240b0a528609fdff57d75df5d63fdd37428eb3c7604e9926bc5a
+07 10d46190c07c20d820c4030889fdff57d75df5d63e4c816324d007e08c80071aaf
+07 4245c336060a5ab83178c1a489fdff57d75df5d63c041409c0415004001a42046c
+07 08dcd1a9000650dd2500d2f189fdff57d75df5d63e20753489f1434507184d2041
+07 409d41aa0122075c0c280de409fdff57d75df5d63d2c045d859116040a081d2049

@@ -77,5 +77,6 @@ var allFixtures = []string{
 	"golden-maxlen.txt",
 	"capture-brandmeister.txt",
 	"capture-radio-etsi.txt",
+	"capture-radio-tms.txt",
 	"capture-nosync.txt",
 }

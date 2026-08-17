@@ -171,9 +171,27 @@ so the only way in is to *be* that address (`shim.go:4-13`).
 
 ## B. Inbound SMS capture — NOT DONE
 
-**Blocked on the radio only.** Capturing a private M-SMS to 9000001 needs
-someone to key the BTECH 6X2 Pro. Everything around that is now built and
-verified against the live node — see
+**ANSWERED 2026-08-17.** A private M-SMS from the 6X2 Pro to 9000001 was
+captured off the bench loopback and is committed as
+`internal/dmrdata/testdata/capture-radio-tms.txt`, with
+`TestReassembleRecordedCaptures` asserting it decodes to the text that was
+typed.
+
+The transfer is five preamble CSBKs, one data header and six rate-1/2 blocks,
+and the existing codec reads it with every error counter at zero — no new
+decoding work was needed for the M-SMS inbound path. Two incidental facts worth
+keeping:
+
+- **The radio sends five preambles**, where this package's `DefaultPreambles`
+  is nine (`sms.go:15`). Nine is not wrong — it buys a receiver that is not
+  already listening more time to open — but the assumption that a radio sends
+  that many is now known to be false.
+- **A message to an ID that exists nowhere crosses the loopback normally.**
+  9000001 answers to nothing and the transfer was still complete and
+  well-formed at the shim. That is the premise intercept rests on, now observed
+  rather than assumed.
+
+The tooling built for this is described below — see
 [bench-f1-captures.md](bench-f1-captures.md) for the procedure, and
 `tools/dmrdcapture` for the capture driver and the pcap→fixture converter.
 
@@ -214,10 +232,42 @@ intercept.
 
 ---
 
-## C. The confirmed-data / ACK question (D-F9) — OPEN
+## C. The confirmed-data / ACK question (D-F9) — ANSWERED: UNCONFIRMED
 
-**Not settled. It cannot be settled from source alone, and the capture in §B is
-the thing that settles it.**
+**Settled 2026-08-17 by the §B capture. The radio sends unconfirmed data, so
+D-F9 is moot and INTERCEPT is unblocked.**
+
+The evidence is the decode itself rather than a field read by eye.
+`parseDataHeader` accepts only `DPFUnconfirmedData` and returns
+`ErrUnsupportedPDU` for `DPFConfirmedData` (`header.go:78-80`), and the
+reassembler counts that as `Unsupported` and drops the transfer. The captured
+message decoded with `Unsupported: 0` and `Messages: 1`, which is only possible
+for an unconfirmed transfer.
+
+What follows:
+
+- **F3 keeps only the `AckFor(tx) → nil` seam.** No ACK synthesis.
+- **No confirmed-data reassembler is needed** — the per-block CRC-9 and ARQ work
+  described in §C.1 below does not have to happen. F3 stays the size the runbook
+  budgeted.
+- **INTERCEPT may be built.** The reason to hold it — that terminating a
+  confirmed frame removes the only party that could answer it — does not apply.
+
+Two caveats to carry forward rather than forget:
+
+1. This is one radio in one codeplug state. **Confirmed Data is a per-channel
+   setting on the 6X2 Pro**, so another operator, or this one on another
+   channel, can still present a confirmed transfer. The gatekeeper should count
+   `Unsupported` and surface it rather than dropping silently — that counter is
+   the difference between "nobody messaged the bot" and "somebody did and we
+   could not read it".
+2. The radio's display was not observed under an intercepted (unanswered)
+   transfer, because nothing intercepts yet. With unconfirmed data there should
+   be nothing to observe, but the first INTERCEPT build should check it on the
+   bench rather than infer it.
+
+The rest of this section is the reasoning that was open before the capture, kept
+because caveat 1 keeps it live.
 
 What the source says: MMDVM-Host does not participate. Its network→RF data path
 regenerates FEC and forwards (`DMRSlot.cpp:1357-1409`, `1776-1828`); there is no
@@ -507,8 +557,10 @@ inherits this requirement.
 2. **INTERCEPT reverses a documented invariant** of the relay and must be built
    as a synchronous classify-before-forward step that cannot panic or block.
    §0.2.
-3. **INTERCEPT must not ship before §B/§C are settled** on the bench. Intercepting
-   confirmed data removes the only party that could answer it. §C.
+3. **INTERCEPT is unblocked.** §C is answered: the radio sends UNCONFIRMED data,
+   so terminating the frame strands nobody and no ACK is owed. Count
+   `Unsupported` anyway — confirmed data is a per-channel radio setting and
+   another operator can still present one. §C.
 4. **D9 group mode is not blocked by MMDVM-Host** — there is no network→RF access
    control. W5 item 6's lastheard-only fallback is unnecessary. §E.2.
 5. **D9 lastheard mode is blocked by the events schema** — last-heard stores
@@ -516,14 +568,20 @@ inherits this requirement.
 6. **The gatekeeper must choose the injection slot from the rendered config**, and
    refuse visibly when no slot is available. §G.2.
 7. **F4 should extract the existing idle gate, not rewrite it.** §F.1.
-8. **If §C comes back "confirmed", F3 grows a confirmed-data reassembler** —
-   per-block CRC-9 and an ARQ exchange, not just an ACK. Re-scope F3 before
-   starting it. §C.1.
+8. **F3 does not need a confirmed-data reassembler.** §C came back unconfirmed,
+   so the per-block CRC-9 and ARQ work is not on the critical path. §C.1.
 
-Outstanding bench work, in the order it should be done: §B (M-SMS inbound
-capture) → §C (confirmed-data answer, free once §B exists) → §D (900999
-position capture). The procedure, the radio settings and the exact commands are
-in [bench-f1-captures.md](bench-f1-captures.md).
+Bench status: **§B and §C are done**; the fixture is committed and the codec
+reads it. **§D remains open and is blocked at the radio**, not in Waypoint —
+three capture windows over six PTT releases produced no position report at all,
+which puts it in the 6X2 Pro's per-channel APRS binding. It should not hold up
+F2 or F3. The procedure, the radio settings and the exact commands are in
+[bench-f1-captures.md](bench-f1-captures.md).
+
+The runbook's **900999 is unsupported by any evidence** and has been dropped
+from these documents: nothing in the tree asserts it, the operator's radio is
+set to 310999, and no beacon has yet been observed to settle it. F5's observe
+set must take the ID from a capture, not from the runbook.
 
 One live hazard that procedure calls out and is worth repeating here: the bench
 renders `Slot1=0`, so **everything must happen on timeslot 2** or MMDVM-Host

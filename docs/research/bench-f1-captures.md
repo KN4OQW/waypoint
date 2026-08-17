@@ -90,7 +90,13 @@ both `62032->62033` and `62034->62031` is the relay forwarding byte-for-byte.
 
 ---
 
-## §B — inbound M-SMS to a bot-range ID
+## §B — inbound M-SMS to a bot-range ID — DONE 2026-08-17
+
+Captured, committed as `internal/dmrdata/testdata/capture-radio-tms.txt`, and
+asserted by `TestReassembleRecordedCaptures`. Five preamble CSBKs, one data
+header, six rate-1/2 blocks; decodes clean with every error counter at zero.
+**§C fell out of it: UNCONFIRMED data.** The procedure below is kept for
+re-running it.
 
 **What this settles:** that the existing codec parses a radio-originated TMS
 message, and it produces the fixture F3's golden test needs. The tree already
@@ -147,9 +153,17 @@ codeplug state, what was typed, and the sanitisation note (own RadioID only).
 
 ---
 
-## §C — is it confirmed data?
+## §C — is it confirmed data? — ANSWERED: NO
 
-**This is the question that gates INTERCEPT.** If the radio sends bot-addressed
+`Messages: 1`, `Unsupported: 0` on the §B capture. `parseDataHeader` declines
+`DPFConfirmedData` outright, so a clean decode is proof of an unconfirmed
+transfer. D-F9 is moot, INTERCEPT is unblocked, and F3 needs no ARQ.
+
+Still worth re-running per radio and per channel: **Confirmed Data is a
+per-channel setting**, so this answer is about this codeplug, not about every
+radio that will ever message a bot.
+
+**This was the question that gated INTERCEPT.** If the radio sends bot-addressed
 SMS as confirmed data and we terminate the frame at the shim, we have removed
 the only party that could ever answer it — the network never sees it — and the
 radio retries against a wall.

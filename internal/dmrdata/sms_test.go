@@ -145,6 +145,11 @@ func TestReassembleRecordedCaptures(t *testing.T) {
 		// Three separate messages in one recording, so this also exercises a source
 		// sending several transfers in sequence.
 		{"capture-radio-etsi.txt", []string{"TEST", "HELLO", "HELLO"}},
+		// The same radio in M-SMS rather than DMR Standard, addressed to 9000001 —
+		// a bot-range id nothing answers to. It decodes anyway, which is the
+		// property the bot framework's intercept depends on, and it decodes as
+		// UNCONFIRMED data, which is what keeps the inbound codec small.
+		{"capture-radio-tms.txt", []string{"TFRT WAYPOINT"}},
 	} {
 		t.Run(tc.fixture, func(t *testing.T) {
 			var r Reassembler

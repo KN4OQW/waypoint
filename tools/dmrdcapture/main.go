@@ -49,6 +49,11 @@ func main() {
 	out := flag.String("out", "", "write the fixture here (default stdout)")
 	from := flag.Int("from", 0, "keep only datagrams with this UDP source port")
 	to := flag.Int("to", 0, "keep only datagrams with this UDP destination port")
+	// A capture window almost always catches more than the transmission it was
+	// opened for — a test message shares it with whatever voice traffic happened
+	// to pass. Filtering on the DMR destination is what turns a busy window into
+	// a fixture containing exactly one transfer.
+	dstID := flag.Uint("dst-id", 0, "keep only frames addressed to this DMR ID")
 	summary := flag.Bool("summary", false, "describe each frame instead of emitting a fixture")
 	decode := flag.Bool("decode", false, "reassemble the bursts into messages and report why any failed")
 	header := flag.String("header", "", "comment line to write above the bursts")
@@ -68,7 +73,7 @@ func main() {
 	}
 
 	if *decode {
-		decodeFrames(frames, *from, *to)
+		decodeFrames(frames, *from, *to, uint32(*dstID))
 		return
 	}
 
@@ -86,6 +91,9 @@ func main() {
 		}
 		d, ok := parseDMRD(f.payload)
 		if !ok {
+			continue
+		}
+		if *dstID != 0 && d.dst != uint32(*dstID) {
 			continue
 		}
 		kept++
@@ -124,7 +132,7 @@ func fail(err error) {
 // only the BPTC bits, and BadCRC means the capture is lossy. Those lead to three
 // completely different next steps, and guessing between them costs a trip to
 // the bench.
-func decodeFrames(frames []frame, from, to int) {
+func decodeFrames(frames []frame, from, to int, dstID uint32) {
 	r := &dmrdata.Reassembler{}
 	seen := 0
 	for _, f := range frames {
@@ -136,6 +144,9 @@ func decodeFrames(frames []frame, from, to int) {
 		}
 		d, ok := parseDMRD(f.payload)
 		if !ok || d.voice {
+			continue
+		}
+		if dstID != 0 && d.dst != dstID {
 			continue
 		}
 		seen++
