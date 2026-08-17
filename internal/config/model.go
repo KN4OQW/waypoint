@@ -64,6 +64,15 @@ type Model struct {
 	// address and the play-out deadline / jitter-buffer defaults the renderer sources
 	// (never hardcoded). Store-only; no secret.
 	Peering Peering `json:"peering"`
+	// Weather alert broadcasting: which hazards, for which counties, onto which
+	// talkgroups. Configuration only — the ingest, the policy and the delivery
+	// consume this from elsewhere. See wx.go for why this is a broadcast rather
+	// than a subscription feature.
+	WX WX `json:"wx"`
+	// The station's coordinates, used to suggest which counties to monitor. It
+	// deliberately does NOT feed the public grid square; see
+	// station_location.go.
+	StationLocation StationLocation `json:"station_location"`
 	// LCD is the Waypoint-native HD44780 driver (store-only; drives no INI).
 	LCD LCD `json:"lcd"`
 	// History is the event-history retention policy (store-only; drives no INI).
@@ -751,6 +760,8 @@ func (m *Model) sections() map[string]any {
 		"buses":              &m.Buses,
 		"attachments":        &m.Attachments,
 		"peers":              &m.Peers,
+		"wx":                 &m.WX,
+		"station_location":   &m.StationLocation,
 		"remote_attachments": &m.RemoteAttachments,
 		"peering":            &m.Peering,
 		"lcd":                &m.LCD,

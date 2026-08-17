@@ -25,6 +25,11 @@ type View struct {
 	FM       ViewFM        `json:"fm"`
 	LCD      ViewLCD       `json:"lcd"`
 	History  ViewHistory   `json:"history"`
+	WX       ViewWX        `json:"wx"`
+	// StationLocation is a straight projection. Coordinates are not a secret in
+	// the write-only sense -- an operator who set them can see them -- but note
+	// that they do NOT reach any public surface; see station_location.go.
+	StationLocation StationLocation `json:"station_location"`
 	// StationID shares the Station Settings tab with History.
 	StationID ViewStationID `json:"station_id"`
 	Update    ViewUpdate    `json:"update"`
@@ -110,6 +115,31 @@ type ViewLCD struct {
 	ActivityInterrupt bool          `json:"activity_interrupt"`
 	LingerSecs        string        `json:"linger_secs"`
 	Pages             []ViewLCDPage `json:"pages"`
+}
+
+// ViewWX is the Weather panel's read model. Everything projects except the feed
+// password, which follows the write-only rule the other secret-bearing sections
+// use even though this particular credential is public: a projection that
+// returns some passwords and not others is a rule nobody can audit.
+//
+// Subscriptions is projected rather than left for the panel to build, because
+// the trailing "/#" on each county filter is load-bearing and easy to omit --
+// the feed keys alerts by ETN at the last level so that a county under two
+// hazards shows both. One authority for that string, and it is the same one the
+// ingest subscribes with.
+type ViewWX struct {
+	Enabled       bool              `json:"enabled"`
+	Broker        string            `json:"broker"`
+	Username      string            `json:"username"`
+	HasPassword   bool              `json:"has_password"`
+	Counties      []WXCounty        `json:"counties"`
+	Talkgroups    []uint32          `json:"talkgroups"`
+	Classes       map[string]WXRule `json:"classes"`
+	Overrides     []WXOverride      `json:"overrides"`
+	Actions       []string          `json:"announce_actions"`
+	Holdoff       string            `json:"holdoff"`
+	MaxDefer      string            `json:"max_defer"`
+	Subscriptions []string          `json:"subscriptions"`
 }
 
 // ViewHistory is the Station Settings tab's read model for event-history
@@ -666,6 +696,24 @@ func (m *Model) View(src Sources) *View {
 		})
 	}
 	v.History = ViewHistory{RetentionDays: m.History.RetentionDays}
+	v.WX = ViewWX{
+		Enabled:       m.WX.Enabled,
+		Broker:        m.WX.Broker,
+		Username:      m.WX.Username,
+		HasPassword:   m.WX.Password != "",
+		Counties:      append([]WXCounty(nil), m.WX.Counties...),
+		Talkgroups:    append([]uint32(nil), m.WX.Talkgroups...),
+		Classes:       map[string]WXRule{},
+		Overrides:     append([]WXOverride(nil), m.WX.Overrides...),
+		Actions:       append([]string(nil), m.WX.AnnounceActions...),
+		Holdoff:       m.WX.Holdoff,
+		MaxDefer:      m.WX.MaxDefer,
+		Subscriptions: m.WX.WXSubscriptions(),
+	}
+	for k, r := range m.WX.Classes {
+		v.WX.Classes[k] = r
+	}
+	v.StationLocation = m.StationLocation
 	v.StationID = ViewStationID{
 		Enable:            m.StationID.Enable,
 		TimeMins:          m.StationID.TimeMins,

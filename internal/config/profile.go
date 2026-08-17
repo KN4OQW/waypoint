@@ -59,7 +59,16 @@ var profileSections = []string{
 // profile, and the server address is this node's plumbing rather than a network
 // it connects to — a profile that carried somebody else's mail server would send
 // this node's notifications through it.
-var profileExcluded = []string{"general", "modem", "display", "lcd", "history", "station_id", "update", "peers", "remote_attachments", "peering", "mqtt", "logging", "notify"}
+//
+// The station's coordinates and its weather-alert policy are excluded for a
+// reason a profile cannot work around: both are tied to where the node
+// physically is. A profile is portable between nodes, and importing a Pensacola
+// profile onto a node in Seattle must not leave it broadcasting Florida tornado
+// warnings to its talkgroup — which is what carrying the monitored counties
+// would do. The coordinates are the same argument in its purest form, and they
+// are node identity in the way general is. wx additionally carries the feed
+// password, which is the mqtt reasoning as well.
+var profileExcluded = []string{"general", "modem", "display", "lcd", "history", "station_id", "update", "peers", "remote_attachments", "peering", "mqtt", "logging", "notify", "wx", "station_location"}
 
 // profileSecretFields registers the secret-bearing fields per section — shared by
 // export scrub and activate reconcile so the two can never drift. The values are
