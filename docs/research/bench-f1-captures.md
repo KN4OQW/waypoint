@@ -241,7 +241,45 @@ positions can be decoded. The transport half needs nothing new — the relay's
 taps already see a copy of every frame and cannot stop one, so passive
 observation of 900999 is free and BrandMeister APRS keeps working untouched.
 
-### BLOCKED 2026-08-17 — the radio is not transmitting a position report
+### BLOCKED 2026-08-17 — the beacon does not reach the modem
+
+Ruled out on the Waypoint side by four independent instruments, so nobody needs
+to re-run this. The radio is configured for digital APRS, timeslot 2, 310999 as
+a **talkgroup**, with a solid GPS fix and a report every 30 s, and the operator
+observes it beaconing.
+
+| Instrument | Result |
+|---|---|
+| Loopback capture, five windows totalling ~20 min | zero data bursts |
+| Events DB | no data transmission recorded |
+| `mosquitto_sub -t 'mmdvm/#'` for 120 s | **complete silence** |
+| Idle 150 s window, ~5 beacon intervals, no PTT | nothing |
+
+The MQTT watch is the decisive one, and it is worth knowing about for any future
+"did the modem hear it" question. `MQTTLevel=1` publishes every log line as well
+as the JSON, so a transmission the modem heard and *refused* would appear there
+even though it reaches neither the loopback nor the events DB — the events bridge
+maps only `start`/`end`/`lost`/`timeout`, never `rejected`
+(`internal/mqtt/bridge.go:114,129`), and a refused frame is never forwarded to
+the network. Silence on `mmdvm/#` therefore means the modem heard nothing at
+all, which is a stronger claim than an empty capture can make on its own.
+
+Also positively excluded rather than assumed: there is no `Slot2TGWhiteList` in
+the rendered `[DMR]` section, and `validateTGId` returns true unconditionally
+when the list is empty (`DMRAccessControl.cpp:96-99`); `SelfOnly=0`; no
+`Prefixes`. MMDVM-Host would have accepted a group call to 310999 from anyone.
+
+So the beacon is being transmitted somewhere the hotspot cannot hear it — on the
+6X2 Pro, the digital APRS system's transmit channel being a fixed channel rather
+than the current one. That is a CPS field and needs Windows or Wine; it is not a
+Waypoint problem and must not hold up F2 or F3.
+
+**One thing to fix at the same time:** 310999 is configured as a talkgroup.
+BrandMeister's APRS ingest expects a **private** call. Irrelevant to Waypoint —
+the observe set matches on destination id whatever the call type — but it is why
+the positions would not land on aprs.fi even once the transmit path is fixed.
+
+### Superseded first reading
 
 Three capture windows (3, 5 and 8 minutes) covering six PTT releases with the
 beacon set to fire at PTT-end, rate-limited to once per 30 s, and with the radio
