@@ -37,7 +37,7 @@ section is the finding; the rest of the document is the ground truth behind it.
 | F3 SMS reassembly + CRC | **Exists** | `internal/dmrdata/sms.go`, `crc.go` |
 | F3 RX wiring into waypointd | **Exists** | `internal/messages/inbound.go` |
 | D10 RF-idle gate | **Exists**, per-slot | `internal/messages/messages.go:404,433` |
-| Position decode (900999) | **Absent** | — |
+| Position decode | **Absent** — and see §D.1, the taps cannot see the packet | — |
 | ACK synthesis | **Absent** | — |
 | Bot ID range / egress guard | **Absent** | — |
 
@@ -325,7 +325,89 @@ field, not a protocol constant.
 
 ---
 
-## D. Position capture (900999) — NOT DONE
+## D. Positions — the transport, and what Waypoint cannot see
+
+### D.0 There are TWO position transports, and the runbook names the wrong one
+
+This is the most consequential finding for F5, and it was reached by reading the
+pinned sources rather than by capture.
+
+**Transport 1 — embedded in the voice superframe.** A radio puts its position in
+the embedded LC of a *voice* transmission, alongside the talker alias, as
+`FLCO::GPS_INFO`. MMDVM-Host reassembles it and hands it to the network:
+
+```cpp
+// DMRSlot.cpp:726-732 (RF side; the network side at 1556 only logs)
+case FLCO::GPS_INFO:
+    if (m_dumpTAData) { ...dump...; logGPSPosition(data); }
+    if (m_network != nullptr)
+        m_network->writeRadioPosition(m_rfLC->getSrcId(), data);
+```
+
+Note the forward is **outside** the `m_dumpTAData` guard, so it happens whatever
+the node's logging configuration says. Waypoint renders `DumpTAData=0`, which
+suppresses the log line and changes nothing else.
+
+That emits a 14-byte packet that is **not** a DMRD frame:
+
+```cpp
+// DMRNetwork.cpp:255-268
+::memcpy(buffer + 0U, "DMRG", 4U);
+buffer[4U] = id >> 16; buffer[5U] = id >> 8; buffer[6U] = id >> 0;
+::memcpy(buffer + 7U, data + 2U, 7U);
+return write(buffer, 14U);
+```
+
+DMRGateway reads it (`MMDVMNetwork.cpp:279`), and `processRadioPosition`
+forwards it to whichever network the active call is routed to
+(`DMRGateway.cpp:1292-1311`) — the condition is an in-progress call, because
+this position rode inside one. BrandMeister decodes it from there. **This is how
+BrandMeister APRS works**, and it is entirely upstream: there is no Pi-Star or
+WPSD code in the path, only configuration Waypoint already renders.
+
+**Transport 2 — a standalone short-data call** to an APRS ingest id (the
+310999/900999 question). This is an ordinary data PDU and would appear as DMRD
+bursts like any message.
+
+### D.1 STOP CONDITION for F5: the tap layer is blind to DMRG and DMRA
+
+`dmrdBurst` requires the `"DMRD"` magic before it will look at a datagram
+(`internal/messages/inbound.go:247-255`). `DMRG` (position) and `DMRA` (talker
+alias) are relayed byte-for-byte by the shim and are **invisible to every tap**.
+
+So D-F6 as written — observe private data calls to an ingest id — would capture
+transport 2 and silently miss transport 1, which is the one a stock Anytone or
+BTECH radio on BrandMeister actually uses. F5 must tap `DMRG` directly. That is
+cheaper than the data-PDU path, not harder: no reassembly, no FEC, no CRC, just
+a 14-byte packet with the source id and seven bytes of position.
+
+### D.2 The decoder is in the pinned source
+
+§D's stop condition asked for a citable open decoder before assigning any field
+a meaning. There is one, and it is closer than the HBLink3 lineage the runbook
+suggested — MMDVM-Host decodes this itself:
+
+```cpp
+// DMRSlot.cpp:1836-1879, operating on the 9-byte embedded block
+errorI    = (data[2] & 0x0E) >> 1;                  // 3-bit position error class
+longitudeI = ((data[2] & 0x01) << 31) | (data[3] << 23) | (data[4] << 15) | (data[5] << 7);
+longitudeI >>= 7;                                    // sign-extended 25-bit
+latitudeI  = (data[6] << 24) | (data[7] << 16) | (data[8] << 8);
+latitudeI  >>= 8;                                    // sign-extended 24-bit
+longitude = longitudeI * 360.0F / 33554432.0F;       // 360/2^25
+latitude  = latitudeI  * 180.0F / 16777216.0F;       // 180/2^24
+```
+
+Error classes: 0 `<2m`, 1 `<20m`, 2 `<200m`, 3 `<2km`, 4 `<20km`, 5 `<200km`,
+6 `>200km`, 7 unknown.
+
+Mind the offsets. `writeRadioPosition` copies `data + 2U` for 7 bytes, so a
+`DMRG` packet's payload begins at what this decoder calls `data[2]` — the seven
+bytes are `data[2..8]`. A decoder written against the DMRG packet must shift the
+indices, and getting that wrong yields a plausible-looking wrong position rather
+than an obvious failure.
+
+### D.3 Capture — NOT DONE, and not blocked on Waypoint
 
 **Blocked for the same reason as §B** — it needs the radio beaconing and a hand
 on the bench box.
@@ -567,6 +649,10 @@ inherits this requirement.
    resolved callsigns, not DMR IDs. §F.3.
 6. **The gatekeeper must choose the injection slot from the rendered config**, and
    refuse visibly when no slot is available. §G.2.
+6a. **F5 must tap DMRG, not just data calls to an ingest id.** Positions from a
+   stock radio on BrandMeister ride inside voice transmissions and leave
+   MMDVM-Host as a 14-byte DMRG packet that no existing tap can see, because
+   every tap filters on the DMRD magic first. §D.1.
 7. **F4 should extract the existing idle gate, not rewrite it.** §F.1.
 8. **F3 does not need a confirmed-data reassembler.** §C came back unconfirmed,
    so the per-block CRC-9 and ARQ work is not on the critical path. §C.1.
