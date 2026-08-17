@@ -5,7 +5,54 @@ still unexplained; this document records what was *established* along the way,
 because two of the findings are load-bearing for the bot framework regardless of
 how the beacon turns out.
 
-Status of the beacon itself: **UNRESOLVED.** See "What is not established".
+Status of the beacon itself: **RESOLVED 2026-08-17.** It was Gate 2, the colour
+code. See "The answer" below.
+
+## The answer
+
+An off-air decode (`dsd-fme`, `-fs`, RTL-SDR on the node's RXFrequency) read the
+beacon completely while the node continued to see nothing:
+
+```
+Preamble CSBK - Individual Data - Source: 3180202 - Target: 310999
+Sync: +DMR MS/DM MODE/MONO | Color Code=01 | DATA
+Slot 1 Data Header - Indiv - Unconfirmed Delivery - Source: 3180202 Target: 310999
+  SAP 03 [UDP Comp] - FMF 1 - BLOCKS 08 - PAD 09
+```
+
+The payload is a well-formed GPRMC sentence with a valid fix. Coordinates are
+deliberately not reproduced here — they are the operator's home QTH, and the
+finding does not need them.
+
+The same capture carried the operator's voice call as a control, and the
+comparison is the whole finding:
+
+| Transmission | Colour code |
+|---|---|
+| voice (clean VLC bursts) | **02** — matches the node |
+| beacon (all bursts) | **01** |
+
+The node renders `ColorCode=2`, so every beacon burst dies at Gate 2. The beacon
+also reports **slot 1** against a channel the operator believes is TS2, so it is
+inheriting neither the colour code nor the timeslot of the channel in use — it is
+going out under some other channel definition.
+
+**No firmware change was needed to find this, and the node was never touched.**
+
+### Why this took so long, and what would have shortened it
+
+Four node-side instruments agreed the radio was not transmitting. All four were
+downstream of the gate and all four were wrong together. The first tool that
+could answer the question was a receiver looking at the air — and once one was
+available, the mistake was writing a demodulator rather than reaching for a
+mature decoder. `dsd-fme` read the burst correctly on its first run, including
+the colour code, addressing, SAP and the NMEA payload, where a hand-rolled
+demodulator had spent hours producing sync matches over payloads its own FEC
+rejected.
+
+The rule worth keeping: **when the question is "what is on the air", use a
+decoder somebody has already validated.** Reimplementing the physical layer to
+answer a configuration question is a poor trade.
 
 ## Gate 0 — a duplex modem that is not transmitting forwards ONLY CSBKs
 
@@ -141,7 +188,7 @@ Two things cost real time and are worth writing down:
 `ParseBurst` reporting `unfixable` is the honesty check on the whole chain: it
 refuses to certify bits that do not survive their own FEC.
 
-## What IS established
+## What IS established (as of the resolution above)
 
 - The radio transmits on 438.800 MHz — the node's `RXFrequency` — at intervals of
   30-31 s, measured across five separate captures at roughly 14 sigma.
