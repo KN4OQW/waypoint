@@ -7,7 +7,56 @@ how the beacon turns out.
 
 Status of the beacon itself: **UNRESOLVED.** See "What is not established".
 
-## The two silent gates in the modem firmware
+## Gate 0 — a duplex modem that is not transmitting forwards ONLY CSBKs
+
+This one subsumes the other two for an idle duplex node, and it is the most
+surprising, so it goes first.
+
+`IO.cpp:206-213` chooses the receiver by whether the modem is TRANSMITTING:
+
+```cpp
+case STATE_DMR:
+#if defined(DUPLEX)
+    if (m_duplex) {
+      if (m_tx)  dmrRX.databit(bit, control);   // full slot receiver
+      else       dmrIdleRX.databit(bit);        // idle receiver
+    } else
+      dmrDMORX.databit(bit);                    // simplex: everything
+```
+
+And `CDMRIdleRX::databit()` (`DMRIdleRX.cpp`) passes a burst to the host only if
+it is a CSBK:
+
+```cpp
+slotType.decode(frame + 1U, colorCode, dataType);
+if (colorCode == m_colorCode && dataType == DT_CSBK) {
+    frame[0U] = CONTROL_IDLE | CONTROL_DATA | DT_CSBK;
+    serial.writeDMRData(false, frame, DMR_FRAME_LENGTH_BYTES + 1U);
+}
+```
+
+Its purpose is to spot a wake-up CSBK so the repeater keys up; once transmitting,
+`dmrRX` takes over. Everything else — data headers, rate-1/2 payload, voice
+headers — is discarded, and the sync-hit `DEBUG3` is commented out in the source,
+so there is not even a debug line behind it.
+
+`CDMRDMORX` (the simplex path) has no such restriction: it switches on every data
+type (`DMRDMORX.cpp:113-149`).
+
+**Consequence.** On an idle duplex node, a short data transmission is received
+only if it leads with a CSBK preamble whose colour code matches. This is
+consistent with the one inbound message that did work: the committed fixture
+`internal/dmrdata/testdata/capture-radio-tms.txt` begins with **five preamble
+CSBKs** before its data header. A transmission that sends no preamble never wakes
+the receiver at all.
+
+This is a live consideration for the bot framework, not a curiosity. Bot traffic
+IS short data traffic, and on a duplex node it depends on the sending radio
+emitting preambles. `dmrdata.DefaultPreambles` is 9 for exactly this class of
+reason (`sms.go:15`), but that governs what Waypoint TRANSMITS; what a user's
+radio sends inbound is not ours to choose.
+
+## The two silent gates inside the full receiver
 
 Both live in `MMDVM_HS` (KN4OQW fork, `bf66faf`), in the duplex receive path
 `CDMRSlotRX`. Both discard a burst *before* anything host-side exists, so no
@@ -104,7 +153,12 @@ refuses to certify bits that do not survive their own FEC.
 
 Stated plainly so nobody builds on it:
 
-- **Which gate closes on the beacon, or whether either does.** The bursts at the
+- **Whether Gate 0 is what closes on the beacon.** It is the best-fitting
+  explanation and it is citable, but it has not been tested. The cheap test needs
+  no SDR: a duplex modem receives normally WHILE TRANSMITTING, so a beacon that
+  fires during a long Parrot echo should be received when the same beacon is
+  ignored on an idle node. Until that is run, this is a mechanism, not a cause.
+- **Which of the other gates closes on the beacon, or whether either does.** The bursts at the
   30-31 s cadence have never correlated against any sync pattern; that may mean
   they use an untested sync, or merely that they were too weak to demodulate.
   Those are very different conclusions and the data does not separate them.
