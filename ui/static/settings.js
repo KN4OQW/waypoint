@@ -354,7 +354,9 @@ function buildEdit(c) {
         max_text_units: w.max_text_units || 200,
         voice: Object.assign({ enabled: false, piper_path: "", model_path: "", speaker: -1,
                                length_scale: 1, vocoder: "none", dongle_device: "",
-                               external_command: "", talkgroups: [] }, w.voice || {}),
+                               external_command: "", talkgroups: [],
+                               tone_enabled: true, tone_hz_a: 1050, tone_hz_b: 0,
+                               tone_millis: 1500 }, w.voice || {}),
       };
     })(),
     station_location: {
@@ -1673,6 +1675,15 @@ function wxCollect() {
   if (ls && ls.value) edit.wx.voice.length_scale = parseFloat(ls.value);
   const vc = document.getElementById("wx-vocoder");
   if (vc) edit.wx.voice.vocoder = vc.value;
+  const num = (id, dflt) => {
+    const el = document.getElementById(id);
+    if (!el) return undefined;
+    const n = parseInt(el.value, 10);
+    return Number.isFinite(n) ? n : dflt;
+  };
+  const ta = num("wx-tone-a"); if (ta !== undefined) edit.wx.voice.tone_hz_a = ta;
+  const tb = num("wx-tone-b"); if (tb !== undefined) edit.wx.voice.tone_hz_b = tb;
+  const tm = num("wx-tone-ms"); if (tm !== undefined) edit.wx.voice.tone_millis = tm;
 }
 
 // Fire a test transmission. Confirmed first, because it keys a transmitter and
@@ -1757,6 +1768,14 @@ function panelWeather() {
       `</select>`) +
     input("wx.voice", "dongle_device", { label: msg("wx.dongleDevice"), placeholder: "/dev/ttyUSB0" }) +
     input("wx.voice", "external_command", { label: msg("wx.externalCommand") }) +
+    toggleRow("wx.voice", "tone_enabled", msg("wx.toneEnabled")) +
+    row(msg("wx.toneHz"),
+      `<input type="number" min="100" max="3000" id="wx-tone-a" value="${esc(voice.tone_hz_a || 1050)}" aria-label="${esc(msg("wx.toneHz"))}">`) +
+    row(msg("wx.toneHz2"),
+      `<input type="number" min="0" max="3000" id="wx-tone-b" value="${esc(voice.tone_hz_b || 0)}" aria-label="${esc(msg("wx.toneHz2"))}">`) +
+    row(msg("wx.toneMs"),
+      `<input type="number" min="100" max="10000" step="100" id="wx-tone-ms" value="${esc(voice.tone_millis || 1500)}" aria-label="${esc(msg("wx.toneMs"))}">`) +
+    note(msg("wx.toneNote")) +
     row(msg("wx.voiceTalkgroups"),
       `<input type="text" id="wx-voice-tgs" value="${esc((voice.talkgroups || []).join(", "))}" placeholder="${esc((wx.talkgroups || []).join(", "))}" aria-label="${esc(msg("wx.voiceTalkgroups"))}">`) +
     note(msg("wx.voiceNote")));

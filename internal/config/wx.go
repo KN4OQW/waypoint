@@ -195,7 +195,31 @@ type WXVoice struct {
 	// separately because an operator may want text everywhere and speech only on
 	// the local talkgroup.
 	Talkgroups []uint32 `json:"talkgroups"`
+
+	// An attention tone ahead of the spoken alert.
+	//
+	// It gets a listener's attention and nothing more: a DMR radio has no alert
+	// decoder, so unlike a weather radio there is no receiver feature for a tone
+	// to trigger. 1050 Hz is the NOAA Weather Radio warning alarm tone and is
+	// the familiar one, which is why it is the default.
+	//
+	// ToneHzB exists so an operator can make a two-tone signal if they want one.
+	// There is deliberately no EAS preset and no SAME generator: those are
+	// regulated signalling rather than attention tones, and what an operator
+	// sets here is their call and their licence.
+	ToneEnabled bool `json:"tone_enabled"`
+	ToneHzA     int  `json:"tone_hz_a"`
+	ToneHzB     int  `json:"tone_hz_b"`
+	ToneMillis  int  `json:"tone_millis"`
 }
+
+// Attention-tone defaults: the NOAA Weather Radio alarm tone, briefly. Ten
+// seconds is what a weather radio sends; that is a long time to hold a
+// talkgroup, so this is far shorter and adjustable.
+const (
+	DefaultWXToneHz     = 1050
+	DefaultWXToneMillis = 1500
+)
 
 // Voice backends. Named rather than boolean because there are already three and
 // a fourth is foreseeable.
@@ -224,6 +248,9 @@ func DefaultWXVoice() WXVoice {
 		LengthScale: 1.0,
 		Vocoder:     WXVocoderNone,
 		Talkgroups:  []uint32{},
+		ToneEnabled: true,
+		ToneHzA:     DefaultWXToneHz,
+		ToneMillis:  DefaultWXToneMillis,
 	}
 }
 
@@ -351,6 +378,9 @@ func ValidateWX(w WX) error {
 	if err := validateWXVoice(w.Voice); err != nil {
 		return err
 	}
+	if err := validateWXTone(w.Voice); err != nil {
+		return err
+	}
 
 	for _, d := range []struct{ field, val string }{
 		{"holdoff", w.Holdoff},
@@ -401,6 +431,26 @@ func validateWXVoice(v WXVoice) error {
 		if tg == 0 || tg > 0xFFFFFF {
 			return fmt.Errorf("voice talkgroup %d is not a 24-bit DMR address (1 to 16777215)", tg)
 		}
+	}
+	return nil
+}
+
+// validateWXTone checks the attention tone. The bounds are audio-band and
+// courtesy: a tone outside 100-3000 Hz is either inaudible through a vocoder
+// modelling speech or unpleasant, and one longer than ten seconds holds a
+// talkgroup for longer than the announcement it introduces.
+func validateWXTone(v WXVoice) error {
+	if !v.ToneEnabled {
+		return nil
+	}
+	if v.ToneHzA < 100 || v.ToneHzA > 3000 {
+		return fmt.Errorf("the alert tone is %d Hz; it must be between 100 and 3000", v.ToneHzA)
+	}
+	if v.ToneHzB != 0 && (v.ToneHzB < 100 || v.ToneHzB > 3000) {
+		return fmt.Errorf("the second alert tone is %d Hz; it must be between 100 and 3000, or 0 for none", v.ToneHzB)
+	}
+	if v.ToneMillis < 100 || v.ToneMillis > 10000 {
+		return fmt.Errorf("the alert tone lasts %d ms; it must be between 100 and 10000", v.ToneMillis)
 	}
 	return nil
 }
@@ -470,6 +520,14 @@ func SetWX(s *store.Store, raw []byte, by string) error {
 	}
 	if w.Voice.LengthScale == 0 {
 		w.Voice.LengthScale = 1.0
+	}
+	// A store written before the tone existed decodes these as zero, which the
+	// validator would then refuse on the next unrelated save.
+	if w.Voice.ToneEnabled && w.Voice.ToneHzA == 0 {
+		w.Voice.ToneHzA = DefaultWXToneHz
+	}
+	if w.Voice.ToneEnabled && w.Voice.ToneMillis == 0 {
+		w.Voice.ToneMillis = DefaultWXToneMillis
 	}
 	if w.MaxTextUnits == 0 {
 		w.MaxTextUnits = DefaultWXMaxTextUnits

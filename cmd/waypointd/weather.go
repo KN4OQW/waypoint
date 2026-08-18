@@ -237,6 +237,17 @@ func (ws *weatherService) speak(w config.WX, text string) {
 			ws.publish(hub.Event{Time: time.Now().UTC(), Type: "wx_voice_failed", Detail: err.Error()})
 			return
 		}
+		// The attention tone goes in front of the speech and through the same
+		// vocoder, so it arrives as ordinary audio rather than as a separate
+		// transmission a radio would have to open squelch for twice.
+		if w.Voice.ToneEnabled {
+			tone := wxvoice.GenerateTone(wxvoice.ToneOptions{
+				HzA:    float64(w.Voice.ToneHzA),
+				HzB:    float64(w.Voice.ToneHzB),
+				Millis: w.Voice.ToneMillis,
+			})
+			pcm = wxvoice.PrependTone(tone, pcm)
+		}
 		codewords, err := voc.Encode(ctx, pcm)
 		if err != nil {
 			log.Printf("weather: voice encoding failed: %v", err)
