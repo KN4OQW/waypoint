@@ -8,6 +8,8 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	"github.com/KN4OQW/waypoint/internal/bus/frames"
 )
 
 // buildWAV makes the minimal RIFF a synthesiser emits, so decodeWAV is tested
@@ -175,5 +177,24 @@ func TestExternalVocoderSurfacesFailure(t *testing.T) {
 func TestSynthesizeNeedsAModel(t *testing.T) {
 	if _, err := Synthesize(context.Background(), Config{PiperPath: "true"}, "hello"); err == nil {
 		t.Fatal("synthesised without a voice model")
+	}
+}
+
+// The default codeword size must track the frame layer's, because that layer
+// applies DMR's FEC itself. A vocoder handing over the 72-bit FEC'd form would
+// produce a burst with FEC over FEC, which is noise on the air and silent
+// everywhere else.
+func TestDefaultCodewordSizeMatchesTheFrameLayer(t *testing.T) {
+	// 14 bytes = two 7-byte codewords, with no CodewordBytes set.
+	v := ExternalVocoder{Command: "printf '%014d' 0"}
+	got, err := v.Encode(context.Background(), []int16{1})
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d codewords from 14 bytes, want 2 of 7 bytes", len(got))
+	}
+	if len(got[0]) != frames.AMBEBytes {
+		t.Errorf("codeword is %d bytes, want frames.AMBEBytes (%d)", len(got[0]), frames.AMBEBytes)
 	}
 }
