@@ -385,18 +385,20 @@ func (s *server) wxTestHandler(w http.ResponseWriter, r *http.Request) {
 		Action:   "NEW", Status: "active", Significance: "W",
 		Ends: time.Now().Add(15 * time.Minute),
 	}
-	s.weather.mu.Lock()
-	cfg := s.weather.running
-	s.weather.mu.Unlock()
-	if !cfg.Enabled {
-		// A test on a switched-off feature still transmits: the operator asked,
-		// and it is the only way to check the path before going live.
-		cfg = m.WX
-	}
-	s.weather.deliver(cfg, a, true)
+	// Deliberately the freshly loaded configuration rather than the running
+	// one. The service reconciles on a tick, so the copy it holds can be up to
+	// half a minute out of date -- and the moment an operator is most likely to
+	// press Test is straight after changing something. Serving them the previous
+	// settings makes the feature look broken when it is merely stale, which cost
+	// two puzzled bench runs before this comment existed.
+	//
+	// It also means a test transmits on a switched-off feature, which is correct:
+	// the operator asked, and it is the only way to check the path before going
+	// live.
+	s.weather.deliver(m.WX, a, true)
 
 	writeJSONStatus(w, http.StatusAccepted, map[string]any{
 		"sent":       true,
-		"talkgroups": cfg.Talkgroups,
+		"talkgroups": m.WX.Talkgroups,
 	})
 }
