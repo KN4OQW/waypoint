@@ -83,6 +83,11 @@ func Transmit(inj Injector, codewords [][]byte, o TransmitOptions) (int, error) 
 	p := frames.Params{Slot: slot, DefaultTG: o.DstID}
 
 	seq := uint8(0)
+	// voiceN is the position in the DMR voice superframe, counted over voice
+	// frames only. It is NOT the DMRD sequence number: that one counts the
+	// header and terminator too, so deriving one from the other would put the
+	// sync on the wrong frame and leave a radio unable to assemble link control.
+	voiceN := uint8(0)
 	sent := 0
 	emit := func(kind frames.Kind, ambe [][]byte) error {
 		f := frames.Frame{
@@ -90,6 +95,10 @@ func Transmit(inj Injector, codewords [][]byte, o TransmitOptions) (int, error) 
 			SrcID: o.SrcID, DstID: o.DstID,
 			Stream: frames.Stream{ID: o.StreamID, Seq: seq},
 			AMBE:   ambe,
+		}
+		if kind == frames.KindVoice {
+			f.VoiceSeq = voiceN
+			voiceN = (voiceN + 1) % frames.DMRVoiceSuperframe
 		}
 		b, err := frames.ConstructDMR(f, p, nil)
 		if err != nil {

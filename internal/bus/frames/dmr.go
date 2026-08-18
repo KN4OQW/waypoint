@@ -13,16 +13,18 @@ import "encoding/binary"
 // sync/EMB gap at bytes 13-19) is MMDVM_CM ModeConv.cpp putDMR/getDMR.
 
 const (
-	dmrdLen        = 55 // "DMRD" + header + 33-byte payload + BER + RSSI
-	dmrPayloadLen  = 33
-	dmrPayloadOff  = 20 // payload starts at byte 20 of the DMRD frame
-	dmrAMBEPerFrm  = 3
-	dmrFlagsOff    = 15
-	dmrSeqOff      = 4
-	dmrSrcOff      = 5
-	dmrDstOff      = 8
-	dmrStreamOff   = 16
-	dmrRepeaterOff = 11
+	dmrdLen       = 55 // "DMRD" + header + 33-byte payload + BER + RSSI
+	dmrPayloadLen = 33
+	dmrPayloadOff = 20 // payload starts at byte 20 of the DMRD frame
+	dmrAMBEPerFrm = 3
+	// dmrVoiceSuperframe is the DMR voice superframe length: frames A-F.
+	dmrVoiceSuperframe = DMRVoiceSuperframe
+	dmrFlagsOff        = 15
+	dmrSeqOff          = 4
+	dmrSrcOff          = 5
+	dmrDstOff          = 8
+	dmrStreamOff       = 16
+	dmrRepeaterOff     = 11
 )
 
 // DMR data types in the flags byte (DMRDefines.h DT_*).
@@ -77,6 +79,11 @@ func ParseDMR(buf []byte) (Frame, error) {
 	return f, nil
 }
 
+// DMRVoiceSuperframe is the DMR voice superframe length: frames A through F.
+// Exported because anything originating a transmission has to count voice
+// frames in it to set Frame.VoiceSeq.
+const DMRVoiceSuperframe = 6
+
 // ConstructDMR builds a "DMRD" frame from a normalized Frame, applying the DMR
 // destination params (slot, default_tg / tg_map) and resolving the source
 // callsign->id via the shared lookup when the frame arrived callsign-addressed
@@ -109,14 +116,31 @@ func ConstructDMR(f Frame, p Params, r Resolver) ([]byte, error) {
 	case KindTerminator:
 		buf[dmrFlagsOff] = slotBit | callBit | 0x20 | dmrDTTerminator
 	default: // voice
-		buf[dmrFlagsOff] = slotBit | callBit | 0x10 // voice sync
 		if len(f.AMBE) != dmrAMBEPerFrm {
 			return nil, ErrBadFrame
+		}
+		// The superframe position decides how this frame is labelled, and the
+		// labelling is what a receiving radio needs to assemble link control.
+		//
+		// Frame A (position 0) is the sync frame: bit 4 set, and the sync
+		// pattern written into the middle 48 bits. Frames B-F carry the position
+		// in the low nibble with neither sync bit set, which is how
+		// CDMRNetwork::read distinguishes them (DMRNetwork.cpp:165-181), and
+		// MMDVM-Host then writes its own embedded LC fragment and EMB over that
+		// same 48-bit region. So there is nothing to put there and no point
+		// writing a sync into it.
+		n := f.VoiceSeq % dmrVoiceSuperframe
+		if n == 0 {
+			buf[dmrFlagsOff] = slotBit | callBit | 0x10
+		} else {
+			buf[dmrFlagsOff] = slotBit | callBit | n
 		}
 		copy(payload[0:9], dmrAMBEFromCanonical(f.AMBE[0]))
 		dmrInsertAMBE2(payload, dmrAMBEFromCanonical(f.AMBE[1]))
 		copy(payload[24:33], dmrAMBEFromCanonical(f.AMBE[2]))
-		dmrInsertSyncGap(payload)
+		if n == 0 {
+			dmrInsertSyncGap(payload)
+		}
 	}
 	return buf, nil
 }
