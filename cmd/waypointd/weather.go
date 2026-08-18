@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -123,7 +125,14 @@ func (ws *weatherService) reconcile(ctx context.Context, want config.WX) {
 		Username: want.Username,
 		Password: want.Password,
 		Topics:   want.WXSubscriptions(),
-		ClientID: "waypointd-wx-" + strings.TrimSpace(want.Username),
+		// A random suffix, deliberately not derived from anything about this
+		// node. MQTT wants client ids to be unique -- two connections sharing one
+		// make the broker evict the first -- but the obvious ways to get
+		// uniqueness are a callsign, a DMR id or a hostname, and every one of
+		// those would put a device identifier on the wire of a public broker for
+		// no benefit to the operator. Random satisfies the protocol and
+		// identifies nothing; wxFeedClientID and its test hold that line.
+		ClientID: wxFeedClientID(),
 	}, wxPolicy{w: want}, ws)
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -299,6 +308,23 @@ func (ws *weatherService) publish(e hub.Event) {
 	if ws.srv.hub != nil {
 		ws.srv.hub.Publish(e)
 	}
+}
+
+// wxFeedClientID returns a per-connection MQTT client id that identifies the
+// software and nothing else.
+//
+// GOVERNANCE.md principle 2: a Waypoint device is not something that reports on
+// itself. The feed is a public read-only broker on a shared account, so nothing
+// needs to tell one NODE from another -- only one CONNECTION from another,
+// which randomness does without naming anybody.
+func wxFeedClientID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// Randomness failing is no reason to refuse the feed, and the fallback
+		// still identifies nothing about this node.
+		return "waypointd-wx"
+	}
+	return "waypointd-wx-" + hex.EncodeToString(b)
 }
 
 // wxSrcID is the DMR ID a spoken alert is transmitted from: the DMR section's
