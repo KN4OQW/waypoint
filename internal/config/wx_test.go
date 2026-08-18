@@ -264,3 +264,27 @@ func TestViewWXClassesAreCopiedNotShared(t *testing.T) {
 		t.Error("mutating the view's class map reached the model; the projection must copy")
 	}
 }
+
+// The first save an operator ever makes must not be refused because the section
+// they have never seen is empty. This was a real failure on the bench: a PUT of
+// counties and talkgroups was rejected for having no announce actions, which the
+// operator had no way to know about and no reason to send.
+func TestSetWXOnAnAbsentSectionUsesTheDefaults(t *testing.T) {
+	s := newTestStore(t) // nothing seeded: no "wx" row at all
+	if err := SetWX(s, []byte(`{"enabled":true,"counties":[{"same":"012113"}],"talkgroups":[9]}`), "api"); err != nil {
+		t.Fatalf("the first save was refused: %v", err)
+	}
+	var got WX
+	if _, err := s.GetInto("wx", &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.AnnounceActions) == 0 {
+		t.Error("announce actions are empty; the defaults were not backfilled")
+	}
+	if got.Broker == "" {
+		t.Error("broker is empty; the defaults were not backfilled")
+	}
+	if got.MaxTextUnits == 0 || got.Voice.Vocoder == "" {
+		t.Errorf("voice/limit defaults missing: %+v", got.Voice)
+	}
+}
