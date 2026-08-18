@@ -98,6 +98,27 @@ Verify before wiring it up — one second of audio must produce 50 codewords:
 Weather panel → Spoken Alerts → Voice encoder → **External command**, then the
 command, e.g. `/usr/local/bin/wpambe`.
 
+## A verified working configuration
+
+Tested end to end on a Pi 3 (armv7l), 2026-08-17, text and speech both reaching
+a radio on TG 9.
+
+| | |
+|---|---|
+| Speech | Piper 1.2.0, `piper_linux_armv7l` |
+| Voice model | `en_US-lessac-medium` (63 MB `.onnx` + `.json`) |
+| Encoder | `md380_vocoder` + a 7-byte adapter at `/usr/local/bin/wpambe` |
+| Speaking rate | 1.1 |
+
+Measured on that hardware: Piper's real-time factor is about 1.5, so a 2.6 s
+announcement takes about 3.6 s to synthesise. A 7.7 s spoken alert went out as
+128 DMR frames. That is comfortable for alerting and would not be for
+conversation.
+
+The relay must be on. Spoken alerts are injected through the DMR message relay,
+which is opt-in and off by default; with it off the node logs that it encoded
+the audio and had nowhere to put it, rather than failing silently.
+
 ## Licensing, plainly
 
 The encoder you choose is yours to obtain and run. Waypoint links no vocoder,
