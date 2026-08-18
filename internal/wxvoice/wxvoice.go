@@ -33,6 +33,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/KN4OQW/waypoint/internal/bus/frames"
 )
 
 // DMRSampleRate is what a DMR vocoder consumes: 8 kHz, signed 16-bit, mono.
@@ -88,10 +90,17 @@ func (NullVocoder) Encode(context.Context, []int16) ([][]byte, error) {
 // to run without this project shipping, bundling or endorsing a particular one.
 type ExternalVocoder struct {
 	Command string
-	// CodewordBytes is how many bytes one codeword occupies on stdout. DMR's
-	// AMBE+2 at 2450x1150 is 49 bits of voice plus FEC, carried as 9 bytes by
-	// every implementation this has been checked against — but it is a field
-	// rather than a constant because "every implementation checked" is two.
+	// CodewordBytes is how many bytes one codeword occupies on stdout.
+	//
+	// It defaults to frames.AMBEBytes, which is 7: the RAW 49-bit AMBE+2 voice
+	// bits, without FEC. That is what the frame layer wants, because it applies
+	// DMR's Golay protection itself while constructing the burst.
+	//
+	// This is worth stating loudly because the obvious alternative is wrong in a
+	// way that is not obvious. A vocoder that offers both an "encode" and an
+	// "encode with FEC" entry point will happily give you the 72-bit, 9-byte
+	// form, and feeding that here produces a burst carrying FEC over FEC. The
+	// air result is noise, and nothing between here and the radio will say so.
 	CodewordBytes int
 }
 
@@ -103,7 +112,7 @@ func (e ExternalVocoder) Encode(ctx context.Context, pcm []int16) ([][]byte, err
 	}
 	size := e.CodewordBytes
 	if size <= 0 {
-		size = 9
+		size = frames.AMBEBytes
 	}
 
 	var in bytes.Buffer
