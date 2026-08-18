@@ -27,6 +27,7 @@ const TABS = [
   { id: "network",      tag: "NW" },
   { id: "gateways",     tag: "GW" },
   { id: "profiles",     tag: "PF" },
+  { id: "weather",      tag: "WX" },
   { id: "publicview",   tag: "PV" },
   { id: "updates",      tag: "UP" },
   { id: "system",       tag: "SS" },
@@ -335,6 +336,31 @@ function buildEdit(c) {
     // body carries retention_days as JSON number, not string (the store field is
     // an int). Falls back to the 7-day default if the view somehow omits it.
     history: { retention_days: (c.history || {}).retention_days ?? 7 },
+    // The weather section, with the password blanked on the way in: blank means
+    // "keep the stored one", and has_password drives the placeholder. Same rule
+    // as every other secret-bearing section.
+    wx: (() => {
+      const w = c.wx || {};
+      return {
+        enabled: !!w.enabled,
+        broker: w.broker || "", username: w.username || "",
+        password: "", has_password: !!w.has_password,
+        counties: (w.counties || []).slice(),
+        talkgroups: (w.talkgroups || []).slice(),
+        classes: JSON.parse(JSON.stringify(w.classes || {})),
+        overrides: (w.overrides || []).slice(),
+        announce_actions: (w.announce_actions || []).slice(),
+        holdoff: w.holdoff || "", max_defer: w.max_defer || "",
+        max_text_units: w.max_text_units || 200,
+        voice: Object.assign({ enabled: false, piper_path: "", model_path: "", speaker: -1,
+                               length_scale: 1, vocoder: "none", dongle_device: "",
+                               external_command: "", talkgroups: [] }, w.voice || {}),
+      };
+    })(),
+    station_location: {
+      latitude: (c.station_location || {}).latitude ?? "",
+      longitude: (c.station_location || {}).longitude ?? "",
+    },
     // Automatic CW identification (Station Settings tab). enable defaults ON when
     // the view omits it — a missing key must never read as "identification off",
     // which is a legal obligation no operator opted out of by accident. callsign
@@ -1610,6 +1636,108 @@ function levelSelect(daemon, field) {
 // panelSystem is the System tab (#29): the MQTT data plane and the per-daemon log
 // levels, which were command-line flags until they became store sections, plus the
 // deployment-owned listen address shown read-only.
+
+// The Weather panel: which hazards this node broadcasts, for which counties, and
+// where they go.
+//
+// Everything the feature varies on is a control here rather than a constant in
+// Go, which is why the panel is long. The one thing it deliberately does NOT
+// offer is a "send a test alert" button on the same card as the live settings --
+// that lives under its own heading with its own confirmation, because it keys a
+// transmitter.
+function panelWeather() {
+  const wx = edit.wx || {};
+  const voice = wx.voice || {};
+  const loc = edit.station_location || {};
+
+  const enable = card(msg("wx.broadcast"),
+    toggle("wx", "enabled", msg("wx.enabled")) +
+    note(msg("wx.enabledNote")));
+
+  // Where the node is. This is used to suggest counties and nothing else; the
+  // note says so, because a coordinate box on a radio dashboard reasonably
+  // makes an operator wonder whether it is about to be published.
+  const where = card(msg("wx.stationLocation"),
+    input("station_location", "latitude", { label: msg("wx.latitude") }) +
+    input("station_location", "longitude", { label: msg("wx.longitude") }) +
+    note(msg("wx.locationNote")));
+
+  const countyRows = (wx.counties || []).map((c, i) => `
+    <div class="row" data-wx-county="${i}">
+      <label>${esc(c.name ? c.name + (c.state ? ", " + c.state : "") : c.same)}</label>
+      <span class="mono">${esc(c.same)}${c.wfo ? " &middot; " + esc(c.wfo) : ""}</span>
+      <button type="button" class="btn small" data-wx-county-remove="${i}">${esc(msg("common.remove"))}</button>
+    </div>`).join("");
+  const counties = card(msg("wx.counties"),
+    (countyRows || note(msg("wx.noCounties"))) +
+    row(msg("wx.addCounty"),
+      `<input type="text" id="wx-county-add" placeholder="012113" aria-label="${esc(msg("wx.addCounty"))}">` +
+      `<button type="button" class="btn" id="wx-county-add-btn">${esc(msg("common.add"))}</button>`) +
+    note(msg("wx.countiesNote")));
+
+  // The routing matrix. Class rows are the coarse control an operator thinks in;
+  // the per-alert overrides below beat them.
+  const cls = wx.classes || {};
+  const classRow = (code, label) => {
+    const r = cls[code] || {};
+    return `<div class="toggle-row"><span class="name">${esc(label)}</span>` +
+      `<button type="button" class="pill ${r.sms ? "on" : "off"}" data-wx-class="${code}.sms" aria-pressed="${!!r.sms}" aria-label="${esc(label)} ${esc(msg("wx.sms"))}">${esc(msg("wx.sms"))}</button> ` +
+      `<button type="button" class="pill ${r.voice ? "on" : "off"}" data-wx-class="${code}.voice" aria-pressed="${!!r.voice}" aria-label="${esc(label)} ${esc(msg("wx.voice"))}">${esc(msg("wx.voice"))}</button></div>`;
+  };
+  const routing = card(msg("wx.routing"),
+    classRow("W", msg("wx.classW")) +
+    classRow("A", msg("wx.classA")) +
+    classRow("Y", msg("wx.classY")) +
+    classRow("S", msg("wx.classS")) +
+    note(msg("wx.routingNote")));
+
+  const tgs = card(msg("wx.talkgroups"),
+    row(msg("wx.alertTalkgroups"),
+      `<input type="text" id="wx-tgs" value="${esc((wx.talkgroups || []).join(", "))}" aria-label="${esc(msg("wx.alertTalkgroups"))}">`) +
+    row(msg("wx.messageLimit"),
+      `<input type="number" min="1" max="2000" id="wx-maxtext" value="${esc(wx.max_text_units || 200)}" aria-label="${esc(msg("wx.messageLimit"))}">`) +
+    note(msg("wx.talkgroupsNote")));
+
+  // Voice. The backend row is the honest part: a node with no vocoder shows
+  // "none" and the note says what that means, rather than offering a switch that
+  // appears to work.
+  const voiceCard = card(msg("wx.voiceTitle"),
+    toggleRow("wx.voice", "enabled", msg("wx.voiceEnabled")) +
+    input("wx.voice", "piper_path", { label: msg("wx.piperPath"), placeholder: "piper" }) +
+    input("wx.voice", "model_path", { label: msg("wx.modelPath") }) +
+    row(msg("wx.speakingRate"),
+      `<input type="number" step="0.1" min="0.1" max="4" id="wx-lengthscale" value="${esc(voice.length_scale || 1)}" aria-label="${esc(msg("wx.speakingRate"))}">`) +
+    row(msg("wx.vocoder"),
+      `<select id="wx-vocoder" aria-label="${esc(msg("wx.vocoder"))}">` +
+      ["none", "dongle", "external"].map((v) =>
+        `<option value="${v}"${(voice.vocoder || "none") === v ? " selected" : ""}>${esc(msg("wx.vocoder." + v))}</option>`).join("") +
+      `</select>`) +
+    input("wx.voice", "dongle_device", { label: msg("wx.dongleDevice"), placeholder: "/dev/ttyUSB0" }) +
+    input("wx.voice", "external_command", { label: msg("wx.externalCommand") }) +
+    row(msg("wx.voiceTalkgroups"),
+      `<input type="text" id="wx-voice-tgs" value="${esc((voice.talkgroups || []).join(", "))}" placeholder="${esc((wx.talkgroups || []).join(", "))}" aria-label="${esc(msg("wx.voiceTalkgroups"))}">`) +
+    note(msg("wx.voiceNote")));
+
+  const timing = card(msg("wx.timing"),
+    input("wx", "holdoff", { label: msg("wx.holdoff"), placeholder: "2s" }) +
+    input("wx", "max_defer", { label: msg("wx.maxDefer"), placeholder: "120s" }) +
+    note(msg("wx.timingNote")));
+
+  const feed = card(msg("wx.feed"),
+    input("wx", "broker", { label: msg("wx.broker"), placeholder: "wss://mqtt.wxalerts.org/mqtt" }) +
+    input("wx", "username", { label: msg("wx.username") }) +
+    row(msg("wx.password"), `<input data-sec="wx" data-key="password" type="password" value="${esc(wx.password || "")}" placeholder="${wx.has_password ? msg("common.passwordUnchanged") : ""}" aria-label="${esc(msg("wx.password"))}">`) +
+    note(msg("wx.feedNote")));
+
+  // Its own card, its own button, away from the settings. It transmits.
+  const test = card(msg("wx.test"),
+    row(msg("wx.testAlert"),
+      `<button type="button" class="btn" id="wx-test-btn">${esc(msg("wx.testSend"))}</button>`) +
+    note(msg("wx.testNote")));
+
+  return enable + where + counties + routing + tgs + voiceCard + timing + feed + test;
+}
+
 function panelSystem(c) {
   const q = edit.mqtt || (edit.mqtt = {});
   const hasPw = !!((c.mqtt || {}).has_password);
@@ -3894,6 +4022,7 @@ function renderPanel() {
     case "publicview":   box.innerHTML = panelPublicView(); pvAfterRender(); break;
     case "updates":      box.innerHTML = panelUpdates(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
+    case "weather":      box.innerHTML = panelWeather(); break;
     case "system":       box.innerHTML = panelSystem(c); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
     case "gateways":     box.innerHTML = panelGateways(); break;
