@@ -119,6 +119,23 @@ The relay must be on. Spoken alerts are injected through the DMR message relay,
 which is opt-in and off by default; with it off the node logs that it encoded
 the audio and had nowhere to put it, rather than failing silently.
 
+## The attention tone through a vocoder
+
+A pure tone is the least speech-like thing a speech codec can be handed, so the
+obvious worry is that it will not survive. Measured on the bench rather than
+assumed: a 1050 Hz tone encoded and decoded through the vocoder comes back at
+**1060 Hz** with its level intact (RMS 11313 in, 11620 out), which is closer
+than speech manages and comfortably close enough to be recognisable.
+
+So the NOAA tone reproduces faithfully. What it does NOT do is trigger anything:
+a DMR radio has no alert decoder, and no receiver will switch itself on for it.
+
+Two things that are audible if you get them wrong, both handled in the generator:
+a two-tone signal must share the amplitude budget or the sum clips, and a clipped
+tone through a vocoder sounds far worse than a quiet one; and both ends need a
+few milliseconds of ramp, because a tone starting or stopping at full amplitude
+clicks and a click splatters across the band.
+
 ## Licensing, plainly
 
 The encoder you choose is yours to obtain and run. Waypoint links no vocoder,
