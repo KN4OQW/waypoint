@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -242,15 +243,44 @@ func (ws *weatherService) speak(w config.WX, text string) {
 			ws.publish(hub.Event{Time: time.Now().UTC(), Type: "wx_voice_failed", Detail: err.Error()})
 			return
 		}
-		// The remaining step is frames.ConstructDMR over these codewords and an
-		// injection through the relay. It is not wired yet because nothing on a
-		// stock node can reach this line: VocoderFor returns the null encoder
-		// unless an operator supplied one, and shipping an untested transmit
-		// path behind a configuration nobody has is how a feature that has never
-		// run once gets called finished.
-		log.Printf("weather: %d voice codewords ready; transmit path not yet wired", len(codewords))
-		ws.publish(hub.Event{Time: time.Now().UTC(), Type: "wx_voice_pending",
-			Detail: fmt.Sprintf("%d codewords encoded, transmit not wired", len(codewords))})
+		relay := ws.srv.relay.shimOrNil()
+		if relay == nil {
+			// The relay is what puts anything on the air, and it is opt-in. A
+			// node with voice configured but the relay off should be told that
+			// rather than left wondering why it never speaks.
+			log.Printf("weather: %d codewords encoded but the DMR message relay is off", len(codewords))
+			ws.publish(hub.Event{Time: time.Now().UTC(), Type: "wx_voice_failed",
+				Detail: "the DMR message relay is switched off, so nothing can be transmitted"})
+			return
+		}
+		m, err := config.Load(ws.srv.store)
+		if err != nil {
+			return
+		}
+		src := wxSrcID(m)
+		if src == 0 {
+			ws.publish(hub.Event{Time: time.Now().UTC(), Type: "wx_voice_failed",
+				Detail: "no DMR ID is configured, so a transmission has no source"})
+			return
+		}
+		for _, tg := range w.VoiceTalkgroups() {
+			n, err := wxvoice.Transmit(relay, codewords, wxvoice.TransmitOptions{
+				SrcID: src, DstID: tg, Slot: uint8(messageSlot(m)),
+				// A stream id distinguishes this transmission from the next in a
+				// capture and to a receiver. Any changing value does; the clock
+				// is the cheapest one that never repeats within a session.
+				StreamID: uint32(time.Now().UnixNano()),
+			})
+			if err != nil {
+				log.Printf("weather: voice to TG %d failed after %d frames: %v", tg, n, err)
+				ws.publish(hub.Event{Time: time.Now().UTC(), Type: "wx_voice_failed",
+					Detail: fmt.Sprintf("TG %d: cut off after %d frames: %v", tg, n, err)})
+				continue
+			}
+			log.Printf("weather: spoke %d frames to TG %d", n, tg)
+			ws.publish(hub.Event{Time: time.Now().UTC(), Type: "wx_voice_sent",
+				Dest: fmt.Sprintf("TG %d", tg), Detail: fmt.Sprintf("%d frames", n)})
+		}
 	}()
 }
 
@@ -258,6 +288,19 @@ func (ws *weatherService) publish(e hub.Event) {
 	if ws.srv.hub != nil {
 		ws.srv.hub.Publish(e)
 	}
+}
+
+// wxSrcID is the DMR ID a spoken alert is transmitted from: the DMR section's
+// own id when set, otherwise the station id. Same resolution the message path
+// uses, because a receiver seeing two different sources for the same node is
+// a confusing thing to explain.
+func wxSrcID(m *config.Model) uint32 {
+	for _, s := range []string{m.DMR.ID, m.General.ID} {
+		if n, err := strconv.ParseUint(strings.TrimSpace(s), 10, 32); err == nil && n > 0 && n <= 0xFFFFFF {
+			return uint32(n)
+		}
+	}
+	return 0
 }
 
 // wxStatus is what the panel and the API are told.
