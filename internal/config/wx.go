@@ -146,6 +146,85 @@ type WX struct {
 
 	Holdoff  string `json:"holdoff"`
 	MaxDefer string `json:"max_defer"`
+
+	// MaxTextUnits caps the transmitted message. It is a variable rather than a
+	// constant because the practical limit is a property of the RECEIVING radio's
+	// display and buffer, not of the protocol, and operators serve different
+	// fleets.
+	MaxTextUnits int `json:"max_text_units"`
+
+	Voice WXVoice `json:"voice"`
+}
+
+// WXVoice is the spoken-announcement half.
+//
+// Every path and tunable here is configuration rather than a build-time
+// constant. The synthesiser, the model and the vocoder are all things an
+// operator may site differently, and a node that cannot find one should say so
+// in the panel rather than fail at the moment a tornado warning arrives.
+type WXVoice struct {
+	Enabled bool `json:"enabled"`
+
+	// PiperPath is the text-to-speech binary and ModelPath its voice model.
+	// Blank means "look on PATH" for the binary; a blank model is refused when
+	// voice is enabled, because Piper cannot run without one and the failure is
+	// far better met at save time.
+	PiperPath string `json:"piper_path"`
+	ModelPath string `json:"model_path"`
+	// Speaker selects a voice within a multi-speaker model. -1 means the model
+	// default.
+	Speaker int `json:"speaker"`
+	// LengthScale slows or speeds delivery; 1.0 is the model's own pace. Slower
+	// is often clearer over a vocoder at 2450 bits per second.
+	LengthScale float64 `json:"length_scale"`
+
+	// Vocoder selects how PCM becomes AMBE. "none" degrades honestly: the job is
+	// logged and skipped rather than failing. "dongle" is an AMBE-3000 style USB
+	// device; "external" runs a command the operator supplies.
+	Vocoder string `json:"vocoder"`
+	// DongleDevice is the serial device for the dongle backend.
+	DongleDevice string `json:"dongle_device"`
+	// ExternalCommand is the command for the external backend. It receives 8 kHz
+	// signed 16-bit mono PCM on stdin and must write raw AMBE codewords to
+	// stdout. That contract is deliberately narrow so an operator can satisfy it
+	// with whatever vocoder they are entitled to run, without Waypoint shipping
+	// or endorsing a particular one.
+	ExternalCommand string `json:"external_command"`
+
+	// Talkgroups defaults to the alert talkgroups when empty. It exists
+	// separately because an operator may want text everywhere and speech only on
+	// the local talkgroup.
+	Talkgroups []uint32 `json:"talkgroups"`
+}
+
+// Voice backends. Named rather than boolean because there are already three and
+// a fourth is foreseeable.
+const (
+	WXVocoderNone     = "none"
+	WXVocoderDongle   = "dongle"
+	WXVocoderExternal = "external"
+)
+
+var wxVocoders = []string{WXVocoderNone, WXVocoderDongle, WXVocoderExternal}
+
+// DefaultWXMaxTextUnits is the transmitted-message ceiling in UTF-16 code units.
+// It matches what the message path already enforces; see dmrdata.MaxTextUnits.
+const DefaultWXMaxTextUnits = 200
+
+// DefaultWXVoice is voice switched off with a synthesiser that would work if it
+// were switched on. The vocoder defaults to none, which is honest: a stock node
+// has no way to turn PCM into AMBE, and pretending otherwise would produce a
+// feature that silently never speaks.
+func DefaultWXVoice() WXVoice {
+	return WXVoice{
+		Enabled:     false,
+		PiperPath:   "piper",
+		ModelPath:   "",
+		Speaker:     -1,
+		LengthScale: 1.0,
+		Vocoder:     WXVocoderNone,
+		Talkgroups:  []uint32{},
+	}
 }
 
 // wxActions are the VTEC action codes the feed emits.
@@ -175,6 +254,8 @@ func DefaultWX() WX {
 		AnnounceActions: []string{"NEW"},
 		Holdoff:         DefaultWXHoldoff,
 		MaxDefer:        DefaultWXMaxDefer,
+		MaxTextUnits:    DefaultWXMaxTextUnits,
+		Voice:           DefaultWXVoice(),
 	}
 }
 
@@ -264,6 +345,13 @@ func ValidateWX(w WX) error {
 		}
 	}
 
+	if w.MaxTextUnits < 1 || w.MaxTextUnits > 2000 {
+		return fmt.Errorf("the message length limit is %d; it must be between 1 and 2000 characters", w.MaxTextUnits)
+	}
+	if err := validateWXVoice(w.Voice); err != nil {
+		return err
+	}
+
 	for _, d := range []struct{ field, val string }{
 		{"holdoff", w.Holdoff},
 		{"max_defer", w.MaxDefer},
@@ -277,6 +365,41 @@ func ValidateWX(w WX) error {
 		}
 		if v < 0 {
 			return fmt.Errorf("%s cannot be negative, got %s", d.field, d.val)
+		}
+	}
+	return nil
+}
+
+// validateWXVoice refuses a voice configuration that cannot speak, but only
+// insists on the parts that are actually required for the mode chosen. A node
+// with voice switched off may carry half-filled fields without being nagged.
+func validateWXVoice(v WXVoice) error {
+	if !wxContains(wxVocoders, strings.TrimSpace(v.Vocoder)) {
+		return fmt.Errorf("%q is not a voice backend; they are %s", v.Vocoder, strings.Join(wxVocoders, " "))
+	}
+	if v.LengthScale < 0.1 || v.LengthScale > 4 {
+		return fmt.Errorf("the speaking rate is %g; it must be between 0.1 and 4 (1 is the voice's own pace)", v.LengthScale)
+	}
+	if !v.Enabled {
+		return nil
+	}
+	// From here on voice is switched ON, so the things it needs are required.
+	if strings.TrimSpace(v.ModelPath) == "" {
+		return fmt.Errorf("spoken alerts need a voice model file; set one or switch voice off")
+	}
+	switch strings.TrimSpace(v.Vocoder) {
+	case WXVocoderDongle:
+		if strings.TrimSpace(v.DongleDevice) == "" {
+			return fmt.Errorf("the dongle voice backend needs a serial device, e.g. /dev/ttyUSB0")
+		}
+	case WXVocoderExternal:
+		if strings.TrimSpace(v.ExternalCommand) == "" {
+			return fmt.Errorf("the external voice backend needs a command to run")
+		}
+	}
+	for _, tg := range v.Talkgroups {
+		if tg == 0 || tg > 0xFFFFFF {
+			return fmt.Errorf("voice talkgroup %d is not a 24-bit DMR address (1 to 16777215)", tg)
 		}
 	}
 	return nil
@@ -327,6 +450,23 @@ func SetWX(s *store.Store, raw []byte, by string) error {
 	for i := range w.Overrides {
 		w.Overrides[i].Event = strings.TrimSpace(w.Overrides[i].Event)
 	}
+	w.Voice.Vocoder = strings.ToLower(strings.TrimSpace(w.Voice.Vocoder))
+	w.Voice.PiperPath = strings.TrimSpace(w.Voice.PiperPath)
+	w.Voice.ModelPath = strings.TrimSpace(w.Voice.ModelPath)
+	w.Voice.DongleDevice = strings.TrimSpace(w.Voice.DongleDevice)
+	w.Voice.ExternalCommand = strings.TrimSpace(w.Voice.ExternalCommand)
+	// A store written before these fields existed decodes them as zero, which
+	// would fail validation on the first save of an unrelated field. Backfill the
+	// two that have no sensible zero.
+	if w.Voice.Vocoder == "" {
+		w.Voice.Vocoder = WXVocoderNone
+	}
+	if w.Voice.LengthScale == 0 {
+		w.Voice.LengthScale = 1.0
+	}
+	if w.MaxTextUnits == 0 {
+		w.MaxTextUnits = DefaultWXMaxTextUnits
+	}
 
 	if err := ValidateWX(w); err != nil {
 		return err
@@ -370,6 +510,17 @@ func (w WX) RuleFor(event, significance string) WXRule {
 		}
 	}
 	return w.Classes[strings.ToUpper(strings.TrimSpace(significance))]
+}
+
+// VoiceTalkgroups is where speech goes: its own list when the operator set one,
+// otherwise the same talkgroups the text goes to. Resolved here so the delivery
+// layer has one answer and the panel can show the effective value rather than an
+// empty box that behaves as if it were full.
+func (w WX) VoiceTalkgroups() []uint32 {
+	if len(w.Voice.Talkgroups) > 0 {
+		return append([]uint32(nil), w.Voice.Talkgroups...)
+	}
+	return append([]uint32(nil), w.Talkgroups...)
 }
 
 // ShouldAnnounce reports whether an alert's action is one the operator asked to

@@ -127,18 +127,24 @@ type ViewLCD struct {
 // hazards shows both. One authority for that string, and it is the same one the
 // ingest subscribes with.
 type ViewWX struct {
-	Enabled       bool              `json:"enabled"`
-	Broker        string            `json:"broker"`
-	Username      string            `json:"username"`
-	HasPassword   bool              `json:"has_password"`
-	Counties      []WXCounty        `json:"counties"`
-	Talkgroups    []uint32          `json:"talkgroups"`
-	Classes       map[string]WXRule `json:"classes"`
-	Overrides     []WXOverride      `json:"overrides"`
-	Actions       []string          `json:"announce_actions"`
-	Holdoff       string            `json:"holdoff"`
-	MaxDefer      string            `json:"max_defer"`
-	Subscriptions []string          `json:"subscriptions"`
+	Enabled      bool              `json:"enabled"`
+	Broker       string            `json:"broker"`
+	Username     string            `json:"username"`
+	HasPassword  bool              `json:"has_password"`
+	Counties     []WXCounty        `json:"counties"`
+	Talkgroups   []uint32          `json:"talkgroups"`
+	Classes      map[string]WXRule `json:"classes"`
+	Overrides    []WXOverride      `json:"overrides"`
+	Actions      []string          `json:"announce_actions"`
+	Holdoff      string            `json:"holdoff"`
+	MaxDefer     string            `json:"max_defer"`
+	MaxTextUnits int               `json:"max_text_units"`
+	Voice        WXVoice           `json:"voice"`
+	// VoiceTalkgroups is the EFFECTIVE list — the voice list when one is set,
+	// otherwise the alert talkgroups. Projected so the panel shows what will
+	// actually happen rather than an empty field that behaves as though full.
+	VoiceTalkgroups []uint32 `json:"voice_talkgroups"`
+	Subscriptions   []string `json:"subscriptions"`
 }
 
 // ViewHistory is the Station Settings tab's read model for event-history
@@ -675,19 +681,23 @@ func (m *Model) View(src Sources) *View {
 	}
 	v.History = ViewHistory{RetentionDays: m.History.RetentionDays}
 	v.WX = ViewWX{
-		Enabled:       m.WX.Enabled,
-		Broker:        m.WX.Broker,
-		Username:      m.WX.Username,
-		HasPassword:   m.WX.Password != "",
-		Counties:      append([]WXCounty(nil), m.WX.Counties...),
-		Talkgroups:    append([]uint32(nil), m.WX.Talkgroups...),
-		Classes:       map[string]WXRule{},
-		Overrides:     append([]WXOverride(nil), m.WX.Overrides...),
-		Actions:       append([]string(nil), m.WX.AnnounceActions...),
-		Holdoff:       m.WX.Holdoff,
-		MaxDefer:      m.WX.MaxDefer,
-		Subscriptions: m.WX.WXSubscriptions(),
+		Enabled:         m.WX.Enabled,
+		Broker:          m.WX.Broker,
+		Username:        m.WX.Username,
+		HasPassword:     m.WX.Password != "",
+		Counties:        append([]WXCounty(nil), m.WX.Counties...),
+		Talkgroups:      append([]uint32(nil), m.WX.Talkgroups...),
+		Classes:         map[string]WXRule{},
+		Overrides:       append([]WXOverride(nil), m.WX.Overrides...),
+		Actions:         append([]string(nil), m.WX.AnnounceActions...),
+		Holdoff:         m.WX.Holdoff,
+		MaxDefer:        m.WX.MaxDefer,
+		MaxTextUnits:    m.WX.MaxTextUnits,
+		Voice:           m.WX.Voice,
+		VoiceTalkgroups: m.WX.VoiceTalkgroups(),
+		Subscriptions:   m.WX.WXSubscriptions(),
 	}
+	v.WX.Voice.Talkgroups = append([]uint32(nil), m.WX.Voice.Talkgroups...)
 	for k, r := range m.WX.Classes {
 		v.WX.Classes[k] = r
 	}
