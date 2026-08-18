@@ -91,6 +91,10 @@ type server struct {
 	// transmits queued messages one at a time through the relay. Nil when there is
 	// no event store to record into, and the API answers 503 rather than pretending.
 	msgs *messages.Service
+	// weather owns the alert subscription and the transmissions it produces.
+	// Nil on a node where messaging is unavailable, since an alert with no way
+	// to be sent is not worth subscribing for.
+	weather *weatherService
 	// listenAddr is the HTTPS address the daemon was told to serve on. It is shown
 	// READ-ONLY on the System tab: it is deployment-owned via the packaged systemd
 	// unit, and editing it live would move the UI out from under the browser doing
@@ -1941,6 +1945,7 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/config/apply", s.configApply)
 	mux.HandleFunc("/api/config/", s.configView) // PUT /api/config/{section}
 	s.messagesRoutes(mux)                        // text messages (messages.go)
+	s.weatherRoutes(mux)                         // weather alerts (weather.go)
 	mux.HandleFunc("/api/overrides", s.overridesView)
 	mux.HandleFunc("/api/buses/validate", s.busesValidate)     // dry-run attach validator (RFC-0003 §2)
 	mux.HandleFunc("/api/buses/migrate", s.busesMigrate)       // seed buses from the dormant bridges (§4)
@@ -2568,6 +2573,12 @@ func main() {
 		// The message service transmits through that relay, so it starts after it.
 		// It costs a goroutine parked on an empty queue when nobody sends anything.
 		s.startMessages(context.Background())
+		// The weather broadcast rides the message service, so it starts after it.
+		// Like the relay it reconciles against the store rather than starting
+		// once: a county added in the panel takes effect without a restart, and
+		// a node with the feature off — the default — finds nothing to do.
+		s.weather = newWeatherService(s)
+		go s.weather.run(context.Background(), wxReconcileInterval)
 		// Update poller (D2 / #15): periodically refresh the stack and waypointd
 		// available-update caches and drive opt-in quiet-window auto-apply. Live mode
 		// only. Ticks every 15 min so it reliably lands in the one-hour quiet window; a

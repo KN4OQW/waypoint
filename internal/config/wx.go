@@ -422,9 +422,16 @@ func wxContains(hay []string, needle string) bool {
 // use: a blank field keeps what is stored, because the View never returns it and
 // a panel round-trip would otherwise erase it.
 func SetWX(s *store.Store, raw []byte, by string) error {
-	var w WX
-	if _, err := s.GetInto("wx", &w); err != nil {
+	// Start from the defaults when the row does not exist yet. A zero WX has no
+	// announce actions and no talkgroups, so validating one would refuse the very
+	// first save an operator ever makes -- with an error about a field they were
+	// never shown. Backfilling here rather than at boot means a store that
+	// predates this section behaves the same as a fresh one.
+	w := DefaultWX()
+	if found, err := s.GetInto("wx", &w); err != nil {
 		return err
+	} else if !found {
+		w = DefaultWX()
 	}
 	prevPassword := w.Password
 

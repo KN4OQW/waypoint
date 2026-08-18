@@ -1645,6 +1645,49 @@ function levelSelect(daemon, field) {
 // offer is a "send a test alert" button on the same card as the live settings --
 // that lives under its own heading with its own confirmation, because it keys a
 // transmitter.
+
+// Weather fields that are lists or numbers rather than plain strings, collected
+// from their own inputs at save time. They are separate because a comma-separated
+// talkgroup list is not a store field shape -- the store wants numbers.
+// cleanWx drops the view-only flag and the blank password before the PUT. The
+// store rejects unknown fields, and a blank password means "keep the stored
+// one" -- sending it would be harmless but sending has_password would 400.
+function cleanWx(w) {
+  const out = Object.assign({}, w);
+  delete out.has_password;
+  if (!out.password) delete out.password;
+  return out;
+}
+
+function wxCollect() {
+  if (!edit.wx) return;
+  const nums = (id) => (document.getElementById(id)?.value || "")
+    .split(",").map((x) => parseInt(x.trim(), 10)).filter((n) => Number.isFinite(n) && n > 0);
+  const tgs = document.getElementById("wx-tgs");
+  if (tgs) edit.wx.talkgroups = nums("wx-tgs");
+  const vtgs = document.getElementById("wx-voice-tgs");
+  if (vtgs) edit.wx.voice.talkgroups = nums("wx-voice-tgs");
+  const mt = document.getElementById("wx-maxtext");
+  if (mt && mt.value) edit.wx.max_text_units = parseInt(mt.value, 10);
+  const ls = document.getElementById("wx-lengthscale");
+  if (ls && ls.value) edit.wx.voice.length_scale = parseFloat(ls.value);
+  const vc = document.getElementById("wx-vocoder");
+  if (vc) edit.wx.voice.vocoder = vc.value;
+}
+
+// Fire a test transmission. Confirmed first, because it keys a transmitter and
+// everyone on the talkgroup hears it.
+async function wxSendTest() {
+  if (!confirm(msg("wx.testConfirm"))) return;
+  try {
+    const r = await fetch("/api/wx/test", { method: "POST", headers: { "Accept": "application/json" } });
+    const b = await r.json().catch(() => ({}));
+    banner(r.ok ? msg("wx.testSent") : (b.error || msg("wx.testFailed")), r.ok ? "ok" : "err");
+  } catch (err) {
+    banner(msg("wx.testFailed"), "err");
+  }
+}
+
 function panelWeather() {
   const wx = edit.wx || {};
   const voice = wx.voice || {};
@@ -4117,6 +4160,10 @@ function banner(msg, kind) {
 }
 
 async function apply() {
+  // Collect the weather panel's list and number fields first. They are not
+  // data-sec/data-key bound because a comma-separated talkgroup list is not the
+  // shape the store wants, so nothing else would pick them up.
+  wxCollect();
   if (!dirty.size || applying) return;
   applying = true;
   const btn = document.getElementById("btn-apply");
@@ -4129,6 +4176,7 @@ async function apply() {
         : sec === "dstargw" ? cleanDstargw(edit.dstargw)
         : sec === "pocsag" ? cleanPocsag(edit.pocsag)
         : sec === "mqtt" ? cleanMqtt(edit.mqtt)
+        : sec === "wx" ? cleanWx(edit.wx)
         : sec === "attachments" ? (edit.attachments || []).map(cleanAttachment)
         : edit[sec];
       const r = await fetch("/api/config/" + sec, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
@@ -4998,6 +5046,35 @@ document.getElementById("panels").addEventListener("input", (e) => {
   }
 });
 document.getElementById("panels").addEventListener("click", (e) => {
+  // --- Weather panel ---
+  // Handled first for the same reason the Public View block is: these controls
+  // carry their own data attributes and must not be captured by a more general
+  // selector further down.
+  const wxCls = e.target.closest("[data-wx-class]");
+  if (wxCls) {
+    const [code, ch] = wxCls.dataset.wxClass.split(".");
+    edit.wx.classes = edit.wx.classes || {};
+    edit.wx.classes[code] = edit.wx.classes[code] || {};
+    edit.wx.classes[code][ch] = !edit.wx.classes[code][ch];
+    renderPanel(); return;
+  }
+  const wxRm = e.target.closest("[data-wx-county-remove]");
+  if (wxRm) {
+    edit.wx.counties.splice(Number(wxRm.dataset.wxCountyRemove), 1);
+    renderPanel(); return;
+  }
+  if (e.target.closest("#wx-county-add-btn")) {
+    const el = document.getElementById("wx-county-add");
+    const code = (el.value || "").trim();
+    // Refused here as well as in the store, so the operator is told before
+    // pressing Apply rather than after.
+    if (!/^[0-9]{6}$/.test(code)) { banner(msg("wx.badSameCode"), "err"); return; }
+    if ((edit.wx.counties || []).some((c) => c.same === code)) { banner(msg("wx.duplicateCounty"), "err"); return; }
+    edit.wx.counties = (edit.wx.counties || []).concat([{ same: code }]);
+    el.value = ""; renderPanel(); return;
+  }
+  if (e.target.closest("#wx-test-btn")) { wxSendTest(); return; }
+
   // --- Public View panel (D1-D8) ---
   // Handled before everything else so its controls cannot be captured by a more
   // general selector below. Each writes immediately; there is no Apply here.

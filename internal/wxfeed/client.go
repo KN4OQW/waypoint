@@ -179,10 +179,14 @@ func (c *Client) handle(_ mqtt.Client, m mqtt.Message) {
 	c.mu.Lock()
 	c.stats.Received++
 	c.stats.LastMessageAt = time.Now()
-	if m.Retained() {
-		c.stats.Retained++
-	}
+	// Retained deliveries are counted ONLY as retained. Letting them also fall
+	// into NotRouted was actively misleading on the bench: a healthy node showed
+	// "6 not routed" on connect, which reads as a policy that is refusing
+	// everything when in fact it was the hazards already in effect arriving as
+	// state. An operator reading that would go looking for a fault.
 	switch {
+	case m.Retained():
+		c.stats.Retained++
 	case v.Announce:
 		c.stats.Announced++
 	case v.Clear:
