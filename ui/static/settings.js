@@ -1379,7 +1379,19 @@ function generalPickCallsign(call, rec) {
   // configured DMR ID because somebody corrected a typo in their callsign would
   // be the picker editing a field it was not asked about — and on this tab that
   // field may hold a derived hotspot ID that is in no table.
-  if (rec && rec.id) setField("general", "id", String(rec.id));
+  //
+  // It also does NOT re-render, and that is load-bearing rather than an
+  // omission. Free text commits on BLUR, and blur fires on the mousedown that is
+  // on its way to clicking something — so rebuilding the panel there would
+  // destroy the control being clicked before the click landed, and the operator's
+  // press would go nowhere. Nothing on screen needs redrawing for it either:
+  // setField has already marked the edit unsaved, and the callsign is not shown
+  // anywhere else on this panel.
+  if (!rec || !rec.id) return;
+  // A chosen row is different: it comes from a mousedown the picker has already
+  // cancelled, so no blur is in flight, and the DMR ID field below IS rendered
+  // from the model and has to be redrawn to show what was just filled in.
+  setField("general", "id", String(rec.id));
   renderPanel();
 }
 
@@ -6116,11 +6128,20 @@ function pbBeginEdit(id) {
   };
   pb.err = "";
   pb.field = "";
+  // Editing an existing row is not a pick from the public list, whatever was in
+  // the form a moment ago: the entry already has its own provenance and the save
+  // path for an edit is the ordinary update either way.
+  pb.picked = null;
   renderPanel();
   // Move focus into the form. The panel is rebuilt wholesale, so the operator who
   // clicked Edit halfway down a long list would otherwise be left where they were
   // with no indication that anything opened.
-  const first = document.getElementById("pb-callsign");
+  //
+  // The combobox, not #pb-callsign: that id belongs to the plain input the picker
+  // hides, and focusing a hidden element does nothing at all. It falls back to the
+  // plain one for the case where the picker did not enhance (D7).
+  const first = document.querySelector('[data-callsign-picker="pb"] input.tz-input') ||
+    document.getElementById("pb-callsign");
   if (first) first.focus();
 }
 
@@ -6128,6 +6149,7 @@ function pbCancelEdit() {
   pbReadForm();
   pb.editing = null;
   pb.form = pbBlankForm();
+  pb.picked = null;
   pb.err = "";
   pb.field = "";
   renderPanel();
@@ -6356,6 +6378,10 @@ function pbPick(rec) {
 // a typo in the callsign would be the picker taking over a form it only assists
 // with. Dropping `picked` is the point: what is in the form no longer came from
 // a published row, so it must not be saved claiming it did.
+// It deliberately does not re-render. This runs from BLUR, and blur fires on the
+// mousedown heading for a click — rebuilding the panel here would destroy the Add
+// button under the operator's finger before the click landed. Nothing needs
+// redrawing anyway: the model is current and the picker already shows the text.
 function pbPickFree(callsign) {
   pb.picked = null;
   pb.form.callsign = callsign || "";
