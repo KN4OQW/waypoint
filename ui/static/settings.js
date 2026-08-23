@@ -28,6 +28,7 @@ const TABS = [
   { id: "gateways",     tag: "GW" },
   { id: "profiles",     tag: "PF" },
   { id: "publicview",   tag: "PV" },
+  { id: "phonebook",    tag: "PB" },
   { id: "updates",      tag: "UP" },
   { id: "system",       tag: "SS" },
   { id: "expert",       tag: "SY" },
@@ -3892,6 +3893,7 @@ function renderPanel() {
     case "profiles":     box.innerHTML = panelProfiles(); break;
     case "station":      box.innerHTML = panelStation(); break;
     case "publicview":   box.innerHTML = panelPublicView(); pvAfterRender(); break;
+    case "phonebook":    box.innerHTML = panelPhonebook(); pbAfterRender(); break;
     case "updates":      box.innerHTML = panelUpdates(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "system":       box.innerHTML = panelSystem(c); break;
@@ -4231,6 +4233,12 @@ function selectTab(id, sub) {
   // frequency.
   if (target.id === "publicview" && !pv.set) {
     pvLoad().then(renderPanel);
+  }
+  // The Phonebook reads its own endpoint for the same reason: it is not part of
+  // the config model, and loading it with everything else would put a request on
+  // the critical path of a page most operators open to change a frequency.
+  if (target.id === "phonebook" && !pb.loaded) {
+    pbLoad().then(renderPanel);
   }
   if (target.id === "modes") {
     state.sub = target.sub;
@@ -4896,6 +4904,22 @@ document.getElementById("panels").addEventListener("click", (e) => {
     return;
   }
 
+  // --- Phonebook panel ---
+  // Also handled early, and for the same reason: these controls write straight
+  // through to /api/phonebook and must not be captured by a config selector below.
+  const pbEdit = e.target.closest("[data-pb-edit]");
+  if (pbEdit) { pbBeginEdit(pbEdit.dataset.pbEdit); return; }
+  const pbDel = e.target.closest("[data-pb-delete]");
+  if (pbDel) { pbDelete(pbDel.dataset.pbDelete); return; }
+  const pbA = e.target.closest("[data-pb-action]");
+  if (pbA) {
+    switch (pbA.dataset.pbAction) {
+      case "submit": pbSubmit(); break;
+      case "cancel": pbCancelEdit(); break;
+    }
+    return;
+  }
+
   // --- inline help disclosure (#135) ---
   // Toggled in place rather than via renderPanel: the text is already in the DOM,
   // so this only flips its visibility, and skipping the re-render keeps the
@@ -5510,4 +5534,262 @@ function pvAfterRender() {
   if (box && pv.branding && pv.branding.narrative_html) {
     box.innerHTML = pv.branding.narrative_html;
   }
+}
+
+// --- Phonebook panel ------------------------------------------------------
+//
+// The people this node knows: a callsign, optionally a DMR ID, a name and an
+// email address. It is not config. Nothing here goes through `edit`, the dirty
+// set, or Apply — each action is a request that has either happened or not by the
+// time the panel re-renders, which is the same posture the Public View panel has
+// and for the same reason: there is no INI to regenerate and no daemon to restart,
+// so an Apply button would be a step that does nothing.
+//
+// Email is PII. It is shown here because this page is behind the session wall;
+// it appears in no public surface, and the server is what enforces that.
+const pb = {
+  entries: [],
+  loaded: false,   // distinct from an empty phonebook, which is a legitimate state
+  err: "",
+  field: "",       // which input the server blamed, so the panel can mark it
+  // editing is the id being edited, or null for the add form. One form does both:
+  // an edit is a PUT of every field and an add is a POST of the same shape, so two
+  // forms would be two copies of the same markup drifting apart.
+  editing: null,
+  form: { callsign: "", dmr_id: "", full_name: "", email: "" },
+};
+
+async function pbLoad() {
+  try {
+    const r = await fetch("/api/phonebook");
+    if (!r.ok) throw new Error(await r.text());
+    const body = await r.json();
+    pb.entries = body.entries || [];
+    pb.loaded = true;
+    pb.err = "";
+  } catch (e) {
+    pb.err = String((e && e.message) || e).trim();
+  }
+}
+
+// pbReadForm copies the live inputs into the model before any re-render, so a
+// half-typed entry survives a failed save instead of being cleared by the reload.
+function pbReadForm() {
+  const g = (id) => { const el = document.getElementById(id); return el ? el.value : ""; };
+  pb.form = {
+    callsign: g("pb-callsign"),
+    dmr_id: g("pb-dmrid"),
+    full_name: g("pb-name"),
+    email: g("pb-email"),
+  };
+}
+
+function pbBlankForm() {
+  return { callsign: "", dmr_id: "", full_name: "", email: "" };
+}
+
+function pbBeginEdit(id) {
+  const entry = pb.entries.find((e) => String(e.id) === String(id));
+  if (!entry) return;
+  pb.editing = entry.id;
+  pb.form = {
+    callsign: entry.callsign || "",
+    dmr_id: entry.dmr_id ? String(entry.dmr_id) : "",
+    full_name: entry.full_name || "",
+    email: entry.email || "",
+  };
+  pb.err = "";
+  pb.field = "";
+  renderPanel();
+  // Move focus into the form. The panel is rebuilt wholesale, so the operator who
+  // clicked Edit halfway down a long list would otherwise be left where they were
+  // with no indication that anything opened.
+  const first = document.getElementById("pb-callsign");
+  if (first) first.focus();
+}
+
+function pbCancelEdit() {
+  pbReadForm();
+  pb.editing = null;
+  pb.form = pbBlankForm();
+  pb.err = "";
+  pb.field = "";
+  renderPanel();
+}
+
+// pbBody builds the request body. dmr_id is sent as null when the field is blank
+// — the server distinguishes "no DMR ID" from a value it has to validate, and
+// sending 0 or "" would ask it to reject something the operator did not type.
+function pbBody() {
+  const raw = pb.form.dmr_id.trim();
+  return {
+    callsign: pb.form.callsign.trim(),
+    dmr_id: raw === "" ? null : Number(raw),
+    full_name: pb.form.full_name.trim(),
+    email: pb.form.email.trim(),
+  };
+}
+
+async function pbSubmit() {
+  pbReadForm();
+  const editing = pb.editing;
+  const path = editing ? "/api/phonebook/" + encodeURIComponent(editing) : "/api/phonebook";
+  try {
+    const r = await fetch(path, {
+      method: editing ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(pbBody()),
+    });
+    if (!r.ok) {
+      // The server names the field it rejected, so the message can be shown
+      // against the input rather than only at the top of the panel.
+      let detail = { error: "", field: "" };
+      try { detail = await r.json(); } catch { /* not JSON — fall through to the status */ }
+      pb.err = (detail.error || (msg("phonebook.saveFailed") + " (" + r.status + ")")).trim();
+      pb.field = detail.field || "";
+      renderPanel();
+      return;
+    }
+    // Saved: clear the form and leave edit mode, then reload so the table shows
+    // what was actually stored — the callsign comes back uppercased.
+    pb.editing = null;
+    pb.form = pbBlankForm();
+    pb.err = "";
+    pb.field = "";
+  } catch (e) {
+    pb.err = String((e && e.message) || e).trim();
+    pb.field = "";
+    renderPanel();
+    return;
+  }
+  await pbLoad();
+  renderPanel();
+}
+
+async function pbDelete(id) {
+  pbReadForm();
+  if (!confirm(msg("phonebook.confirmDelete"))) return;
+  try {
+    const r = await fetch("/api/phonebook/" + encodeURIComponent(id), { method: "DELETE" });
+    if (!r.ok && r.status !== 404) {
+      pb.err = (await r.text()).trim() || msg("phonebook.deleteFailed");
+    } else {
+      pb.err = "";
+    }
+  } catch (e) {
+    pb.err = String((e && e.message) || e).trim();
+  }
+  // An entry being edited that has just been deleted must not leave the form
+  // pointed at a row that is gone — the next Save would 404.
+  if (String(pb.editing) === String(id)) {
+    pb.editing = null;
+    pb.form = pbBlankForm();
+  }
+  pb.field = "";
+  await pbLoad();
+  renderPanel();
+}
+
+// pbTable is the list. A real <table> with header cells, not a stack of rows:
+// this is the one panel whose content is genuinely tabular — four attributes of
+// the same kind of thing, read down a column — and a screen reader announcing
+// "Callsign, KN4OQW" depends on the header association a <div> cannot give it.
+function pbTable() {
+  if (!pb.entries.length) return note(esc(msg("phonebook.empty")));
+  const dash = `<span class="none" aria-hidden="true">—</span>`;
+  const cell = (v) => (v ? esc(v) : dash);
+  const rows = pb.entries.map((e) => {
+    const label = e.callsign;
+    return `<tr>` +
+      `<td class="call">${esc(e.callsign)}</td>` +
+      `<td class="num">${e.dmr_id ? esc(String(e.dmr_id)) : dash}</td>` +
+      `<td>${cell(e.full_name)}</td>` +
+      `<td>${cell(e.email)}</td>` +
+      `<td class="rowacts">` +
+        `<button type="button" class="btn ghost" data-pb-edit="${esc(String(e.id))}" ` +
+          `aria-label="${esc(msg("phonebook.editEntry", { callsign: label }))}">${esc(msg("phonebook.edit"))}</button>` +
+        `<button type="button" class="btn ghost" data-pb-delete="${esc(String(e.id))}" ` +
+          `aria-label="${esc(msg("phonebook.deleteEntry", { callsign: label }))}">${esc(msg("common.remove"))}</button>` +
+      `</td></tr>`;
+  }).join("");
+  return `<div class="tscroll"><table aria-label="${esc(msg("phonebook.tableLabel"))}">` +
+    `<thead><tr>` +
+      `<th scope="col">${esc(msg("phonebook.callsign"))}</th>` +
+      `<th scope="col">${esc(msg("phonebook.dmrId"))}</th>` +
+      `<th scope="col">${esc(msg("phonebook.fullName"))}</th>` +
+      `<th scope="col">${esc(msg("phonebook.email"))}</th>` +
+      `<th scope="col"><span class="sr-only">${esc(msg("phonebook.actions"))}</span></th>` +
+    `</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+// pbInput renders one form field, marking it when the server named it as the
+// cause. aria-invalid plus aria-describedby is what carries that to a screen
+// reader; the colour on the message is never the only signal (accessibility gate).
+function pbInput(id, key, label, opts) {
+  const o = opts || {};
+  const bad = pb.field === key;
+  const attrs = [
+    `id="${esc(id)}"`,
+    `value="${esc(pb.form[key] || "")}"`,
+    `data-pb-field="${esc(key)}"`,
+    o.type ? `type="${esc(o.type)}"` : "",
+    o.placeholder ? `placeholder="${esc(o.placeholder)}"` : "",
+    o.inputmode ? `inputmode="${esc(o.inputmode)}"` : "",
+    o.maxlength ? `maxlength="${esc(String(o.maxlength))}"` : "",
+    bad ? `aria-invalid="true" aria-describedby="pb-error"` : "",
+  ].filter(Boolean).join(" ");
+  return row(label, `<input ${attrs}>`);
+}
+
+function panelPhonebook() {
+  if (pb.err && !pb.loaded) return note(esc(pb.err));
+  if (!pb.loaded) return note(esc(msg("phonebook.loading")));
+
+  // role="alert" rather than "status": this is the operator's own input coming
+  // back rejected, and it must be announced when it appears rather than waiting
+  // for the next thing they do.
+  const err = pb.err
+    ? `<div id="pb-error" class="note" role="alert" style="color:var(--bad);border-color:var(--bad)">${esc(pb.err)}</div>`
+    : "";
+
+  const list = card(msg("phonebook.listTitle"), note(msg("phonebook.listHelp")) + pbTable());
+
+  const editing = pb.editing != null;
+  const form = card(editing ? msg("phonebook.editTitle") : msg("phonebook.addTitle"),
+    err +
+    pbInput("pb-callsign", "callsign", msg("phonebook.callsign"), { placeholder: "KN4OQW" }) +
+    pbInput("pb-dmrid", "dmr_id", msg("phonebook.dmrId"), { inputmode: "numeric", placeholder: "3180202" }) +
+    pbInput("pb-name", "full_name", msg("phonebook.fullName")) +
+    pbInput("pb-email", "email", msg("phonebook.email"), { type: "email", placeholder: "operator@example.com" }) +
+    note(msg("phonebook.emailHelp")) +
+    `<div class="actions" style="margin-top:4px">` +
+      `<button type="button" class="btn primary" data-pb-action="submit">` +
+        `${esc(editing ? msg("common.save") : msg("common.add"))}</button>` +
+      (editing
+        ? `<button type="button" class="btn ghost" data-pb-action="cancel">${esc(msg("common.cancel"))}</button>`
+        : "") +
+    `</div>`);
+
+  return `<div class="grid2">${list}${form}</div>`;
+}
+
+// pbAfterRender keeps the form model in step with the inputs.
+//
+// It listens on `input` rather than `change`: unlike the Public View panel, whose
+// fields each save on blur, nothing here is written until Submit — so the model
+// only has to be current when a re-render happens, and a keystroke-level listener
+// is what makes a failed save give the operator their typing back rather than an
+// empty form.
+function pbAfterRender() {
+  document.querySelectorAll("[data-pb-field]").forEach((el) => {
+    el.addEventListener("input", () => { pb.form[el.dataset.pbField] = el.value; });
+  });
+  // Enter anywhere in the form submits it, which is what a form element would do
+  // for free. The panel is not a <form> because the page already has one apply
+  // path and a nested submit would fight it.
+  document.querySelectorAll("[data-pb-field]").forEach((el) => {
+    el.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); pbSubmit(); }
+    });
+  });
 }
