@@ -4948,11 +4948,17 @@ document.getElementById("panels").addEventListener("click", (e) => {
   if (pbEdit) { pbBeginEdit(pbEdit.dataset.pbEdit); return; }
   const pbDel = e.target.closest("[data-pb-delete]");
   if (pbDel) { pbDelete(pbDel.dataset.pbDelete); return; }
+  const pbGrantBtn = e.target.closest("[data-pb-grant]");
+  if (pbGrantBtn) { pbBeginGrant(pbGrantBtn.dataset.pbGrant); return; }
+  const pbRev = e.target.closest("[data-pb-revoke]");
+  if (pbRev) { pbRevoke(pbRev.dataset.pbRevoke); return; }
   const pbA = e.target.closest("[data-pb-action]");
   if (pbA) {
     switch (pbA.dataset.pbAction) {
       case "submit": pbSubmit(); break;
       case "cancel": pbCancelEdit(); break;
+      case "grant": pbGrant(); break;
+      case "cancelGrant": pbCancelGrant(); break;
     }
     return;
   }
@@ -5167,6 +5173,11 @@ document.getElementById("panels").addEventListener("change", (e) => {
   if (e.target.id === "import-files") {
     if (e.target.files && e.target.files.length) runImportScan({ files: e.target.files });
   }
+  // Role select in the phonebook's Login column. It writes on change rather than
+  // needing a Save: there is one field, the write is idempotent, and a Save button
+  // for a single select is a second click to confirm what the first already said.
+  const roleSel = e.target.closest && e.target.closest("[data-pb-role]");
+  if (roleSel) pbSetRole(roleSel.dataset.pbRole, roleSel.value);
 });
 // Keyboard support for the network role="switch" pills (Wi-Fi hidden, NTP enable):
 // Enter/Space toggle them like a native checkbox, and focus is restored after the
@@ -5594,7 +5605,43 @@ const pb = {
   // forms would be two copies of the same markup drifting apart.
   editing: null,
   form: { callsign: "", dmr_id: "", full_name: "", email: "" },
+  // --- logins (RFC-0002 Amendment 1) -----------------------------------------
+  // The phonebook is the identity anchor; accounts hang off it. Both live in this
+  // one model because the panel shows them as one thing — an operator does not
+  // think "this phonebook row and that account", they think "does this person have
+  // a login" — and two models would mean two loads and a window where the table
+  // disagreed with itself.
+  accounts: [],
+  accountsLoaded: false,   // distinct from "no accounts", which cannot happen
+  // granting is the phonebook id whose grant form is open, or null. One form, the
+  // same way the entry form does add and edit: two would drift.
+  granting: null,
+  grant: { username: "", password: "", role: "operator" },
+  grantErr: "",
+  grantField: "",
 };
+
+// pbAccountsFor returns the accounts keyed to a phonebook entry. Several may share
+// one row — one person holding an admin login for the handful of things that need
+// it and an operator login for everyday use is the root-and-user pattern, and the
+// amendment declines to forbid it.
+function pbAccountsFor(id) {
+  return pb.accounts.filter((a) => String(a.phonebook_id) === String(id));
+}
+
+// pbAdminCount is how many admins exist at all. The last one cannot be revoked or
+// demoted — the server returns 409 — and this is what lets the panel disable those
+// controls and say why instead of letting the operator find out by being refused.
+function pbAdminCount() {
+  return pb.accounts.filter((a) => a.role === "admin").length;
+}
+
+// pbIsLastAdmin reports whether removing or demoting this account would leave the
+// node with no administrator. The check here is a courtesy; the real one is on the
+// write, where it cannot be skipped by a client that did not run this code.
+function pbIsLastAdmin(a) {
+  return a.role === "admin" && pbAdminCount() <= 1;
+}
 
 async function pbLoad() {
   try {
@@ -5607,6 +5654,19 @@ async function pbLoad() {
   } catch (e) {
     pb.err = String((e && e.message) || e).trim();
   }
+  // Accounts are fetched separately and failure here is NOT fatal to the panel:
+  // the phonebook is usable without them, and a node whose accounts call failed
+  // should still let an operator fix a callsign. The login column reads as "no
+  // login" in that case, which is why the table asks pb.accountsLoaded rather
+  // than inferring absence from an empty list.
+  try {
+    const r = await fetch("/api/accounts");
+    if (r.ok) {
+      const body = await r.json();
+      pb.accounts = body.accounts || [];
+      pb.accountsLoaded = true;
+    }
+  } catch { /* leave the column blank rather than blocking the phonebook */ }
 }
 
 // pbReadForm copies the live inputs into the model before any re-render, so a
@@ -5709,7 +5769,15 @@ async function pbDelete(id) {
   try {
     const r = await fetch("/api/phonebook/" + encodeURIComponent(id), { method: "DELETE" });
     if (!r.ok && r.status !== 404) {
-      pb.err = (await r.text()).trim() || msg("phonebook.deleteFailed");
+      // The one refusal with a cure the operator can apply: the entry is the
+      // identity an account signs in as, and the foreign key is RESTRICT so that
+      // removing the person cannot silently delete their login. Say what to do
+      // about it rather than echoing a status — a bare 409 tells an operator that
+      // something refused without telling them what would unrefuse it.
+      const detail = await r.json().catch(() => ({}));
+      pb.err = detail.reason === "has_account"
+        ? msg("phonebook.hasAccount")
+        : (detail.error || "").trim() || msg("phonebook.deleteFailed");
     } else {
       pb.err = "";
     }
@@ -5742,9 +5810,14 @@ function pbTable() {
       `<td class="num">${e.dmr_id ? esc(String(e.dmr_id)) : dash}</td>` +
       `<td>${cell(e.full_name)}</td>` +
       `<td>${cell(e.email)}</td>` +
+      `<td>${pbLoginCell(e)}</td>` +
       `<td class="rowacts">` +
         `<button type="button" class="btn ghost" data-pb-edit="${esc(String(e.id))}" ` +
           `aria-label="${esc(msg("phonebook.editEntry", { callsign: label }))}">${esc(msg("phonebook.edit"))}</button>` +
+        (pb.accountsLoaded
+          ? `<button type="button" class="btn ghost" data-pb-grant="${esc(String(e.id))}" ` +
+            `aria-label="${esc(msg("phonebook.grantFor", { callsign: label }))}">${esc(msg("phonebook.grant"))}</button>`
+          : "") +
         `<button type="button" class="btn ghost" data-pb-delete="${esc(String(e.id))}" ` +
           `aria-label="${esc(msg("phonebook.deleteEntry", { callsign: label }))}">${esc(msg("common.remove"))}</button>` +
       `</td></tr>`;
@@ -5755,8 +5828,218 @@ function pbTable() {
       `<th scope="col">${esc(msg("phonebook.dmrId"))}</th>` +
       `<th scope="col">${esc(msg("phonebook.fullName"))}</th>` +
       `<th scope="col">${esc(msg("phonebook.email"))}</th>` +
+      `<th scope="col">${esc(msg("phonebook.login"))}</th>` +
       `<th scope="col"><span class="sr-only">${esc(msg("phonebook.actions"))}</span></th>` +
     `</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+// pbLoginCell is the Login column: every account keyed to this entry, each with
+// its role and the two things an admin can do to it.
+//
+// A person may hold more than one, so this is a list rather than a single value.
+// The role is a <select> because changing it is one of the two actions, and a
+// separate "change role" button that revealed a select would be a click for
+// nothing.
+//
+// The last admin's controls are DISABLED with the reason spelled out beside them,
+// rather than left live to be refused. The write is still guarded server-side —
+// this is the explanation, not the enforcement — but an operator who is going to
+// be told "no" is better told before they click than after.
+function pbLoginCell(e) {
+  // "No login" and "we could not ask" are different answers, and printing the
+  // first for the second would tell an operator that somebody has no access when
+  // the truth is that the panel does not know.
+  if (!pb.accountsLoaded) {
+    return `<span class="none">${esc(msg("phonebook.loginsUnavailable"))}</span>`;
+  }
+  const mine = pbAccountsFor(e.id);
+  if (!mine.length) {
+    return `<span class="none">${esc(msg("phonebook.noLogin"))}</span>`;
+  }
+  return mine.map((a) => {
+    const last = pbIsLastAdmin(a);
+    const rotate = a.must_rotate
+      ? `<span class="pill warn" title="${esc(msg("phonebook.mustRotateHelp"))}">${esc(msg("phonebook.mustRotate"))}</span>`
+      : "";
+    const sel = `<select data-pb-role="${esc(String(a.id))}" ` +
+      `aria-label="${esc(msg("phonebook.roleFor", { username: a.username }))}"` +
+      (last ? " disabled" : "") + ">" +
+      ["admin", "operator", "viewer"].map((r) =>
+        `<option value="${r}"${a.role === r ? " selected" : ""}>${esc(msg("role." + r))}</option>`
+      ).join("") + "</select>";
+    const revoke = `<button type="button" class="btn ghost" data-pb-revoke="${esc(String(a.id))}" ` +
+      `aria-label="${esc(msg("phonebook.revokeFor", { username: a.username }))}"` +
+      (last ? " disabled" : "") + ">" + esc(msg("phonebook.revoke")) + "</button>";
+    // The note is what turns a disabled control into an explanation. It is text,
+    // not a colour or a cursor — the accessibility gate treats state conveyed by
+    // appearance alone as a failure, and "why is this greyed out" is exactly the
+    // question a disabled control has to answer.
+    const why = last ? `<span class="none">${esc(msg("phonebook.lastAdmin"))}</span>` : "";
+    return `<div class="loginrow"><code>${esc(a.username)}</code>${rotate}${sel}${revoke}${why}</div>`;
+  }).join("");
+}
+
+// pbBeginGrant opens the grant form for one phonebook entry.
+//
+// The username DEFAULTS to the callsign and is then independent of it. The
+// amendment is explicit that the stored username is its own column rather than
+// derived: POST /api/claim fixed the {username, password} contract, and deriving
+// the login name from the phonebook would change it. Defaulting is a convenience;
+// following would be a contract change.
+function pbBeginGrant(id) {
+  pbReadForm();
+  const e = pb.entries.find((x) => String(x.id) === String(id));
+  pb.granting = id;
+  pb.grant = { username: (e && e.callsign) || "", password: "", role: "operator" };
+  pb.grantErr = "";
+  pb.grantField = "";
+  renderPanel();
+}
+
+function pbCancelGrant() {
+  pbReadGrant();
+  pb.granting = null;
+  pb.grantErr = "";
+  pb.grantField = "";
+  renderPanel();
+}
+
+// pbReadGrant copies the live grant inputs into the model before a re-render, the
+// same discipline pbReadForm keeps: a half-typed password must survive a rejected
+// save rather than being cleared by the reload that follows it.
+function pbReadGrant() {
+  const g = (id) => { const el = document.getElementById(id); return el ? el.value : ""; };
+  if (pb.granting == null) return;
+  pb.grant = {
+    username: g("pb-acct-user"),
+    password: g("pb-acct-pass"),
+    role: g("pb-acct-role") || "operator",
+  };
+}
+
+// pbGrant creates the login. must_rotate is set by the server, not asked for here:
+// an admin choosing a password is the only way to create an account today, so the
+// flag is a property of that act rather than an option to forget.
+async function pbGrant() {
+  pbReadGrant();
+  const id = pb.granting;
+  try {
+    const r = await fetch("/api/accounts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: pb.grant.username.trim(),
+        password: pb.grant.password,
+        role: pb.grant.role,
+        phonebook_id: Number(id),
+      }),
+    });
+    if (!r.ok) {
+      const detail = await r.json().catch(() => ({}));
+      pb.grantErr = (detail.error || "").trim() || msg("phonebook.grantFailed");
+      pb.grantField = detail.field || "";
+      renderPanel();
+      return;
+    }
+    pb.granting = null;
+    pb.grantErr = "";
+    pb.grantField = "";
+  } catch (e) {
+    pb.grantErr = String((e && e.message) || e).trim();
+    renderPanel();
+    return;
+  }
+  await pbLoad();
+  renderPanel();
+}
+
+// pbRevoke deletes the account row. The session rows go with it in the same
+// transaction — sessions.account_id is ON DELETE CASCADE — so revoking a login
+// signs that person out everywhere rather than waiting for an idle expiry. The
+// phonebook entry is untouched: the node still knows who they are.
+async function pbRevoke(accountID) {
+  pbReadForm();
+  pbReadGrant();
+  const a = pb.accounts.find((x) => String(x.id) === String(accountID));
+  if (!confirm(msg("phonebook.confirmRevoke", { username: (a && a.username) || "" }))) return;
+  try {
+    const r = await fetch("/api/accounts/" + encodeURIComponent(accountID), { method: "DELETE" });
+    if (!r.ok && r.status !== 404) {
+      const detail = await r.json().catch(() => ({}));
+      // 409 here is the last-admin guard. The controls are disabled for that case,
+      // so reaching this means the count changed under us — another admin was
+      // demoted in another tab between the render and the click. Say the same
+      // thing the disabled control says rather than echoing the status.
+      pb.err = r.status === 409
+        ? msg("phonebook.lastAdmin")
+        : (detail.error || "").trim() || msg("phonebook.revokeFailed");
+    } else {
+      pb.err = "";
+    }
+  } catch (e) {
+    pb.err = String((e && e.message) || e).trim();
+  }
+  await pbLoad();
+  renderPanel();
+}
+
+// pbSetRole changes an account's role. It takes effect on the next request the
+// account makes: the role is read from the accounts table at authentication time
+// and never copied into the session, so a session carries an owner rather than a
+// capability and there is nothing stale to invalidate.
+async function pbSetRole(accountID, role) {
+  pbReadForm();
+  pbReadGrant();
+  try {
+    const r = await fetch("/api/accounts/" + encodeURIComponent(accountID), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: role }),
+    });
+    if (!r.ok) {
+      const detail = await r.json().catch(() => ({}));
+      pb.err = r.status === 409
+        ? msg("phonebook.lastAdmin")
+        : (detail.error || "").trim() || msg("phonebook.roleFailed");
+    } else {
+      pb.err = "";
+    }
+  } catch (e) {
+    pb.err = String((e && e.message) || e).trim();
+  }
+  await pbLoad();
+  renderPanel();
+}
+
+// pbGrantCard is the grant form, shown in place of the entry form while it is
+// open. The two never appear together: they are both "the thing you are doing to
+// this person right now", and stacking them would ask the operator to notice which
+// of two forms their Save belongs to.
+function pbGrantCard() {
+  const e = pb.entries.find((x) => String(x.id) === String(pb.granting));
+  const who = (e && e.callsign) || "";
+  const bad = (k) => (pb.grantField === k ? ` aria-invalid="true" aria-describedby="pb-grant-error"` : "");
+  const err = pb.grantErr
+    ? `<div id="pb-grant-error" class="note" role="alert" style="color:var(--bad);border-color:var(--bad)">${esc(pb.grantErr)}</div>`
+    : "";
+  return card(msg("phonebook.grantTitle", { callsign: who }),
+    err +
+    note(msg("phonebook.grantHelp")) +
+    row(msg("phonebook.username"),
+      `<input id="pb-acct-user" value="${esc(pb.grant.username)}"${bad("username")}>`) +
+    row(msg("phonebook.initialPassword"),
+      `<input id="pb-acct-pass" type="password" autocomplete="new-password" minlength="8" ` +
+      `value="${esc(pb.grant.password)}"${bad("password")}>`) +
+    row(msg("phonebook.role"),
+      `<select id="pb-acct-role"${bad("role")}>` +
+      ["admin", "operator", "viewer"].map((r) =>
+        `<option value="${r}"${pb.grant.role === r ? " selected" : ""}>${esc(msg("role." + r))}</option>`
+      ).join("") + "</select>") +
+    note(msg("phonebook.rotateHelp")) +
+    `<div class="actions" style="margin-top:4px">` +
+      `<button type="button" class="btn primary" data-pb-action="grant">${esc(msg("phonebook.grant"))}</button>` +
+      `<button type="button" class="btn ghost" data-pb-action="cancelGrant">${esc(msg("common.cancel"))}</button>` +
+    `</div>`);
 }
 
 // pbInput renders one form field, marking it when the server named it as the
@@ -5790,6 +6073,13 @@ function panelPhonebook() {
     : "";
 
   const list = card(msg("phonebook.listTitle"), note(msg("phonebook.listHelp")) + pbTable());
+
+  // While a grant is open it takes the second column: the operator is doing one
+  // thing to one person, and showing both forms would ask them to notice which of
+  // two Saves theirs is.
+  if (pb.granting != null) {
+    return `<div class="grid2">${list}${pbGrantCard()}</div>`;
+  }
 
   const editing = pb.editing != null;
   const form = card(editing ? msg("phonebook.editTitle") : msg("phonebook.addTitle"),
