@@ -76,7 +76,11 @@ type server struct {
 	storePath string
 	evStore   *events.Store // persistent event history (RFC-0004); nil only in tests
 	auth      *auth.Auth    // first-boot claim state machine + sessions (RFC-0002)
-	paths     config.Paths  // where each daemon reads its generated INI (render targets)
+	// authStore is the same store auth holds, kept here so the account-management
+	// API can read and write accounts without going through the claim state
+	// machine. One store, two callers with different jobs.
+	authStore *auth.Store
+	paths     config.Paths // where each daemon reads its generated INI (render targets)
 	// mqttFlags is the command-line MQTT surface plus which of those flags the
 	// operator typed explicitly. The store owns the data plane (#29), so this exists
 	// only to let an explicit flag shadow it with a logged warning (D1 / system.go).
@@ -2033,6 +2037,11 @@ func (s *server) newMux() *http.ServeMux {
 	// route above: its entries carry email addresses, and the gate's default-deny
 	// is what keeps them off an anonymous response.
 	s.registerPhonebookRoutes(mux)
+	// Accounts, whoami and self-service password change (accounts.go). The first
+	// is admin-only by the role mapping; the other two are reachable by every
+	// authenticated account, and /api/password is the one route a must-rotate
+	// account may use.
+	s.registerAccountRoutes(mux)
 	// Notification test-send and the parked list (notify.go).
 	s.registerNotifyRoutes(mux)
 	mux.Handle("/", s.rootHandler(http.FileServerFS(ui.FS())))
@@ -2425,7 +2434,7 @@ func main() {
 	// any boot-partition reset marker before the server starts serving, so a device
 	// booted with a marker comes up unclaimed. A failure here is fatal: starting
 	// with an unknown/inconsistent auth state could expose config surfaces.
-	s.auth, err = buildAuth(st, secureCookieOn, resetPaths{Marker: *provisionMarker, Progress: *setupProgress})
+	s.auth, s.authStore, err = buildAuth(st, secureCookieOn, resetPaths{Marker: *provisionMarker, Progress: *setupProgress})
 	if err != nil {
 		log.Fatalf("auth: %v", err)
 	}
@@ -2666,7 +2675,7 @@ func main() {
 		// The setup gate wraps the auth gate, so an unprovisioned node never
 		// reaches the claim state machine at all: provisioning says what the box
 		// is, claiming says who administers it, and the first has to happen first.
-		Handler:           s.setupGate(s.auth.Gate(s.newMux())),
+		Handler:           s.setupGate(s.auth.Gate(s.enforceRoles(s.newMux()))),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	// Serve HTTPS by default with the self-signed device cert (RFC-0012), plus the

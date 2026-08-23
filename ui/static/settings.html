@@ -406,6 +406,23 @@
   .pill { font-family: var(--mono); font-size: 10px; border-radius: 4px; padding: 3px 8px; }
   .pill.on { color: var(--accent); border: 1px solid var(--accent); }
   .pill.off { color: var(--dim); border: 1px solid var(--pill-line); }
+  .pill.warn { color: var(--warn); border: 1px solid var(--warn); }
+
+  /* The phonebook's Login column (RFC-0002 Amendment 1). One row per account, and
+     a person may hold more than one — so this wraps rather than assuming a single
+     line, and each row keeps its controls together when it does.
+     The last-admin explanation rides in the same row as the controls it explains,
+     because a disabled control whose reason is elsewhere on the page is a control
+     with no reason as far as a screen reader walking in order is concerned. */
+  .loginrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 3px 0; }
+  .loginrow code { font-family: var(--mono); font-size: 12px; }
+  .loginrow select { min-height: 32px; padding: 3px 6px; font-size: 12px; }
+  .loginrow .btn { padding: 4px 10px; }
+  .loginrow .none { flex-basis: 100%; font-size: 12px; line-height: 1.4; }
+  /* Disabled is never carried by opacity alone: the reason is written out beside
+     the control (see .loginrow .none) and the cursor says it is not actionable. */
+  .loginrow [disabled] { opacity: .55; cursor: not-allowed; }
+  @media (max-width: 720px) { .loginrow .btn, .loginrow select { min-height: 44px; } }
 
   /* Mode buses (RFC-0003). The bus card reuses .card/.card-head; these add the
      per-bus controls, the attachment blocks, the attach picker, and the transient

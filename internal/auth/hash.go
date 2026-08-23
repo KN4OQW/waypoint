@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -113,3 +114,29 @@ func splitHash(s string) (salt, digest []byte, err error) {
 	}
 	return salt, digest, nil
 }
+
+// decoyRecord is a valid argon2id record over a fixed, unusable password. It
+// exists so a login against a username that does not exist still costs the same
+// argon2 work as one against a username that does.
+//
+// Without it the response time distinguishes the two, which is username
+// enumeration: an attacker learns which callsigns have a login on the node before
+// guessing a single password. That did not matter under RFC-0002's single fixed
+// admin — there was one username and it was not a secret — and it matters now.
+//
+// It is derived once and reused. Deriving it per request would be correct too but
+// costs 64 MiB of argon2 work on a Pi Zero for every miss, which is a denial of
+// service handed to whoever finds the login page. The salt is fixed for the same
+// reason: nothing verifies against this record, so it protects no secret.
+var decoyOnce = sync.OnceValue(func() HashRecord {
+	rec, err := HashPassword("waypoint-decoy-never-a-real-password")
+	if err != nil {
+		// HashPassword fails only if the system CSPRNG does, which is not a
+		// condition a login handler can do anything about. An empty record still
+		// verifies to false; the cost equalisation is what is lost, not the refusal.
+		return HashRecord{}
+	}
+	return rec
+})
+
+func decoyRecord() HashRecord { return decoyOnce() }

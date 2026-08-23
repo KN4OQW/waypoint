@@ -25,7 +25,7 @@ import (
 // migrated database, so a release that raises it must also raise the update
 // manifest's min_version (RFC-0014) to the first release that ships the new
 // version. See docs/updates.md.
-const SchemaVersion = 5
+const SchemaVersion = 6
 
 // ErrSchemaNewer is returned by Open when the database was written by a newer
 // build. It is a distinct error because it is the one open failure with a real
@@ -212,6 +212,41 @@ CREATE TABLE IF NOT EXISTS phonebook (
   updated_at TEXT NOT NULL
 );`
 
+// accountsDDL is the multi-account credential table (RFC-0002 Amendment 1).
+//
+// It replaces the fixed-id `admin` row RFC-0002 specified. The contracts that
+// table carried are unchanged and are the reason for several column choices here:
+// the password is an argon2id salt+digest with its parameter block stored beside
+// it, so a record written under old cost parameters stays verifiable; and nothing
+// in it is ever reachable through the settings key tree, the config view, or a
+// profile.
+//
+// phonebook_id is NULLABLE and carries no unique constraint, both deliberately. A
+// node claimed before this table existed has an admin with no phonebook row, and
+// the migration must not invent one — a fabricated callsign is junk in the table
+// the dashboard reads. And one person may hold two accounts, an admin login for
+// the few things that need it and an operator login for everyday use, which a
+// unique constraint would forbid for no gain.
+//
+// ON DELETE RESTRICT, not CASCADE: deleting a phonebook entry must not silently
+// delete somebody's login. The phonebook DELETE handler answers 409 instead and
+// the panel says "revoke this entry's login first".
+//
+// AUTOINCREMENT because sessions reference accounts(id): a reused rowid would
+// silently re-point a live session at a different person.
+const accountsDDL = `
+CREATE TABLE IF NOT EXISTS accounts (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  phonebook_id  INTEGER REFERENCES phonebook(id) ON DELETE RESTRICT,
+  username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  password_hash TEXT NOT NULL,          -- argon2id salt + digest; never a plaintext
+  params        TEXT NOT NULL,          -- the per-hash parameter block (RFC-0002)
+  role          TEXT NOT NULL CHECK (role IN ('admin','operator','viewer')),
+  must_rotate   INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL,          -- RFC-3339 UTC
+  updated_at    TEXT NOT NULL
+);`
+
 // publicViewSeed materializes the single rows so readers never have to special-case
 // "configured but never written". Both are INSERT OR IGNORE: re-running is a no-op,
 // and an existing row keeps whatever the operator set.
@@ -261,6 +296,9 @@ CREATE TABLE IF NOT EXISTS applies (
 		return err
 	}
 	if _, err := s.db.Exec(phonebookDDL); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(accountsDDL); err != nil {
 		return err
 	}
 

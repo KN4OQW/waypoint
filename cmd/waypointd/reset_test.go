@@ -41,7 +41,14 @@ func newResetEnv(t *testing.T) *resetEnv {
 	if err := as.Claim("kn4oqw", rec, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := as.CreateSession("hash-1", time.Now(), time.Now().Add(time.Hour)); err != nil {
+	// The session belongs to the account that was just claimed. A session with no
+	// owner is not a state the daemon can produce any more, and writing one here
+	// would test a shape that cannot occur.
+	acct, ok, err := as.AccountByUsername("kn4oqw")
+	if err != nil || !ok {
+		t.Fatalf("reading back the claimed account: ok=%v err=%v", ok, err)
+	}
+	if err := as.CreateSession("hash-1", acct.ID, time.Now(), time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 

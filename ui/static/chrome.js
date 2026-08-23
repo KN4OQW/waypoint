@@ -70,14 +70,31 @@ window.WPChrome = (function () {
     });
   }
 
-  // The callsign chip mirrors the settings sidebar; sourced from the config API.
+  // whoami is the shell's identity read: who is signed in, what they may do, and
+  // the station callsign for the sidebar chip.
+  //
+  // It used to be GET /api/config, which meant a read-only account had to be handed
+  // every network name, address and port on the node to paint one chip. RFC-0002
+  // Amendment 1 denies viewer that route and added this one instead: three fields,
+  // all of which the caller is already entitled to — their own name, their own
+  // role, and the identity this node transmits in the clear on every transmission.
+  //
+  // The role is cached for role-aware rendering. It REPORTS what the server will
+  // enforce and grants nothing: a client that lies to itself about its role still
+  // gets 403s. Hiding a control the caller cannot use is a courtesy, not a check.
+  let me = { username: "", role: "", callsign: "" };
   async function loadCallsign() {
     try {
-      const c = await (await fetch("/api/config")).json();
-      const cs = (c.general && c.general.callsign) || "";
-      if (cs) $("#side-callsign").textContent = cs;
+      const r = await fetch("/api/whoami");
+      if (!r.ok) return;                       // gate will have redirected the page
+      me = await r.json();
+      if (me.callsign) $("#side-callsign").textContent = me.callsign;
     } catch { /* offline — leave the placeholder */ }
   }
+  // whoami is the cached answer. Callers must tolerate the empty role: the shell
+  // paints before the fetch resolves, and a panel that assumed otherwise would
+  // hide its controls for one frame on every load.
+  function whoami() { return me; }
   function mountLanguagePicker() { WPI18n.renderPicker($("#lang-pick")); }
 
   // setConn paints the connection state everywhere the shell shows it: the status
@@ -106,5 +123,6 @@ window.WPChrome = (function () {
     mountLanguagePicker: mountLanguagePicker,
     setConn: setConn,
     loadCallsign: loadCallsign,
+    whoami: whoami,
   };
 })();

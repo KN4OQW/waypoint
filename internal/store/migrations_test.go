@@ -392,12 +392,23 @@ func TestMigratesV2ToHead(t *testing.T) {
 			if !tc.withAdmin {
 				return
 			}
-			var role string
-			if err := s.db.QueryRow(`SELECT role FROM admin WHERE id = 1`).Scan(&role); err != nil {
-				t.Fatalf("admin.role not present after migration: %v", err)
+			// The v2 credential now finishes in accounts, not in admin: the accounts
+			// step (v6) moves it and drops the old table. This assertion used to read
+			// admin.role; it reads the destination now because that is where a v2
+			// node's credential ends up, and the claim — "the existing credential
+			// arrives as an admin" — is the same one.
+			var username, role string
+			if err := s.db.QueryRow(`SELECT username, role FROM accounts`).Scan(&username, &role); err != nil {
+				t.Fatalf("the v2 admin credential did not reach accounts: %v", err)
 			}
 			if role != "admin" {
 				t.Errorf("existing credential migrated to role %q, want %q", role, "admin")
+			}
+			if username != "W4RJM" {
+				t.Errorf("migrated username = %q, want the v2 fixture's W4RJM", username)
+			}
+			if err := s.db.QueryRow(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='admin'`).Scan(new(int)); err == nil {
+				t.Error("the admin table survived the migration; the accounts step drops it")
 			}
 		})
 	}
@@ -765,5 +776,216 @@ func TestMigratesV4ToHead(t *testing.T) {
 			`INSERT INTO phonebook(callsign, created_at, updated_at) VALUES(?, 'x', 'x')`, c); err != nil {
 			t.Errorf("second row with a NULL dmr_id refused (%s): %v", c, err)
 		}
+	}
+}
+
+// v5DDL is the schema exactly as shipped at SchemaVersion 5 — the last shape
+// before accounts existed. Frozen like the fixtures above it: this is the tree a
+// node in the field is running the day the accounts step arrives.
+//
+// Only the tables the accounts step touches or reads are reproduced. It creates
+// one table, moves one row, adds one column and drops one table; a fixture
+// carrying every v5 table verbatim would add lines without adding a claim, and
+// TestMigratedMatchesFresh is what proves the whole shape agrees.
+const v5DDL = `
+CREATE TABLE meta (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  schema_version INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  claimed_at TEXT,
+  provisioned INTEGER
+);
+CREATE TABLE settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  updated_by TEXT NOT NULL
+);
+CREATE TABLE applies (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  at         TEXT NOT NULL,
+  by         TEXT NOT NULL,
+  diff       TEXT NOT NULL
+);
+CREATE TABLE admin (
+  id            INTEGER PRIMARY KEY CHECK (id = 1),
+  username      TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  params        TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  role          TEXT NOT NULL DEFAULT 'admin'
+);
+CREATE TABLE sessions (
+  token_hash TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  last_seen  TEXT NOT NULL
+);`
+
+// The credential and session a v5 node is carrying. The hash is not a real
+// argon2id record — nothing here verifies it — but it is a distinctive string, so
+// a migration that rewrote or re-derived it instead of copying it would be
+// visible rather than plausible.
+const (
+	v5Hash    = "$argon2id$v=19$FIXTURE-SALT-AND-DIGEST-DO-NOT-REWRITE"
+	v5Params  = "m=65536,t=1,p=4"
+	v5Token   = "fixture-session-token-hash"
+	v5Created = "2026-01-01T00:00:00Z"
+)
+
+// writeV5Fixture builds a claimed schema-v5 node with a live session.
+func writeV5Fixture(t *testing.T, path string, claimed bool) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+	for _, ddl := range []string{v5DDL, publicViewDDL, publicViewSeed, heardPositionsDDL, phonebookDDL} {
+		if _, err := db.Exec(ddl); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claimedAt := "'2026-01-02T00:00:00Z'"
+	if !claimed {
+		claimedAt = "NULL"
+	}
+	if _, err := db.Exec(`INSERT INTO meta(id, schema_version, created_at, claimed_at) VALUES(1, 5, ?, `+claimedAt+`)`, v5Created); err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range fixtureSettings {
+		if _, err := db.Exec(`INSERT INTO settings(key, value, updated_at, updated_by) VALUES(?, ?, ?, 'fixture')`, k, v, v5Created); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO applies(at, by, diff) VALUES(?, 'fixture', '{"general.callsign":"KN4OQW"}')`, v5Created); err != nil {
+		t.Fatal(err)
+	}
+	// A phonebook the reset path must never touch and the migration must not link to.
+	if _, err := db.Exec(`INSERT INTO phonebook(callsign, dmr_id, full_name, created_at, updated_at)
+		VALUES('KN4OQW', 3180202, 'Clint Chance', ?, ?)`, v5Created, v5Created); err != nil {
+		t.Fatal(err)
+	}
+	if !claimed {
+		return
+	}
+	if _, err := db.Exec(`INSERT INTO admin(id, username, password_hash, params, created_at, role)
+		VALUES(1, 'kn4oqw', ?, ?, ?, 'admin')`, v5Hash, v5Params, v5Created); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO sessions(token_hash, created_at, expires_at, last_seen)
+		VALUES(?, ?, '2026-02-01T00:00:00Z', ?)`, v5Token, v5Created, v5Created); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestMigratesV5ToHead is the accounts step against the only kind of node it ever
+// runs on: one that is already claimed, with a credential somebody is using and a
+// session somebody is holding.
+//
+// Every assertion here is a promise the amendment makes about this migration, and
+// each would be a real incident if it broke — a rewritten hash locks the operator
+// out, a revoked session logs them out mid-update, a forced rotation demands a
+// change nothing prompted, and a lost phonebook is data loss.
+func TestMigratesV5ToHead(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.db")
+	writeV5Fixture(t, path, true)
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a v5 store: %v", err)
+	}
+	defer s.Close() //nolint:errcheck // test cleanup
+
+	if v, err := s.Version(); err != nil || v != SchemaVersion {
+		t.Fatalf("after Open, version = %d (%v), want %d", v, err, SchemaVersion)
+	}
+	assertFixtureIntact(t, s)
+
+	var (
+		id      int64
+		pbID    sql.NullInt64
+		user, h string
+		params  string
+		role    string
+		rotate  int
+		created string
+		updated string
+	)
+	if err := s.db.QueryRow(`SELECT id, phonebook_id, username, password_hash, params, role, must_rotate, created_at, updated_at
+		FROM accounts`).Scan(&id, &pbID, &user, &h, &params, &role, &rotate, &created, &updated); err != nil {
+		t.Fatalf("the admin credential did not reach accounts: %v", err)
+	}
+
+	// The hash is copied byte-for-byte: the operator's password keeps working.
+	if h != v5Hash {
+		t.Errorf("password_hash was rewritten:\n got %q\nwant %q", h, v5Hash)
+	}
+	if params != v5Params {
+		t.Errorf("params were rewritten:\n got %q\nwant %q", params, v5Params)
+	}
+	if user != "kn4oqw" || role != "admin" {
+		t.Errorf("migrated as %q/%q, want kn4oqw/admin", user, role)
+	}
+	// No rotation is forced: they chose that password themselves at claim time.
+	if rotate != 0 {
+		t.Error("the migrated admin was flagged for rotation; nothing prompted one")
+	}
+	// No phonebook link is invented, even though a matching row exists.
+	if pbID.Valid {
+		t.Errorf("the migration linked the admin to phonebook row %d; it must not guess an identity", pbID.Int64)
+	}
+	if created != v5Created {
+		t.Errorf("created_at = %q, want the original %q", created, v5Created)
+	}
+	if updated != created {
+		t.Errorf("updated_at = %q, want it seeded from created_at %q", updated, created)
+	}
+
+	// The live session survives and now belongs to the migrated account.
+	var sessAccount sql.NullInt64
+	if err := s.db.QueryRow(`SELECT account_id FROM sessions WHERE token_hash = ?`, v5Token).Scan(&sessAccount); err != nil {
+		t.Fatalf("the live session did not survive the migration: %v", err)
+	}
+	if !sessAccount.Valid || sessAccount.Int64 != id {
+		t.Errorf("session account_id = %v, want the migrated account %d", sessAccount, id)
+	}
+
+	// The old table is gone, so nothing can read a credential from two places.
+	if err := s.db.QueryRow(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='admin'`).Scan(new(int)); err == nil {
+		t.Error("the admin table survived the migration")
+	}
+
+	// The phonebook is untouched.
+	var pbCount int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM phonebook`).Scan(&pbCount); err != nil {
+		t.Fatal(err)
+	}
+	if pbCount != 1 {
+		t.Errorf("phonebook has %d rows after the migration, want the 1 it started with", pbCount)
+	}
+}
+
+// TestMigratesV5UnclaimedToHead: a node that was never claimed has no credential
+// and no session, and must still arrive at head with an empty accounts table
+// rather than with a fabricated row.
+func TestMigratesV5UnclaimedToHead(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.db")
+	writeV5Fixture(t, path, false)
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on an unclaimed v5 store: %v", err)
+	}
+	defer s.Close() //nolint:errcheck // test cleanup
+
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM accounts`).Scan(&n); err != nil {
+		t.Fatalf("accounts missing after migration: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("an unclaimed node came out of the migration with %d accounts, want 0", n)
 	}
 }

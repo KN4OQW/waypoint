@@ -158,14 +158,17 @@ func explainStoreError(err error, storePath string) error {
 // buildAuth attaches the auth subsystem to the store and applies the boot-marker
 // reset before the server starts serving. secureCookie is wired to the TLS story:
 // false until the TLS PR flips it (a pre-TLS build must not set Secure).
-func buildAuth(st *store.Store, secureCookie bool, paths resetPaths) (*auth.Auth, error) {
+func buildAuth(st *store.Store, secureCookie bool, paths resetPaths) (*auth.Auth, *auth.Store, error) {
 	as, err := auth.NewStore(st)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if _, err := checkResetMarker(as, st, resetMarkerPaths, paths, log.Printf); err != nil {
 		// A failed reset is security-relevant; do not silently start claimed.
-		return nil, err
+		return nil, nil, err
 	}
-	return auth.New(as, auth.Options{SecureCookie: secureCookie}), nil
+	// The store is returned as well as wrapped: the account-management API reads
+	// and writes accounts directly, which is a different job from the claim state
+	// machine and not one auth.Auth should grow methods for.
+	return auth.New(as, auth.Options{SecureCookie: secureCookie}), as, nil
 }

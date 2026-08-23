@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -62,7 +63,16 @@ func (a *Auth) HandleClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	a.invalidateClaimed()
 	a.logf("auth: device claimed by admin %q", strings.TrimSpace(c.Username))
-	if err := a.issueSession(w); err != nil {
+	// Look the account up rather than having Claim return it: the claim is already
+	// committed, and a failure here costs the auto-login cookie, not the claim.
+	acct, ok, lerr := a.store.AccountByUsername(strings.TrimSpace(c.Username))
+	if lerr != nil || !ok {
+		a.logf("auth: claim succeeded but the new account could not be read back: %v", lerr)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"claimed": true})
+		return
+	}
+	if err := a.issueSession(w, acct.ID); err != nil {
 		// The claim is committed; only the auto-login cookie failed. Report success
 		// so the client can fall back to the login page rather than re-claiming.
 		a.logf("auth: claim succeeded but issuing session failed: %v", err)
@@ -97,34 +107,49 @@ func (a *Auth) handleLogin(w http.ResponseWriter, r *http.Request) {
 		a.failLogin(w, source, "invalid request body")
 		return
 	}
-	admin, ok, err := a.store.Admin()
+	acct, found, err := a.store.AccountByUsername(strings.TrimSpace(c.Username))
 	if err != nil {
-		a.logf("auth: admin lookup failed: %v", err)
+		a.logf("auth: account lookup failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "login failed")
 		return
 	}
-	// Verify even when there is no admin row or the username differs, so the
-	// response time does not reveal which of the two was wrong.
-	match := false
-	if ok {
-		if v, verr := admin.Record.Verify(c.Password); verr == nil {
-			match = v
-		} else {
-			a.logf("auth: verifying password failed: %v", verr)
-		}
+	// Verify against SOMETHING every time, even when the username does not exist.
+	//
+	// With one fixed admin this mattered little — there was only ever one username
+	// and an attacker already knew it. With several accounts, skipping the argon2
+	// work on an unknown username makes the response measurably faster for names
+	// that do not exist, which is username enumeration: an attacker learns who has
+	// a login on the node before guessing a single password. So a miss verifies
+	// against a decoy record with the same cost parameters and discards the result.
+	record := acct.Record
+	if !found {
+		record = decoyRecord()
 	}
-	if !ok || admin.Username != c.Username || !match {
+	match := false
+	if v, verr := record.Verify(c.Password); verr == nil {
+		match = v
+	} else if found {
+		a.logf("auth: verifying password failed: %v", verr)
+	}
+	if !found || !match {
 		a.failLogin(w, source, "invalid username or password")
 		return
 	}
 	a.damper.recordSuccess(source)
-	if err := a.issueSession(w); err != nil {
+	if err := a.issueSession(w, acct.ID); err != nil {
 		a.logf("auth: issuing session failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "login failed")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"authenticated": true})
+	// must_rotate is reported so the client can go straight to the change-password
+	// screen. It is not a permission — the server refuses every other route while
+	// the flag is set, whatever the client does with this.
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"authenticated": true,
+		"role":          string(acct.Role),
+		"must_rotate":   acct.MustRotate,
+	})
 }
 
 // failLogin applies the fixed per-failure delay, records the failure against the
@@ -219,7 +244,18 @@ func (a *Auth) gateClaimed(w http.ResponseWriter, r *http.Request, next http.Han
 		next.ServeHTTP(w, r)
 		return
 	}
-	if _, ok := a.authenticate(r); ok {
+	if sess, ok := a.authenticate(r); ok {
+		// Authenticated, but the account may still be carrying an admin-chosen
+		// password. Forced rotation refuses every route but the password change,
+		// and roles.go does that for the API; what it cannot do is decide what the
+		// PAGE is, because "/" is not an /api/ path. So the page is decided here,
+		// beside the claim and login screens it is a third case of: a caller who is
+		// past the wall but not yet free of it gets a self-contained screen rather
+		// than the dashboard shell they cannot use.
+		if a.mustRotate(sess) && isPageAsset(r) {
+			writePlaceholder(w, rotatePlaceholder)
+			return
+		}
 		next.ServeHTTP(w, r)
 		return
 	}
@@ -230,6 +266,28 @@ func (a *Auth) gateClaimed(w http.ResponseWriter, r *http.Request, next http.Han
 		return
 	}
 	writeErrorMode(w, http.StatusUnauthorized, "authentication required", "login")
+}
+
+// mustRotate reports whether the session's owner still owes a password rotation.
+//
+// A session with no owner (a pre-amendment row the migration could not attribute,
+// or an account deleted mid-flight) is NOT treated as owing one: the rotation
+// screen would be a dead end for a caller who has nothing to rotate. Those cases
+// are already handled downstream — roles.go answers 401 when it cannot resolve the
+// caller — and duplicating that judgement here would give two answers to one
+// question.
+func (a *Auth) mustRotate(sess Session) bool {
+	if sess.AccountID == 0 {
+		return false
+	}
+	acct, err := a.store.AccountByID(sess.AccountID)
+	if err != nil {
+		if !errors.Is(err, ErrNoSuchAccount) {
+			a.logf("auth: resolving session owner for rotation check failed: %v", err)
+		}
+		return false
+	}
+	return acct.MustRotate
 }
 
 // isPageAsset reports whether the request is for the top-level HTML page. Pre-auth
@@ -290,6 +348,53 @@ var loginPlaceholder = authScreen(
 	"Enter your admin credentials to manage this Waypoint node.",
 	"/api/session", "Log in", false)
 
+// The forced-rotation screen (RFC-0002 Amendment 1).
+//
+// An admin who creates an account chooses its first password, so for a moment two
+// people know it. must_rotate is what makes that moment brief: until the account
+// rotates, the gate serves this instead of the dashboard and roles.go refuses
+// every route but /api/password.
+//
+// It asks for the current password even though the caller is already
+// authenticated. That is not belt-and-braces — a session left open on an
+// unattended screen must not be enough to take an account over, and the rotation
+// flag does not change that.
+//
+// There is no username field: the account is whoever the session says it is, and
+// offering to change somebody else's password from here would be a different
+// route with a different permission.
+var rotatePlaceholder = rotateScreen()
+
+func rotateScreen() string {
+	return authHead("Set a new password") + `
+<body>
+  <form id="f" class="card" autocomplete="on">
+    <div class="brand"><svg width="24" height="24" viewBox="0 0 512 512" fill="var(--accent)" aria-hidden="true"><path d="M256 474 C201 410 138 362 138 284 A118 118 0 0 1 374 284 C374 362 311 410 256 474 Z"></path></svg><b>WAYPOINT</b></div>
+    <h1>Set a new password</h1>
+    <p class="sub">This account was created with a password somebody else chose. Set your own to finish signing in — nothing else on this node will open until you do.</p>
+    <p class="err" id="err" role="alert" hidden></p>
+    <label>Current password<input id="current" type="password" autocomplete="current-password" required autofocus></label>
+    <label>New password<input id="password" type="password" autocomplete="new-password" required minlength="8"></label>
+    <label>Confirm new password<input id="confirm" type="password" autocomplete="new-password" required minlength="8"></label>
+    <button type="submit">Set password</button>
+  </form>
+<script>
+  var f=document.getElementById("f"),err=document.getElementById("err");
+  function show(m){err.textContent=m;err.hidden=false;return false;}
+  f.addEventListener("submit",function(e){
+    e.preventDefault();err.hidden=true;
+    var c=document.getElementById("current").value,p=document.getElementById("password").value;
+    if(p!==document.getElementById("confirm").value){return show("Passwords do not match");}
+    if(p.length<8){return show("Password must be at least 8 characters");}
+    if(p===c){return show("The new password must be different from the current one");}
+    fetch("/api/password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({current_password:c,new_password:p})})
+      .then(function(r){if(r.ok){location.href="/";return;}return r.json().then(function(j){show((j&&j.error)||"Request failed");});})
+      .catch(function(){show("Network error — check the connection and try again");});
+  });
+</script>
+</body></html>`
+}
+
 // lockoutHelp is the "forgotten it?" disclosure, on the login screen only. The
 // claim screen does not need it: there is no password to have forgotten yet.
 func lockoutHelp(kind string) string {
@@ -313,6 +418,69 @@ func lockoutHelp(kind string) string {
     </details>`
 }
 
+// authScreenHead is the shared <head> of every pre-auth screen: the theme-restore
+// script and the whole stylesheet. It is one constant rather than three copies so
+// the claim, login and rotation screens cannot drift apart visually — they are the
+// same surface seen at three moments, and an operator who meets two of them in one
+// sitting should not be able to tell they were built separately.
+//
+// The literal {{TITLE}} is the page title, substituted by authHead. It is a token
+// rather than a Sprintf verb because this stylesheet is full of percent signs
+// (gradients, widths, viewport units) and every one of them would be a format
+// verb — a class of bug that shows up as a mangled page, not a compile error.
+const authScreenHead = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Waypoint · {{TITLE}}</title>
+<script>(function(){try{var m=localStorage.getItem("wp-mode");if(m===null&&window.matchMedia&&matchMedia("(prefers-color-scheme: light)").matches)m="light";if(m==="light")document.documentElement.setAttribute("data-mode","light");var t=localStorage.getItem("wp-theme");if(t&&t!=="phosphor")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+<style>
+  :root{--accent:#35d07f;--accent-soft:rgba(53,208,127,.13);--bg:#06070a;--panel:#0f1218;--panel-line:#1c222c;--field:#0a0d12;--field-line:#262c38;--ink:#e4ebf4;--ink-head:#eef2f7;--muted:#8a94a6;--bad:#ff6b6b;--mono:ui-monospace,"SF Mono",Consolas,Menlo,monospace;--sans:system-ui,-apple-system,"Segoe UI",Arial,sans-serif;}
+  :root[data-theme="amber"]{--accent:#f0a935;--accent-soft:rgba(240,169,53,.13);}
+  :root[data-theme="ice"]{--accent:#4db8ff;--accent-soft:rgba(77,184,255,.13);}
+  /* Light mode. These accents are the CORRECTED ones from ui/static/settings.html,
+     not the values this file shipped with: #12a35a was 3.27:1 on white and
+     #1f77c9 was 4.09:1 on --bg, both below AA. The app fixed them (#121); these
+     screens kept the old palette because nothing measured them — the axe harness
+     authenticates before it scans, so it never saw the claim or login page. The
+     rotation screen is the first pre-auth screen it does see, and it failed on
+     exactly this. Keep the three in step with settings.html. */
+  :root[data-mode="light"]{--accent:#0e7c45;--accent-soft:rgba(14,124,69,.12);--bg:#eef1f6;--panel:#fff;--panel-line:#dde3ec;--field:#f5f7fb;--field-line:#ccd4e0;--ink:#1a2130;--ink-head:#0e1420;--muted:#566072;--bad:#cc3333;}
+  :root[data-mode="light"][data-theme="amber"]{--accent:#9a5d05;--accent-soft:rgba(154,93,5,.12);}
+  :root[data-mode="light"][data-theme="ice"]{--accent:#1d6eba;--accent-soft:rgba(29,110,186,.12);}
+  *{box-sizing:border-box;}html,body{margin:0;padding:0;}
+  body{background:radial-gradient(ellipse 90% 60% at 78% -10%,var(--accent-soft),transparent 55%),var(--bg);color:var(--ink);font-family:var(--sans);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+  .card{width:100%;max-width:380px;background:var(--panel);border:1px solid var(--panel-line);border-radius:14px;padding:26px 24px 28px;}
+  .brand{display:flex;align-items:center;gap:11px;margin-bottom:20px;}
+  .brand svg{flex:none;}
+  .brand b{font-size:15px;font-weight:700;letter-spacing:2.5px;color:var(--ink-head);}
+  h1{margin:0 0 6px;font-size:22px;font-weight:600;color:var(--ink-head);}
+  .sub{margin:0 0 20px;font-size:13.5px;line-height:1.5;color:var(--muted);}
+  label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;margin-bottom:14px;}
+  input{display:block;width:100%;margin-top:6px;background:var(--field);border:1px solid var(--field-line);border-radius:8px;padding:12px;color:var(--ink);font-size:15px;font-family:var(--mono);min-height:44px;}
+  input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+  /* color:--bg, not a fixed near-black. The accent is bright in dark mode and dark
+     in light mode, so a single hardcoded ink can only pass in one of them; --bg is
+     the surface the accent is already sized against, which is what .btn.primary in
+     the app does and for the same reason. */
+  button{width:100%;margin-top:8px;background:var(--accent);color:var(--bg);border:0;border-radius:8px;padding:13px;font-size:14px;font-weight:600;font-family:var(--mono);letter-spacing:.5px;cursor:pointer;min-height:48px;}
+  button:focus-visible{outline:2px solid var(--ink-head);outline-offset:2px;}
+  .err{margin:0 0 14px;color:var(--bad);font-size:13px;font-family:var(--mono);}
+  a{color:var(--accent);}
+  .help{margin-top:20px;border-top:1px solid var(--panel-line);padding-top:14px;font-size:13px;line-height:1.55;color:var(--muted);}
+  .help summary{cursor:pointer;font-family:var(--mono);font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--accent);min-height:32px;display:flex;align-items:center;}
+  .help summary:focus-visible{outline:2px solid var(--ink-head);outline-offset:2px;}
+  .help p{margin:10px 0;}
+  .help b{color:var(--ink);font-weight:600;}
+  .help pre,.help code{font-family:var(--mono);font-size:12px;color:var(--ink);background:var(--field);border:1px solid var(--field-line);border-radius:6px;}
+  .help pre{padding:9px 10px;margin:8px 0;overflow-x:auto;}
+  .help code{padding:1px 5px;}
+</style></head>
+`
+
+// authHead renders the shared head with a page title.
+func authHead(title string) string {
+	return strings.Replace(authScreenHead, "{{TITLE}}", title, 1)
+}
+
 // authScreen builds a self-contained first-run page. withConfirm adds a
 // confirm-password field and the 8-char client-side check (the API enforces the
 // floor too); endpoint is where the form POSTs.
@@ -328,41 +496,7 @@ func authScreen(kind, heading, sub, endpoint, submit string, withConfirm bool) s
 	if withConfirm {
 		pwAutocomplete = "new-password"
 	}
-	return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Waypoint · ` + heading + `</title>
-<script>(function(){try{var m=localStorage.getItem("wp-mode");if(m===null&&window.matchMedia&&matchMedia("(prefers-color-scheme: light)").matches)m="light";if(m==="light")document.documentElement.setAttribute("data-mode","light");var t=localStorage.getItem("wp-theme");if(t&&t!=="phosphor")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
-<style>
-  :root{--accent:#35d07f;--accent-soft:rgba(53,208,127,.13);--bg:#06070a;--panel:#0f1218;--panel-line:#1c222c;--field:#0a0d12;--field-line:#262c38;--ink:#e4ebf4;--ink-head:#eef2f7;--muted:#8a94a6;--bad:#ff6b6b;--mono:ui-monospace,"SF Mono",Consolas,Menlo,monospace;--sans:system-ui,-apple-system,"Segoe UI",Arial,sans-serif;}
-  :root[data-theme="amber"]{--accent:#f0a935;--accent-soft:rgba(240,169,53,.13);}
-  :root[data-theme="ice"]{--accent:#4db8ff;--accent-soft:rgba(77,184,255,.13);}
-  :root[data-mode="light"]{--accent:#12a35a;--accent-soft:rgba(18,163,90,.12);--bg:#eef1f6;--panel:#fff;--panel-line:#dde3ec;--field:#f5f7fb;--field-line:#ccd4e0;--ink:#1a2130;--ink-head:#0e1420;--muted:#566072;--bad:#cc3333;}
-  :root[data-mode="light"][data-theme="amber"]{--accent:#9a5d05;--accent-soft:rgba(154,93,5,.12);}
-  :root[data-mode="light"][data-theme="ice"]{--accent:#1f77c9;--accent-soft:rgba(31,119,201,.12);}
-  *{box-sizing:border-box;}html,body{margin:0;padding:0;}
-  body{background:radial-gradient(ellipse 90% 60% at 78% -10%,var(--accent-soft),transparent 55%),var(--bg);color:var(--ink);font-family:var(--sans);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
-  .card{width:100%;max-width:380px;background:var(--panel);border:1px solid var(--panel-line);border-radius:14px;padding:26px 24px 28px;}
-  .brand{display:flex;align-items:center;gap:11px;margin-bottom:20px;}
-  .brand svg{flex:none;}
-  .brand b{font-size:15px;font-weight:700;letter-spacing:2.5px;color:var(--ink-head);}
-  h1{margin:0 0 6px;font-size:22px;font-weight:600;color:var(--ink-head);}
-  .sub{margin:0 0 20px;font-size:13.5px;line-height:1.5;color:var(--muted);}
-  label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;margin-bottom:14px;}
-  input{display:block;width:100%;margin-top:6px;background:var(--field);border:1px solid var(--field-line);border-radius:8px;padding:12px;color:var(--ink);font-size:15px;font-family:var(--mono);min-height:44px;}
-  input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
-  button{width:100%;margin-top:8px;background:var(--accent);color:#04120a;border:0;border-radius:8px;padding:13px;font-size:14px;font-weight:600;font-family:var(--mono);letter-spacing:.5px;cursor:pointer;min-height:48px;}
-  button:focus-visible{outline:2px solid var(--ink-head);outline-offset:2px;}
-  .err{margin:0 0 14px;color:var(--bad);font-size:13px;font-family:var(--mono);}
-  a{color:var(--accent);}
-  .help{margin-top:20px;border-top:1px solid var(--panel-line);padding-top:14px;font-size:13px;line-height:1.55;color:var(--muted);}
-  .help summary{cursor:pointer;font-family:var(--mono);font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--accent);min-height:32px;display:flex;align-items:center;}
-  .help summary:focus-visible{outline:2px solid var(--ink-head);outline-offset:2px;}
-  .help p{margin:10px 0;}
-  .help b{color:var(--ink);font-weight:600;}
-  .help pre,.help code{font-family:var(--mono);font-size:12px;color:var(--ink);background:var(--field);border:1px solid var(--field-line);border-radius:6px;}
-  .help pre{padding:9px 10px;margin:8px 0;overflow-x:auto;}
-  .help code{padding:1px 5px;}
-</style></head>
+	return authHead(heading) + `
 <body>
   <form id="f" class="card" autocomplete="on">
     <div class="brand"><svg width="24" height="24" viewBox="0 0 512 512" fill="var(--accent)" aria-hidden="true"><path d="M256 474 C201 410 138 362 138 284 A118 118 0 0 1 374 284 C374 362 311 410 256 474 Z"></path></svg><b>WAYPOINT</b></div>

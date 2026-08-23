@@ -132,6 +132,143 @@ async function authenticate(context) {
   if (!r.ok()) throw new Error(`could not authenticate against ${BASE}: ${r.status()} ${(await r.text()).trim()}`);
 }
 
+// Seed the phonebook with entries and logins, so the Phonebook panel is scanned
+// POPULATED rather than in its empty state (RFC-0002 Amendment 1).
+//
+// This matters more than it sounds. An empty phonebook renders one paragraph of
+// prose; the populated panel renders the table, the Login column, a role <select>
+// per account, a must-rotate pill and the last admin's DISABLED controls with the
+// explanation beside them. Every one of those is a thing axe has an opinion about,
+// and none of them exist in the empty state — a green scan of the empty panel is a
+// green scan of nothing.
+//
+// Three rows, chosen to produce the three shapes the column can take:
+//   W1AW    an operator login, freshly granted, so must_rotate is set (the pill)
+//   K2ABC   no login at all (the "no login" cell)
+//   N0SZ    an admin login, and since the scan's own account is the other admin,
+//           this one is NOT the last admin — so its controls stay live. The
+//           disabled-and-explained state is produced separately below, because it
+//           needs to be the only admin and the scan account cannot be deleted.
+//
+// Seeded through the API rather than the UI: the panel reads it back the same way
+// either route, and driving four forms per row would make the scan a UI test that
+// happens to run axe. Failures are swallowed — a rerun against an already-seeded
+// node gets 409s, and the panel is populated either way.
+async function seedPhonebook(context) {
+  const entries = [
+    { callsign: "W1AW", dmr_id: 3100001, full_name: "Hiram Percy Maxim", email: "w1aw@example.org" },
+    { callsign: "K2ABC", dmr_id: 3100002, full_name: "Pat Operator" },
+    { callsign: "N0SZ", dmr_id: 3101901, full_name: "Rocky" },
+  ];
+  const ids = {};
+  for (const e of entries) {
+    const r = await context.request.post(`${BASE}/api/phonebook`, { data: e });
+    if (r.ok()) ids[e.callsign] = (await r.json()).id;
+  }
+  // Look up anything that already existed, so a rerun still links the accounts.
+  const list = await context.request.get(`${BASE}/api/phonebook`);
+  if (list.ok()) {
+    for (const e of (await list.json()).entries || []) ids[e.callsign] = e.id;
+  }
+  for (const [callsign, username, role] of [["W1AW", "w1aw", "operator"], ["N0SZ", "n0sz", "admin"]]) {
+    if (!ids[callsign]) continue;
+    await context.request.post(`${BASE}/api/accounts`, {
+      data: {
+        username,
+        password: "seeded-scan-password",
+        role,
+        phonebook_id: ids[callsign],
+      },
+    });
+  }
+}
+
+// Force the two Phonebook states the seeded data cannot produce on its own.
+//
+// The grant form replaces the entry form in the second column, so it is never
+// rendered by a plain load. The last-admin state needs exactly one admin, and the
+// scan is signed in as one — so rather than delete accounts out from under the
+// session, the count is faked in the panel's own model and re-rendered. That is
+// honest for an accessibility scan: what is being measured is the markup the
+// operator meets, and this is that markup.
+async function openPhonebookStates(page, analyze, label) {
+  await page.evaluate(() => {
+    const first = (pb.entries || [])[0];
+    if (first) pbBeginGrant(String(first.id));
+  }).catch(() => {});
+  await page.waitForTimeout(200);
+  if (!await page.evaluate(() => !!document.getElementById("pb-acct-pass")).catch(() => false)) {
+    throw new Error("the grant form did not render; the scan would have passed without measuring it");
+  }
+  await analyze(page, `${label} settings#phonebook (grant form)`);
+
+  // The admin kept has to be a LINKED one. The scan's own account is an admin
+  // with no phonebook_id — it is created by the claim, which the amendment is
+  // explicit must not invent an identity — so keeping "the first admin" kept the
+  // one account that renders no row at all, and the state under test never
+  // appeared. The scan went green on a panel that did not contain it.
+  await page.evaluate(() => {
+    pb.granting = null;
+    const linkedAdmin = (pb.accounts || []).find((a) => a.role === "admin" && a.phonebook_id);
+    pb.accounts = (pb.accounts || []).filter((a) => a.role !== "admin")
+      .concat(linkedAdmin ? [linkedAdmin] : []);
+    renderPanel();
+  }).catch(() => {});
+  await page.waitForTimeout(200);
+  // Assert the state is really on the page before scanning it. Every evaluate
+  // here ends in .catch(() => {}) so a broken selector degrades to the plain
+  // panel rather than failing — which is precisely how an accessibility gate
+  // reports a pass for markup it never saw.
+  const rendered = await page.evaluate(() =>
+    document.querySelectorAll("[data-pb-revoke][disabled]").length).catch(() => 0);
+  if (!rendered) {
+    throw new Error("the last-admin state did not render; the scan would have passed without measuring it");
+  }
+  await analyze(page, `${label} settings#phonebook (last admin)`);
+}
+
+// The forced-rotation screen (RFC-0002 Amendment 1).
+//
+// It is a self-contained pre-auth page like claim and login, served at "/" to an
+// account that still owes a rotation, so it is reached with its OWN context: the
+// scan's admin session has nothing to rotate and would be served the dashboard.
+//
+// A fresh context per call, discarded after: this signs in as somebody else, and
+// leaking that session into the panel walk would scan the whole settings surface
+// as an account that can reach one route.
+async function scanRotationScreen(browser, theme, mode, vp, analyze) {
+  const ctx = await browser.newContext({ ignoreHTTPSErrors: true, colorScheme: mode, viewport: vp.size });
+  await ctx.addInitScript(([t, m]) => {
+    localStorage.setItem("wp-theme", t);
+    localStorage.setItem("wp-mode", m);
+  }, [theme, mode]);
+  try {
+    const r = await ctx.request.post(`${BASE}/api/session`, {
+      data: { username: "w1aw", password: "seeded-scan-password" },
+    });
+    if (!r.ok()) return;               // not seeded, or already rotated
+    const p = await ctx.newPage();
+    await p.goto(BASE + "/", { waitUntil: "domcontentloaded" });
+    await p.waitForTimeout(200);
+    // Only scan it if it IS the rotation screen; a rerun against a node whose
+    // seeded account has already rotated would otherwise scan the dashboard again
+    // under a label claiming it was this screen.
+    const isRotate = await p.evaluate(() => !!document.querySelector('input#current'));
+    if (isRotate) await analyze(p, `${vp.key} rotation screen`);
+    // And its error state, which is the only coloured thing on the page.
+    if (isRotate) {
+      await p.evaluate(() => {
+        const e = document.getElementById("err");
+        if (e) { e.textContent = "Passwords do not match"; e.hidden = false; }
+      }).catch(() => {});
+      await p.waitForTimeout(100);
+      await analyze(p, `${vp.key} rotation screen (error)`);
+    }
+  } finally {
+    await ctx.close();
+  }
+}
+
 // Open a settings target. The canonical deep link for a mode panel is
 // "#modes/<sub>"; selectTab is called as well because a hash-only goto is a
 // same-document navigation and does not re-run the page script.
@@ -204,6 +341,7 @@ for (const theme of THEMES) for (const mode of MODES) {
     localStorage.setItem("wp-mode", m);
   }, [theme, mode]);
   await authenticate(context);
+  await seedPhonebook(context);
   const page = await context.newPage();
 
   for (const vp of VIEWPORTS) {
@@ -242,7 +380,18 @@ for (const theme of THEMES) for (const mode of MODES) {
         await openIDLookup(page);
         await analyze(page, `${vp.key} settings#general (ID lookup answered)`);
       }
+      // The Phonebook panel's two other states: the grant form, and an account
+      // whose controls are disabled because it is the last admin. Both are after
+      // the plain pass, so the panel above is still scanned as it loads.
+      if (t.tab === "phonebook") {
+        await openPhonebookStates(page, analyze, vp.key);
+      }
     }
+
+    // The forced-rotation screen, in its own context — see the note on the
+    // function. Placed here so it is walked at both viewports like everything
+    // else on this page.
+    await scanRotationScreen(browser, theme, mode, vp, analyze);
 
     if (vp.key === "desktop") {
       // Both states of every sidebar group. Expanded is the default the walk above

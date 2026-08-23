@@ -2,6 +2,7 @@ package phonebook
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -399,5 +400,56 @@ func TestErrorsCarryNoFieldValues(t *testing.T) {
 				t.Errorf("error %q quotes the field value %q; a rejection must not disclose what was typed", e, secret)
 			}
 		}
+	}
+}
+
+// TestRestrictIsRecognisedByResultCode pins the extended result code a refused
+// delete actually carries, independently of the message.
+//
+// isForeignKeyConflict has a message fallback, and a message fallback that is the
+// only thing working is indistinguishable from one that is a safety net — until
+// the driver changes its wording. This asserts the CODE path recognises the error
+// on its own, and records what the code is: SQLITE_CONSTRAINT_TRIGGER (1811), not
+// SQLITE_CONSTRAINT_FOREIGNKEY (787), because SQLite implements ON DELETE RESTRICT
+// with an implicit trigger.
+//
+// On disk, not in memory: store.Open turns foreign keys on only for a file path.
+func TestRestrictIsRecognisedByResultCode(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close() //nolint:errcheck // test cleanup
+
+	s := New(st)
+	e, err := s.Create(Entry{Callsign: "W1AW"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().Exec(`INSERT INTO accounts
+		(phonebook_id, username, password_hash, params, role, must_rotate, created_at, updated_at)
+		VALUES (?, 'w1aw', 'hash', 'params', 'operator', 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+		e.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, rawErr := st.DB().Exec(`DELETE FROM phonebook WHERE id = ?`, e.ID)
+	if rawErr == nil {
+		t.Fatal("deleting a referenced phonebook row succeeded; foreign keys are not being enforced")
+	}
+	var coded interface{ Code() int }
+	if !errors.As(rawErr, &coded) {
+		t.Fatalf("the driver no longer exposes an extended result code on %v — isForeignKeyConflict is down to its message fallback", rawErr)
+	}
+	switch coded.Code() {
+	case 787, 1811:
+	default:
+		t.Errorf("a refused delete carried extended result code %d; isForeignKeyConflict accepts only 787 and 1811", coded.Code())
+	}
+
+	// And the store surfaces the sentinel rather than the raw driver error.
+	if err := s.Delete(e.ID); !errors.Is(err, ErrHasAccount) {
+		t.Errorf("Delete returned %v, want ErrHasAccount", err)
 	}
 }

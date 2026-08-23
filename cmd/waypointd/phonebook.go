@@ -101,6 +101,14 @@ func pbError(w http.ResponseWriter, op string, err error) {
 		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": err.Error(), "field": "callsign"})
 	case errors.Is(err, phonebook.ErrDMRIDTaken):
 		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": err.Error(), "field": "dmr_id"})
+	// A delete refused by the accounts foreign key. It carries a machine-readable
+	// reason rather than only prose, because the panel has to say "revoke this
+	// entry's login first" in the operator's language and a sentence generated
+	// here could not be translated (house rule: user-facing strings live in the
+	// catalogs). The English text stays for a caller reading the API directly.
+	case errors.Is(err, phonebook.ErrHasAccount):
+		writeJSONStatus(w, http.StatusConflict, map[string]string{
+			"error": err.Error(), "reason": "has_account"})
 	case errors.Is(err, phonebook.ErrBadCallsign):
 		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": err.Error(), "field": "callsign"})
 	case errors.Is(err, phonebook.ErrBadDMRID):
