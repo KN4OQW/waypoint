@@ -154,10 +154,19 @@ func (m *Model) stationProblems() []ModeProblem {
 	}
 
 	// The frequencies. Unlike every mode parameter below, these render VERBATIM
-	// into MMDVM-Host's [Info] with no default (render.go:486-492), so a blank
-	// model field reaches the daemon as an empty value and atoi() makes it 0
-	// (Conf.cpp:582-585). A modem told to tune 0 Hz does not come up on the air,
-	// and one gateway does not come up at all — see ysfProblems.
+	// with no default, so a blank model field reaches the daemon as 0 Hz — atoi()
+	// of an empty value, or of a key that is simply not there. A modem told to
+	// tune 0 Hz does not come up on the air, and one gateway does not come up at
+	// all — see ysfProblems.
+	//
+	// They render into TWO sections of MMDVM-Host's INI: [Info], where they have
+	// always been, and [Modem], where upstream moved them in g4klx b7d15b8. The
+	// [Modem] copy is omitted when blank rather than written empty; [Info] still
+	// writes it either way. Neither placement changes what this check is for — the
+	// daemon is withheld before either is read — but the two are worth knowing
+	// about before editing the render block, which is why they are named here
+	// rather than by line number: the previous version of this comment cited
+	// render.go:486-492 and had drifted about thirty lines out of date.
 	rx, rxOK := freqHz(m.Modem.RXFreqHz)
 	tx, txOK := freqHz(m.Modem.TXFreqHz)
 	for _, f := range []struct {
@@ -518,10 +527,13 @@ func (m *Model) pocsagProblems() []ModeProblem {
 	}
 
 	// The paging channel. Unlike the modem frequencies this one HAS a rendered
-	// default (render.go:630-633), so a blank field is not the fault — a set one
-	// that lands in a different band from the node's transmitter is. MMDVM-Host
-	// retunes the modem to m_pocsagFrequency to send a page (Conf.cpp:955-956,
-	// which also shows [Info] TXFrequency seeding it), so a paging channel on 70cm
+	// default, so a blank field is not the fault — a set one that lands in a
+	// different band from the node's transmitter is. MMDVM-Host retunes the modem
+	// to m_pocsagFrequency to send a page, and TXFrequency seeds that same field
+	// as a side effect of being parsed (Conf.cpp:646, :954). The seeding is why
+	// [POCSAG] must render AFTER [Modem] — reversed, the node's TX frequency would
+	// overwrite the paging channel; TestModemPrecedesPOCSAG pins it. So a channel
+	// on 70cm
 	// and a node on 2m means every page is transmitted somewhere the operator is
 	// not listening and may not be licensed.
 	pocsag, pOK := freqHz(m.POCSAG.Frequency)
