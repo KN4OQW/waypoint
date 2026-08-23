@@ -82,8 +82,12 @@ func newAuthEnvOverStore(t *testing.T, st *store.Store, storePath string) *authE
 		Logf:      logs.logf,
 		FailDelay: time.Millisecond, // non-zero so a delay is requested; Sleep is a no-op
 	})
-	s := &server{hub: hub.New(), started: time.Now(), store: st, storePath: storePath, auth: a}
-	return &authEnv{s: s, as: as, handler: a.Gate(s.newMux()), clock: clock, logs: logs}
+	s := &server{hub: hub.New(), started: time.Now(), store: st, storePath: storePath, auth: a, authStore: as}
+	// The real stack: the gate decides whether there is a session, and enforceRoles
+	// decides whether that session's account may reach the route. Testing against
+	// the gate alone would leave the permission mapping unexercised by every test
+	// in this file.
+	return &authEnv{s: s, as: as, handler: a.Gate(s.enforceRoles(s.newMux())), clock: clock, logs: logs}
 }
 
 // claim performs a claim and returns the session cookie the server issued.

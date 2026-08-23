@@ -177,7 +177,7 @@ func (s *server) initSetupAP(ctx context.Context, opts apOptions) {
 	lock := &captive.Lock{Idle: opts.IdleTimeout, Logf: log.Printf}
 	portal := &captive.Portal{
 		Lock:      lock,
-		Wizard:    s.wiz.Gate(s.auth.Gate(s.newMux())),
+		Wizard:    s.wiz.Gate(s.auth.Gate(s.enforceRoles(s.newMux()))),
 		OnRequest: ctrl.NoteClient,
 		Logf:      log.Printf,
 	}
