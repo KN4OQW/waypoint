@@ -47,6 +47,7 @@ type View struct {
 	// happens here, in the projection, not in the browser: a value the server never
 	// serializes cannot leak through a cached response, a proxy log, or a curl.
 	MQTT    ViewMQTT    `json:"mqtt"`
+	Notify  ViewNotify  `json:"notify"`
 	Logging ViewLogging `json:"logging"`
 	// BlockedGateways names the enabled modes whose gateway apply deliberately does
 	// NOT start, because the daemon reads a value at startup that is not set and
@@ -277,6 +278,25 @@ type ViewMQTT struct {
 	Name         string `json:"name"`
 	StatusPrefix string `json:"status_prefix"`
 	BusPrefix    string `json:"bus_prefix"`
+}
+
+// ViewNotify is the notification settings' read model. The SMTP password is a
+// write-only secret and is never serialized here — HasSMTPPassword reports only
+// whether one is stored, the same rule the broker password and every network
+// password follow. Everything else is operator-visible configuration.
+type ViewNotify struct {
+	Enabled                bool   `json:"enabled"`
+	SMTPHost               string `json:"smtp_host"`
+	SMTPPort               string `json:"smtp_port"`
+	SMTPImplicitTLS        bool   `json:"smtp_implicit_tls"`
+	SMTPAllowPlaintext     bool   `json:"smtp_allow_plaintext"`
+	SMTPInsecureSkipVerify bool   `json:"smtp_insecure_skip_verify"`
+	SMTPUsername           string `json:"smtp_username"`
+	HasSMTPPassword        bool   `json:"has_smtp_password"`
+	SMTPFrom               string `json:"smtp_from"`
+	// Configured is the panel's "can this send at all" answer, computed here so
+	// the UI does not re-derive a rule the server owns.
+	Configured bool `json:"configured"`
 }
 
 // ViewLogging is the System tab's read model for the per-daemon log levels. No
@@ -675,6 +695,18 @@ func (m *Model) View(src Sources) *View {
 	// — rather than the raw row, so the page shows what the node will actually do
 	// instead of a blank box on a store that has never been written. The password is
 	// the one field that does not project at all (D4): only whether one is set.
+	v.Notify = ViewNotify{
+		Enabled:                m.Notify.Enabled,
+		SMTPHost:               m.Notify.SMTPHost,
+		SMTPPort:               m.Notify.Port(),
+		SMTPImplicitTLS:        m.Notify.SMTPImplicitTLS,
+		SMTPAllowPlaintext:     m.Notify.SMTPAllowPlaintext,
+		SMTPInsecureSkipVerify: m.Notify.SMTPInsecureSkipVerify,
+		SMTPUsername:           m.Notify.SMTPUsername,
+		HasSMTPPassword:        m.Notify.SMTPPassword != "",
+		SMTPFrom:               m.Notify.SMTPFrom,
+		Configured:             m.Notify.SMTPConfigured(),
+	}
 	v.MQTT = ViewMQTT{
 		Host:         m.MQTT.host(),
 		Port:         m.MQTT.port(),

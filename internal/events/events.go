@@ -34,11 +34,20 @@ import (
 //	1 — the event log.
 //	2 — plus the text-message record (messages.go).
 //	3 — plus that record's dialect column.
+//	4 — plus the notification queue (notifications.go).
 //
 // The upgrade from 1 to 2 adds a table and touches nothing that existed, so it
 // needs no data migration and an older build reading a v2 database still finds
-// every event where it left it.
-const SchemaVersion = 3
+// every event where it left it. 3 to 4 is the same shape.
+//
+// The notification queue lives HERE and not in config.db, and the reason is
+// churn. It is a work queue: rows are written on every notifiable event,
+// updated on every delivery attempt, and deleted when they age out. config.db is
+// the configuration of record — small, rarely written, and fsynced on every
+// commit — and putting a retry loop's write traffic through it would trade that
+// away for nothing. This database already takes the other side of that trade
+// (synchronous=NORMAL, see Open) precisely because it is the high-churn one.
+const SchemaVersion = 4
 
 // Store is a handle to the event-history database. It is the only writer.
 type Store struct {
@@ -96,7 +105,7 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_ts     ON events (ts_ms);
 CREATE INDEX IF NOT EXISTS idx_events_source ON events (source, ts_ms);
 CREATE INDEX IF NOT EXISTS idx_events_type   ON events (type, ts_ms);`
-	if _, err := s.db.Exec(ddl + messagesDDL); err != nil {
+	if _, err := s.db.Exec(ddl + messagesDDL + notificationsDDL); err != nil {
 		return err
 	}
 
