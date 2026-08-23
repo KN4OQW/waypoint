@@ -95,11 +95,22 @@ guarantee is preserved.
 
 md380-emu is the primary path: software, already the source of the fixtures the
 frames tests are pinned against, run as a persistent `-S` UDP server on
-127.0.0.1:2470 from the DVSwitch fork. It stays an external, restartable process
-rather than being linked in — the AMBE+2 firmware blob is licensed and must never
-be redistributed (fetch-at-enable, never committed), and md380tools issue #925
-has it segfaulting on some recent Raspberry Pi OS kernels. An out-of-process
-vocoder makes that a restart instead of a daemon crash.
+127.0.0.1:2470. It stays an external, restartable process rather than being linked
+in — the AMBE+2 firmware blob is licensed and must never be redistributed
+(fetch-at-enable, never committed), and md380tools issue #925 has it segfaulting
+on some recent Raspberry Pi OS kernels. An out-of-process vocoder makes that a
+restart instead of a daemon crash.
+
+*Revised after Prompt 1.* Build **maintained upstream plus a patch**, not the
+DVSwitch fork. `-e` encode is in upstream today; only `ambeServer()` is
+fork-only, and it is 46 self-contained lines. The fork's entire history is one
+squashed commit from 2018, so taking the whole vocoder from it to get those 46
+lines buys an unmaintained tree and forecloses any fix for #925.
+
+The patch must also bind the server to loopback. As shipped it binds
+`INADDR_ANY`, which on a node is an unauthenticated network service answering
+anyone on the LAN who sends it 320 bytes. See
+[docs/zello/ground-truth.md](../zello/ground-truth.md).
 
 An optional `vocoder = hardware` path drives a DV3000/ThumbDV for operators who
 own one: better audio, less CPU, and the only fully licensed option, since the
@@ -243,6 +254,9 @@ The vocoder firmware blob is fetched at enable and never committed.
 
 ### Prompt 1 — Ground truth, no product code
 
+**Done.** Findings in [docs/zello/ground-truth.md](../zello/ground-truth.md); D2
+and Prompt 2 below are revised from them. The original brief follows.
+
 Verify, and write the findings to `docs/zello/ground-truth.md`.
 
 Read `API.md` and `AUTH.md` in zelloptt/zello-channel-api and confirm: consumer
@@ -264,7 +278,7 @@ which.
 missing from the fork, or if the frame sizes differ from the above. Do not
 proceed to code.
 
-### Prompt 2 — md380-emu UDP client and .amb mapping
+### Prompt 2 — md380-emu UDP client
 
 The 49-to-72-bit FEC transform is already implemented and golden-tested:
 `internal/bus/frames/dmr.go` provides `dmrAMBEFromCanonical`,
@@ -272,12 +286,22 @@ The 49-to-72-bit FEC transform is already implemented and golden-tested:
 byte in `ambe_vocoder_test.go` against fixtures produced by a real md380 vocoder
 on a Pi. **Do not reimplement any FEC or canonical-to-on-air logic.**
 
-Scope: (a) a thin Go client for the md380-emu `-S` UDP server, per Prompt 1's
-captured framing, exposing `Encode(pcm []int16) []byte` and
-`Decode(ambe7 []byte) []int16`; (b) the 7-byte canonical to 8-byte `.amb` frame
-mapping, reusing the existing frames helpers for bit ordering; (c) service
+*Revised after Prompt 1.* The `.amb` mapping this originally scheduled is not
+needed: the `-S` server's 7-byte output is already the canonical form, bit for
+bit. The 8-byte `.amb` frame is the file format, and it puts bit 48 in a
+different byte as the LSB — do not go near it.
+
+Scope: (a) a thin Go client for the `-S` UDP server exposing
+`Encode(pcm []int16) []byte` and `Decode(ambe7 []byte) []int16`; (b) service
 lifecycle — health check, restart, and a guard for the md380tools issue #925
 SIGSEGV.
+
+The protocol is headerless and dispatches on datagram length alone: 320 bytes in
+returns 7, 7 bytes in returns 320, any other length is silently discarded.
+Nothing correlates a reply with its request, so the client keeps **exactly one
+request outstanding at a time** and treats a missing reply as a timeout. A
+pipelined client would mis-pair frames under loss and produce audio that is wrong
+rather than absent.
 
 Decisive test: round-trip a canonical codeword from the existing golden fixtures
 through the live md380-emu server and back; encode-then-decode of known PCM must
@@ -299,8 +323,12 @@ backoff, one connection per channel.
 Unit tests run against the protocol transcripts Prompt 1 captured. Opus via
 hraban/opus behind a build tag; add libopus to the build docs.
 
-**Stop and report** if a live logon returns `not authorized` or `no phone` in a way
-that contradicts the documented auth model.
+Match the error code `listen only connection` — unhyphenated; the hyphenated form
+is the description. Do not expect `no phone`: Prompt 1 found it is not a
+documented error code.
+
+**Stop and report** if a live logon returns `not authorized` in a way that
+contradicts the documented auth model.
 
 ### Prompt 4 — Bus endpoint, routing and config spine
 
