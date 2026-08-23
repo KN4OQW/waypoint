@@ -12,6 +12,28 @@
        control rather than replacing it outright, so if init throws the underlying
        <input>/<select> keeps working (progressive enhancement, D7).
 
+   The combobox now backs two pickers: timezones, and the Weather panel's county
+   picker. It was generalized rather than copied because the ARIA contract in
+   here — role=combobox with aria-expanded/aria-controls, a role=listbox of
+   role=option, aria-activedescendant tracking the keyboard cursor, and the
+   mousedown-before-blur commit — is a merge gate, and two implementations of a
+   merge gate drift. The generalization is additive: `zones` (an array of
+   strings) still behaves exactly as it did, and every timezone call site is
+   unchanged.
+
+   The file keeps its name, which is now half a lie. Renaming it means touching
+   settings.html, the test file and CI for no behavioural gain, so the honest
+   note is here instead of in a rename.
+
+   Two things a caller supplies for a non-timezone list:
+
+     - `items`: [{value, label, sub}] instead of `zones`. `sub` is secondary text
+       shown beside the label (the county's SAME code), never the only carrier of
+       meaning.
+     - `source(query) -> Promise<items>`: an ASYNC list, for a table too large to
+       ship to the browser. The county table is 3,269 rows and is searched in Go,
+       so the ranking lives in exactly one language instead of two.
+
    Plain script in the same no-build style as app.js/settings.js: it attaches a
    WPTz global for the browser and also exports for CommonJS so the Node test
    runner can require it. */
@@ -133,14 +155,61 @@
   //   destroy()      — remove the combobox and un-hide the native control.
   // Callers wrap this in try/catch: if it throws, the native control is untouched
   // and still submits (D7).
+  // toItem accepts either a bare string (the timezone case, where the value is
+  // also the label) or an object, so both list shapes reach the renderer as one.
+  function toItem(x) {
+    if (x && typeof x === "object") {
+      const v = typeof x.value === "string" ? x.value : "";
+      // `data` rides along untouched: the county picker has to store five fields
+      // when one row is chosen, and re-fetching the row it just rendered to get
+      // them back would be the picker asking the server what it already knows.
+      return {
+        value: v,
+        label: typeof x.label === "string" && x.label ? x.label : v,
+        sub: typeof x.sub === "string" ? x.sub : "",
+        data: x.data,
+      };
+    }
+    const s = typeof x === "string" ? x : "";
+    return { value: s, label: s, sub: "", data: undefined };
+  }
+
+  function toItems(list) {
+    return (Array.isArray(list) ? list : []).map(toItem);
+  }
+
+  // filterItems is filterZones over the item shape: same normalize-both-sides
+  // substring rule, matched against the label, the value and the sub so a
+  // county is reachable by its name or its code.
+  function filterItems(query, items) {
+    const q = tzNormalize(query).trim();
+    if (!q) return items.slice();
+    return items.filter((it) => tzNormalize(it.label + " " + it.value + " " + it.sub).indexOf(q) !== -1);
+  }
+
   function createTzPicker(mount, opts) {
     opts = opts || {};
     const doc = mount.ownerDocument;
-    const zones = Array.isArray(opts.zones) ? opts.zones : [];
+    // `items` is the local list; `source` replaces it with an async one. Exactly
+    // one of them is in play, decided once here rather than per keystroke.
+    const items = opts.items ? toItems(opts.items) : toItems(opts.zones);
+    const source = typeof opts.source === "function" ? opts.source : null;
+    const debounceMs = typeof opts.debounceMs === "number" ? opts.debounceMs : 150;
     let value = typeof opts.value === "string" ? opts.value : "";
+    let valueLabel = typeof opts.valueLabel === "string" && opts.valueLabel ? opts.valueLabel : value;
     let matches = [];
     let active = -1;
     let open = false;
+    // Every async fetch carries a sequence number and only the newest may render.
+    // Without it a slow response for "sant" lands after a fast one for "santa
+    // rosa" and the operator watches the list they were reading get replaced by
+    // an older one.
+    let seq = 0;
+    let timer = null;
+    // Trailing text under the options — "25 of 67 shown". Not decoration: a
+    // capped list with nothing saying so reads as the whole answer, and an
+    // operator whose county is number 40 concludes it is missing.
+    let listNote = "";
 
     // Hide whatever native control already lives in the mount (the progressive-
     // enhancement fallback), keeping it in the DOM so destroy() can restore it.
@@ -165,7 +234,7 @@
     input.setAttribute("spellcheck", "false");
     if (opts.ariaLabel) input.setAttribute("aria-label", opts.ariaLabel);
     if (opts.placeholder) input.placeholder = opts.placeholder;
-    input.value = value;
+    input.value = valueLabel;
 
     const list = doc.createElement("ul");
     list.className = "tz-list";
@@ -198,35 +267,98 @@
         input.removeAttribute("aria-activedescendant");
         return;
       }
-      matches.forEach((z, i) => {
+      matches.forEach((it, i) => {
         const li = doc.createElement("li");
         li.className = "tz-opt" + (i === active ? " active" : "");
         li.id = optId(i);
         li.setAttribute("role", "option");
         li.setAttribute("aria-selected", i === active ? "true" : "false");
-        li.textContent = z;
+        li.textContent = it.label;
+        if (it.sub) {
+          // Secondary text, never the only carrier of meaning: the label already
+          // names the county, and this is the code beside it. textContent, not
+          // innerHTML — these strings come from the server.
+          const sub = doc.createElement("span");
+          sub.className = "tz-sub";
+          sub.textContent = it.sub;
+          li.appendChild(sub);
+        }
         // mousedown (not click) + preventDefault: commit before the input blurs,
         // so the blur handler's revert-to-committed-value never eats the pick.
-        li.addEventListener("mousedown", (e) => { e.preventDefault(); commit(z); });
+        li.addEventListener("mousedown", (e) => { e.preventDefault(); commit(it); });
         list.appendChild(li);
       });
+      if (listNote) {
+        // role="presentation" so it is not one of the options a screen reader
+        // counts or the arrow keys land on; it describes the list, it is not in
+        // it. aria-describedby on the input carries it to assistive tech, which
+        // a purely visual footer would not.
+        const li = doc.createElement("li");
+        li.className = "tz-note";
+        li.id = listId + "-note";
+        li.setAttribute("role", "presentation");
+        li.textContent = listNote;
+        list.appendChild(li);
+        input.setAttribute("aria-describedby", li.id);
+      } else {
+        input.removeAttribute("aria-describedby");
+      }
       if (active >= 0) input.setAttribute("aria-activedescendant", optId(active));
       else input.removeAttribute("aria-activedescendant");
     }
 
-    function refilter() {
-      matches = filterZones(input.value, zones);
+    // show installs a result set and opens the list. `keep` asks to leave the
+    // cursor on the committed value if it is present, which is what focusing a
+    // filled-in picker should do.
+    function show(list, keep, note) {
+      matches = list;
+      listNote = typeof note === "string" ? note : "";
       open = true;
-      active = matches.length ? 0 : -1;
+      let at = -1;
+      if (keep) {
+        for (let i = 0; i < matches.length; i++) {
+          if (matches[i].value === value) { at = i; break; }
+        }
+      }
+      active = at >= 0 ? at : (matches.length ? 0 : -1);
       renderList();
     }
 
+    // fetch runs the async source, debounced, and drops anything but the newest
+    // answer. A source that rejects leaves the list as it was rather than
+    // blanking it: a dropped request is not evidence that nothing matches, and
+    // showing "no matches" for one would be the picker lying about the table.
+    function fetch(query, keep) {
+      if (timer) { clearTimeout(timer); timer = null; }
+      const mine = ++seq;
+      timer = setTimeout(() => {
+        timer = null;
+        Promise.resolve(source(query)).then((res) => {
+          if (mine !== seq) return;
+          // A source may answer with a bare array, or with {items, note} when it
+          // has something to say about the list as a whole.
+          const arr = Array.isArray(res) ? res : (res && res.items);
+          const note = (res && !Array.isArray(res) && typeof res.note === "string") ? res.note : "";
+          show(toItems(arr), keep, note);
+        }, () => { /* leave the previous list in place */ });
+      }, debounceMs);
+    }
+
+    function refilter() {
+      if (source) { fetch(input.value, false); return; }
+      show(filterItems(input.value, items), false);
+    }
+
     function openForFocus() {
-      matches = filterZones(input.value, zones);
-      open = true;
-      const at = matches.indexOf(value);
-      active = at >= 0 ? at : (matches.length ? 0 : -1);
-      renderList();
+      if (source) {
+        // Open immediately on the list already in hand, then replace it when the
+        // fetch lands. Waiting for the network to open the dropdown makes a
+        // focused picker look broken on a slow node.
+        show(matches, true, listNote);
+        fetch(input.value, true);
+        return;
+      }
+      show(filterItems(input.value, items), true);
     }
 
     function close() {
@@ -239,10 +371,15 @@
     // an external setValue() all land here, so D4's accept action is genuinely
     // "the same code path as a manual selection".
     function commit(v) {
-      value = v;
-      input.value = v;
+      const it = toItem(v);
+      value = it.value;
+      valueLabel = it.label;
+      input.value = it.label;
       close();
-      if (typeof opts.onSelect === "function") opts.onSelect(v);
+      // The first argument stays the plain value, so every timezone call site —
+      // which passes a string in and expects a string back — is untouched. The
+      // whole item comes second, for callers that need the fields beside it.
+      if (typeof opts.onSelect === "function") opts.onSelect(it.value, it);
     }
 
     input.addEventListener("input", refilter);
@@ -253,7 +390,7 @@
       // Escape when already closed should let the event through (e.g. close a
       // parent overlay); every other handled key is ours to consume.
       if (!(e.key === "Escape" && !open)) e.preventDefault();
-      if (e.key === "Escape") input.value = value; // discard un-selected filter text
+      if (e.key === "Escape") input.value = valueLabel; // discard un-selected filter text
       if (res.commit >= 0 && matches[res.commit] != null) { commit(matches[res.commit]); return; }
       active = res.active;
       open = res.open;
@@ -262,7 +399,7 @@
     input.addEventListener("blur", () => {
       // Free text that matched nothing selects nothing: on blur, drop the filter
       // text and show the last committed value again (D6).
-      input.value = value;
+      input.value = valueLabel;
       close();
     });
 
@@ -271,6 +408,11 @@
       getValue: () => value,
       setValue: (v) => commit(v),
       destroy: () => {
+        // Bump the sequence so an in-flight fetch cannot render into a wrapper
+        // that is no longer in the document. The panel re-renders wholesale on
+        // every edit, so this happens routinely rather than exceptionally.
+        seq++;
+        if (timer) { clearTimeout(timer); timer = null; }
         wrap.remove();
         natives.forEach((ch) => { ch.hidden = false; });
       },
@@ -283,6 +425,8 @@
     tzSuggestion: tzSuggestion,
     tzNormalize: tzNormalize,
     filterZones: filterZones,
+    filterItems: filterItems,
+    toItems: toItems,
     tzKeyAction: tzKeyAction,
     createTzPicker: createTzPicker,
   };

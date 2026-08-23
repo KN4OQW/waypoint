@@ -1693,6 +1693,108 @@ function cleanWx(w) {
   return out;
 }
 
+// wxCountySource backs the county picker's type-ahead. It asks the daemon rather
+// than filtering a list in the browser, because the ranking that decides which
+// county comes first lives in internal/wxzones and is tested there -- state
+// abbreviations outranking the same letters inside a name, spelling-insensitive
+// matching for the four counties the NWS table spells "DeKalb" and the two it
+// spells "De Kalb". A second implementation of that in JavaScript would be a
+// second thing to keep right, and the 3,269-row table is 95 KB to ship to a
+// browser on every settings load besides.
+//
+// The endpoint reaches no network of its own -- the table is compiled into the
+// daemon -- so this works on a node that has never had one.
+function wxCountySource(q) {
+  const url = "/api/wx/counties?limit=25" + (q ? "&q=" + encodeURIComponent(q) : "");
+  return fetch(url, { headers: { Accept: "application/json" } })
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
+    .then((b) => {
+      const list = b.counties || [];
+      const items = list.map((c) => ({
+        value: c.same,
+        // Composed here, not in Go: a user-facing string generated in Go cannot
+        // be translated (CLAUDE.md), so the daemon sends the parts and the panel
+        // assembles them.
+        label: c.name + (c.state ? ", " + c.state : ""),
+        sub: c.same + (c.wfo ? " \u00b7 " + c.wfo : ""),
+        data: c,
+      }));
+      // Say when the list is cut short. 25 of Florida's 67 counties with nothing
+      // saying so reads as all of them, and an operator whose county is not among
+      // them concludes it is missing.
+      const total = typeof b.total === "number" ? b.total : items.length;
+      return { items, note: total > items.length ? msg("wx.countyShowing", { shown: items.length, total }) : "" };
+    });
+}
+
+// wxAddCounty is the single way a county joins the list, so the picker and the
+// typed-code fallback cannot disagree about what gets stored or what is refused.
+//
+// Every field the picker knows is stored, not just the code. config.WXCounty
+// carries the name, UGC, state and office precisely so a county still reads
+// correctly when a later release's table no longer has it -- storing the code
+// alone would throw that away at the one moment it could be captured.
+function wxAddCounty(c) {
+  if (!edit.wx) return false;
+  const code = (c.same || "").trim();
+  // Refused here as well as in the store, so the operator is told before
+  // pressing Apply rather than after.
+  if (!/^[0-9]{6}$/.test(code)) { banner(msg("wx.badSameCode"), "err"); return false; }
+  if ((edit.wx.counties || []).some((x) => x.same === code)) { banner(msg("wx.duplicateCounty"), "err"); return false; }
+  edit.wx.counties = (edit.wx.counties || []).concat([{
+    same: code,
+    ugc: c.ugc || "",
+    name: c.name || "",
+    state: c.state || "",
+    wfo: c.wfo || "",
+  }]);
+  wxMarkDirty();
+  renderPanel();
+  return true;
+}
+
+// wxResolveStoredCounties fills in the names for codes the store holds without
+// one -- a configuration imported from a WPSD card, or one hand-edited back when
+// typing six digits was the only way to add a county. Without this those rows
+// show as bare numbers forever, since nothing else ever looks them up.
+//
+// Runs once per load. wxCountiesResolved guards it because it re-renders the
+// panel on success and would otherwise call itself.
+let wxCountiesResolved = false;
+function wxResolveStoredCounties() {
+  if (wxCountiesResolved || !edit.wx) return;
+  const missing = (edit.wx.counties || []).filter((c) => c.same && !c.name).map((c) => c.same);
+  if (!missing.length) { wxCountiesResolved = true; return; }
+  wxCountiesResolved = true;
+  fetch("/api/wx/counties?same=" + encodeURIComponent(missing.join(",")), { headers: { Accept: "application/json" } })
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
+    .then((b) => {
+      const by = {};
+      (b.counties || []).forEach((c) => { by[c.same] = c; });
+      let changed = false;
+      (edit.wx.counties || []).forEach((c) => {
+        const found = by[c.same];
+        if (!found || c.name) return;
+        c.ugc = found.ugc; c.name = found.name; c.state = found.state; c.wfo = found.wfo;
+        changed = true;
+      });
+      // Deliberately NOT marked dirty. Naming a county the operator already
+      // chose is the panel reading the store, not the operator editing it, and
+      // enabling Apply because a label was filled in would ask them to save a
+      // change they did not make.
+      if (changed) renderPanel();
+    })
+    .catch(() => { /* leave the codes showing as codes */ });
+}
+
+// wxMarkDirty is what every weather control that is not data-sec/data-key bound
+// has to call. See the note in the input listener for why the collect-at-Apply
+// design needed it.
+function wxMarkDirty() {
+  dirty.add("wx");
+  refreshActions();
+}
+
 function wxCollect() {
   if (!edit.wx) return;
   const nums = (id) => (document.getElementById(id)?.value || "")
@@ -1754,11 +1856,19 @@ function panelWeather() {
       <span class="mono">${esc(c.same)}${c.wfo ? " &middot; " + esc(c.wfo) : ""}</span>
       <button type="button" class="btn small" data-wx-county-remove="${i}">${esc(msg("common.remove"))}</button>
     </div>`).join("");
+  // The add control is a type-ahead over the county table the daemon ships, with
+  // the plain code box left inside the mount as the fallback: enhanceCountyPickers
+  // hides the mount's children on success, so if the component is missing or its
+  // init throws, an operator still has the box and the Add button that worked
+  // before it existed (the same progressive-enhancement rule the timezone picker
+  // follows).
   const counties = card(msg("wx.counties"),
     (countyRows || note(msg("wx.noCounties"))) +
     row(msg("wx.addCounty"),
-      `<input type="text" id="wx-county-add" placeholder="012113" aria-label="${esc(msg("wx.addCounty"))}">` +
-      `<button type="button" class="btn" id="wx-county-add-btn">${esc(msg("common.add"))}</button>`) +
+      `<div data-wx-countypicker>` +
+        `<input type="text" id="wx-county-add" placeholder="012113" aria-label="${esc(msg("wx.addCountyCode"))}">` +
+        `<button type="button" class="btn" id="wx-county-add-btn">${esc(msg("common.add"))}</button>` +
+      `</div>`) +
     note(msg("wx.countiesNote")));
 
   // The routing matrix. Class rows are the coarse control an operator thinks in;
@@ -1779,9 +1889,9 @@ function panelWeather() {
 
   const tgs = card(msg("wx.talkgroups"),
     row(msg("wx.alertTalkgroups"),
-      `<input type="text" id="wx-tgs" value="${esc((wx.talkgroups || []).join(", "))}" aria-label="${esc(msg("wx.alertTalkgroups"))}">`) +
+      `<input type="text" data-wx-dirty id="wx-tgs" value="${esc((wx.talkgroups || []).join(", "))}" aria-label="${esc(msg("wx.alertTalkgroups"))}">`) +
     row(msg("wx.messageLimit"),
-      `<input type="number" min="1" max="2000" id="wx-maxtext" value="${esc(wx.max_text_units || 200)}" aria-label="${esc(msg("wx.messageLimit"))}">`) +
+      `<input type="number" data-wx-dirty min="1" max="2000" id="wx-maxtext" value="${esc(wx.max_text_units || 200)}" aria-label="${esc(msg("wx.messageLimit"))}">`) +
     note(msg("wx.talkgroupsNote")));
 
   // Voice. The backend row is the honest part: a node with no vocoder shows
@@ -1792,9 +1902,9 @@ function panelWeather() {
     input("wx.voice", "piper_path", { label: msg("wx.piperPath"), placeholder: "piper" }) +
     input("wx.voice", "model_path", { label: msg("wx.modelPath") }) +
     row(msg("wx.speakingRate"),
-      `<input type="number" step="0.1" min="0.1" max="4" id="wx-lengthscale" value="${esc(voice.length_scale || 1)}" aria-label="${esc(msg("wx.speakingRate"))}">`) +
+      `<input type="number" step="0.1" min="0.1" max="4" data-wx-dirty id="wx-lengthscale" value="${esc(voice.length_scale || 1)}" aria-label="${esc(msg("wx.speakingRate"))}">`) +
     row(msg("wx.vocoder"),
-      `<select id="wx-vocoder" aria-label="${esc(msg("wx.vocoder"))}">` +
+      `<select data-wx-dirty id="wx-vocoder" aria-label="${esc(msg("wx.vocoder"))}">` +
       ["none", "dongle", "external"].map((v) =>
         `<option value="${v}"${(voice.vocoder || "none") === v ? " selected" : ""}>${esc(msg("wx.vocoder." + v))}</option>`).join("") +
       `</select>`) +
@@ -1802,14 +1912,14 @@ function panelWeather() {
     input("wx.voice", "external_command", { label: msg("wx.externalCommand") }) +
     toggleRow("wx.voice", "tone_enabled", msg("wx.toneEnabled")) +
     row(msg("wx.toneHz"),
-      `<input type="number" min="100" max="3000" id="wx-tone-a" value="${esc(voice.tone_hz_a || 1050)}" aria-label="${esc(msg("wx.toneHz"))}">`) +
+      `<input type="number" min="100" max="3000" data-wx-dirty id="wx-tone-a" value="${esc(voice.tone_hz_a || 1050)}" aria-label="${esc(msg("wx.toneHz"))}">`) +
     row(msg("wx.toneHz2"),
-      `<input type="number" min="0" max="3000" id="wx-tone-b" value="${esc(voice.tone_hz_b || 0)}" aria-label="${esc(msg("wx.toneHz2"))}">`) +
+      `<input type="number" min="0" max="3000" data-wx-dirty id="wx-tone-b" value="${esc(voice.tone_hz_b || 0)}" aria-label="${esc(msg("wx.toneHz2"))}">`) +
     row(msg("wx.toneMs"),
-      `<input type="number" min="100" max="10000" step="100" id="wx-tone-ms" value="${esc(voice.tone_millis || 1500)}" aria-label="${esc(msg("wx.toneMs"))}">`) +
+      `<input type="number" min="100" max="10000" step="100" data-wx-dirty id="wx-tone-ms" value="${esc(voice.tone_millis || 1500)}" aria-label="${esc(msg("wx.toneMs"))}">`) +
     note(msg("wx.toneNote")) +
     row(msg("wx.voiceTalkgroups"),
-      `<input type="text" id="wx-voice-tgs" value="${esc((voice.talkgroups || []).join(", "))}" placeholder="${esc((wx.talkgroups || []).join(", "))}" aria-label="${esc(msg("wx.voiceTalkgroups"))}">`) +
+      `<input type="text" data-wx-dirty id="wx-voice-tgs" value="${esc((voice.talkgroups || []).join(", "))}" placeholder="${esc((wx.talkgroups || []).join(", "))}" aria-label="${esc(msg("wx.voiceTalkgroups"))}">`) +
     note(msg("wx.voiceNote")));
 
   const timing = card(msg("wx.timing"),
@@ -4118,7 +4228,7 @@ function renderPanel() {
     case "notify":       box.innerHTML = panelNotify(); ntAfterRender(); break;
     case "updates":      box.innerHTML = panelUpdates(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
-    case "weather":      box.innerHTML = panelWeather(); break;
+    case "weather":      box.innerHTML = panelWeather(); wxResolveStoredCounties(); break;
     case "system":       box.innerHTML = panelSystem(c); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
     case "gateways":     box.innerHTML = panelGateways(); break;
@@ -4130,6 +4240,7 @@ function renderPanel() {
   // as that label's control when it assigns for/id pairs.
   enhanceHelp(box);
   enhanceTzPickers(box);
+  enhanceCountyPickers(box);
   // A DMR ID lookup the operator ASKED for takes focus, so the answer is read out
   // and reachable without hunting for it. renderPanel replaces the panel wholesale,
   // so a role="status" region is new markup rather than a changed one and cannot be
@@ -4174,6 +4285,37 @@ function enhanceTzPickers(box) {
     } catch (e) {
       // D7: leave the native control visible and working.
       netTzHandle = null;
+    }
+  });
+}
+
+// enhanceCountyPickers upgrades the Weather panel's [data-wx-countypicker] mount
+// to the type-ahead over the shipped county table. Same shape and same rules as
+// enhanceTzPickers: it runs after every render because the panel is rebuilt
+// wholesale, and it is guarded and wrapped so a missing or throwing component
+// leaves the plain code box and its Add button in place and working (D7).
+//
+// The mount holds BOTH the code box and the Add button, so enhancing hides the
+// pair together. A visible Add button beside an enhanced picker would read the
+// hidden box it no longer edits and do nothing.
+function enhanceCountyPickers(box) {
+  if (typeof WPTz === "undefined" || !WPTz.createTzPicker) return;
+  box.querySelectorAll("[data-wx-countypicker]").forEach((mount, i) => {
+    try {
+      WPTz.createTzPicker(mount, {
+        source: wxCountySource,
+        value: "",
+        ariaLabel: msg("wx.addCountySearch"),
+        placeholder: msg("wx.addCountyPlaceholder"),
+        noMatchText: msg("wx.noCountyMatch"),
+        idBase: "wxcounty-" + i,
+        // Choosing a county IS the action; there is no second confirming click.
+        // The whole row is handed over, so every field the store keeps is stored
+        // rather than just the code that was matched on.
+        onSelect: (code, item) => { wxAddCounty(item && item.data ? item.data : { same: code }); },
+      });
+    } catch (e) {
+      // Leave the native box and Add button visible and working.
     }
   });
 }
@@ -5013,6 +5155,15 @@ async function applyHost() {
 document.getElementById("panels").addEventListener("input", (e) => {
   const t = e.target;
   if (!t.dataset) return;
+  // --- Weather panel free fields ---
+  // The talkgroup lists, the message limit and the tone numbers are read out of
+  // the DOM by wxCollect() at Apply time rather than being data-sec/data-key
+  // bound, because a comma-separated list is not the shape the store wants. That
+  // left them marking nothing dirty, and Apply is disabled until something is:
+  // an operator who changed ONLY a weather field watched the button stay grey
+  // and lost the edit. Collecting a value is not the same as noticing it
+  // changed, and only the second one enables the button.
+  if (t.dataset.wxDirty != null) { wxMarkDirty(); return; }
   // --- network editable fields (connections + VLANs: guarded apply) ---
   if (t.dataset.netmethod != null) {
     netIPv4Target(t.dataset.netmethod).method = t.value;
@@ -5120,22 +5271,19 @@ document.getElementById("panels").addEventListener("click", (e) => {
     edit.wx.classes = edit.wx.classes || {};
     edit.wx.classes[code] = edit.wx.classes[code] || {};
     edit.wx.classes[code][ch] = !edit.wx.classes[code][ch];
+    wxMarkDirty();
     renderPanel(); return;
   }
   const wxRm = e.target.closest("[data-wx-county-remove]");
   if (wxRm) {
     edit.wx.counties.splice(Number(wxRm.dataset.wxCountyRemove), 1);
+    wxMarkDirty();
     renderPanel(); return;
   }
   if (e.target.closest("#wx-county-add-btn")) {
     const el = document.getElementById("wx-county-add");
-    const code = (el.value || "").trim();
-    // Refused here as well as in the store, so the operator is told before
-    // pressing Apply rather than after.
-    if (!/^[0-9]{6}$/.test(code)) { banner(msg("wx.badSameCode"), "err"); return; }
-    if ((edit.wx.counties || []).some((c) => c.same === code)) { banner(msg("wx.duplicateCounty"), "err"); return; }
-    edit.wx.counties = (edit.wx.counties || []).concat([{ same: code }]);
-    el.value = ""; renderPanel(); return;
+    wxAddCounty({ same: (el.value || "").trim() });
+    return;
   }
   if (e.target.closest("#wx-test-btn")) { wxSendTest(); return; }
 
