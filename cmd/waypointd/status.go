@@ -26,7 +26,7 @@ func (s *server) statusView(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "status unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	writeJSON(w, s.agg.Snapshot())
+	writeJSON(w, s.decorateStatus(s.agg.Snapshot()))
 }
 
 // wsUpgrader accepts same-origin WebSocket upgrades. The endpoint is already behind
@@ -91,7 +91,7 @@ func (s *server) wsStream(w http.ResponseWriter, r *http.Request) {
 
 	// Initial snapshot so a fresh client paints immediately.
 	if s.agg != nil {
-		if err := writeWSFrame(c, "status", s.agg.Snapshot()); err != nil {
+		if err := writeWSFrame(c, "status", s.decorateStatus(s.agg.Snapshot())); err != nil {
 			return
 		}
 	}
@@ -105,11 +105,11 @@ func (s *server) wsStream(w http.ResponseWriter, r *http.Request) {
 		case <-done:
 			return
 		case e := <-ch:
-			if err := writeWSFrame(c, "event", e); err != nil {
+			if err := writeWSFrame(c, "event", s.decorateEvent(e)); err != nil {
 				return
 			}
 		case st := <-statusCh:
-			if err := writeWSFrame(c, "status", st); err != nil {
+			if err := writeWSFrame(c, "status", s.decorateStatus(st)); err != nil {
 				return
 			}
 		case <-keepalive.C:

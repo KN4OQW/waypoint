@@ -116,6 +116,23 @@ type Live interface {
 	Snapshot() status.Status
 }
 
+// CallsignResolver is this package's ENTIRE view of the resolver chain, and its
+// shape is the enforcement of D3 rather than a convenience.
+//
+// The chain (internal/idresolve) can return an operator's full name alongside the
+// callsign, and the authenticated dashboard shows it. The public surface may not.
+// The obvious way to hold that line is to take a Display and copy only the
+// callsign out of it, and the obvious way is wrong: it is one careless field
+// access away from failing, in a package whose whole job is not disclosing things.
+//
+// So the dependency is declared as an interface with one method that returns one
+// string. A full name is not something this package forgets to use — it is
+// something it has no way to obtain. *idresolve.Chain satisfies this by having
+// CallsignForSource; nothing here can reach DisplayForSource beside it.
+type CallsignResolver interface {
+	CallsignForSource(source string) string
+}
+
 // Service answers the public activity questions. It owns no state: every call
 // re-reads the settings and the suppress list, so an operator's change to either
 // takes effect on the next request rather than at the next restart.
@@ -129,6 +146,10 @@ type Service struct {
 	// now is injectable so window-edge behavior can be tested exactly rather than
 	// approximately.
 	now func() time.Time
+	// resolver is the phonebook-over-DMRIds chain, callsign-only (D3). Nil on a
+	// node that wired none, in which case sources are filtered exactly as they
+	// were before the chain existed.
+	resolver CallsignResolver
 }
 
 // NewService wires the public activity service. history and live may be nil on a
@@ -148,6 +169,43 @@ func (s *Service) WithIDDatabase(probe func() IDDBStatus) *Service {
 		s.idDB = probe
 	}
 	return s
+}
+
+// WithResolver attaches the identity resolver chain, callsign-only (D3).
+//
+// Without it every source is filtered exactly as it was before the chain existed,
+// which is also what a node with an empty phonebook gets: the chain resolves
+// nothing, resolveSource hands back the original string, and publishableCallsign
+// reaches the same verdict on the same bytes (D5).
+func (s *Service) WithResolver(r CallsignResolver) *Service {
+	if r != nil {
+		s.resolver = r
+	}
+	return s
+}
+
+// resolveSource runs an event's source through the chain before the publish
+// filter, and falls back to the source untouched.
+//
+// The order matters and is the whole integration. hub.Event.Source is already
+// MMDVM-Host's own DMRIds.dat lookup (src_info), so the table leg can only
+// re-derive what is in the string; the leg that adds anything here is the
+// phonebook. What it adds is precisely the case publishableCallsign drops today:
+// a station MMDVM-Host could not resolve arrives as a bare decimal ID and is
+// refused, and if the operator has entered that person in their phonebook, the
+// chain turns it into a callsign before the filter ever sees a digit.
+//
+// A miss returns the original string rather than "", so the filter applies its own
+// rules to the same bytes it would have seen anyway — an unresolvable ID is still
+// dropped, and dropped for the reason publishableCallsign gives.
+func (s *Service) resolveSource(source string) string {
+	if s.resolver == nil {
+		return source
+	}
+	if got := s.resolver.CallsignForSource(source); got != "" {
+		return got
+	}
+	return source
 }
 
 // Status reports whether the node is on the air.
@@ -217,7 +275,7 @@ func (s *Service) LastHeard(limit int) (LastHeardResult, error) {
 	}
 	out := []Heard{}
 	for _, e := range evs {
-		call, ok := publishableCallsign(e.Source)
+		call, ok := publishableCallsign(s.resolveSource(e.Source))
 		if !ok || suppressed[call] {
 			continue
 		}
@@ -253,7 +311,7 @@ func (s *Service) Counters() (CountersResult, error) {
 	seen := map[string]bool{}
 	out := Counters{WindowHours: set.RetentionHours}
 	for _, e := range evs {
-		call, ok := publishableCallsign(e.Source)
+		call, ok := publishableCallsign(s.resolveSource(e.Source))
 		if !ok || suppressed[call] {
 			continue
 		}

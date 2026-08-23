@@ -91,9 +91,24 @@ function renderOnAir() {
   box.className = "onair active";
   box.innerHTML =
     `<span class="dir"><span aria-hidden="true">${dir}</span><span class="sr-only">${esc(dirWord)}</span></span><div>` +
-    `<span class="who">${esc(e.source)}<span class="arrow" aria-hidden="true">→</span><span class="sr-only">${esc(t("dash.onair.to"))}</span>${esc(tgLabel(e.mode, e.dest))}</span>` +
+    `<span class="who">${who(e)}<span class="arrow" aria-hidden="true">→</span><span class="sr-only">${esc(t("dash.onair.to"))}</span>${esc(tgLabel(e.mode, e.dest))}</span>` +
     `<span class="meta">${meta.join(" ")}${e.network ? " · " + esc(e.network) : ""}</span>` +
     `</div>`;
+}
+
+// who renders a station: the callsign, and the operator's name beside it when the
+// phonebook has one (D4). The server decides whether there is a name at all — it
+// resolves the phonebook only for authenticated responses and omits the field
+// entirely otherwise — so this never has to ask whether it is allowed to show one.
+//
+// Two elements rather than one interpolated string, because the callsign is the
+// identifier and the name is a gloss on it: the table's monospace .call styling
+// stays on the callsign alone, and a screen reader gets them as separate text
+// rather than one run in which "KN4OQW Clint Chance" reads as a single token.
+function who(e) {
+  const call = `<span class="call">${esc(e.source)}</span>`;
+  if (!e.source_name) return call;
+  return call + `<span class="opname">${esc(e.source_name)}</span>`;
 }
 
 function renderLastHeard() {
@@ -102,7 +117,7 @@ function renderLastHeard() {
     .slice(0, 12);
   $("#lastheard-empty").hidden = rows.length > 0;
   $("#lastheard tbody").innerHTML = rows.map((e) =>
-    `<tr><td><span class="call">${esc(e.source)}</span></td><td>${esc(tgLabel(e.mode, e.dest))}</td>` +
+    `<tr><td>${who(e)}</td><td>${esc(tgLabel(e.mode, e.dest))}</td>` +
     `<td>${esc(e.mode)}${e.slot ? esc(t("dash.lastheard.slot", { slot: e.slot })) : ""}</td>` +
     `<td class="num">${e.seconds ? esc(t("dash.lastheard.seconds", { n: e.seconds.toFixed(1) })) : "—"}</td>` +
     `<td class="num">${e.ber != null && e.type === "rf_voice_end" ? esc(t("dash.lastheard.berValue", { n: e.ber.toFixed(1) })) : "—"}</td>` +
@@ -253,7 +268,8 @@ async function loadStatus() {
   if (s.tx) {
     state.active = {
       type: s.tx.direction === "network" ? "net_voice_start" : "rf_voice_start",
-      source: s.tx.source, dest: s.tx.dest, mode: s.tx.mode, slot: s.tx.slot, network: s.tx.network,
+      source: s.tx.source, source_name: s.tx.source_name,
+      dest: s.tx.dest, mode: s.tx.mode, slot: s.tx.slot, network: s.tx.network,
     };
   } else {
     state.active = null;

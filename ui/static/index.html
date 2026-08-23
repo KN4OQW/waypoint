@@ -240,6 +240,13 @@
   tbody tr:last-child td { border-bottom: 0; }
   td.num { font-family: var(--mono); font-size: 11.5px; color: var(--muted); text-align: right; }
   .call, td .call { font-family: var(--mono); font-weight: 600; color: var(--accent); letter-spacing: .5px; }
+  /* The operator's name from the phonebook, beside the callsign it glosses. Muted
+     and proportional: the callsign is the identifier the eye scans a column for,
+     and a name in the same weight and colour would compete with it. Wraps rather
+     than truncating — a name that is cut off mid-word is worse than a taller row. */
+  .opname { display: block; font-size: 11.5px; color: var(--muted); letter-spacing: 0; }
+  /* On the on-air card the pair sits on one line, where there is room for it. */
+  .onair .opname { display: inline; margin-left: 7px; }
   .loglimit { max-height: 320px; overflow-y: auto; }
   .ev-rf { color: var(--ink-head); }
   .ev-net { color: var(--accent); }

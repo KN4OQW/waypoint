@@ -29,6 +29,27 @@ type Event struct {
 	// type, and empty from producers that have only a boolean to offer — the
 	// status aggregator falls back to the boolean's meaning in that case.
 	State string `json:"state,omitempty"`
+	// SourceName is the operator's name for Source, from the phonebook, for the
+	// AUTHENTICATED dashboard only (D4). Empty everywhere else, and empty always on
+	// a node whose phonebook has no row for that station.
+	//
+	// Three things about it are deliberate.
+	//
+	// It is decorated at SERVE time, never at ingest: the handlers that answer
+	// /api/history, /api/events and the WebSocket fill it in on their way out
+	// (cmd/waypointd). An event therefore carries whatever the phonebook says
+	// right now, so correcting a name fixes the history too, and a producer cannot
+	// bake a stale one in.
+	//
+	// It is never persisted. internal/events writes an explicit column list and has
+	// no column for this, so a field added to this struct cannot reach the database
+	// by accident — which is what keeps the stored event identical to what it was
+	// and the no-op guarantee (D5) structural rather than careful.
+	//
+	// It never reaches the public surface. internal/publicview builds its own Heard
+	// struct with three fields and copies nothing from here; its resolver dependency
+	// is an interface that cannot even return a name (D3).
+	SourceName string `json:"source_name,omitempty"`
 }
 
 const backlogSize = 200
