@@ -636,3 +636,134 @@ func hasColumnDB(db *sql.DB, table, col string) (bool, error) {
 	}
 	return false, rows.Err()
 }
+
+// v4DDL is the schema exactly as shipped at SchemaVersion 4 — the public-view and
+// heard-position tables, and no phonebook. Frozen like v1DDL and v2DDL: it is the
+// last shape that existed before the phonebook step, and updating it when the
+// current schema changes would destroy the only thing it is for.
+//
+// Only the tables the phonebook step has to coexist with are reproduced. The step
+// creates one table and touches nothing else, so a fixture carrying every v4 table
+// verbatim would add lines without adding a claim; TestMigratedMatchesFresh is
+// what proves the whole shape agrees, from v1.
+const v4DDL = `
+CREATE TABLE meta (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  schema_version INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  claimed_at TEXT,
+  provisioned INTEGER
+);
+CREATE TABLE settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  updated_by TEXT NOT NULL
+);
+CREATE TABLE applies (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  at         TEXT NOT NULL,
+  by         TEXT NOT NULL,
+  diff       TEXT NOT NULL
+);`
+
+// writeV4Fixture builds a schema-v4 database holding operator data — the shape a
+// node in the field has immediately before the phonebook step runs.
+func writeV4Fixture(t *testing.T, path string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close() //nolint:errcheck // test cleanup
+	if _, err := db.Exec(v4DDL); err != nil {
+		t.Fatal(err)
+	}
+	// The public-view tables are created from the same const the baseline uses:
+	// they are not what this fixture is pinning, and a frozen copy of them here
+	// would be a second place to update for no gain.
+	if _, err := db.Exec(publicViewDDL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(publicViewSeed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(heardPositionsDDL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO meta(id, schema_version, created_at, claimed_at) VALUES(1, 4, '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range fixtureSettings {
+		if _, err := db.Exec(`INSERT INTO settings(key, value, updated_at, updated_by) VALUES(?, ?, '2026-01-01T00:00:00Z', 'fixture')`, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO applies(at, by, diff) VALUES('2026-01-01T00:00:00Z', 'fixture', '{"general.callsign":"KN4OQW"}')`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestMigratesV4ToHead exercises the phonebook step against a node that already
+// exists, which is the only kind of node it ever runs on.
+//
+// The assertions are about what the table can and cannot hold, not merely that it
+// appeared: the uniqueness rules are the schema's half of "already in the
+// phonebook", and a migration that produced the table without them would leave a
+// node whose panel accepts two rows for one operator.
+func TestMigratesV4ToHead(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.db")
+	writeV4Fixture(t, path)
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a v4 store: %v", err)
+	}
+	defer s.Close() //nolint:errcheck // test cleanup
+
+	v, err := s.Version()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != SchemaVersion {
+		t.Errorf("after Open, version = %d, want %d", v, SchemaVersion)
+	}
+	assertFixtureIntact(t, s)
+
+	// A migrated node starts with an empty phonebook — the same state a fresh one
+	// is created in. There is nothing to backfill and nothing to seed.
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM phonebook`).Scan(&n); err != nil {
+		t.Fatalf("phonebook table missing after migration: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("migrated node came up with %d phonebook rows, want 0", n)
+	}
+
+	if _, err := s.db.Exec(
+		`INSERT INTO phonebook(callsign, dmr_id, full_name, email, created_at, updated_at)
+		 VALUES('KN4OQW', 3180202, 'Clint', 'clint@example.invalid', '2026-01-03T00:00:00Z', '2026-01-03T00:00:00Z')`); err != nil {
+		t.Fatalf("phonebook not writable after migration: %v", err)
+	}
+	// Callsign uniqueness is case-insensitive: the UNIQUE index inherits the
+	// column's NOCASE collation, so a differently-cased duplicate is refused by the
+	// schema and not only by the validator above it.
+	if _, err := s.db.Exec(
+		`INSERT INTO phonebook(callsign, created_at, updated_at) VALUES('kn4oqw', 'x', 'x')`); err == nil {
+		t.Error("a differently-cased duplicate callsign was accepted; the UNIQUE index is not NOCASE")
+	}
+	if _, err := s.db.Exec(
+		`INSERT INTO phonebook(callsign, dmr_id, created_at, updated_at) VALUES('W1AW', 3180202, 'x', 'x')`); err == nil {
+		t.Error("a duplicate dmr_id was accepted; the UNIQUE constraint is missing")
+	}
+	// Two rows with no DMR ID at all must coexist: SQLite's unique index permits
+	// any number of NULLs, which is what makes "not every operator has one"
+	// representable for every row at once rather than for one.
+	for _, c := range []string{"W1AW", "N0CALL"} {
+		if _, err := s.db.Exec(
+			`INSERT INTO phonebook(callsign, created_at, updated_at) VALUES(?, 'x', 'x')`, c); err != nil {
+			t.Errorf("second row with a NULL dmr_id refused (%s): %v", c, err)
+		}
+	}
+}

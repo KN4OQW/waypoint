@@ -159,6 +159,14 @@ var allRoutes = []route{
 	{"POST", "/api/network/host/apply"},
 	{"GET", "/api/update/check"},
 	{"POST", "/api/update/apply"},
+	// The phonebook (phonebook.go). Its entries carry email addresses,
+	// so a route of this surface answering anonymously is a PII disclosure rather
+	// than a missing feature — the matrix is what keeps that from arriving by
+	// accident.
+	{"GET", "/api/phonebook"},
+	{"POST", "/api/phonebook"},
+	{"PUT", "/api/phonebook/1"},
+	{"DELETE", "/api/phonebook/1"},
 	{"POST", "/api/claim"},
 	{"POST", "/api/session"},
 	{"GET", "/"},

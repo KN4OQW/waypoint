@@ -41,6 +41,23 @@ var migrations = []migration{
 	{to: 2, name: "meta-claim-and-provision-columns", fn: migrateMetaColumns},
 	{to: 3, name: "public-view-tables-and-admin-role", fn: migratePublicView},
 	{to: 4, name: "heard-positions", fn: migrateHeardPositions},
+	{to: 5, name: "phonebook", fn: migratePhonebook},
+}
+
+// migratePhonebook installs the identity/contact table on a database that already
+// has rows. Like every step before it, the DDL is the same const the baseline
+// executes, so the baseline and the ladder cannot drift.
+//
+// There is nothing to seed and nothing to backfill: an existing node comes out of
+// this step with an empty phonebook, which is exactly what a fresh one is created
+// with. Nothing in the config renderer spine reads this table, so a node that
+// migrates and never opens the panel renders byte-identical INIs before and
+// after — asserted in internal/config, not just intended.
+func migratePhonebook(tx *sql.Tx) error {
+	if _, err := tx.Exec(phonebookDDL); err != nil {
+		return fmt.Errorf("create phonebook: %w", err)
+	}
+	return nil
 }
 
 // migrateHeardPositions installs the locally-heard position table (D3) on a

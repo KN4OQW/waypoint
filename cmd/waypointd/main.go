@@ -46,6 +46,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/p25hosts"
 	"github.com/KN4OQW/waypoint/internal/paths"
 	"github.com/KN4OQW/waypoint/internal/peering"
+	"github.com/KN4OQW/waypoint/internal/phonebook"
 	"github.com/KN4OQW/waypoint/internal/privhelper"
 	"github.com/KN4OQW/waypoint/internal/provision"
 	"github.com/KN4OQW/waypoint/internal/publicview"
@@ -156,6 +157,13 @@ type server struct {
 	// as "not enabled" so a partially-built server 404s rather than panicking.
 	publicStore *publicview.Store
 	publicSvc   *publicview.Service
+
+	// The phonebook (identity and contact detail for the operators this node
+	// knows). Its table is guaranteed by the schema version and it holds no
+	// config, so it is attached beside publicStore rather than through it. Nil in
+	// tests that do not exercise the surface, and the handlers answer 503 rather
+	// than panicking on a partially-built server.
+	phonebook *phonebook.Store
 
 	// Atomic-update surface (RFC-0014 / issue #13). update holds the manifest URL,
 	// release key, and OS seams; updateArgs is the `-update` invocation the apply
@@ -1995,6 +2003,10 @@ func (s *server) newMux() *http.ServeMux {
 	s.registerBrandingRoutes(mux)
 	s.registerAdminMapRoutes(mux)
 	s.registerPublicPanelRoutes(mux)
+	// The phonebook (phonebook.go). Behind the session wall like every other
+	// route above: its entries carry email addresses, and the gate's default-deny
+	// is what keeps them off an anonymous response.
+	s.registerPhonebookRoutes(mux)
 	mux.Handle("/", s.rootHandler(http.FileServerFS(ui.FS())))
 	return mux
 }
@@ -2399,6 +2411,10 @@ func main() {
 	// when DMRIds.dat is missing or corrupt, rather than quietly serving only the
 	// D-Star and YSF traffic that resolves without it.
 	s.publicStore = publicview.New(st)
+	// The phonebook needs nothing but the store handle: no history, no live
+	// status, no service in front of it. It is attached here so the surface exists
+	// the moment the daemon serves, rather than being built per request.
+	s.phonebook = phonebook.New(st)
 	// Assigned through the interfaces rather than passed directly, so a build
 	// without one of them hands the service a genuinely nil interface instead of a
 	// non-nil one wrapping a nil pointer.

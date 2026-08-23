@@ -25,7 +25,7 @@ import (
 // migrated database, so a release that raises it must also raise the update
 // manifest's min_version (RFC-0014) to the first release that ships the new
 // version. See docs/updates.md.
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 // ErrSchemaNewer is returned by Open when the database was written by a newer
 // build. It is a distinct error because it is the one open failure with a real
@@ -171,6 +171,47 @@ CREATE TABLE IF NOT EXISTS heard_positions (
 );
 CREATE INDEX IF NOT EXISTS idx_heard_positions_at ON heard_positions (heard_at);`
 
+// phonebookDDL is the node's identity/contact table: the operators this node
+// knows about, keyed by a surrogate id.
+//
+// The surrogate is the anchor, and that is the whole point of the shape. A
+// callsign is reassigned when a licence lapses and a DMR ID is issued per radio,
+// so neither is stable enough to be a foreign key; both are unique *attributes*
+// of a row whose identity is the id. Later units hang password hashes, roles, and
+// notification preferences off phonebook(id) — none of which belong here, because
+// a table that holds a credential is a table every read path has to be careful
+// with, and this one is read by the admin UI.
+//
+// AUTOINCREMENT rather than a bare INTEGER PRIMARY KEY: without it SQLite reuses
+// the rowid of a deleted row, so an id that later units will carry as a foreign
+// key could silently come to mean a different person. The cost is one row in
+// sqlite_sequence.
+//
+// COLLATE NOCASE on callsign makes the UNIQUE index case-insensitive, which is
+// what makes "already in the phonebook" mean the same thing as the operator does
+// — measured, not assumed: an insert of 'kn4oqw' against a stored 'KN4OQW' comes
+// back SQLITE_CONSTRAINT_UNIQUE (2067), and `WHERE callsign = 'kn4oqw'` finds the
+// stored row. Writes are uppercased anyway (phonebook.Store), so NOCASE folding
+// only ASCII A-Z is not a limitation here.
+//
+// dmr_id is UNIQUE and nullable. SQLite permits any number of NULLs in a unique
+// index, so "no DMR ID recorded" is representable for every row at once — also
+// measured rather than assumed.
+//
+// email is PII. It is stored here and served only to an authenticated admin; no
+// public-view response type carries it, and nothing in this package is read by a
+// renderer (phonebook rows compile to no INI key at all).
+const phonebookDDL = `
+CREATE TABLE IF NOT EXISTS phonebook (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  callsign   TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  dmr_id     INTEGER UNIQUE,          -- nullable: not every operator has one
+  full_name  TEXT,
+  email      TEXT,                    -- PII: admin-only, never public, never logged
+  created_at TEXT NOT NULL,           -- RFC-3339 UTC
+  updated_at TEXT NOT NULL
+);`
+
 // publicViewSeed materializes the single rows so readers never have to special-case
 // "configured but never written". Both are INSERT OR IGNORE: re-running is a no-op,
 // and an existing row keeps whatever the operator set.
@@ -217,6 +258,9 @@ CREATE TABLE IF NOT EXISTS applies (
 		return err
 	}
 	if _, err := s.db.Exec(heardPositionsDDL); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(phonebookDDL); err != nil {
 		return err
 	}
 

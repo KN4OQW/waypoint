@@ -42,7 +42,7 @@ const PASS = process.env.A11Y_PASS || "a11y-scan-passphrase";
 const TABS = [
   "general", "hardware", "setup", "lcd", "station", "modes",
   "brandmeister", "network", "gateways",
-  "profiles", "updates", "system", "expert",
+  "profiles", "phonebook", "updates", "system", "expert",
 ];
 
 // The Modes tab's sub-tabs (mirrors MODE_SUBS in settings.js). These render the
