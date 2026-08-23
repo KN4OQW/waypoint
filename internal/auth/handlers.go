@@ -62,7 +62,16 @@ func (a *Auth) HandleClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	a.invalidateClaimed()
 	a.logf("auth: device claimed by admin %q", strings.TrimSpace(c.Username))
-	if err := a.issueSession(w); err != nil {
+	// Look the account up rather than having Claim return it: the claim is already
+	// committed, and a failure here costs the auto-login cookie, not the claim.
+	acct, ok, lerr := a.store.AccountByUsername(strings.TrimSpace(c.Username))
+	if lerr != nil || !ok {
+		a.logf("auth: claim succeeded but the new account could not be read back: %v", lerr)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"claimed": true})
+		return
+	}
+	if err := a.issueSession(w, acct.ID); err != nil {
 		// The claim is committed; only the auto-login cookie failed. Report success
 		// so the client can fall back to the login page rather than re-claiming.
 		a.logf("auth: claim succeeded but issuing session failed: %v", err)
@@ -97,34 +106,49 @@ func (a *Auth) handleLogin(w http.ResponseWriter, r *http.Request) {
 		a.failLogin(w, source, "invalid request body")
 		return
 	}
-	admin, ok, err := a.store.Admin()
+	acct, found, err := a.store.AccountByUsername(strings.TrimSpace(c.Username))
 	if err != nil {
-		a.logf("auth: admin lookup failed: %v", err)
+		a.logf("auth: account lookup failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "login failed")
 		return
 	}
-	// Verify even when there is no admin row or the username differs, so the
-	// response time does not reveal which of the two was wrong.
-	match := false
-	if ok {
-		if v, verr := admin.Record.Verify(c.Password); verr == nil {
-			match = v
-		} else {
-			a.logf("auth: verifying password failed: %v", verr)
-		}
+	// Verify against SOMETHING every time, even when the username does not exist.
+	//
+	// With one fixed admin this mattered little — there was only ever one username
+	// and an attacker already knew it. With several accounts, skipping the argon2
+	// work on an unknown username makes the response measurably faster for names
+	// that do not exist, which is username enumeration: an attacker learns who has
+	// a login on the node before guessing a single password. So a miss verifies
+	// against a decoy record with the same cost parameters and discards the result.
+	record := acct.Record
+	if !found {
+		record = decoyRecord()
 	}
-	if !ok || admin.Username != c.Username || !match {
+	match := false
+	if v, verr := record.Verify(c.Password); verr == nil {
+		match = v
+	} else if found {
+		a.logf("auth: verifying password failed: %v", verr)
+	}
+	if !found || !match {
 		a.failLogin(w, source, "invalid username or password")
 		return
 	}
 	a.damper.recordSuccess(source)
-	if err := a.issueSession(w); err != nil {
+	if err := a.issueSession(w, acct.ID); err != nil {
 		a.logf("auth: issuing session failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "login failed")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"authenticated": true})
+	// must_rotate is reported so the client can go straight to the change-password
+	// screen. It is not a permission — the server refuses every other route while
+	// the flag is set, whatever the client does with this.
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"authenticated": true,
+		"role":          string(acct.Role),
+		"must_rotate":   acct.MustRotate,
+	})
 }
 
 // failLogin applies the fixed per-failure delay, records the failure against the

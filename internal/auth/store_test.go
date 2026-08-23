@@ -35,7 +35,7 @@ func TestClaimLifecycle(t *testing.T) {
 	if claimed, err := as.IsClaimed(); err != nil || !claimed {
 		t.Fatalf("after claim IsClaimed = %v, %v; want true, nil", claimed, err)
 	}
-	admin, ok, err := as.Admin()
+	admin, ok, err := as.AccountByUsername("kn4oqw")
 	if err != nil || !ok {
 		t.Fatalf("Admin after claim: ok=%v err=%v", ok, err)
 	}
@@ -59,7 +59,7 @@ func TestClaimSecondConflicts(t *testing.T) {
 	if err := as.Claim("second", rec2, time.Now()); err != ErrAlreadyClaimed {
 		t.Fatalf("second claim err = %v, want ErrAlreadyClaimed", err)
 	}
-	admin, _, _ := as.Admin()
+	admin, _, _ := as.AccountByUsername("first")
 	if admin.Username != "first" {
 		t.Fatalf("second claim overwrote the admin: username = %q", admin.Username)
 	}
@@ -102,8 +102,9 @@ func TestConcurrentClaimSingleWinner(t *testing.T) {
 // Sessions round-trip, slide forward on touch, and revoke individually and en masse.
 func TestSessionCRUD(t *testing.T) {
 	as := newAuthStore(t)
+	owner := claimedAccountID(t, as)
 	now := time.Now()
-	if err := as.CreateSession("hashA", now, now.Add(time.Hour)); err != nil {
+	if err := as.CreateSession("hashA", owner, now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	got, ok, err := as.LookupSession("hashA")
@@ -133,26 +134,24 @@ func TestSessionCRUD(t *testing.T) {
 // ResetClaim returns the store to the unclaimed state and revokes all sessions.
 func TestResetClaim(t *testing.T) {
 	as := newAuthStore(t)
-	rec, _ := HashPassword("password-longenough")
-	if err := as.Claim("user", rec, time.Now()); err != nil {
-		t.Fatal(err)
-	}
+	owner := claimedAccountID(t, as)
 	now := time.Now()
-	_ = as.CreateSession("s1", now, now.Add(time.Hour))
-	_ = as.CreateSession("s2", now, now.Add(time.Hour))
+	_ = as.CreateSession("s1", owner, now, now.Add(time.Hour))
+	_ = as.CreateSession("s2", owner, now, now.Add(time.Hour))
 	if err := as.ResetClaim(); err != nil {
 		t.Fatal(err)
 	}
 	if claimed, _ := as.IsClaimed(); claimed {
 		t.Fatal("still claimed after reset")
 	}
-	if _, ok, _ := as.Admin(); ok {
+	if n, _ := as.AdminCount(); n > 0 {
 		t.Fatal("admin row survived reset")
 	}
 	if n, _ := as.SessionCount(); n != 0 {
 		t.Fatalf("sessions survived reset: %d", n)
 	}
 	// After a reset the device can be claimed again.
+	rec, _ := HashPassword("password-longenough")
 	if err := as.Claim("newowner", rec, time.Now()); err != nil {
 		t.Fatalf("re-claim after reset failed: %v", err)
 	}
@@ -161,9 +160,10 @@ func TestResetClaim(t *testing.T) {
 // SweepExpired removes only sessions past their deadline.
 func TestSweepExpired(t *testing.T) {
 	as := newAuthStore(t)
+	owner := claimedAccountID(t, as)
 	base := time.Now()
-	_ = as.CreateSession("live", base, base.Add(time.Hour))
-	_ = as.CreateSession("dead", base.Add(-2*time.Hour), base.Add(-time.Hour))
+	_ = as.CreateSession("live", owner, base, base.Add(time.Hour))
+	_ = as.CreateSession("dead", owner, base.Add(-2*time.Hour), base.Add(-time.Hour))
 	if err := as.SweepExpired(base); err != nil {
 		t.Fatal(err)
 	}
@@ -188,4 +188,27 @@ func TestMigrateIdempotent(t *testing.T) {
 	if _, err := NewStore(st); err != nil {
 		t.Fatalf("second NewStore (re-migrate) failed: %v", err)
 	}
+}
+
+// claimedAccountID claims the device and returns the admin account's id, so a
+// session fixture has a real owner.
+//
+// It matters even though most of these tests run against :memory:, where SQLite
+// does NOT enforce foreign keys — store.Open applies _pragma=foreign_keys(1) only
+// to a file path. A session written with account_id 0 therefore passes here and
+// fails on a real node, which is the wrong way round for a test to behave.
+func claimedAccountID(t *testing.T, as *Store) int64 {
+	t.Helper()
+	rec, err := HashPassword("fixture-password-long-enough")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := as.Claim("fixture", rec, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	a, ok, err := as.AccountByUsername("fixture")
+	if err != nil || !ok {
+		t.Fatalf("reading back the claimed account: ok=%v err=%v", ok, err)
+	}
+	return a.ID
 }

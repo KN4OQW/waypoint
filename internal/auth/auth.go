@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -186,15 +187,36 @@ func (a *Auth) authenticate(r *http.Request) (Session, bool) {
 	return sess, true
 }
 
+// Caller resolves the account a request is acting as.
+//
+// It is the single place a role is read, and it reads it from accounts rather
+// than from the session record. That is what makes a demotion take effect on the
+// next request instead of at the next login: a session carries an OWNER, not a
+// capability. A session whose account has been deleted authenticates as nobody.
+func (a *Auth) Caller(r *http.Request) (Account, bool) {
+	sess, ok := a.authenticate(r)
+	if !ok || sess.AccountID == 0 {
+		return Account{}, false
+	}
+	acct, err := a.store.AccountByID(sess.AccountID)
+	if err != nil {
+		if !errors.Is(err, ErrNoSuchAccount) {
+			a.logf("auth: resolving session owner failed: %v", err)
+		}
+		return Account{}, false
+	}
+	return acct, true
+}
+
 // issueSession mints a session and sets the cookie. The raw token is returned to
 // the client only here, once; the store keeps only its hash.
-func (a *Auth) issueSession(w http.ResponseWriter) error {
+func (a *Auth) issueSession(w http.ResponseWriter, accountID int64) error {
 	raw, hash, err := newSessionToken()
 	if err != nil {
 		return err
 	}
 	now := a.now()
-	if err := a.store.CreateSession(hash, now, now.Add(a.idleWindow)); err != nil {
+	if err := a.store.CreateSession(hash, accountID, now, now.Add(a.idleWindow)); err != nil {
 		return err
 	}
 	a.setCookie(w, raw)

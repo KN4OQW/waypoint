@@ -442,6 +442,10 @@ func TestSecretsNeverInViewOrLogs(t *testing.T) {
 	}
 	const adminPass = "SuperSecretAdminPass1"
 	cookie := e.claim(t, "kn4oqw", adminPass)
+	// Several accounts, not one. The single-admin version of this test could pass
+	// while a projection leaked the credentials of accounts an admin created later,
+	// which is exactly the shape the amendment introduces.
+	seedAccounts(t, e)
 
 	req := httptest.NewRequest("GET", "/api/config", nil)
 	req.AddCookie(cookie)
@@ -456,16 +460,33 @@ func TestSecretsNeverInViewOrLogs(t *testing.T) {
 			t.Errorf("config view leaked secret %q", secret)
 		}
 	}
-	// The stored hash must not appear either.
-	admin, _, _ := e.as.Admin()
-	if strings.Contains(body, admin.Record.Hash) {
-		t.Error("config view leaked the password hash")
+	// No account's stored hash may appear either — every one of them, not just
+	// the admin's. A projection that redacted the claiming admin and forgot the
+	// accounts an admin created later would pass a single-account check.
+	accts, err := e.as.Accounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accts) < 2 {
+		t.Fatalf("fixture has %d accounts; this test is only meaningful over several", len(accts))
+	}
+	for _, a := range accts {
+		if strings.Contains(body, a.Record.Hash) {
+			t.Errorf("config view leaked account %q's password hash", a.Username)
+		}
+		if strings.Contains(body, a.Record.Params) && a.Record.Params != "" {
+			t.Errorf("config view leaked account %q's KDF parameter block", a.Username)
+		}
 	}
 
 	// Nothing secret in the logs (the claim log line carries the username, not the
 	// password or hash).
 	logs := e.logs.String()
-	for _, secret := range []string{adminPass, admin.Record.Hash} {
+	secrets := []string{adminPass}
+	for _, a := range accts {
+		secrets = append(secrets, a.Record.Hash)
+	}
+	for _, secret := range secrets {
 		if strings.Contains(logs, secret) {
 			t.Errorf("logs leaked secret %q", secret)
 		}
@@ -481,6 +502,7 @@ func TestNoSecretsInRawDB(t *testing.T) {
 	const adminPass = "RawDbSecretPass99"
 	cookie := e.claim(t, "kn4oqw", adminPass)
 	rawToken := cookie.Value
+	seedAccounts(t, e)
 
 	// Force any WAL content to the main file so the grep sees committed rows.
 	if _, err := e.s.store.DB().Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
@@ -490,9 +512,18 @@ func TestNoSecretsInRawDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{adminPass, rawToken} {
+	// Every account's password, not just the claiming admin's: an admin-set
+	// initial password is the one most likely to be written somewhere careless,
+	// because it passes through a handler rather than through the claim path.
+	for _, secret := range append([]string{adminPass, rawToken}, seededPasswords...) {
 		if bytes.Contains(blob, []byte(secret)) {
 			t.Errorf("raw DB contains a recoverable secret %q", secret)
+		}
+	}
+	// And every username IS present, so the grep above is known to work.
+	for _, u := range []string{"kn4oqw", "w1aw-op", "n0call-view"} {
+		if !bytes.Contains(blob, []byte(u)) {
+			t.Errorf("expected the plaintext username %q in the DB (grep sanity check)", u)
 		}
 	}
 	// Sanity: the non-secret username IS present, proving the grep would have found
@@ -573,7 +604,8 @@ func TestResetClaimSubcommand(t *testing.T) {
 func TestResetMarker(t *testing.T) {
 	e := newAuthEnv(t, ":memory:")
 	_ = e.claim(t, "kn4oqw", "goodpassword")
-	_ = e.as.CreateSession("hashX", time.Now(), time.Now().Add(time.Hour))
+	acctX, _, _ := e.as.AccountByUsername("kn4oqw")
+	_ = e.as.CreateSession("hashX", acctX.ID, time.Now(), time.Now().Add(time.Hour))
 
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "waypoint-reset")
@@ -633,5 +665,30 @@ func TestResetMarkerDeleteFailureTolerated(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "could NOT be deleted") {
 		t.Errorf("undeletable marker not surfaced in logs:\n%s", logs.String())
+	}
+}
+
+// seededPasswords are the initial passwords seedAccounts sets. They are distinct
+// strings so a byte grep can tell which account leaked.
+var seededPasswords = []string{"OperatorInitialPass7", "ViewerInitialPass8"}
+
+// seedAccounts adds an operator and a viewer beside the claiming admin, the way
+// an admin creates them: with an initial password and the rotation flag set.
+func seedAccounts(t *testing.T, e *authEnv) {
+	t.Helper()
+	for i, spec := range []struct {
+		user string
+		role auth.Role
+	}{
+		{"w1aw-op", auth.RoleOperator},
+		{"n0call-view", auth.RoleViewer},
+	} {
+		rec, err := auth.HashPassword(seededPasswords[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.as.CreateAccount(0, spec.user, rec, spec.role, true, time.Now()); err != nil {
+			t.Fatalf("seeding %s: %v", spec.user, err)
+		}
 	}
 }

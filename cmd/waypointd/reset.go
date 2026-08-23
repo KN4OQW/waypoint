@@ -36,6 +36,7 @@ func (r resetPaths) progress() string {
 type resetResult struct {
 	WasClaimed     bool
 	AdminUser      string
+	Accounts       int
 	Sessions       int
 	WasProvisioned bool
 	Full           bool
@@ -50,8 +51,17 @@ type resetResult struct {
 func resetClaim(as *auth.Store) (resetResult, error) {
 	res := resetResult{}
 	res.WasClaimed, _ = as.IsClaimed()
-	if admin, ok, _ := as.Admin(); ok {
-		res.AdminUser = admin.Username
+	// Every account goes, not just the admin: the reset removes trust, and a
+	// viewer login left behind would be trust the operator did not intend to keep.
+	// The names are collected for the operator-facing summary before the wipe,
+	// because afterwards there is nothing to name.
+	if accts, err := as.Accounts(); err == nil {
+		res.Accounts = len(accts)
+		for _, a := range accts {
+			if a.Role == auth.RoleAdmin && res.AdminUser == "" {
+				res.AdminUser = a.Username
+			}
+		}
 	}
 	res.Sessions, _ = as.SessionCount()
 
@@ -106,7 +116,8 @@ func (r resetResult) describe(storePath string) string {
 	if r.AdminUser != "" {
 		who = fmt.Sprintf(" (admin %q)", r.AdminUser)
 	}
-	claim := fmt.Sprintf("wiped admin credential%s, revoked %d session(s), cleared claimed_at", who, r.Sessions)
+	claim := fmt.Sprintf("wiped %d account(s)%s, revoked %d session(s), cleared claimed_at — the phonebook is untouched",
+		r.Accounts, who, r.Sessions)
 	if !r.Full {
 		return fmt.Sprintf("reset-claim: %s — device returned to claim mode (store %s)", claim, storePath)
 	}
