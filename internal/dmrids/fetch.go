@@ -53,6 +53,23 @@ func Fetch(ctx context.Context, urls []string, path string, v verifydl.Verify) e
 // The interval is long because the table changes slowly and is the largest thing
 // the node downloads; there is no benefit in pulling megabytes hourly.
 func Run(ctx context.Context, urls []string, path string, interval time.Duration, v verifydl.Verify) {
+	RunThen(ctx, urls, path, interval, v, nil)
+}
+
+// RunThen is Run with a hook that fires after each SUCCESSFUL refresh.
+//
+// It exists for the phonebook, whose imported entries are re-read against the new
+// table so a reissued callsign reaches the operator's roster. The hook runs after
+// the file is in place and only when the fetch actually replaced it, so a failed
+// download — which leaves the previous table intact — does not re-scan a file
+// nothing changed.
+//
+// The hook must not be slow or panic: it runs on the refresher's goroutine, and
+// an error from it is logged rather than returned, because a phonebook sync that
+// fails has not made the downloaded table any less valid.
+//
+// nil is the ordinary case and means Run.
+func RunThen(ctx context.Context, urls []string, path string, interval time.Duration, v verifydl.Verify, after func(path string) error) {
 	hostsrc.Register(hostsrc.DMRIds, "DMR ID / callsign table")
 	hostsrc.Every(ctx, hostsrc.DMRIds, interval, func(ctx context.Context) error {
 		if err := Fetch(ctx, urls, path, v); err != nil {
@@ -64,6 +81,11 @@ func Run(ctx context.Context, urls []string, path string, interval time.Duration
 			log.Printf("dmrids: updated %s (%d ids)", path, t.Len())
 		} else {
 			log.Printf("dmrids: updated %s", path)
+		}
+		if after != nil {
+			if err := after(path); err != nil {
+				log.Printf("dmrids: post-refresh hook failed: %v", err)
+			}
 		}
 		return nil
 	})

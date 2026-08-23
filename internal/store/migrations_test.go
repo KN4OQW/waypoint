@@ -989,3 +989,70 @@ func TestMigratesV5UnclaimedToHead(t *testing.T) {
 		t.Errorf("an unclaimed node came out of the migration with %d accounts, want 0", n)
 	}
 }
+
+// TestMigratesV6ToHead: the phonebook gains a provenance column, and every row
+// that predates it is the operator's own typing — there was no import before this
+// step, which is exactly what the column's DEFAULT says. The migration therefore
+// does no backfill, and this asserts the default really lands rather than leaving
+// existing rows NULL.
+func TestMigratesV6ToHead(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.db")
+
+	// A store at head, taken back to v6 by dropping the column the step adds.
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO phonebook(callsign, dmr_id, full_name, created_at, updated_at, source)
+		VALUES('KN4OQW', 3180202, 'Clint', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'manual')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE phonebook DROP COLUMN source`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE meta SET schema_version = 6 WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reopening runs the step.
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a v6 store: %v", err)
+	}
+	defer s2.Close() //nolint:errcheck // test cleanup
+
+	if v, err := s2.Version(); err != nil || v != SchemaVersion {
+		t.Fatalf("after Open, version = %d (%v), want %d", v, err, SchemaVersion)
+	}
+	var source string
+	if err := s2.db.QueryRow(`SELECT source FROM phonebook WHERE callsign = 'KN4OQW'`).Scan(&source); err != nil {
+		t.Fatalf("the phonebook row did not survive the migration: %v", err)
+	}
+	if source != "manual" {
+		t.Errorf("a pre-existing row migrated to source %q, want \"manual\" — a row that predates the import path was typed by hand", source)
+	}
+}
+
+// TestFreshStoreRejectsAnUnknownSource pins the CHECK constraint on a fresh store,
+// and records the asymmetry it has with a migrated one: SQLite cannot add a column
+// WITH a CHECK to an existing table, so a store that arrived by the ladder has the
+// column but not the constraint. Nothing outside internal/phonebook writes it and
+// that package normalizes the value, so the constraint is a backstop rather than
+// the enforcement — but the difference is real and belongs written down.
+func TestFreshStoreRejectsAnUnknownSource(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close() //nolint:errcheck // test cleanup
+
+	_, err = s.db.Exec(`INSERT INTO phonebook(callsign, created_at, updated_at, source)
+		VALUES('W1AW', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'somewhere-else')`)
+	if err == nil {
+		t.Error("a fresh store accepted an unknown source; the CHECK constraint is not doing anything")
+	}
+}

@@ -25,7 +25,7 @@ import (
 // migrated database, so a release that raises it must also raise the update
 // manifest's min_version (RFC-0014) to the first release that ships the new
 // version. See docs/updates.md.
-const SchemaVersion = 6
+const SchemaVersion = 7
 
 // ErrSchemaNewer is returned by Open when the database was written by a newer
 // build. It is a distinct error because it is the one open failure with a real
@@ -209,7 +209,22 @@ CREATE TABLE IF NOT EXISTS phonebook (
   full_name  TEXT,
   email      TEXT,                    -- PII: admin-only, never public, never logged
   created_at TEXT NOT NULL,           -- RFC-3339 UTC
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  -- Where this row's callsign, DMR ID and name came from, which decides whether
+  -- the public-list refresh may rewrite them. 'manual' is the operator's own
+  -- typing and is never touched; 'dmrids' was copied from the RadioID export and
+  -- is re-read against it when the table refreshes.
+  --
+  -- A row moves from 'dmrids' to 'manual' the moment the operator edits one of
+  -- the three fields the export owns. Editing only the email does NOT move it:
+  -- the export has no email, so an address is additive rather than a
+  -- disagreement, and an operator who adds contact details to an imported entry
+  -- should not thereby stop it tracking a vanity callsign change.
+  --
+  -- Defaulted rather than NOT NULL so the migration needs no backfill pass: every
+  -- row that existed before this column was typed by hand, which is what the
+  -- default says.
+  source     TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','dmrids'))
 );`
 
 // accountsDDL is the multi-account credential table (RFC-0002 Amendment 1).

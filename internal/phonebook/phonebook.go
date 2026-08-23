@@ -72,7 +72,23 @@ type Entry struct {
 	Email     string `json:"email,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
+	// Source is where the callsign, DMR ID and name came from: SourceManual for an
+	// operator's own typing, SourceDMRIds for a row copied from the public RadioID
+	// export. It decides whether the public-list refresh may rewrite those three
+	// fields, and it is read-only over the API — a client cannot declare a row
+	// imported, only the import path can.
+	Source string `json:"source,omitempty"`
 }
+
+// Where a row's identity fields came from.
+const (
+	// SourceManual is an entry the operator typed. The refresh never touches it.
+	SourceManual = "manual"
+	// SourceDMRIds is an entry copied from the public DMRIds.dat export. The
+	// refresh re-reads it against the table and carries changes through, until the
+	// operator edits one of the three fields the export owns.
+	SourceDMRIds = "dmrids"
+)
 
 // Store is the phonebook's persistence. It owns the phonebook table and nothing
 // else, sharing waypointd's single store connection (see store.Store.DB), so its
@@ -186,7 +202,7 @@ func ValidateDMRID(n int64) (uint32, error) {
 // Reads
 // ---------------------------------------------------------------------------
 
-const selectCols = `SELECT id, callsign, dmr_id, full_name, email, created_at, updated_at FROM phonebook`
+const selectCols = `SELECT id, callsign, dmr_id, full_name, email, created_at, updated_at, source FROM phonebook`
 
 // scanEntry reads one row, folding the three nullable columns onto their zero
 // values. Doing it in one place is what keeps NULL from leaking out of this file
@@ -198,7 +214,7 @@ func scanEntry(sc interface{ Scan(...any) error }) (Entry, error) {
 		name  sql.NullString
 		email sql.NullString
 	)
-	if err := sc.Scan(&e.ID, &e.Callsign, &dmrID, &name, &email, &e.CreatedAt, &e.UpdatedAt); err != nil {
+	if err := sc.Scan(&e.ID, &e.Callsign, &dmrID, &name, &email, &e.CreatedAt, &e.UpdatedAt, &e.Source); err != nil {
 		return Entry{}, err
 	}
 	if dmrID.Valid {
@@ -301,10 +317,18 @@ func (s *Store) Create(e Entry) (Entry, error) {
 		return Entry{}, err
 	}
 	at := s.stamp()
+	// Source is normalized rather than trusted: Create is reached from the API,
+	// and a client that could set it to "dmrids" could make the refresh start
+	// rewriting a row the operator typed.
+	src := SourceManual
+	if e.Source == SourceDMRIds {
+		src = SourceDMRIds
+	}
+	e.Source = src
 	res, err := s.db.Exec(
-		`INSERT INTO phonebook(callsign, dmr_id, full_name, email, created_at, updated_at)
-		 VALUES(?, ?, ?, ?, ?, ?)`,
-		e.Callsign, nullID(e.DMRID), nullIf(e.FullName), nullIf(e.Email), at, at)
+		`INSERT INTO phonebook(callsign, dmr_id, full_name, email, created_at, updated_at, source)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		e.Callsign, nullID(e.DMRID), nullIf(e.FullName), nullIf(e.Email), at, at, src)
 	if err != nil {
 		return Entry{}, s.conflict(err, e, 0)
 	}
@@ -332,11 +356,31 @@ func (s *Store) Update(e Entry) (Entry, error) {
 	if err := e.validate(); err != nil {
 		return Entry{}, err
 	}
+	// An edit to one of the three fields the public export owns makes the row the
+	// operator's. From then on the refresh leaves it alone: they have said what the
+	// callsign, ID or name is, and a download must not argue with them.
+	//
+	// Editing ONLY the email does not demote it. The export carries no address, so
+	// an email is additive rather than a disagreement, and an operator who adds
+	// contact details to an imported entry should not thereby stop it tracking a
+	// vanity callsign change. That distinction is the whole reason this reads the
+	// previous row instead of demoting on any write.
+	//
+	// A read-then-write is a race in principle. It is not one here: waypointd is a
+	// single process and every phonebook write goes through this one store over one
+	// connection, so two updates to the same row are already serialized by the
+	// database. Worth stating because the obvious fix — folding it into the UPDATE
+	// as a CASE — would be unreadable for a race that cannot happen.
 	at := s.stamp()
+	src := SourceManual
+	if prev, err := s.Get(e.ID); err == nil && prev.Source == SourceDMRIds && !identityChanged(prev, e) {
+		src = SourceDMRIds
+	}
+	e.Source = src
 	res, err := s.db.Exec(
-		`UPDATE phonebook SET callsign = ?, dmr_id = ?, full_name = ?, email = ?, updated_at = ?
+		`UPDATE phonebook SET callsign = ?, dmr_id = ?, full_name = ?, email = ?, updated_at = ?, source = ?
 		 WHERE id = ?`,
-		e.Callsign, nullID(e.DMRID), nullIf(e.FullName), nullIf(e.Email), at, e.ID)
+		e.Callsign, nullID(e.DMRID), nullIf(e.FullName), nullIf(e.Email), at, src, e.ID)
 	if err != nil {
 		return Entry{}, s.conflict(err, e, e.ID)
 	}
@@ -351,6 +395,125 @@ func (s *Store) Update(e Entry) (Entry, error) {
 	// the caller's copy, and returning a zero one would make the panel show an
 	// entry that had just lost its age.
 	return s.Get(e.ID)
+}
+
+// identityChanged reports whether an update touches one of the three fields the
+// public export owns. Email and the timestamps are deliberately not compared:
+// they are not the export's to disagree with.
+//
+// The callsign comparison is case-insensitive to match the column's collation, so
+// re-saving a form that lower-cased the display value is not an edit.
+func identityChanged(prev, next Entry) bool {
+	return !strings.EqualFold(NormalizeCallsign(prev.Callsign), NormalizeCallsign(next.Callsign)) ||
+		prev.DMRID != next.DMRID ||
+		strings.TrimSpace(prev.FullName) != strings.TrimSpace(next.FullName)
+}
+
+// SyncResult is what one refresh pass changed.
+type SyncResult struct {
+	// Checked is how many imported entries were considered.
+	Checked int
+	// Updated is how many had a callsign or name rewritten from the table.
+	Updated int
+	// Missing is how many were not in the table at all. They are left exactly as
+	// they were; see the note in Sync.
+	Missing int
+}
+
+// Sync re-reads every imported entry against the public table and carries through
+// what changed.
+//
+// lookup is injected rather than called directly so this package does not import
+// internal/dmrids — the phonebook is not a reader of DMRIds.dat and must not
+// become one (RFC-0003 §3 makes internal/dmrids the single reader). The caller
+// passes dmrids.LookupIDs, which resolves the whole set in one pass over the file.
+//
+// What it will change: the callsign and the name, for a row whose source is still
+// 'dmrids'. A vanity callsign reissued against the same DMR ID is the case this
+// exists for, and it is invisible to the operator until something rewrites it.
+//
+// What it will NOT change:
+//
+//   - The DMR ID. It is the key the row was matched on; rewriting it would move
+//     the row to a different person rather than update this one.
+//   - The email. The export has no address, so there is nothing to sync and
+//     everything to lose.
+//   - Anything about a 'manual' row, or one the operator has edited since import.
+//   - A row whose ID has left the table. An export can lose a row — a lapsed
+//     registration, or a regional list this node does not carry — and deleting
+//     somebody's identity because a download changed would be far worse than
+//     holding a stale name. Accounts key to these rows; a delete here could take
+//     a login with it.
+//
+// A conflict is skipped, not fatal. If the table now issues an imported row's
+// callsign to a different ID that the operator ALSO has, the rewrite would
+// collide with the unique index; that entry keeps what it has and the pass
+// continues, because one unresolvable row must not stop the other forty syncing.
+func (s *Store) Sync(lookup func(ids []uint32) (map[uint32]Record, error)) (SyncResult, error) {
+	var res SyncResult
+	rows, err := s.db.Query(selectCols+` WHERE source = ? AND dmr_id IS NOT NULL ORDER BY id`, SourceDMRIds)
+	if err != nil {
+		return res, err
+	}
+	var imported []Entry
+	for rows.Next() {
+		e, err := scanEntry(rows)
+		if err != nil {
+			_ = rows.Close()
+			return res, err
+		}
+		imported = append(imported, e)
+	}
+	if err := rows.Close(); err != nil {
+		return res, err
+	}
+	if err := rows.Err(); err != nil {
+		return res, err
+	}
+	if len(imported) == 0 {
+		return res, nil
+	}
+	ids := make([]uint32, 0, len(imported))
+	for _, e := range imported {
+		ids = append(ids, e.DMRID)
+	}
+	found, err := lookup(ids)
+	if err != nil {
+		return res, err
+	}
+	res.Checked = len(imported)
+	at := s.stamp()
+	for _, e := range imported {
+		rec, ok := found[e.DMRID]
+		if !ok {
+			res.Missing++
+			continue
+		}
+		call := NormalizeCallsign(rec.Callsign)
+		name := strings.TrimSpace(rec.Name)
+		if call == NormalizeCallsign(e.Callsign) && name == strings.TrimSpace(e.FullName) {
+			continue
+		}
+		if call == "" {
+			continue // a row with no callsign is not an answer worth writing
+		}
+		if _, err := s.db.Exec(
+			`UPDATE phonebook SET callsign = ?, full_name = ?, updated_at = ? WHERE id = ? AND source = ?`,
+			call, nullIf(name), at, e.ID, SourceDMRIds); err != nil {
+			// Almost certainly the unique index; see the note above. Skip and carry on.
+			continue
+		}
+		res.Updated++
+	}
+	return res, nil
+}
+
+// Record is one row of the public table, as Sync needs it. It mirrors
+// dmrids.Record without importing that package — see the note on Sync.
+type Record struct {
+	ID       uint32
+	Callsign string
+	Name     string
 }
 
 // Delete removes an entry. A second click on a delete button gets ErrNotFound,

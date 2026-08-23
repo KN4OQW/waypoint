@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/KN4OQW/waypoint/internal/dmrids"
 	"github.com/KN4OQW/waypoint/internal/phonebook"
 )
 
@@ -30,6 +31,10 @@ import (
 // registerPhonebookRoutes mounts the collection and item endpoints.
 func (s *server) registerPhonebookRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/phonebook", s.phonebookCollection)
+	// Registered before the subtree so the exact pattern wins: Go's ServeMux picks
+	// the longest match, so "/api/phonebook/import" reaches this rather than
+	// phonebookItem trying to read "import" as an entry id.
+	mux.HandleFunc("/api/phonebook/import", s.phonebookImport)
 	mux.HandleFunc("/api/phonebook/", s.phonebookItem)
 }
 
@@ -209,4 +214,124 @@ func (s *server) phonebookItem(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", "PUT, DELETE")
 		writeJSONStatus(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
+}
+
+// syncPhonebookFromPublic re-reads the phonebook's imported entries against the
+// refreshed public table. It is the hook dmrids.RunThen fires after a
+// successful download.
+//
+// The lookup is handed in as a closure so internal/phonebook never imports
+// internal/dmrids: RFC-0003 §3 makes that package the single reader of
+// DMRIds.dat, and a store that opened the file itself would be a second one.
+//
+// A node with no phonebook, or one whose entries are all hand-typed, does no work
+// beyond one query that matches nothing.
+func (s *server) syncPhonebookFromPublic(path string) error {
+	if s.phonebook == nil {
+		return nil
+	}
+	res, err := s.phonebook.Sync(func(ids []uint32) (map[uint32]phonebook.Record, error) {
+		found, err := dmrids.LookupIDs(path, ids)
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[uint32]phonebook.Record, len(found))
+		for id, r := range found {
+			out[id] = phonebook.Record{ID: r.ID, Callsign: r.Callsign, Name: r.Name}
+		}
+		return out, nil
+	})
+	if err != nil {
+		return err
+	}
+	// Logged only when something actually changed. A 24-hour timer that writes a
+	// line saying it did nothing is a line that trains an operator to skip the log.
+	// The counts carry no email and no name — the phonebook's PII stays out of the
+	// journal (D4).
+	if res.Updated > 0 || res.Missing > 0 {
+		log.Printf("phonebook: public-list refresh: %d imported entr(ies) checked, %d updated, %d no longer listed",
+			res.Checked, res.Updated, res.Missing)
+	}
+	return nil
+}
+
+// phonebookImport creates an entry from the public DMRIds.dat table.
+//
+// The request names an ID and nothing else. The SERVER looks it up and writes what
+// the table says, which is the whole point: a client that could post the callsign
+// and name alongside the ID could store anything it liked and have it marked as
+// coming from the public list, and the refresh would then keep "correcting" a row
+// back to a value nobody had ever published. Marking a row imported is a claim
+// about provenance, and only the code that reads the file can make it.
+//
+// It adds no outbound request. The table is the one the ID-database refresher has
+// already downloaded for the gateways, under the same operator-visible off switch
+// (#138) — a second reader of a file that was already there, exactly as the #140
+// callsign lookup is.
+//
+// The email is not set and cannot be: the export has no address. An operator adds
+// one afterwards through the ordinary edit form, and doing so does not stop the
+// entry tracking the public list — see phonebook.Store.Update.
+func (s *server) phonebookImport(w http.ResponseWriter, r *http.Request) {
+	if s.phonebook == nil {
+		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "no phonebook on this node"})
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		writeJSONStatus(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var body struct {
+		DMRID int64 `json:"dmr_id"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	// Range-checked before the scan, the same way phonebookEntry checks it: a DMR
+	// ID is a 32-bit field on the air, and a value that cannot be one is a bad
+	// request rather than a lookup that will certainly miss.
+	if body.DMRID <= 0 || body.DMRID > 0xFFFFFFFF {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{
+			"error": "a DMR ID must be a positive number no wider than 32 bits", "field": "dmr_id",
+		})
+		return
+	}
+	id := uint32(body.DMRID)
+	found, err := dmrids.LookupIDs(s.dmrIDs, []uint32{id})
+	if err != nil {
+		// The table being unreadable is the node's problem, not the request's, and
+		// the path is not named — the same rule the #140 lookup follows.
+		log.Printf("phonebook: import: reading the id table failed: %v", err)
+		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": "the DMR ID table could not be read"})
+		return
+	}
+	rec, ok := found[id]
+	if !ok {
+		// 404, and the message distinguishes the two reasons a lookup finds nothing:
+		// there is no table on this node, or there is one and the ID is not in it.
+		// The first is fixed from the Updates tab and the second at radioid.net, and
+		// telling an operator the wrong one sends them on the wrong errand.
+		if !dmrIDTablePresent(s.dmrIDs) {
+			writeJSONStatus(w, http.StatusNotFound, map[string]string{"error": "no public ID table on this node", "reason": "no_table"})
+			return
+		}
+		writeJSONStatus(w, http.StatusNotFound, map[string]string{"error": "that DMR ID is not in the public list", "reason": "not_listed"})
+		return
+	}
+	got, err := s.phonebook.Create(phonebook.Entry{
+		Callsign: rec.Callsign,
+		DMRID:    rec.ID,
+		FullName: rec.Name,
+		Source:   phonebook.SourceDMRIds,
+	})
+	if err != nil {
+		pbError(w, "import", err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	writeJSON(w, got)
 }

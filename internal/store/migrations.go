@@ -43,6 +43,45 @@ var migrations = []migration{
 	{to: 4, name: "heard-positions", fn: migrateHeardPositions},
 	{to: 5, name: "phonebook", fn: migratePhonebook},
 	{to: 6, name: "accounts", fn: migrateAccounts},
+	{to: 7, name: "phonebook-source", fn: migratePhonebookSource},
+}
+
+// migratePhonebookSource records where a phonebook row's identity fields came
+// from, so the public-list refresh knows which rows it may rewrite.
+//
+// Every row that predates this column was typed by an operator — there was no
+// import before it — so the column's DEFAULT says exactly the right thing and no
+// backfill is needed. That is why it is defaulted rather than NOT NULL with an
+// UPDATE: a backfill over an existing table is a second thing that can fail
+// halfway, and there is nothing here for it to do.
+//
+// The table may not exist: phonebook arrived at step 5, but a store created fresh
+// at head builds it from phonebookDDL with the column already present, and the
+// ladder must be a no-op there rather than an error.
+func migratePhonebookSource(tx *sql.Tx) error {
+	has, err := txHasTable(tx, "phonebook")
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+	hasCol, err := txHasColumn(tx, "phonebook", "source")
+	if err != nil {
+		return err
+	}
+	if hasCol {
+		return nil
+	}
+	// No CHECK on the ALTER. SQLite cannot add a column with a CHECK constraint to
+	// an existing table, the same limitation that stopped sessions.account_id
+	// carrying its REFERENCES clause at step 6. A fresh store gets the constraint
+	// from phonebookDDL; a migrated one relies on the store being the only writer,
+	// which it is — nothing outside internal/phonebook writes this column.
+	if _, err := tx.Exec(`ALTER TABLE phonebook ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'`); err != nil {
+		return fmt.Errorf("add phonebook.source: %w", err)
+	}
+	return nil
 }
 
 // migrateAccounts moves the single fixed-id admin credential into the accounts

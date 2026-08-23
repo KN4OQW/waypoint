@@ -2655,7 +2655,18 @@ func main() {
 		go dmrtg.Run(context.Background(), hostsrc.Split(*dmrTGsURL), *dmrTGs, 24*time.Hour, hostVerify)
 		// The id<->callsign table every gateway is configured to read. Nothing used
 		// to download it, so the lookups silently resolved nothing (#138).
-		go dmrids.Run(context.Background(), hostsrc.Split(*dmrIDsURL), *dmrIDs, 24*time.Hour, hostVerify)
+		// RunThen, not Run: after each successful refresh the phonebook's imported
+		// entries are re-read against the new table, so a callsign RadioID reissued
+		// against the same DMR ID reaches the operator's roster instead of sitting
+		// stale until somebody notices. Entries the operator typed or has since
+		// edited are not touched — see phonebook.Sync.
+		//
+		// This adds no outbound request: it runs on the table the refresher had
+		// already downloaded, under the same operator-visible off switch. Turning the
+		// ID-database refresh off turns this off with it, because there is then no
+		// refresh for it to hang from.
+		go dmrids.RunThen(context.Background(), hostsrc.Split(*dmrIDsURL), *dmrIDs, 24*time.Hour, hostVerify,
+			func(path string) error { return s.syncPhonebookFromPublic(path) })
 	}
 
 	mode := "live, mqtt " + s.dataPlaneBroker(*broker)
