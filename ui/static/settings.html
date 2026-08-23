@@ -407,6 +407,11 @@
   .pill.on { color: var(--accent); border: 1px solid var(--accent); }
   .pill.off { color: var(--dim); border: 1px solid var(--pill-line); }
   .pill.warn { color: var(--warn); border: 1px solid var(--warn); }
+  /* Marks a phonebook entry that came from the public list and is still tracking
+     it. Deliberately quiet: it is the answer to "why did this change on its own",
+     not something to look at every time the table is read. The border carries the
+     state as well as the colour, so it is not colour alone. */
+  .pill.src { color: var(--dim); border: 1px solid var(--pill-line); }
 
   /* The phonebook's Login column (RFC-0002 Amendment 1). One row per account, and
      a person may hold more than one — so this wraps rather than assuming a single

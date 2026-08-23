@@ -170,6 +170,11 @@ async function seedPhonebook(context) {
   if (list.ok()) {
     for (const e of (await list.json()).entries || []) ids[e.callsign] = e.id;
   }
+  // One entry imported through the real route, so the "from the public list"
+  // marker is rendered rather than only the hand-typed rows. It needs the demo
+  // node to have an ID table; where there is none the import 404s and the panel is
+  // scanned without the marker, which is the honest degradation.
+  await context.request.post(`${BASE}/api/phonebook/import`, { data: { dmr_id: 3180202 } });
   for (const [callsign, username, role] of [["W1AW", "w1aw", "operator"], ["N0SZ", "n0sz", "admin"]]) {
     if (!ids[callsign]) continue;
     await context.request.post(`${BASE}/api/accounts`, {
@@ -192,6 +197,23 @@ async function seedPhonebook(context) {
 // honest for an accessibility scan: what is being measured is the markup the
 // operator meets, and this is that markup.
 async function openPhonebookStates(page, analyze, label) {
+  // The public-list search, in its two interesting states: results with Add
+  // buttons, and the no-match branch whose copy is the longest prose on the panel.
+  // Both are driven through the real control rather than by poking state, so the
+  // scan sees the markup an operator actually produces.
+  await page.fill("#pb-find", "KN4OQW").catch(() => {});
+  await page.click('[data-pb-action="find"]').catch(() => {});
+  await page.waitForTimeout(400);
+  if (!await page.evaluate(() => !!document.querySelector(".idfind-list li")).catch(() => false)) {
+    throw new Error("the public-list search returned nothing; the scan would have passed without measuring it");
+  }
+  await analyze(page, `${label} settings#phonebook (public-list results)`);
+
+  await page.fill("#pb-find", "ZZ9ZZZ").catch(() => {});
+  await page.click('[data-pb-action="find"]').catch(() => {});
+  await page.waitForTimeout(400);
+  await analyze(page, `${label} settings#phonebook (public-list no match)`);
+
   await page.evaluate(() => {
     const first = (pb.entries || [])[0];
     if (first) pbBeginGrant(String(first.id));

@@ -144,3 +144,53 @@ func TestImportRangeChecksTheID(t *testing.T) {
 		}
 	}
 }
+
+// TestSyncFromPublicWiring exercises the seam the unit tests cannot: the closure
+// that hands dmrids.LookupIDs to phonebook.Sync, converting between the two
+// packages' record types. Sync is tested against a fake table in internal/phonebook
+// and LookupIDs against a fixture file in internal/dmrids; this is the only place
+// the real two meet.
+func TestSyncFromPublicWiring(t *testing.T) {
+	e, cookie := withTable(t, importTable)
+
+	// Import a row, then rewrite the table as though RadioID reissued the callsign
+	// against the same ID — the case the whole refresh exists for.
+	if rec := e.do(t, "POST", "/api/phonebook/import", map[string]any{"dmr_id": 3180202}, cookie); rec.Code != http.StatusCreated {
+		t.Fatalf("import = %d (%s)", rec.Code, rec.Body.String())
+	}
+	// A hand-typed entry alongside it, which the refresh must not touch.
+	if rec := e.do(t, "POST", "/api/phonebook", map[string]any{"callsign": "W1AW", "dmr_id": 3100001}, cookie); rec.Code != http.StatusCreated {
+		t.Fatalf("manual create = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if err := os.WriteFile(e.s.dmrIDs, []byte("3180202\tW1XYZ\tClint\n3100001\tRENAMED\tHiram\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.s.syncPhonebookFromPublic(e.s.dmrIDs); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	imported, err := e.s.phonebook.LookupByDMRID(3180202)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imported.Callsign != "W1XYZ" {
+		t.Errorf("the imported entry did not follow the reissued callsign: %q", imported.Callsign)
+	}
+	manual, err := e.s.phonebook.LookupByDMRID(3100001)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manual.Callsign != "W1AW" {
+		t.Errorf("the hand-typed entry was rewritten to %q; the refresh must not argue with the operator", manual.Callsign)
+	}
+}
+
+// A node with no phonebook attached must not panic the refresher's goroutine.
+func TestSyncFromPublicWithNoPhonebook(t *testing.T) {
+	e := newAuthEnv(t, ":memory:")
+	e.s.phonebook = nil
+	if err := e.s.syncPhonebookFromPublic("/nonexistent/DMRIds.dat"); err != nil {
+		t.Errorf("sync with no phonebook returned %v, want nil", err)
+	}
+}
