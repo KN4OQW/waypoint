@@ -42,6 +42,98 @@ var migrations = []migration{
 	{to: 3, name: "public-view-tables-and-admin-role", fn: migratePublicView},
 	{to: 4, name: "heard-positions", fn: migrateHeardPositions},
 	{to: 5, name: "phonebook", fn: migratePhonebook},
+	{to: 6, name: "accounts", fn: migrateAccounts},
+}
+
+// migrateAccounts moves the single fixed-id admin credential into the accounts
+// table (RFC-0002 Amendment 1), in one transaction with everything that depends
+// on it.
+//
+// The whole step is atomic because a half-applied one is a device nobody can log
+// into: an accounts table without the admin row in it, or sessions pointing at an
+// account that was never written, is a node whose only recovery is a physical
+// reset. The ladder already runs each step in a transaction (applyMigration) and
+// SQLite's DDL is transactional, so the CREATE, the INSERT, the ALTER and the
+// DROP either all land or none do.
+//
+// Three things it deliberately does NOT do:
+//
+//   - It does not rehash. The password_hash and params columns are copied
+//     byte-for-byte, so the operator's existing password keeps working and its
+//     stored parameter block keeps describing it. There is no moment at which a
+//     plaintext exists, which is the property RFC-0002 stored the parameters for.
+//   - It does not set must_rotate. The migrated admin chose that password
+//     themselves at claim time; forcing a rotation would be a rotation with no
+//     event behind it.
+//   - It does not revoke sessions. RFC-0002 guarantees a session survives a
+//     daemon restart, and a migration happens during exactly such a restart.
+//     Existing sessions are attributed to the migrated admin — they belonged to
+//     the only account that existed.
+//
+// A node whose auth subsystem has never run has no admin table at all. That is
+// not a gap: auth creates its tables at head shape (auth.Store.migrate), so a
+// fresh node arrives here with accounts already present and nothing to move.
+func migrateAccounts(tx *sql.Tx) error {
+	if _, err := tx.Exec(accountsDDL); err != nil {
+		return fmt.Errorf("create accounts: %w", err)
+	}
+
+	hasAdmin, err := txHasTable(tx, "admin")
+	if err != nil {
+		return err
+	}
+	var accountID int64
+	if hasAdmin {
+		// SELECT ... INSERT rather than reading the row out and writing it back:
+		// the hash never enters this process's memory, so it cannot be logged, and
+		// the copy is exact by construction rather than by careful assignment.
+		res, err := tx.Exec(`
+INSERT INTO accounts (phonebook_id, username, password_hash, params, role, must_rotate, created_at, updated_at)
+SELECT NULL, username, password_hash, params, 'admin', 0, created_at, created_at FROM admin WHERE id = 1`)
+		if err != nil {
+			return fmt.Errorf("move the admin credential into accounts: %w", err)
+		}
+		if n, err := res.RowsAffected(); err == nil && n > 0 {
+			if accountID, err = res.LastInsertId(); err != nil {
+				return err
+			}
+		}
+	}
+
+	// sessions is the auth subsystem's table and may not exist yet on a node that
+	// has never claimed. The ladder owns only the column's existence, the same
+	// division migrateMetaColumns settled for meta.
+	hasSessions, err := txHasTable(tx, "sessions")
+	if err != nil {
+		return err
+	}
+	if hasSessions {
+		hasCol, err := txHasColumn(tx, "sessions", "account_id")
+		if err != nil {
+			return err
+		}
+		if !hasCol {
+			// No REFERENCES clause on the ALTER: SQLite cannot add a column with a
+			// foreign key to a table that already has rows, and the constraint is
+			// carried by the table auth creates at head shape. What matters here is
+			// that live sessions keep authenticating, which the backfill below does.
+			if _, err := tx.Exec(`ALTER TABLE sessions ADD COLUMN account_id INTEGER`); err != nil {
+				return fmt.Errorf("add sessions.account_id: %w", err)
+			}
+		}
+		if accountID != 0 {
+			if _, err := tx.Exec(`UPDATE sessions SET account_id = ? WHERE account_id IS NULL`, accountID); err != nil {
+				return fmt.Errorf("attribute existing sessions: %w", err)
+			}
+		}
+	}
+
+	if hasAdmin {
+		if _, err := tx.Exec(`DROP TABLE admin`); err != nil {
+			return fmt.Errorf("drop admin: %w", err)
+		}
+	}
+	return nil
 }
 
 // migratePhonebook installs the identity/contact table on a database that already
