@@ -557,6 +557,16 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// The notify section carries the SMTP password, the same write-only secret
+	// rule: a blank field keeps the stored one (see SetNotify).
+	if section == "notify" {
+		if err := config.SetNotify(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	// The D-Star gateway carries the ircDDB password, the same write-only secret
 	// rule: a blank field keeps the stored one (see SetDStarGateway).
 	if section == "dstargw" {

@@ -436,8 +436,16 @@ func (e *authEnv) get(t *testing.T, path string, cookie *http.Cookie) int {
 // the regression guard that keeps it there.
 func TestSecretsNeverInViewOrLogs(t *testing.T) {
 	e := newAuthEnv(t, ":memory:")
-	// Also seed a config secret (a network password) to prove the view redacts it.
+	// Seed every kind of config secret the view is supposed to redact, so this
+	// test fails when a NEW one is added without redaction rather than only when
+	// an existing one regresses.
 	if err := e.s.store.Set("networks", []config.Network{{Name: "BM", Address: "1.2.3.4", Password: "NETSECRET-xyz"}}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.store.Set("notify", config.Notify{
+		Enabled: true, SMTPHost: "mail.example.invalid", SMTPFrom: "node@example.invalid",
+		SMTPUsername: "kn4oqw", SMTPPassword: "SMTPSECRET-abc",
+	}, "test"); err != nil {
 		t.Fatal(err)
 	}
 	const adminPass = "SuperSecretAdminPass1"
@@ -451,7 +459,7 @@ func TestSecretsNeverInViewOrLogs(t *testing.T) {
 		t.Fatalf("GET /api/config = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, secret := range []string{adminPass, "NETSECRET-xyz"} {
+	for _, secret := range []string{adminPass, "NETSECRET-xyz", "SMTPSECRET-abc"} {
 		if strings.Contains(body, secret) {
 			t.Errorf("config view leaked secret %q", secret)
 		}

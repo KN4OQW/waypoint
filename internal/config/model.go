@@ -85,6 +85,7 @@ type Model struct {
 	// before these sections existed. MQTT carries a secret (the broker password),
 	// so it writes through SetMQTT and never appears in the View. See system.go.
 	MQTT    MQTT    `json:"mqtt"`
+	Notify  Notify  `json:"notify"`
 	Logging Logging `json:"logging"`
 }
 
@@ -757,6 +758,7 @@ func (m *Model) sections() map[string]any {
 		"station_id":         &m.StationID,
 		"update":             &m.Update,
 		"mqtt":               &m.MQTT,
+		"notify":             &m.Notify,
 		"logging":            &m.Logging,
 	}
 }

@@ -54,7 +54,12 @@ var profileSections = []string{
 // node-local secret that must never travel in a portable profile — and a profile
 // that moved the broker address would take the dashboard down on the node it was
 // imported to, which is the opposite of what switching a profile is for.
-var profileExcluded = []string{"general", "modem", "display", "lcd", "history", "station_id", "update", "peers", "remote_attachments", "peering", "mqtt", "logging"}
+// Notification settings are excluded for both of mqtt's reasons at once. The
+// SMTP password is a node-local secret that must never travel in a portable
+// profile, and the server address is this node's plumbing rather than a network
+// it connects to — a profile that carried somebody else's mail server would send
+// this node's notifications through it.
+var profileExcluded = []string{"general", "modem", "display", "lcd", "history", "station_id", "update", "peers", "remote_attachments", "peering", "mqtt", "logging", "notify"}
 
 // profileSecretFields registers the secret-bearing fields per section — shared by
 // export scrub and activate reconcile so the two can never drift. The values are
