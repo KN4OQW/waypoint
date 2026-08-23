@@ -63,7 +63,9 @@ Four choices worth stating:
 
 **`phonebook_id` is nullable.** A node claimed before this amendment has an admin with no phonebook row, and the migration must not invent one — a fabricated callsign is junk identity data in the table the dashboard reads. The column is null until an admin links it. New accounts created through the UI link at creation.
 
-**`ON DELETE RESTRICT`, not `CASCADE`.** Deleting a phonebook entry must not silently delete somebody's login. The phonebook `DELETE` handler will begin returning `409 Conflict` when an account depends on the row, naming the account. *This is a visible behaviour change to an existing endpoint and is called out in the test contract.*
+**`ON DELETE RESTRICT`, not `CASCADE`.** Deleting a phonebook entry must not silently delete somebody's login. The phonebook `DELETE` handler will begin returning `409 Conflict` when an account depends on the row, naming the account. *This is a visible behaviour change to an existing endpoint and is called out in the test contract.* The panel must render it as **"revoke this entry's login first"** — a bare 409 tells an operator that something refused without telling them what to do about it, which the house rule on error copy forbids.
+
+**No unique constraint on `phonebook_id`.** One person may hold two accounts — an `admin` login for the handful of things that need it and an `operator` login for everyday use. That is the root-and-user pattern, it is good practice rather than an edge case, and a unique constraint would forbid it for no gain.
 
 **`username` stays its own column** rather than being derived from the linked callsign. `POST /api/claim` accepts `{username, password}` and RFC-0002 fixed that; deriving the login name from the phonebook would change the claim contract. The UI may *default* the field to the linked callsign; the stored value is independent.
 
@@ -123,24 +125,24 @@ Exhaustive over the route table as it stands. **The default is deny**: a route a
 | Route | Note |
 |---|---|
 | `GET /api/events`, `GET /api/history`, `GET /api/status`, `GET /api/ws` | The live dashboard. |
-| `GET /api/config` | The redacted view — carries `HasPassword`, never a secret. **See open question 1.** |
+| `GET /api/whoami` *(new)* | Username, role, and the station callsign. **See "The whoami route" below.** |
 | `GET /api/map` | Read-only map. |
 
 #### operator (and above)
 
 | Route | Note |
 |---|---|
+| `GET /api/config` | The redacted view — carries `HasPassword`, never a secret. **Not granted to `viewer`:** it names the node's networks, addresses and ports, which a read-only account has no need for. The callsign chip that used to justify viewer access is served by `GET /api/whoami`. |
 | `PUT /api/config/{section}`, `POST /api/config/apply` | The config spine. |
 | `/api/cal/*` (`sweep`, `cancel`, `events`, `apply`, `transmit`, `listen`) | **Transmits.** RF-affecting by definition. |
 | `/api/flash`, `/api/flash/catalog`, `/api/flash/events` | Firmware. |
 | `/api/hardware`, `/hardware/detect`, `/hardware/adopt`, `/hardware/uart` | Detect takes the modem off the air. |
 | `/api/lcd/detect`, `/api/lcd/adopt` | |
 | `/api/profiles`, `/api/profiles/import`, `/api/profiles/*` | Mode/network snapshots. Identity and calibration are never in a profile (RFC-0001), so this grants no identity change. |
-| `/api/messages`, `/api/messages/{id}` | **See open question 2.** |
 | `/api/overrides` | Read-only view of override drop-ins. |
 | `/api/buses/validate` | Dry-run only. |
 | `/api/import/scan` | Preview only; `import/apply` is admin. |
-| `/api/hostlists`, `/api/hostlists/refresh`, `/api/dmr/talkgroups`, `/api/dmr/ids`, `/api/dmr/masters`, `/api/{ysf,p25,nxdn,dstar,m17}/reflectors` | Reference data for config. |
+| `/api/hostlists`, `/api/hostlists/refresh`, `/api/dmr/talkgroups`, `/api/dmr/ids`, `/api/dmr/masters`, `/api/ysf/reflectors`, `/api/p25/reflectors`, `/api/nxdn/reflectors`, `/api/dstar/reflectors`, `/api/m17/reflectors` | Reference data for config. |
 | `GET /api/network/status`, `/api/network/wifi/scan`, `/api/network/timezones` | Read and scan only. |
 
 #### admin only
@@ -149,13 +151,53 @@ Exhaustive over the route table as it stands. **The default is deny**: a route a
 |---|---|
 | `/api/accounts`, `/api/accounts/{id}` *(new)* | Account management. |
 | `/api/phonebook`, `/api/phonebook/{id}` | Carries email (PII, D4) and is the identity accounts are keyed to. |
+| `/api/messages`, `/api/messages/{id}` | Correspondence is not "what the radio does". See below. |
 | `/api/peering/*` (`discover`, `initiate`, `confirm`, `cancel`, `pending`, `peers`, `revoke`) | Trust between nodes. |
-| `/api/network/config`, `/api/network/apply`, `/api/network/confirm`, `/api/network/host/apply` | Can strand the node. **See open question 3.** |
+| `/api/network/config`, `/api/network/apply`, `/api/network/confirm`, `/api/network/host/apply` | Can strand the node. The confirm-or-revert guard is a seatbelt, not a licence. |
 | `/api/update/check`, `/api/update/apply`, `/api/update/stack*` | Changes the software. |
 | `/api/public-view/*`, `/api/branding/*` | Decides what the world sees. |
 | `POST /api/map/position` | Writes the map. |
 | `/api/import/apply` | Bulk overwrite of the config from a card. |
 | `/api/buses/migrate` | Structural. |
+
+### The `whoami` route
+
+`GET /api/whoami` is new, and it exists because the alternative was worse.
+
+The dashboard shell needs the station callsign for its sidebar chip, and it was
+reading `GET /api/config` to get it. Granting a read-only account the whole
+config view — every network name, address and port — to paint one chip is a
+disclosure with no case behind it. So the shell reads this instead:
+
+```json
+{ "username": "kn4oqw", "role": "operator", "callsign": "KN4OQW" }
+```
+
+Three fields, all of which the caller is already entitled to: their own name,
+their own role, and the station identity the node transmits in the clear on every
+transmission anyway.
+
+It also pays for itself twice. The UI has to know the caller's role regardless —
+a viewer should not be shown an Apply button that will 403 — so **role-aware
+rendering falls out of a route the shell was going to call at load anyway**. And
+it keeps the role in exactly one place: the server. The route reports what the
+server will enforce; it does not hand the client a capability.
+
+Available to every authenticated account. It carries no configuration, so there
+is no role below which it must be withheld.
+
+### Why messages are admin-only
+
+Text messages are correspondence. Reading a club member's traffic is not covered
+by "changes what the radio does", which is the whole of what `operator` is
+supposed to mean, and an operator role that quietly includes everyone's SMS is a
+role nobody can grant with confidence.
+
+The obviously-right end state is per-account scoping: a phonebook user with a
+login reads *their own* messages. That needs per-user message ownership, which
+belongs with the notification and preferences work and does not exist yet.
+Admin-only is the honest interim — it withholds rather than over-grants, and it
+does not have to be walked back when scoping lands.
 
 ### Sessions
 
@@ -201,23 +243,77 @@ Nothing in three roles changes that boundary. It is the core of RFC-0002 and it 
 
 RFC-0002's five release-blocking tests stand unchanged. Six are added.
 
-6. **Role matrix.** Exhaustive over the registered route table, for each of the three roles plus unauthenticated: assert the exact allow/deny verdict from the mapping above. Like the existing pre-claim matrix, a newly registered route **defaults to denied** and fails the test until it is deliberately placed.
+6. **Role matrix.** Exhaustive over the registered route table, for each of the three roles plus unauthenticated: assert the exact allow/deny verdict from the mapping above. Like the existing pre-claim matrix, a newly registered route **defaults to denied** and fails the test until it is deliberately placed. Two verdicts are called out because they are the ones a future change is most likely to relax by accident: **`viewer` is denied `GET /api/config`**, and **`operator` is denied `/api/messages`**.
 7. **Last-admin protection.** Deleting the only admin, and demoting the only admin, each return 409 and leave the account intact. With two admins, either may be removed.
 8. **Migration fidelity.** From a claimed pre-amendment store: the admin lands in `accounts` as `role='admin'`, the `password_hash` (salt + digest) and `params` are **byte-identical** to before, the pre-migration password still authenticates, `must_rotate` is 0, and a session live before the migration still authenticates after it.
 9. **Reset, both paths.** From a claimed device with several accounts, live sessions, and a populated phonebook: for path (a) and path (b) independently, assert `accounts` and `sessions` are empty, `claimed_at` is null, **the phonebook is untouched row-for-row**, the device serves the claim page, the marker is deleted (path b), and the reset was logged.
 10. **Forced rotation.** An account with `must_rotate=1` authenticates, is refused every route but the password change, and is granted the mapping's routes once rotated.
-11. **Referential integrity.** Deleting a phonebook row an account depends on returns 409 and deletes nothing; deleting an account revokes its sessions in the same transaction. **This test must run against an on-disk store**, not `:memory:` — `store.Open` applies `_pragma=foreign_keys(1)` only to a file path, so an in-memory store does not enforce foreign keys and would pass this test vacuously.
+11. **`whoami` discloses only its three fields.** `GET /api/whoami` returns exactly `username`, `role` and `callsign` for each role, and a field audit over the response type fails if it grows a fourth — it is the route a viewer *does* reach, so its shape is the thing holding the `/api/config` denial up.
+12. **Referential integrity.** Deleting a phonebook row an account depends on returns 409 and deletes nothing; deleting an account revokes its sessions in the same transaction. The phonebook panel renders the 409 as "revoke this entry's login first", not as a bare status. **This test must run against an on-disk store**, not `:memory:` — `store.Open` applies `_pragma=foreign_keys(1)` only to a file path, so an in-memory store does not enforce foreign keys and would pass this test vacuously.
 
-## Open questions
+## Decisions taken during drafting
 
-1. **Does `viewer` get `GET /api/config`?** The dashboard shell reads it for the callsign chip, so some access is needed. It is redacted of secrets but still names networks, addresses and ports. Options: grant it, grant a narrower projection, or move the chip to `/api/status`. Leaning grant, flagged because it is the one viewer route that discloses configuration.
-2. **Are text messages visible to `operator`?** Messages are correspondence. Reading a club member's texts is arguably above "changes what the radio does". Options: operator (as mapped), admin-only, or per-account visibility. Leaning admin-only on reflection, but it is a real call.
-3. **Is host networking `admin` or `operator`?** Mapped as admin because a bad change strands the node. But the confirm-or-revert guard already exists precisely for that, which weakens the argument.
-4. **Should `username` default to the linked phonebook callsign** in the UI, and should two accounts be allowed to link to the same phonebook row (one person, two roles)? Leaning yes and no respectively.
+Four questions were open in an earlier revision and are settled here, recorded so
+review does not re-litigate ground already walked.
 
-## Reconciliation notes (drift found while drafting)
+1. **`viewer` does not get `GET /api/config`.** Redacted or not, it names the
+   node's networks, addresses and ports, and a read-only account has no need for
+   them. The callsign chip that motivated the question is served by
+   `GET /api/whoami` instead, which also gives the UI the role it needs for
+   role-aware rendering.
+2. **Messages are admin-only**, not operator. Correspondence is not "changes what
+   the radio does". Per-account scoping is the right end state and arrives with
+   the notification/preferences work; withholding now is the interim that does not
+   have to be walked back.
+3. **Host networking stays admin.** The confirm-or-revert guard is a seatbelt,
+   not a licence.
+4. **Several accounts may link to one phonebook row**, and `username` may default
+   to the linked callsign in the UI without being derived from it. One person
+   holding an admin login and an operator login is the root-and-user pattern.
 
-Neither is caused by this amendment. Both are places where RFC-0002's text and the shipped implementation have diverged, surfaced here because this amendment touches the same sections. The maintainer may want to fold them in or record them separately.
+**This amendment ships with no open questions of its own.** RFC-0002's three
+remain open and are untouched by it (argon2id cost-parameter escalation policy,
+self-signed-certificate trust UX, at-rest encryption revisited at Phase 3).
 
-1. **Status code for an authenticated-but-absent session.** RFC-0002 says a claimed device returns **403** to an unauthenticated caller. The implementation returns **401** with a `mode: "login"` body (`internal/auth/handlers.go`), reserving 403 for the unclaimed state's `mode: "claim"`. The implemented split is better — it tells a client which surface to show — but the RFC text says 403 in both states.
-2. **Depth of reset path (b).** RFC-0002 §Reset lists five actions for the marker path. The implementation performs a **full re-provision**: it also clears the provisioned marker, discards in-flight setup progress, and clears the `config.db` mirror, so the next boot serves the setup wizard. The code documents this as deliberate — *"the two reset paths are deliberately different depths, matched to what the person running them can already do"* — but RFC-0002 does not describe it.
+## Errata to RFC-0002
+
+Two places where RFC-0002's text and the shipped implementation had diverged.
+Neither is caused by this amendment; both are in sections it touches, so rather
+than spend a second review round on two paragraphs, **this amendment adopts the
+shipped behaviour as normative and corrects the RFC text.**
+
+**E1 — Status code for an authenticated-but-absent session.** RFC-0002 says a
+claimed device returns **403** to an unauthenticated caller. The implementation
+returns **401** with a `mode: "login"` body, reserving **403** with
+`mode: "claim"` for the unclaimed state (`internal/auth/handlers.go`).
+
+*Corrected text:* an unclaimed device answers a non-allowlisted route with **403
+and `mode: "claim"`**; a claimed device answers an unauthenticated caller with
+**401 and `mode: "login"`**. The split is deliberate and better than the original
+text: the status code alone cannot tell a client whether to render the claim
+screen or the login screen, and the `mode` field does. RFC-0002's route-matrix
+test contract is unchanged in substance — the assertion is "denied by the gate",
+of which both codes are cases.
+
+**E2 — Depth of reset path (b).** RFC-0002 §Reset lists five actions for the
+boot-partition marker path. The implementation performs a **full re-provision**:
+it also clears the provisioned marker, discards in-flight setup progress, and
+clears the `config.db` mirror, so the next boot serves the setup wizard and
+raises the setup access point.
+
+*Corrected text:* the two reset paths are **deliberately different depths, matched
+to what the person running them can already do.** `reset-claim` needs a shell on
+the box; whoever has one can already read the config and restart the daemons, so
+handing the dashboard to a new administrator is the whole job and the node's
+identity is not in question. The marker needs the SD card in a reader — someone
+holding the hardware, and the reason they are holding it is almost always that
+they cannot get in at all. A claim-only reset would hand them a dashboard on a
+node still carrying someone else's hostname, recovery account and SSH key.
+
+Neither path reverts anything on the system: the hostname stays, the recovery
+account stays, root stays locked. Reverting those needs the privileged helper,
+and a reset that ran halfway would be worse than one that reverts nothing.
+
+**This changes nothing about the guarantee this amendment depends on:** both paths
+wipe `accounts` and `sessions` and clear `meta.claimed_at` through the same
+primitive, and neither touches the phonebook.
