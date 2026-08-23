@@ -29,6 +29,7 @@ const TABS = [
   { id: "profiles",     tag: "PF" },
   { id: "publicview",   tag: "PV" },
   { id: "phonebook",    tag: "PB" },
+  { id: "notify",       tag: "NT" },
   { id: "updates",      tag: "UP" },
   { id: "system",       tag: "SS" },
   { id: "expert",       tag: "SY" },
@@ -386,6 +387,20 @@ function buildEdit(c) {
       bus_prefix: (c.mqtt || {}).bus_prefix || "waypoint/bus",
     },
     logging: loggingFrom(c.logging || {}),
+    // smtp_password starts blank for the same reason mqtt's does: blank means
+    // "keep the stored one", has_smtp_password drives the placeholder, and the
+    // value itself never reaches the browser (D4).
+    notify: {
+      enabled: !!(c.notify || {}).enabled,
+      smtp_host: (c.notify || {}).smtp_host || "",
+      smtp_port: (c.notify || {}).smtp_port || "587",
+      smtp_implicit_tls: !!(c.notify || {}).smtp_implicit_tls,
+      smtp_allow_plaintext: !!(c.notify || {}).smtp_allow_plaintext,
+      smtp_insecure_skip_verify: !!(c.notify || {}).smtp_insecure_skip_verify,
+      smtp_username: (c.notify || {}).smtp_username || "",
+      smtp_password: "",
+      smtp_from: (c.notify || {}).smtp_from || "",
+    },
   };
   dirty = new Set();
   refreshActions();
@@ -3910,6 +3925,7 @@ function renderPanel() {
     case "station":      box.innerHTML = panelStation(); break;
     case "publicview":   box.innerHTML = panelPublicView(); pvAfterRender(); break;
     case "phonebook":    box.innerHTML = panelPhonebook(); pbAfterRender(); break;
+    case "notify":       box.innerHTML = panelNotify(); ntAfterRender(); break;
     case "updates":      box.innerHTML = panelUpdates(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
     case "system":       box.innerHTML = panelSystem(c); break;
@@ -4255,6 +4271,11 @@ function selectTab(id, sub) {
   // the critical path of a page most operators open to change a frequency.
   if (target.id === "phonebook" && !pb.loaded) {
     pbLoad().then(renderPanel);
+  }
+  // The notifications panel needs the phonebook (to offer a test recipient) and
+  // the parked list, neither of which is in the config model.
+  if (target.id === "notify") {
+    Promise.all([pb.loaded ? Promise.resolve() : pbLoad(), ntLoad()]).then(renderPanel);
   }
   if (target.id === "modes") {
     state.sub = target.sub;
@@ -5808,4 +5829,127 @@ function pbAfterRender() {
       if (ev.key === "Enter") { ev.preventDefault(); pbSubmit(); }
     });
   });
+}
+
+
+// --- Notifications panel ---------------------------------------------------
+//
+// SMTP settings plus the two things an operator needs when nothing arrives: a
+// test send, and the list of notifications that gave up and why.
+//
+// The test button ENQUEUES. It cannot report "sent" because sending happens on
+// the dispatcher's goroutine seconds later — and that is deliberate, not a
+// limitation: a button that waited for SMTP would hang this page for the timeout
+// against exactly the broken server it is there to diagnose. So it says queued,
+// and the parked list below is where the answer appears if it fails.
+const nt = { parked: [], err: "", note: "" };
+
+async function ntLoad() {
+  try {
+    const r = await fetch("/api/notify/parked");
+    if (!r.ok) throw new Error(await r.text());
+    nt.parked = (await r.json()).parked || [];
+  } catch (e) {
+    // A failure to read the parked list is not worth breaking the panel over:
+    // the settings above it still work, and the list is diagnostic.
+    nt.parked = [];
+  }
+}
+
+async function ntSendTest() {
+  const sel = document.getElementById("nt-test-to");
+  const id = sel ? Number(sel.value) : 0;
+  if (!id) {
+    nt.err = msg("notify.testPickSomebody");
+    nt.note = "";
+    renderPanel();
+    return;
+  }
+  try {
+    const r = await fetch("/api/notify/test", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phonebook_id: id }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      nt.err = (body.error || msg("notify.testFailed")).trim();
+      nt.note = "";
+    } else {
+      nt.err = "";
+      nt.note = msg("notify.testQueued", { to: body.to || "" });
+    }
+  } catch (e) {
+    nt.err = String((e && e.message) || e);
+    nt.note = "";
+  }
+  await ntLoad();
+  renderPanel();
+}
+
+function panelNotify() {
+  const n = edit.notify || {};
+  const v = (state.config && state.config.notify) || {};
+
+  const server = card(msg("notify.serverTitle"),
+    toggleRow("notify", "enabled", msg("notify.enabled")) +
+    input("notify", "smtp_host", { label: msg("notify.host"), placeholder: "smtp.example.com" }) +
+    input("notify", "smtp_port", { label: msg("notify.port"), placeholder: "587" }) +
+    input("notify", "smtp_from", { label: msg("notify.from"), placeholder: "waypoint@example.com" }) +
+    note(msg("notify.fromHelp")));
+
+  // The password placeholder is the only thing that tells an operator a secret is
+  // stored, because the value never reaches the browser. Same treatment the MQTT
+  // broker password gets.
+  const auth = card(msg("notify.authTitle"),
+    input("notify", "smtp_username", { label: msg("notify.username") }) +
+    row(msg("notify.password"),
+      `<input type="password" data-sec="notify" data-key="smtp_password" autocomplete="new-password" ` +
+      `placeholder="${esc(v.has_smtp_password ? msg("common.passwordUnchanged") : "")}" ` +
+      `aria-label="${esc(msg("notify.password"))}">`) +
+    note(msg("notify.passwordHelp")));
+
+  const tls = card(msg("notify.tlsTitle"),
+    toggleRow("notify", "smtp_implicit_tls", msg("notify.implicitTls")) +
+    toggleRow("notify", "smtp_allow_plaintext", msg("notify.allowPlaintext")) +
+    toggleRow("notify", "smtp_insecure_skip_verify", msg("notify.skipVerify")) +
+    note(msg("notify.tlsHelp")));
+
+  // Only phonebook entries with an address can receive a test, so the picker
+  // lists those and says so when there are none — rather than offering a name
+  // that will be refused.
+  const withEmail = (pb.entries || []).filter((e) => e.email);
+  const testBody = withEmail.length
+    ? row(msg("notify.testTo"),
+        `<select id="nt-test-to" aria-label="${esc(msg("notify.testTo"))}">` +
+        withEmail.map((e) => `<option value="${e.id}">${esc(e.callsign)} — ${esc(e.email)}</option>`).join("") +
+        `</select>`) +
+      `<button type="button" class="btn primary" data-nt-action="test">${esc(msg("notify.sendTest"))}</button>` +
+      note(msg("notify.testHelp"))
+    : note(msg("notify.testNoAddresses"));
+  const test = card(msg("notify.testTitle"),
+    (nt.err ? `<div class="note" role="alert" style="color:var(--bad);border-color:var(--bad)">${esc(nt.err)}</div>` : "") +
+    (nt.note ? `<div class="note" role="status">${esc(nt.note)}</div>` : "") +
+    testBody);
+
+  const parkedRows = nt.parked.length
+    ? `<div class="tscroll"><table aria-label="${esc(msg("notify.parkedTable"))}">` +
+      `<thead><tr><th scope="col">${esc(msg("notify.parkedWhat"))}</th>` +
+      `<th scope="col">${esc(msg("notify.parkedWhen"))}</th>` +
+      `<th scope="col">${esc(msg("notify.parkedWhy"))}</th></tr></thead><tbody>` +
+      nt.parked.map((p) =>
+        `<tr><td>${esc(p.event_type)}</td><td class="num">${esc(String(p.created_at).slice(0, 16).replace("T", " "))}</td>` +
+        `<td>${esc(p.last_error)}</td></tr>`).join("") +
+      `</tbody></table></div>`
+    : note(msg("notify.parkedNone"));
+  const parked = card(msg("notify.parkedTitle"), note(msg("notify.parkedHelp")) + parkedRows);
+
+  return `<div class="grid2">${server}<div class="stack">${auth}${tls}</div></div>` +
+    `<div class="grid2">${test}${parked}</div>`;
+}
+
+// ntAfterRender wires the test button. Everything else on this panel is an
+// ordinary data-sec/data-key control and is handled by the existing delegation.
+function ntAfterRender() {
+  const b = document.querySelector('[data-nt-action="test"]');
+  if (b) b.addEventListener("click", ntSendTest);
 }
