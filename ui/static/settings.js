@@ -831,8 +831,9 @@ function nodeLockRow() {
 // --- panels --------------------------------------------------------------
 function panelGeneral() {
   const left = card(msg("general.stationIdentity"),
-    input("general", "callsign", { label: msg("general.callsign") }) +
-    idLookupRow() +
+    callsignRow() +
+    note(msg("general.callsignHelp")) +
+    input("general", "id", { label: msg("general.dmrId"), placeholder: "3180202" }) +
     input("general", "location", { label: msg("general.location") }) +
     input("general", "url", { label: msg("general.dashboardUrl") }));
   const radio = card(msg("general.radioFrequency"),
@@ -1344,126 +1345,56 @@ function shortErr(err) {
 let dmrMasters = []; // cached /api/dmr/masters, for the master dropdowns
 let dmrTGs = [];     // cached /api/dmr/talkgroups, for the searchable TG picker (RFC-0010)
 
-// --- DMR ID lookup (#140) -------------------------------------------------
-// Result of the last callsign -> DMR ID lookup against /api/dmr/ids, which reads
-// the DMRIds.dat the node already downloads for the gateways. Page state only: it
-// is never saved, and choosing a row goes through setField like any other edit,
-// so nothing here bypasses Apply.
+// --- station callsign + DMR ID (#140) --------------------------------------
 //
-// The lookup NEVER writes the ID by itself, not even when the table returns a
-// single unambiguous row. A callsign can have several IDs issued to it — most of
-// the multi-ID callsigns in the table are one operator's block of consecutive
-// numbers, and only that operator knows which one this node uses — so the page
-// offers and the operator chooses. Guessing here would be a wrong number logged
-// into a live network, which is worse than a lookup that saved nobody a keystroke.
-let idLookup = { status: "idle", callsign: "", records: [], truncated: false, available: true };
-// Which callsign the automatic lookup has already been spent on. The lookup scans
-// a 6.6 MB file, so the panel fires it at most once per callsign per page load,
-// and only when the DMR ID field is empty — a node that is already configured
-// never pays for it at all.
-let idLookupAuto = "";
-// Set when the operator asked, so the result takes focus and is read out. The
-// automatic suggestion deliberately does not: moving focus because a panel
-// finished rendering would yank an operator out of whatever they were doing.
-let idLookupAnnounce = false;
-
-async function runIDLookup(cs, announce) {
-  const call = String(cs || "").trim();
-  if (!call) {
-    idLookup = { status: "nocall", callsign: "", records: [], truncated: false, available: true };
-    idLookupAnnounce = !!announce;
-    repaintGeneral();
-    return;
-  }
-  // Mark the callsign spent here rather than only at the automatic call site, so a
-  // manual press does not leave the automatic path free to scan the same file
-  // again on the very next render.
-  idLookupAuto = call.toUpperCase();
-  idLookup = { status: "busy", callsign: call, records: [], truncated: false, available: true };
-  repaintGeneral();
-  try {
-    const r = await fetch("/api/dmr/ids?callsign=" + encodeURIComponent(call));
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    const body = await r.json();
-    idLookup = {
-      status: "done",
-      // The server answers with what it actually searched: a suffixed callsign
-      // falls back to the base call, and the operator should see which one the
-      // answer is about rather than wonder.
-      callsign: body.callsign || call,
-      records: body.records || [],
-      truncated: !!body.truncated,
-      available: !!body.available,
-    };
-  } catch (err) {
-    idLookup = { status: "error", callsign: call, records: [], truncated: false, available: true, error: shortErr(err) };
-  }
-  idLookupAnnounce = !!announce;
-  repaintGeneral();
-}
-
-// repaintGeneral re-renders only while the General tab is the one on screen. The
-// lookup is asynchronous and the operator is free to walk away from it mid-scan; a
-// result landing afterwards must not rebuild whatever panel they moved to.
-function repaintGeneral() {
-  if (state.tab === "general") renderPanel();
-}
-
-// idLookupRow is the General tab's DMR ID field: the ordinary text input, a button
-// that asks the table what IDs the callsign has, and the answer underneath.
+// These two fields used to be a text box and a "Find my ID" button whose answer
+// arrived in a results panel underneath, where each row carried a Use button
+// that wrote the ID. That worked, but it made the operator ask for something the
+// page could simply offer, and it put the answer somewhere other than the field
+// it was an answer about.
 //
-// It is hand-built rather than input()+something because the result has to live
-// inside the same .row — enhanceHelp attaches "help.general.id" to that row, and a
-// second row would give the field two help disclosures.
-function idLookupRow() {
-  const cur = (edit.general || {}).id == null ? "" : (edit.general || {}).id;
-  const call = ((edit.general || {}).callsign || "").trim();
-  // Fire the automatic suggestion for an unconfigured node. Deferred out of the
-  // render: runIDLookup re-renders, and re-entering renderPanel from inside itself
-  // would build the panel on top of the one being returned.
-  // idLookupAuto alone guards the re-entry: runIDLookup marks the callsign spent
-  // before its first render, so the busy repaint cannot start a second scan.
-  if (!cur && call && idLookupAuto !== call.toUpperCase()) setTimeout(() => runIDLookup(call, false), 0);
-  const control =
-    `<div class="idfind">` +
-      `<input data-sec="general" data-key="id" data-kind="str" value="${esc(cur)}">` +
-      `<button type="button" class="btn ghost idfind-go" data-idlookup="1">${esc(msg("general.findMyId"))}</button>` +
-    `</div>`;
-  return `<div class="row"><label>${esc(msg("general.dmrId"))}</label>${control}${idLookupOut(cur)}</div>`;
+// The Callsign field is now the search. Typing it lists the rows the public ID
+// table holds for that callsign, and choosing one fills the DMR ID.
+//
+// The old code carried a deliberate rule — the lookup NEVER wrote an ID by
+// itself, because a callsign can have several issued to it and only the operator
+// knows which one this node uses. That rule is intact, not dropped. The choice
+// simply moved into the dropdown: every issued ID is a separate option, labelled
+// with the row's name to tell a block of consecutive numbers apart, and nothing
+// is written until one is chosen. What is gone is the automatic scan that fired
+// on render for an unconfigured node — with the IDs listed as you type, a
+// suggestion nobody asked for has nothing left to add.
+//
+// The nine-digit hotspot IDs an operator derives from their base ID are not
+// issued rows and are in no export, so a pick is a starting point on this tab:
+// the field stays editable and the operator appends their own two digits.
+
+// generalPickCallsign commits a choice from the Callsign picker.
+//
+// Both halves go through setField, so they are ordinary unsaved edits that Apply
+// writes like any other — the picker bypasses nothing.
+function generalPickCallsign(call, rec) {
+  setField("general", "callsign", call);
+  // Free text (no row behind it) sets the callsign and stops. Overwriting a
+  // configured DMR ID because somebody corrected a typo in their callsign would
+  // be the picker editing a field it was not asked about — and on this tab that
+  // field may hold a derived hotspot ID that is in no table.
+  if (rec && rec.id) setField("general", "id", String(rec.id));
+  renderPanel();
 }
 
-// idLookupOut renders the answer. Every branch says what happened AND what to do
-// about it: an empty table is fixed on this node, an unlisted callsign is fixed at
-// radioid.net, and those are not the same errand.
-function idLookupOut(cur) {
-  const L = idLookup;
-  if (L.status === "idle") return "";
-  const call = esc(L.callsign);
-  const box = (html) => `<div class="idfind-out" id="id-lookup-out" tabindex="-1" role="status">${html}</div>`;
-  switch (L.status) {
-    case "nocall":
-      return box(esc(msg("general.idLookupNoCallsign")));
-    case "busy":
-      return box(esc(msg("general.idLookupBusy")));
-    case "error":
-      return box(esc(msg("general.idLookupFailed")) + (L.error ? ` <span class="idfind-dim">${esc(L.error)}</span>` : ""));
-  }
-  if (!L.available) return box(msg("general.idLookupNoTable"));
-  if (!L.records.length) return box(msg("general.idLookupNoMatch", { callsign: `<b>${call}</b>`, radioid: extLink("https://radioid.net/", "radioid.net") }));
-
-  const head = L.records.length === 1
-    ? msg("general.idLookupOne", { callsign: `<b>${call}</b>` })
-    : msg("general.idLookupMany", { callsign: `<b>${call}</b>`, count: L.records.length });
-  const tail = L.truncated ? ` ${esc(msg("general.idLookupTruncated", { count: L.records.length }))}` : "";
-  const rows = L.records.map((r) => {
-    const id = String(r.id);
-    const name = r.name ? `<span class="idfind-name">${esc(r.name)}</span>` : "";
-    const action = id === String(cur)
-      ? `<span class="idfind-cur">${esc(msg("general.idLookupInUse"))}</span>`
-      : `<button type="button" class="btn ghost" data-iduse="${esc(id)}" aria-label="${esc(msg("general.idLookupUse", { id }))}">${esc(msg("general.idLookupUseShort"))}</button>`;
-    return `<li><span class="idfind-id">${esc(id)}</span>${name}${action}</li>`;
-  }).join("");
-  return box(`<p class="idfind-head">${head}${tail}</p><ul class="idfind-list">${rows}</ul>`);
+// callsignRow is the General tab's Callsign field: the type-ahead, with the
+// plain input inside the mount as the fallback (D7).
+//
+// Hand-built rather than input()+something for the same reason idLookupRow was:
+// enhanceHelp attaches the row's help disclosure to a .row, and a second row
+// would give the field two of them.
+function callsignRow() {
+  const cur = (edit.general || {}).callsign == null ? "" : (edit.general || {}).callsign;
+  return `<div class="row"><label>${esc(msg("general.callsign"))}</label>` +
+    `<div class="cspick" data-callsign-picker="general">` +
+      `<input data-sec="general" data-key="callsign" data-kind="str" placeholder="KN4OQW" value="${esc(cur)}">` +
+    `</div></div>`;
 }
 
 const slotSelect = (sel, attrs) =>
@@ -1691,6 +1622,85 @@ function cleanWx(w) {
   delete out.has_password;
   if (!out.password) delete out.password;
   return out;
+}
+
+// --- callsign type-ahead ---------------------------------------------------
+//
+// The public RadioID export is 310,364 rows, so a callsign field that offers
+// what the node already knows has to be a search rather than a list. One source
+// backs both pickers — the phonebook's entry form and the General tab's station
+// callsign — because it is the same table answering the same question, and two
+// copies of "what does a row look like in a dropdown" would drift.
+//
+// The list is a SUGGESTION, never a constraint. Both pickers run with freeText,
+// so a callsign the export has never heard of is typed and accepted exactly as
+// it always was: the export records who has registered a DMR ID, which is a
+// smaller set than the callsigns that exist, and a node whose ID table has never
+// been downloaded has no list at all. That is why every empty answer below says
+// which kind of empty it is instead of one shrug for all of them.
+
+// callsignMinPrefix is the shortest prefix the daemon will search, learned from
+// its own answer rather than written down here. The server enforces it
+// (dmrids.SearchPrefixMin) and a second copy in this file would be free to drift
+// from the one that matters. Zero until the first answer lands, which is why the
+// note below is conditional rather than assumed.
+let callsignMinPrefix = 0;
+
+// callsignSource backs both callsign pickers.
+//
+// Answering a prefix shorter than the minimum costs the daemon nothing — the
+// scanner returns before it opens the file — so this asks from the first
+// keystroke rather than counting characters locally, and gets the minimum back
+// to explain itself with.
+function callsignSource(q) {
+  const query = String(q || "").trim();
+  return fetch("/api/dmr/ids?prefix=" + encodeURIComponent(query), { headers: { Accept: "application/json" } })
+    .then((r) => {
+      // A 400 is the daemon saying "that is not a callsign shape", which happens
+      // while somebody types a space or a punctuation mark into the box. It is an
+      // empty answer, not a failed request: rejecting here would leave the last
+      // list on screen under text that no longer has anything to do with it.
+      if (r.status === 400) return { records: [] };
+      return r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status));
+    })
+    .then((b) => {
+      if (typeof b.min_prefix === "number" && b.min_prefix > 0) callsignMinPrefix = b.min_prefix;
+      const recs = b.records || [];
+      const items = recs.map((r) => ({
+        value: r.callsign,
+        label: r.callsign,
+        // The ID is what tells two rows of the same callsign apart, and it is the
+        // field being chosen as much as the callsign is. Composed here rather
+        // than in Go: a user-facing string generated in Go cannot be translated
+        // (CLAUDE.md), so the daemon sends the parts.
+        sub: String(r.id) + (r.name ? " · " + r.name : ""),
+        data: r,
+      }));
+      return { items, note: callsignNote(query, b, items.length) };
+    });
+}
+
+// callsignNote is what the picker says about the list as a whole. Each branch
+// answers a different question an operator would otherwise have to guess at, and
+// the empty ones matter most: an empty dropdown with nothing said about it reads
+// as "this person is not registered", which is the wrong conclusion three times
+// out of four.
+function callsignNote(query, body, shown) {
+  // Still typing. Said rather than left blank, because a picker that does
+  // nothing for two keystrokes looks broken.
+  if (callsignMinPrefix && query.length > 0 && query.length < callsignMinPrefix) {
+    return msg("callsign.keepTyping", { count: callsignMinPrefix });
+  }
+  if (!query.length) return msg("callsign.typeToSearch");
+  // No table at all is fixed on the Updates tab; an unlisted callsign is fixed at
+  // radioid.net, or by simply typing it. Sending an operator on the wrong errand
+  // is worse than saying nothing, which is the rule the #140 lookup set.
+  if (body.available === false) return msg("callsign.noTable");
+  if (!shown) return msg("callsign.noMatch");
+  // A window, said so. Fifty rows with nothing saying they are fifty of many
+  // reads as all of them.
+  if (body.truncated) return msg("callsign.showing", { shown: shown });
+  return "";
 }
 
 // wxCountySource backs the county picker's type-ahead. It asks the daemon rather
@@ -4241,16 +4251,7 @@ function renderPanel() {
   enhanceHelp(box);
   enhanceTzPickers(box);
   enhanceCountyPickers(box);
-  // A DMR ID lookup the operator ASKED for takes focus, so the answer is read out
-  // and reachable without hunting for it. renderPanel replaces the panel wholesale,
-  // so a role="status" region is new markup rather than a changed one and cannot be
-  // relied on to announce; moving focus is what actually works here. The automatic
-  // suggestion never sets the flag — see idLookupAnnounce.
-  if (idLookupAnnounce) {
-    idLookupAnnounce = false;
-    const out = document.getElementById("id-lookup-out");
-    if (out) out.focus();
-  }
+  enhanceCallsignPickers(box);
 }
 
 // enhanceTzPickers upgrades every [data-tzpicker] mount in the freshly rendered
@@ -4298,6 +4299,48 @@ function enhanceTzPickers(box) {
 // The mount holds BOTH the code box and the Add button, so enhancing hides the
 // pair together. A visible Add button beside an enhanced picker would read the
 // hidden box it no longer edits and do nothing.
+// enhanceCallsignPickers upgrades every [data-callsign-picker] mount to the
+// type-ahead over the public ID list. Same rules as the two enhancers above: it
+// runs after every render because the panel is rebuilt wholesale, and it is
+// guarded and wrapped so a missing or throwing component leaves an ordinary text
+// box that still submits (D7).
+//
+// freeText is the setting that matters here and it is not a detail. The public
+// export lists who has registered a DMR ID, not who holds a licence, and a node
+// that has never been online has no export at all — so a callsign box that only
+// accepted what the list contained would refuse perfectly real callsigns, and
+// refuse every callsign on a fresh node. The list suggests; the operator decides.
+function enhanceCallsignPickers(box) {
+  if (typeof WPTz === "undefined" || !WPTz.createTzPicker) return;
+  box.querySelectorAll("[data-callsign-picker]").forEach((mount, i) => {
+    const native = mount.querySelector("input");
+    if (!native) return;
+    const which = mount.dataset.callsignPicker;
+    try {
+      WPTz.createTzPicker(mount, {
+        source: callsignSource,
+        value: native.value || "",
+        freeText: true,
+        ariaLabel: msg("callsign.search"),
+        placeholder: native.getAttribute("placeholder") || "",
+        noMatchText: msg("callsign.noMatch"),
+        idBase: "cspick-" + which + "-" + i,
+        onSelect: (call, item) => {
+          // Keep the hidden fallback in step with the model, so pbReadForm and
+          // the General tab's setField both read what the picker committed.
+          native.value = call;
+          const rec = item && item.data ? item.data : null;
+          if (which === "general") { generalPickCallsign(call, rec); return; }
+          if (rec) { pbPick(rec); return; }
+          pbPickFree(call);
+        },
+      });
+    } catch (e) {
+      // Leave the plain text box visible and working.
+    }
+  });
+}
+
 function enhanceCountyPickers(box) {
   if (typeof WPTz === "undefined" || !WPTz.createTzPicker) return;
   box.querySelectorAll("[data-wx-countypicker]").forEach((mount, i) => {
@@ -5325,8 +5368,6 @@ document.getElementById("panels").addEventListener("click", (e) => {
   if (pbGrantBtn) { pbBeginGrant(pbGrantBtn.dataset.pbGrant); return; }
   const pbRev = e.target.closest("[data-pb-revoke]");
   if (pbRev) { pbRevoke(pbRev.dataset.pbRevoke); return; }
-  const pbImp = e.target.closest("[data-pb-import]");
-  if (pbImp) { pbImport(pbImp.dataset.pbImport); return; }
   const pbA = e.target.closest("[data-pb-action]");
   if (pbA) {
     switch (pbA.dataset.pbAction) {
@@ -5334,7 +5375,6 @@ document.getElementById("panels").addEventListener("click", (e) => {
       case "cancel": pbCancelEdit(); break;
       case "grant": pbGrant(); break;
       case "cancelGrant": pbCancelGrant(); break;
-      case "find": pbFind(); break;
     }
     return;
   }
@@ -5353,17 +5393,6 @@ document.getElementById("panels").addEventListener("click", (e) => {
     const body = document.getElementById(id);
     if (body) body.classList.toggle("sr-only", !open);
     hb.setAttribute("aria-expanded", String(open));
-    return;
-  }
-  // --- DMR ID lookup (#140) ---
-  // The button asks the cached table what IDs the General callsign has; a row's
-  // Use button commits one through setField, so it is an ordinary unsaved edit
-  // that Apply writes like any other.
-  if (e.target.closest("[data-idlookup]")) { runIDLookup((edit.general || {}).callsign, true); return; }
-  const idu = e.target.closest("[data-iduse]");
-  if (idu) {
-    setField("general", "id", idu.dataset.iduse);
-    renderPanel(); // the list re-renders with the chosen row marked as the one in use
     return;
   }
   // --- Modes sub-tab strip (D4) ---
@@ -5560,14 +5589,6 @@ document.getElementById("panels").addEventListener("change", (e) => {
 // re-render so the keyboard user stays put.
 document.getElementById("panels").addEventListener("keydown", (e) => {
   const t = e.target;
-  // Enter in the public-list search runs it. The field is not in a <form>, so
-  // nothing would happen otherwise, and pressing Enter after typing a callsign is
-  // what everyone does.
-  if (t && t.id === "pb-find" && e.key === "Enter") {
-    e.preventDefault();
-    pbFind();
-    return;
-  }
   // Modes sub-tab strip: arrows move between tabs, Home/End jump to the ends
   // (WAI-ARIA tabs pattern). Enter/Space need no handler — they are real buttons.
   const mt = t.closest && t.closest("[data-modesub]");
@@ -6005,14 +6026,18 @@ const pb = {
   grantField: "",
   // --- import from the public ID table ------------------------------------
   // The operator's roster is a handful of people and the public export is over
-  // 300,000 rows, so the way in is a search rather than a list: type a callsign,
-  // see the IDs issued to it, add the one that is them.
+  // 300,000 rows, so the way in is a search — and it is the Callsign field
+  // itself, rather than a second card below the form. Typing a callsign is what
+  // an operator does either way; making that one box also offer the rows behind
+  // what they typed removes a choice that was never interesting (am I adding
+  // somebody by hand, or from the list?) without removing either outcome.
   //
-  // find mirrors the General tab's #140 lookup because it is the same question
-  // asked in the same shape — deliberately, so an operator who has met one
-  // recognises the other.
-  find: { status: "idle", callsign: "", records: [], truncated: false, available: true, err: "" },
-  findQuery: "",
+  // picked is the public row the operator chose from the dropdown, or null. It
+  // exists for PROVENANCE, not for the form: the fields it fills are ordinary
+  // form fields the operator may then edit, and this remembers which row they
+  // came from so pbSubmit can tell an imported entry from a typed one. Cleared
+  // whenever the identity fields stop matching it — see pbPickedIntact.
+  picked: null,
 };
 
 // pbAccountsFor returns the accounts keyed to a phonebook entry. Several may share
@@ -6124,6 +6149,23 @@ function pbBody() {
 async function pbSubmit() {
   pbReadForm();
   const editing = pb.editing;
+  // A new entry whose identity fields are still exactly the row picked from the
+  // dropdown goes in as an IMPORT, not as an ordinary create. That is not a
+  // shortcut — it is the difference between an entry the node knows came from the
+  // public list, and will carry a reissued callsign through when the table is
+  // next downloaded, and one it believes the operator typed and will never touch
+  // again. Only on create: /api/phonebook/import creates, and an edit of an
+  // existing row is the operator's own change either way.
+  if (!editing && pbPickedIntact()) {
+    const created = await pbImportPicked();
+    if (!created) { renderPanel(); return; }
+    pb.editing = null;
+    pb.form = pbBlankForm();
+    pb.picked = null;
+    await pbLoad();
+    renderPanel();
+    return;
+  }
   const path = editing ? "/api/phonebook/" + encodeURIComponent(editing) : "/api/phonebook";
   try {
     const r = await fetch(path, {
@@ -6145,6 +6187,7 @@ async function pbSubmit() {
     // what was actually stored — the callsign comes back uppercased.
     pb.editing = null;
     pb.form = pbBlankForm();
+    pb.picked = null;
     pb.err = "";
     pb.field = "";
   } catch (e) {
@@ -6285,52 +6328,108 @@ function pbLoginCell(e) {
   }).join("");
 }
 
-// pbFind asks the public ID table which DMR IDs are issued to a callsign.
+// pbPick records the row chosen from the callsign dropdown and fills the form
+// from it.
 //
-// It reuses GET /api/dmr/ids, the route the General tab's #140 lookup already
-// uses: one scanner, one validation, one place the answer's shape is decided. The
-// phonebook panel is admin-only and that route is operator-or-above, so an admin
-// reaching it needs no new permission.
-async function pbFind() {
-  const el = document.getElementById("pb-find");
-  const cs = String((el ? el.value : pb.findQuery) || "").trim();
-  pb.findQuery = cs;
-  if (!cs) {
-    pb.find = { status: "nocall", callsign: "", records: [], truncated: false, available: true, err: "" };
-    renderPanel();
-    return;
-  }
-  pbReadForm();
-  pb.find = { status: "busy", callsign: cs, records: [], truncated: false, available: true, err: "" };
-  renderPanel();
-  try {
-    const r = await fetch("/api/dmr/ids?callsign=" + encodeURIComponent(cs));
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    const body = await r.json();
-    pb.find = {
-      status: "done",
-      // What the server actually searched: a suffixed callsign falls back to the
-      // base call, and the operator should see which one answered.
-      callsign: body.callsign || cs,
-      records: body.records || [],
-      truncated: !!body.truncated,
-      available: !!body.available,
-      err: "",
-    };
-  } catch (e) {
-    pb.find = { status: "error", callsign: cs, records: [], truncated: false, available: true, err: String((e && e.message) || e).trim() };
-  }
+// Choosing a row is an explicit "this is the person", so it OVERWRITES the DMR
+// ID and the name rather than filling only what is blank. Filling only blanks
+// would leave an operator who picked the wrong row first with a form quietly
+// carrying half of one person and half of another, and there would be nothing on
+// screen to say so. The email is never touched: the export carries no address,
+// so there is nothing to overwrite it with.
+function pbPick(rec) {
+  pb.picked = rec || null;
+  if (!rec) return;
+  pb.form.callsign = rec.callsign || "";
+  pb.form.dmr_id = rec.id ? String(rec.id) : "";
+  pb.form.full_name = rec.name || "";
+  pb.err = "";
+  pb.field = "";
   renderPanel();
 }
 
-// pbImport creates the entry from one of those rows.
+// pbPickFree records a callsign typed rather than chosen.
 //
-// It posts the ID alone. The server does the lookup again and writes what the
+// It sets the callsign and NOTHING else. A callsign the public list has never
+// heard of is the case this whole field exists to keep working, and the operator
+// is filling the rest in themselves; clearing their DMR ID because they corrected
+// a typo in the callsign would be the picker taking over a form it only assists
+// with. Dropping `picked` is the point: what is in the form no longer came from
+// a published row, so it must not be saved claiming it did.
+function pbPickFree(callsign) {
+  pb.picked = null;
+  pb.form.callsign = callsign || "";
+}
+
+// pbImportPicked creates the picked row, then adds an email if one was typed.
+//
+// Two requests, because /api/phonebook/import deliberately takes a DMR ID and
+// nothing else — the whole point of that shape is that the client cannot claim a
+// field came from the public list. So the address goes on afterwards through the
+// ordinary update, which is safe precisely because the server treats an
+// email-only change as additive and leaves the entry tracking the list (only the
+// callsign, ID and name make a row the operator's own).
+//
+// A failed second request leaves the entry created and the address missing, and
+// says so rather than pretending the save worked: the operator can add it with
+// Edit, and an error that silently swallowed the address would be worse.
+async function pbImportPicked() {
+  const created = await pbImport(pb.picked.id);
+  if (!created) return null;
+  const email = pb.form.email.trim();
+  if (!email || !created.id) return created;
+  try {
+    const r = await fetch("/api/phonebook/" + encodeURIComponent(created.id), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        callsign: created.callsign,
+        dmr_id: created.dmr_id == null ? null : Number(created.dmr_id),
+        full_name: created.full_name || "",
+        email: email,
+      }),
+    });
+    if (!r.ok) {
+      const detail = await r.json().catch(() => ({}));
+      pb.err = (detail.error || msg("phonebook.importEmailFailed")).trim();
+      pb.field = detail.field || "email";
+    }
+  } catch (e) {
+    pb.err = String((e && e.message) || e).trim();
+  }
+  return created;
+}
+
+// pbPickedIntact reports whether the form still holds the row that was picked.
+//
+// This is the client half of the rule the server already enforces on an update:
+// the callsign, the DMR ID and the name are the fields the public list owns, and
+// editing any of them makes the entry the operator's own. So an edited form is
+// saved as an ordinary entry even though it began as a pick, and only an
+// untouched one is saved as an import. The email is excluded on purpose and for
+// the same reason the server excludes it — the export has no address, so adding
+// one is additive rather than a disagreement.
+function pbPickedIntact() {
+  const p = pb.picked;
+  if (!p) return false;
+  return pb.form.callsign.trim().toUpperCase() === String(p.callsign || "").toUpperCase() &&
+    pb.form.dmr_id.trim() === String(p.id || "") &&
+    pb.form.full_name.trim() === String(p.name || "");
+}
+
+// pbImport creates an entry from a public row, and is what preserves provenance.
+//
+// It posts the ID alone. The server does the lookup itself and writes what the
 // table says, so what lands in the phonebook is the published row rather than
 // whatever this page happened to be showing — which is what lets the entry be
-// marked as coming from the public list and kept in step with it afterwards.
+// marked as coming from the public list and kept in step with it when the table
+// is next downloaded. A client that could post the callsign and name alongside
+// could mark anything it liked as published.
+//
+// Returns the created entry, or null when the server refused. The caller decides
+// what to do about it; this only translates the refusal into something an
+// operator can act on.
 async function pbImport(id) {
-  pbReadForm();
   try {
     const r = await fetch("/api/phonebook/import", {
       method: "POST",
@@ -6342,68 +6441,16 @@ async function pbImport(id) {
       pb.err = detail.reason === "no_table" ? msg("phonebook.findNoTable")
         : detail.reason === "not_listed" ? msg("phonebook.findNotListed")
         : (detail.error || "").trim() || msg("phonebook.importFailed");
-    } else {
-      pb.err = "";
+      pb.field = detail.field || "";
+      return null;
     }
+    pb.err = "";
+    pb.field = "";
+    return await r.json().catch(() => ({}));
   } catch (e) {
     pb.err = String((e && e.message) || e).trim();
+    return null;
   }
-  await pbLoad();
-  renderPanel();
-}
-
-// pbFindCard is the search and its answer.
-//
-// Every branch says what happened AND what to do about it, the same rule the
-// General tab's lookup follows: an empty table is fixed on this node from the
-// Updates tab, an unlisted callsign is fixed at radioid.net, and those are not the
-// same errand.
-function pbFindCard() {
-  const F = pb.find;
-  const call = esc(F.callsign);
-  const already = (id) => pb.entries.some((e) => String(e.dmr_id) === String(id));
-
-  let out = "";
-  if (F.status === "busy") {
-    out = note(esc(msg("phonebook.findBusy")));
-  } else if (F.status === "nocall") {
-    out = note(esc(msg("phonebook.findNoCallsign")));
-  } else if (F.status === "error") {
-    out = `<div class="note" role="alert" style="color:var(--bad);border-color:var(--bad)">` +
-      `${esc(msg("phonebook.findFailed"))}${F.err ? ` <span class="none">${esc(F.err)}</span>` : ""}</div>`;
-  } else if (F.status === "done") {
-    if (!F.available) {
-      out = note(esc(msg("phonebook.findNoTable")));
-    } else if (!F.records.length) {
-      out = note(msg("phonebook.findNoMatch", { callsign: `<b>${call}</b>` }));
-    } else {
-      const head = F.records.length === 1
-        ? msg("phonebook.findOne", { callsign: `<b>${call}</b>` })
-        : msg("phonebook.findMany", { callsign: `<b>${call}</b>`, count: F.records.length });
-      const tail = F.truncated ? " " + esc(msg("phonebook.findTruncated", { count: F.records.length })) : "";
-      const rows = F.records.map((r) => {
-        const id = String(r.id);
-        const name = r.name ? `<span class="idfind-name">${esc(r.name)}</span>` : "";
-        // An ID already in the phonebook says so instead of offering a button
-        // whose only outcome is the uniqueness conflict.
-        const action = already(id)
-          ? `<span class="idfind-cur">${esc(msg("phonebook.findAlready"))}</span>`
-          : `<button type="button" class="btn ghost" data-pb-import="${esc(id)}" ` +
-            `aria-label="${esc(msg("phonebook.findAddLabel", { callsign: F.callsign, id }))}">${esc(msg("common.add"))}</button>`;
-        return `<li><span class="idfind-id">${esc(id)}</span>${name}${action}</li>`;
-      }).join("");
-      out = `<div class="idfind-out"><p class="idfind-head">${head}${tail}</p><ul class="idfind-list">${rows}</ul></div>`;
-    }
-  }
-
-  return card(msg("phonebook.findTitle"),
-    note(msg("phonebook.findHelp")) +
-    `<div class="row"><label for="pb-find">${esc(msg("phonebook.callsign"))}</label>` +
-      `<div class="idfind">` +
-        `<input id="pb-find" value="${esc(pb.findQuery)}" placeholder="KN4OQW" data-pb-findinput="1">` +
-        `<button type="button" class="btn ghost idfind-go" data-pb-action="find">${esc(msg("phonebook.findGo"))}</button>` +
-      `</div></div>` +
-    out);
 }
 
 // pbBeginGrant opens the grant form for one phonebook entry.
@@ -6585,6 +6632,18 @@ function pbInput(id, key, label, opts) {
     o.maxlength ? `maxlength="${esc(String(o.maxlength))}"` : "",
     bad ? `aria-invalid="true" aria-describedby="pb-error"` : "",
   ].filter(Boolean).join(" ");
+  // The callsign field is a type-ahead over the public ID list. The plain input
+  // stays inside the mount as the fallback: enhanceCallsignPickers hides it and
+  // puts the combobox in its place, and if that component is missing or throws,
+  // this is a working text box that still submits (D7). It is also what
+  // pbReadForm reads, so the two are kept in step rather than the model having
+  // two homes.
+  if (o.picker) {
+    return row(label,
+      `<div class="cspick" data-callsign-picker="${esc(o.picker)}">` +
+        `<input ${attrs}>` +
+      `</div>`);
+  }
   return row(label, `<input ${attrs}>`);
 }
 
@@ -6611,7 +6670,8 @@ function panelPhonebook() {
   const editing = pb.editing != null;
   const form = card(editing ? msg("phonebook.editTitle") : msg("phonebook.addTitle"),
     err +
-    pbInput("pb-callsign", "callsign", msg("phonebook.callsign"), { placeholder: "KN4OQW" }) +
+    pbInput("pb-callsign", "callsign", msg("phonebook.callsign"), { placeholder: "KN4OQW", picker: "pb" }) +
+    note(msg("phonebook.callsignHelp")) +
     pbInput("pb-dmrid", "dmr_id", msg("phonebook.dmrId"), { inputmode: "numeric", placeholder: "3180202" }) +
     pbInput("pb-name", "full_name", msg("phonebook.fullName")) +
     pbInput("pb-email", "email", msg("phonebook.email"), { type: "email", placeholder: "operator@example.com" }) +
@@ -6624,10 +6684,12 @@ function panelPhonebook() {
         : "") +
     `</div>`);
 
-  // The find card sits beside the entry form rather than replacing it: adding
-  // somebody by hand and looking them up in the public list are two ways to do the
-  // same thing, and an operator should not have to switch modes to choose.
-  return `<div class="grid2">${list}${form + pbFindCard()}</div>`;
+  // One form. Searching the public list used to be a second card below this one,
+  // which asked the operator to decide up front whether they were adding somebody
+  // by hand or from the list — a choice with no consequence, since both end in
+  // the same four fields. The Callsign box does both now: it offers the rows
+  // behind what is typed, and accepts what is typed when it offers nothing.
+  return `<div class="grid2">${list}${form}</div>`;
 }
 
 // pbAfterRender keeps the form model in step with the inputs.

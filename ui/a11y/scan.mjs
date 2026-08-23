@@ -232,22 +232,29 @@ async function openCountyPicker(page, analyze, label) {
 // honest for an accessibility scan: what is being measured is the markup the
 // operator meets, and this is that markup.
 async function openPhonebookStates(page, analyze, label) {
-  // The public-list search, in its two interesting states: results with Add
-  // buttons, and the no-match branch whose copy is the longest prose on the panel.
-  // Both are driven through the real control rather than by poking state, so the
-  // scan sees the markup an operator actually produces.
-  await page.fill("#pb-find", "KN4OQW").catch(() => {});
-  await page.click('[data-pb-action="find"]').catch(() => {});
-  await page.waitForTimeout(400);
-  if (!await page.evaluate(() => !!document.querySelector(".idfind-list li")).catch(() => false)) {
-    throw new Error("the public-list search returned nothing; the scan would have passed without measuring it");
+  // The callsign type-ahead, in its two interesting states: an open dropdown of
+  // matching rows, and the empty branch whose note carries the longest prose on
+  // the panel. Both are driven through the real control rather than by poking
+  // state, so the scan sees the markup an operator actually produces — and both
+  // ASSERT the state rendered, because a closed combobox is a plain text box and
+  // scanning one measures nothing.
+  if (await openCallsignPicker(page, "pb", "KN4OQ") === "rows") {
+    await analyze(page, `${label} settings#phonebook (callsign picker open)`);
+  } else {
+    console.log(`  skip ${ctxLabel} ${label} settings#phonebook (callsign picker open) — this node has no ID table`);
   }
-  await analyze(page, `${label} settings#phonebook (public-list results)`);
 
-  await page.fill("#pb-find", "ZZ9ZZZ").catch(() => {});
-  await page.click('[data-pb-action="find"]').catch(() => {});
-  await page.waitForTimeout(400);
-  await analyze(page, `${label} settings#phonebook (public-list no match)`);
+  // The empty branch, which every node can produce: its note REPLACES the generic
+  // no-match line and is carried by aria-describedby rather than merely drawn, so
+  // it is worth a pass of its own whether or not there is a table to search.
+  await openCallsignPicker(page, "pb", "ZZ9ZZZ");
+  await analyze(page, `${label} settings#phonebook (callsign picker no match)`);
+
+  // Leave the picker closed and the field empty again, so the states forced below
+  // are measured on the panel as it normally renders.
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => { pb.form.callsign = ""; pb.picked = null; renderPanel(); }).catch(() => {});
+  await page.waitForTimeout(200);
 
   await page.evaluate(() => {
     const first = (pb.entries || [])[0];
@@ -336,35 +343,56 @@ async function open(page, tab, sub) {
   await page.waitForTimeout(250);
 }
 
-// Put the General tab's DMR ID lookup (#140) into its answered state and scan
-// that, because the default render never shows it: the block only exists after a
-// callsign has been looked up, so the ordinary settings#general pass walks past
-// the list, its Use buttons and its "in use" marker without seeing any of them.
+// openCallsignPicker drives one of the two callsign type-aheads and reports what
+// it reached: "rows" when the dropdown has options in it, "empty" when it opened
+// with only its note, or throws when the control did not enhance at all.
 //
-// The state is seeded directly rather than by typing a callsign and pressing the
-// button. A real lookup needs a DMRIds.dat on the machine, which CI does not have
-// and should not need for an accessibility scan; seeding also pins the awkward
-// cases — a row already in use, and a truncated list — that a live table would
-// only produce for particular callsigns. If the settings page ever stops carrying
-// these globals the evaluate throws, the catch swallows it, and the scan degrades
-// to the plain panel rather than failing for the wrong reason.
-async function openIDLookup(page) {
-  await page.evaluate(() => {
-    edit.general = Object.assign({}, edit.general, { callsign: "N0SZ", id: "3101901" });
-    idLookup = {
-      status: "done",
-      callsign: "N0SZ",
-      records: [
-        { id: 3101900, callsign: "N0SZ", name: "Rocky" },
-        { id: 3101901, callsign: "N0SZ", name: "Rocky" },
-        { id: 3101902, callsign: "N0SZ", name: "" },
-      ],
-      truncated: true,
-      available: true,
-    };
-    renderPanel();
-  }).catch(() => {});
-  await page.waitForTimeout(150);
+// The two empty results are not the same thing and only one is a bug. A node that
+// has never downloaded the RadioID export has nothing to search, and the picker
+// saying so is correct behaviour — CI passes a fixture table so the populated
+// state exists there deterministically, while a developer running this against a
+// node with no table should get a skip and a line saying why rather than a
+// failure about something that is working. A picker that never enhanced IS a
+// bug either way, because then the scan is measuring a plain text box.
+async function openCallsignPicker(page, which, query) {
+  const sel = `[data-callsign-picker="${which}"] input.tz-input`;
+  if (!await page.$(sel)) {
+    throw new Error(`the ${which} callsign picker did not enhance; the scan would have passed without measuring it`);
+  }
+  await page.focus(sel);
+  await page.fill(sel, query);
+  await page.waitForSelector(`[data-callsign-picker="${which}"] .tz-list li`, { timeout: 5000 });
+  const rows = await page.$(`[data-callsign-picker="${which}"] .tz-list li.tz-opt`);
+  if (!rows) return "empty";
+  // Move the keyboard cursor off the first option so aria-activedescendant is
+  // pointing at something the scan can see it pointing at.
+  await page.keyboard.press("ArrowDown");
+  if (!await page.evaluate((s) => {
+    const i = document.querySelector(s);
+    return i && i.getAttribute("aria-expanded") === "true" && !!i.getAttribute("aria-activedescendant");
+  }, sel)) {
+    throw new Error(`the ${which} callsign picker opened without its combobox state; the scan would be measuring a closed control`);
+  }
+  return "rows";
+}
+
+// The General tab's callsign type-ahead, open with matches in it.
+//
+// It replaced a "Find my ID" button whose answer arrived in a panel below the
+// field, so what used to be scanned here was static markup that could be faked
+// by assigning to a state variable. A combobox cannot: the role=listbox, its
+// role=option children and the aria-activedescendant cursor only exist in the
+// DOM once it is open with matches, and a scan of the closed control is a scan
+// of a plain text box. So this drives the real control and THROWS if the state
+// did not render — a pass that went green on the wrong markup would be worse
+// than no pass at all.
+async function openIDLookup(page, analyze, label) {
+  const got = await openCallsignPicker(page, "general", "N0SZ");
+  if (got !== "rows") {
+    console.log(`  skip ${ctxLabel} ${label} settings#general (callsign picker open) — this node has no ID table`);
+    return;
+  }
+  await analyze(page, `${label} settings#general (callsign picker open)`);
 }
 
 // Drive every sidebar group to the wanted state through its own disclosure button,
@@ -430,12 +458,11 @@ for (const theme of THEMES) for (const mode of MODES) {
     for (const t of TARGETS) {
       await open(page, t.tab, t.sub);
       await analyze(page, `${vp.key} settings#${t.sub ? `${t.tab}/${t.sub}` : t.tab}`);
-      // The General tab has a second state worth scanning: the DMR ID lookup with
-      // an answer in it. Done after the plain pass so the panel above is scanned
-      // as it actually loads.
+      // The General tab has a second state worth scanning: the callsign picker
+      // open, with rows in it. Done after the plain pass so the panel above is
+      // scanned as it actually loads.
       if (t.tab === "general" && !t.sub) {
-        await openIDLookup(page);
-        await analyze(page, `${vp.key} settings#general (ID lookup answered)`);
+        await openIDLookup(page, analyze, vp.key);
       }
       // The Phonebook panel's two other states: the grant form, and an account
       // whose controls are disabled because it is the last admin. Both are after

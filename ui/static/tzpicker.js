@@ -291,11 +291,22 @@
       list.hidden = false;
       input.setAttribute("aria-expanded", "true");
       if (!matches.length) {
+        // A note REPLACES the generic no-match line rather than sitting under it.
+        // An empty list has more than one cause and they need different answers:
+        // "keep typing, three characters at least" and "this node has never
+        // downloaded the list" are not "nobody matches", and printing the generic
+        // line for either would send an operator looking for a person who is
+        // there. The source says which case it is; only when it has nothing to
+        // add does the caller's own noMatchText stand.
         const li = doc.createElement("li");
         li.className = "tz-empty";
+        li.id = listId + "-note";
         li.setAttribute("role", "presentation");
-        li.textContent = opts.noMatchText || "No matches";
+        li.textContent = listNote || opts.noMatchText || "No matches";
         list.appendChild(li);
+        // Described, not merely drawn: a reason an operator cannot see is not a
+        // reason they were given.
+        input.setAttribute("aria-describedby", li.id);
         input.removeAttribute("aria-activedescendant");
         return;
       }
