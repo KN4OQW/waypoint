@@ -204,10 +204,27 @@ async function openPhonebookStates(page, analyze, label) {
   await page.fill("#pb-find", "KN4OQW").catch(() => {});
   await page.click('[data-pb-action="find"]').catch(() => {});
   await page.waitForTimeout(400);
-  if (!await page.evaluate(() => !!document.querySelector(".idfind-list li")).catch(() => false)) {
-    throw new Error("the public-list search returned nothing; the scan would have passed without measuring it");
+  // Two different reasons the results can be empty, and only one is a bug.
+  //
+  // A node with no ID table cannot produce this state at all — the panel says so
+  // instead, which is correct behaviour and is itself scanned below. CI passes a
+  // fixture table so the state DOES exist there; a developer running the scan
+  // against a node that has never downloaded it gets the skip and a line saying
+  // why, rather than a failure about something that is working.
+  //
+  // A table that IS present and still returns nothing is a regression, and that
+  // one throws: the alternative is a green scan of markup nobody looked at.
+  const noTable = await page.evaluate(() =>
+    !!document.querySelector(".idfind-out, .note") &&
+    /public ID database/i.test(document.body.textContent || "")).catch(() => false);
+  const gotRows = await page.evaluate(() => !!document.querySelector(".idfind-list li")).catch(() => false);
+  if (gotRows) {
+    await analyze(page, `${label} settings#phonebook (public-list results)`);
+  } else if (noTable) {
+    console.log(`  skip ${ctxLabel} ${label} settings#phonebook (public-list results) — this node has no ID table`);
+  } else {
+    throw new Error("the public-list search returned nothing and the panel did not say why; the scan would have passed without measuring it");
   }
-  await analyze(page, `${label} settings#phonebook (public-list results)`);
 
   await page.fill("#pb-find", "ZZ9ZZZ").catch(() => {});
   await page.click('[data-pb-action="find"]').catch(() => {});
