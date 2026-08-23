@@ -169,6 +169,10 @@ type server struct {
 	// the phonebook over DMRIds.dat (identity.go). Nil disables decoration
 	// entirely, which is exactly what a node with no phonebook gets.
 	identity *idresolve.Chain
+	// talkerAlias injects DMRA frames naming the caller on network→RF calls
+	// (talkeralias.go). Always non-nil so callers need no nil check; it emits
+	// nothing until an operator picks a template.
+	talkerAlias *taInjector
 
 	// Atomic-update surface (RFC-0014 / issue #13). update holds the manifest URL,
 	// release key, and OS seams; updateArgs is the `-update` invocation the apply
@@ -2424,6 +2428,7 @@ func main() {
 	s.phonebook = phonebook.New(st)
 	// The dashboard's display-name chain over that same phonebook (identity.go).
 	s.identity = identityChain(s.phonebook)
+	s.talkerAlias = &taInjector{}
 	// Assigned through the interfaces rather than passed directly, so a build
 	// without one of them hands the service a genuinely nil interface instead of a
 	// non-nil one wrapping a nil pointer.

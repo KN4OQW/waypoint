@@ -595,7 +595,17 @@ type DMR struct {
 	EmbeddedLCOnly bool   `json:"embedded_lc_only"`
 	SelfOnly       bool   `json:"self_only"`
 	DumpTAData     bool   `json:"dump_ta_data"`
-	Beacons        bool   `json:"beacons"` // DMR Roaming Beacon (MMDVM-Host [DMR Network] Beacons)
+	// TalkerAlias is the alias this node injects toward the radio on network→RF
+	// calls: "", "callsign", "callsign + name", or "name". Empty is OFF and is the
+	// default — a node that has never been configured for it emits no DMRA frames
+	// and renders no InboundTalkerAlias key, so its traffic is byte-identical to a
+	// build without the feature.
+	//
+	// It reaches the air through two places that must agree: the shim emits the
+	// frames, and MMDVM-Host is told to accept them ([DMR Network]
+	// InboundTalkerAlias). Both are driven from this one field.
+	TalkerAlias string `json:"talker_alias"`
+	Beacons     bool   `json:"beacons"` // DMR Roaming Beacon (MMDVM-Host [DMR Network] Beacons)
 
 	// The three [DMR] hang timers, in seconds. CallHang is "TG hold": how long
 	// the just-heard talkgroup stays latched so a reply keys back to it — the
