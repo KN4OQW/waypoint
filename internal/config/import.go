@@ -60,8 +60,15 @@ func fromINI(mm, dg, yg, dgid, pg, ng, xg, mg, dpg *INI) *Model {
 		Modem: Modem{
 			Port:      firstNonEmpty(mm.Get("Modem", "UARTPort"), mm.Get("Modem", "Port"), "/dev/ttyAMA0"),
 			UARTSpeed: orDefault(mm.Get("Modem", "UARTSpeed"), "115200"),
-			RXFreqHz:  mm.Get("Info", "RXFrequency"),
-			TXFreqHz:  mm.Get("Info", "TXFrequency"),
+			// [Modem] first, then [Info]. Upstream moved these keys from the
+			// second section to the first (g4klx b7d15b8) and deleted [Info]
+			// outright, so an incumbent config can carry either shape depending on
+			// how old the node being imported from is. Reading only one placement
+			// would silently import a node with no frequency at all, and a blank
+			// frequency renders verbatim — the operator's imported node would come
+			// up refusing to tune. Both are read; whichever is present wins.
+			RXFreqHz:  firstNonEmpty(mm.Get("Modem", "RXFrequency"), mm.Get("Info", "RXFrequency")),
+			TXFreqHz:  firstNonEmpty(mm.Get("Modem", "TXFrequency"), mm.Get("Info", "TXFrequency")),
 			RXOffset:  orDefault(mm.Get("Modem", "RXOffset"), "0"),
 			TXOffset:  orDefault(mm.Get("Modem", "TXOffset"), "0"),
 			TXInvert:  mm.Bool("Modem", "TXInvert"),

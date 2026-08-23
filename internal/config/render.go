@@ -514,6 +514,42 @@ func (m *Model) RenderMMDVM() string {
 		kv("Display", def(m.Display.Type, "None")),
 		kv("Daemon", "0"),
 	)
+	// [Info] and the RF frequencies. The frequencies are rendered TWICE — here and
+	// again in [Modem] below — and that is deliberate.
+	//
+	// g4klx b7d15b8 ("Remove the DMRC startup message", 2026-07-13) deleted this
+	// section from MMDVM-Host entirely and moved RXFrequency/TXFrequency into
+	// [Modem]. The rest of it went with no replacement: Power, Location, URL,
+	// Latitude, Longitude, Height and Description existed to fill the DMR config
+	// packet a host sends when it connects DIRECTLY to a master, and that path was
+	// removed. Waypoint never used it — MMDVM-Host talks to DMRGateway on the
+	// loopback and DMRGateway is what logs into the network — so those keys have
+	// been inert on a Waypoint node all along.
+	//
+	// A host at or after that commit reads only [Modem], so a node whose frequency
+	// is here alone tunes 0 Hz, the modem NAKs SET_FREQ, and MMDVM-Host exits 1
+	// into a systemd restart loop. Measured on the bench: 11 restarts, with the
+	// older binary running clean on the identical file.
+	//
+	// Emitting both is what lets waypointd and waypoint-stack move independently,
+	// which they must, because they are separate packages an operator upgrades
+	// separately. Neither host minds the copy it does not want, and that is
+	// MEASURED, not inferred from the source: this exact rendered file was run
+	// through both real binaries on 2026-08-23, and each logged
+	//
+	//     TX Frequency: 438900000Hz (438899960Hz)
+	//     RX Frequency: 433900000Hz (433900075Hz)
+	//
+	// — MMDVM-Host-20260528 (pin 71e598c) reading it from [Info], and
+	// MMDVM-Host-20260713 (pin 95a8e1d) reading it from [Modem]. Neither warned
+	// about the copy it ignores. The source agrees on why: the new host maps an
+	// unrecognised [Info] to SECTION::NONE and drops every key in it
+	// (Conf.cpp:530), and the old host's [Modem] key chain ends at Debug with no
+	// else, so RXFrequency there falls through untouched.
+	//
+	// Power/Location/URL stay because removing them would change what an existing
+	// node renders for no gain — they are already inert. Once every supported
+	// stack carries a host at or after b7d15b8, the whole section can go.
 	sect(&b, "Info",
 		kv("RXFrequency", m.Modem.RXFreqHz),
 		kv("TXFrequency", m.Modem.TXFreqHz),
@@ -585,6 +621,20 @@ func (m *Model) RenderMMDVM() string {
 		if strings.TrimSpace(lvl.val) != "" {
 			modemLines = append(modemLines, kv(lvl.key, lvl.val))
 		}
+	}
+	// The RF frequencies, rendered HERE as well as in [Info] above — see the note
+	// on that block for why both. Blank is OMITTED rather than written empty, the
+	// same rule the per-mode levels follow and for the same reason: the host reads
+	// these with atoi, so "RXFrequency=" is not "unset", it is 0 Hz, which is the
+	// modem NAK this whole change exists to stop. [Info] above still writes them
+	// unconditionally; that is pre-existing and left alone, and it does not matter
+	// because a node with no frequency has its modem daemon withheld before any of
+	// this is read (mode_readiness.go).
+	if strings.TrimSpace(m.Modem.RXFreqHz) != "" {
+		modemLines = append(modemLines, kv("RXFrequency", m.Modem.RXFreqHz))
+	}
+	if strings.TrimSpace(m.Modem.TXFreqHz) != "" {
+		modemLines = append(modemLines, kv("TXFrequency", m.Modem.TXFreqHz))
 	}
 	modemLines = append(modemLines, kv("RSSIMappingFile", def(m.Modem.RSSIMappingFile, "/usr/local/etc/RSSI.dat")))
 	sect(&b, "Modem", modemLines...)
