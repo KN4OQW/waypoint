@@ -227,3 +227,42 @@ test("filterItems: an empty query returns everything, and a miss returns nothing
   assert.equal(WPTz.filterItems("   ", items).length, 2);
   assert.equal(WPTz.filterItems("qqzz", items).length, 0);
 });
+
+// --- freeText: a value the list does not contain ---------------------------
+//
+// The rule the callsign pickers depend on. The public ID table is an export of
+// who has registered, not of who exists, so text that matched no option has to
+// survive — a picker that erased an unlisted callsign would be worse than none.
+
+test("tzFreeAction: without freeText, unmatched typing is discarded (D6)", () => {
+  assert.deepEqual(WPTz.tzFreeAction("Europe/Atlant", "Europe/Berlin", false), {
+    commit: false, value: "Europe/Berlin",
+  });
+});
+
+test("tzFreeAction: with freeText, unmatched typing becomes the value", () => {
+  assert.deepEqual(WPTz.tzFreeAction("KN4OQW", "", true), { commit: true, value: "KN4OQW" });
+});
+
+test("tzFreeAction: typing that equals the held value commits nothing", () => {
+  // No onSelect for a no-op: re-committing on every blur would fire the caller's
+  // handler for merely tabbing through a field nobody edited.
+  assert.deepEqual(WPTz.tzFreeAction("KN4OQW", "KN4OQW", true), { commit: false, value: "KN4OQW" });
+  assert.deepEqual(WPTz.tzFreeAction("  KN4OQW  ", "KN4OQW", true), { commit: false, value: "KN4OQW" });
+});
+
+test("tzFreeAction: clearing the field commits the empty value", () => {
+  // Emptying a callsign box means "no callsign". A picker that held onto the last
+  // value would leave the form carrying something visibly deleted.
+  assert.deepEqual(WPTz.tzFreeAction("", "KN4OQW", true), { commit: true, value: "" });
+  assert.deepEqual(WPTz.tzFreeAction("   ", "KN4OQW", true), { commit: true, value: "" });
+});
+
+test("tzFreeAction: the committed value is trimmed", () => {
+  assert.deepEqual(WPTz.tzFreeAction("  W1AW ", "", true), { commit: true, value: "W1AW" });
+});
+
+test("tzFreeAction: junk arguments never throw", () => {
+  assert.deepEqual(WPTz.tzFreeAction(null, null, true), { commit: false, value: "" });
+  assert.deepEqual(WPTz.tzFreeAction(undefined, "KN4OQW", false), { commit: false, value: "KN4OQW" });
+});

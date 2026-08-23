@@ -33,6 +33,10 @@
      - `source(query) -> Promise<items>`: an ASYNC list, for a table too large to
        ship to the browser. The county table is 3,269 rows and is searched in Go,
        so the ranking lives in exactly one language instead of two.
+     - `freeText`: accept a value the list does not contain. Off by default,
+       because for a timezone or a county the list IS the set of valid values.
+       The callsign pickers turn it on: the public ID table is an export of who
+       has registered, not of who exists. See tzFreeAction.
 
    Plain script in the same no-build style as app.js/settings.js: it attaches a
    WPTz global for the browser and also exports for CommonJS so the Node test
@@ -144,6 +148,34 @@
   }
 
   const NAV_KEYS = ["ArrowDown", "ArrowUp", "Home", "End", "Enter", "Escape"];
+
+  // tzFreeAction decides what becomes of text that matched no option, when the
+  // operator leaves the field or presses Enter with nothing selected.
+  //
+  // A timezone or a county picker DISCARDS it: those lists are the authority on
+  // what a valid value is, so text that matched nothing names nothing and the
+  // field goes back to what was last committed. A callsign picker cannot take
+  // that position. The public ID table is a third party's export of the people
+  // who have registered, not of the people who exist — an operator's own club
+  // callsign may simply not be in it, and a picker that silently erased what they
+  // typed because RadioID has not heard of them would be worse than no picker.
+  //
+  // So `freeText` callers accept the typing as the value. Three cases and they
+  // are all the same rule, "commit what is there unless there is nothing to do":
+  //   - not a freeText picker      -> discard, restore the committed label (D6)
+  //   - typing equals what is held -> nothing to commit; no onSelect for a no-op
+  //   - anything else, INCLUDING a cleared field -> commit it
+  //
+  // Clearing counts deliberately: emptying a callsign box means "no callsign",
+  // and a picker that refused to let go of the last value would leave the form
+  // holding something the operator had visibly deleted.
+  function tzFreeAction(typed, committedLabel, freeText) {
+    const held = typeof committedLabel === "string" ? committedLabel : "";
+    if (!freeText) return { commit: false, value: held };
+    const next = (typeof typed === "string" ? typed : "").trim();
+    if (next === held.trim()) return { commit: false, value: held };
+    return { commit: true, value: next };
+  }
 
   // createTzPicker enhances `mount` (a container that already holds a working
   // native control — the D7 fallback) into a type-ahead combobox. It hides the
@@ -390,16 +422,28 @@
       // Escape when already closed should let the event through (e.g. close a
       // parent overlay); every other handled key is ours to consume.
       if (!(e.key === "Escape" && !open)) e.preventDefault();
-      if (e.key === "Escape") input.value = valueLabel; // discard un-selected filter text
+      // Escape discards un-selected filter text in EVERY picker, freeText or not.
+      // Escape means "never mind"; it is the one key whose whole job is to undo
+      // the typing, so a callsign picker taking it as a value would be reading it
+      // backwards.
+      if (e.key === "Escape") input.value = valueLabel;
       if (res.commit >= 0 && matches[res.commit] != null) { commit(matches[res.commit]); return; }
+      // Enter with nothing selected: a freeText picker takes the typing, which is
+      // how a callsign the table has never heard of gets into the field.
+      if (e.key === "Enter") {
+        const free = tzFreeAction(input.value, valueLabel, !!opts.freeText);
+        if (free.commit) { commit(free.value); return; }
+      }
       active = res.active;
       open = res.open;
       renderList();
     });
     input.addEventListener("blur", () => {
-      // Free text that matched nothing selects nothing: on blur, drop the filter
-      // text and show the last committed value again (D6).
-      input.value = valueLabel;
+      // Text that matched no option: discarded here, or kept if the caller asked
+      // for freeText. See tzFreeAction for why those are two different answers.
+      const free = tzFreeAction(input.value, valueLabel, !!opts.freeText);
+      if (free.commit) { commit(free.value); return; }
+      input.value = free.value;
       close();
     });
 
@@ -428,6 +472,7 @@
     filterItems: filterItems,
     toItems: toItems,
     tzKeyAction: tzKeyAction,
+    tzFreeAction: tzFreeAction,
     createTzPicker: createTzPicker,
   };
 });
