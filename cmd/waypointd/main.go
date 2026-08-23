@@ -407,16 +407,27 @@ func (s *server) dmrTalkgroups(w http.ResponseWriter, _ *http.Request) {
 // response says when it bit; the page does not silently show a prefix.
 const dmrIDLookupLimit = 100
 
-// dmrIDLookupResponse is GET /api/dmr/ids?callsign=…
+// dmrIDSearchLimit caps the type-ahead's answer. It is far smaller than
+// dmrIDLookupLimit because the two are answering different questions: an exact
+// callsign's IDs are a set the operator wants all of, while a prefix's matches
+// are a window they are narrowing by typing. Fifty is more than fits on screen,
+// so a longer list would only be scrolled past on the way to typing another
+// letter — and the ranking (see dmrids.SearchCallsigns) is what makes the top of
+// a truncated window the useful part rather than an arbitrary slice.
+const dmrIDSearchLimit = 50
+
+// dmrIDLookupResponse is GET /api/dmr/ids?callsign=… and ?prefix=…
 type dmrIDLookupResponse struct {
 	// Callsign is what was actually looked up: trimmed and upper-cased, and with a
 	// portable suffix dropped when that was the only way to find anything. The page
 	// shows it, so an operator who typed KN4OQW/P can see it answered on KN4OQW.
+	// For a prefix search it echoes the normalized prefix that was searched.
 	Callsign string `json:"callsign"`
-	// Records is every issued ID behind that callsign, ascending. Never null: an
-	// empty list is a legitimate answer and the page renders it as "no match".
+	// Records is every issued ID behind that callsign, ascending — or, for a prefix
+	// search, the ranked matching rows. Never null: an empty list is a legitimate
+	// answer and the page renders it as "no match".
 	Records []dmrids.Record `json:"records"`
-	// Truncated reports that the scan stopped at the limit.
+	// Truncated reports that there were more matches than were returned.
 	Truncated bool `json:"truncated,omitempty"`
 	// Available reports whether the ID table is on disk at all. A node that has
 	// never reached the internet has no table, and "no suggestions because there is
@@ -424,6 +435,13 @@ type dmrIDLookupResponse struct {
 	// callsign is not in the database" — the first is fixable from the Updates tab,
 	// the second means going to radioid.net.
 	Available bool `json:"available"`
+	// MinPrefix is the shortest prefix a search will answer, sent only on the
+	// prefix path. The page needs it to say "keep typing" instead of rendering an
+	// empty list as "nobody matches", and carrying it in the answer is what stops
+	// the number being written down twice — a copy in the JavaScript would be free
+	// to drift from the constant that actually enforces it. Answering a short
+	// prefix costs nothing to serve: the scanner returns before it opens the file.
+	MinPrefix int `json:"min_prefix,omitempty"`
 }
 
 // dmrIDLookup answers "which DMR IDs are issued to this callsign" from the cached
@@ -438,9 +456,18 @@ type dmrIDLookupResponse struct {
 // That is not about the scanner — LookupCallsign only ever returns whole rows it
 // matched exactly, so no query can make it emit something else — it is about not
 // standing up an endpoint that walks a 6.6 MB file for arbitrary input.
+//
+// It also answers ?prefix=…, the type-ahead behind the callsign pickers. Same
+// route rather than a second one because it is the same table, the same reader
+// and the same answer shape; a separate endpoint would be a second place to
+// decide what a row looks like on the wire, and the two would drift.
 func (s *server) dmrIDLookup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONStatus(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if q := r.URL.Query(); q.Has("prefix") {
+		s.dmrIDSearch(w, strings.TrimSpace(q.Get("prefix")))
 		return
 	}
 	cs := strings.TrimSpace(r.URL.Query().Get("callsign"))
@@ -474,6 +501,65 @@ func (s *server) dmrIDLookup(w http.ResponseWriter, r *http.Request) {
 		Truncated: truncated,
 		Available: dmrIDTablePresent(s.dmrIDs),
 	})
+}
+
+// dmrIDSearch answers the type-ahead: the ranked rows whose callsign starts with
+// what has been typed so far.
+//
+// A prefix below dmrids.SearchPrefixMin is answered, not refused. It is not a bad
+// request — it is somebody two letters into typing a callsign, and a 400 there
+// would make the page render an error for the normal state of a picker being used
+// correctly. The answer carries MinPrefix so the page can say "keep typing", and
+// it costs nothing to serve because the scanner returns before opening the file.
+//
+// Anything that is not callsign-shaped IS refused, for the reason the exact
+// lookup refuses it: not because the scanner could be made to emit something
+// else, but so that a 6.6 MB file is not walked for arbitrary input. The shape
+// check is looser here by exactly one thing — a prefix has no minimum length,
+// since a length rule that rejected what somebody had typed so far would be the
+// same mistake as the 400 above.
+func (s *server) dmrIDSearch(w http.ResponseWriter, prefix string) {
+	if !prefixShaped(prefix) {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "not a callsign prefix: " + prefix})
+		return
+	}
+	recs, truncated, err := dmrids.SearchCallsigns(s.dmrIDs, prefix, dmrIDSearchLimit)
+	if err != nil {
+		// Same rule as the exact lookup: an unreadable table is the node's problem
+		// and is reported without naming the path.
+		log.Printf("dmr id search: reading the id table failed: %v", err)
+		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": "the DMR ID table could not be read"})
+		return
+	}
+	if recs == nil {
+		recs = []dmrids.Record{}
+	}
+	writeJSON(w, dmrIDLookupResponse{
+		Callsign:  strings.ToUpper(prefix),
+		Records:   recs,
+		Truncated: truncated,
+		Available: dmrIDTablePresent(s.dmrIDs),
+		MinPrefix: dmrids.SearchPrefixMin,
+	})
+}
+
+// prefixShaped is callsignShaped without the minimum length: the same letters,
+// digits and single optional `/P`-style suffix, bounded the same way at the top,
+// but accepting the one and two characters somebody has typed on the way to a
+// whole callsign. An empty prefix is shaped — it is what an empty picker sends —
+// and SearchCallsigns answers it with nothing.
+func prefixShaped(p string) bool {
+	base, suffix, hasSuffix := strings.Cut(p, "/")
+	if !hasSuffix {
+		base, suffix, hasSuffix = strings.Cut(p, "-")
+	}
+	if !alnum(base) || len(base) > 10 {
+		return false
+	}
+	if hasSuffix && (!alnum(suffix) || len(suffix) > 4) {
+		return false
+	}
+	return true
 }
 
 // dmrIDTablePresent reports whether there is an ID table to search. It stats
