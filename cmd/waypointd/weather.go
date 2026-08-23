@@ -16,6 +16,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/hub"
 	"github.com/KN4OQW/waypoint/internal/wxfeed"
 	"github.com/KN4OQW/waypoint/internal/wxvoice"
+	"github.com/KN4OQW/waypoint/internal/wxzones"
 )
 
 // The weather broadcast's lifecycle and delivery.
@@ -364,6 +365,96 @@ func (ws *weatherService) status() wxStatus {
 func (s *server) weatherRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/wx/status", s.wxStatusHandler)
 	mux.HandleFunc("/api/wx/test", s.wxTestHandler)
+	mux.HandleFunc("/api/wx/counties", s.wxCountiesHandler)
+}
+
+// wxCountyLimit is what the picker asks for and the most it can be given. A
+// combobox shows a screenful; the cap is here so a hand-made request cannot ask
+// for the whole 3,269-row table on every keystroke.
+const (
+	wxCountyLimitDefault = 25
+	wxCountyLimitMax     = 200
+)
+
+// wxCountiesHandler searches the shipped county table.
+//
+//	GET /api/wx/counties?q=santa+rosa   — search, best first
+//	GET /api/wx/counties?same=012113    — resolve codes already in the store
+//
+// It answers from internal/wxzones, which is embedded, so this reaches no
+// network and works on a node that has never had one. That is the point of
+// shipping the table whole rather than proxying a lookup service; see the
+// package comment there.
+//
+// Deliberately NOT gated on s.weather. The picker's whole job is to be used
+// before the feature is switched on -- choosing counties is part of setting it
+// up -- so an operator configuring a node with the broadcast off must still get
+// a working search. Gating this the way status and test are gated would make the
+// panel unfillable in exactly the state every node ships in.
+func (s *server) wxCountiesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONStatus(w, http.StatusMethodNotAllowed, map[string]string{"error": "GET only"})
+		return
+	}
+	q := r.URL.Query()
+
+	// same= resolves exact codes rather than searching. It is what turns the six
+	// digits in a stored configuration -- or one imported from a WPSD card, or
+	// hand-edited before this picker existed -- back into a county with a name.
+	if codes := strings.TrimSpace(q.Get("same")); codes != "" {
+		out := []wxzones.County{}
+		var unknown []string
+		for _, code := range strings.Split(codes, ",") {
+			code = strings.TrimSpace(code)
+			if code == "" {
+				continue
+			}
+			c, ok := wxzones.Lookup(code)
+			if !ok {
+				// Reported, not dropped. A code the shipped table does not know
+				// is a real state -- a county created since this release, or a
+				// typo from before the picker -- and the panel has to be able to
+				// tell the operator which of their counties it cannot name.
+				unknown = append(unknown, code)
+				continue
+			}
+			out = append(out, c)
+		}
+		writeJSONStatus(w, http.StatusOK, map[string]any{
+			"counties": out,
+			"unknown":  unknown,
+		})
+		return
+	}
+
+	limit := wxCountyLimitDefault
+	if v := strings.TrimSpace(q.Get("limit")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			writeJSONStatus(w, http.StatusBadRequest, map[string]string{
+				"error": "limit must be a positive whole number"})
+			return
+		}
+		limit = min(n, wxCountyLimitMax)
+	}
+
+	// Searched twice rather than once: the capped page to show, and the full
+	// count behind it. The panel says "showing 25 of 68" instead of implying the
+	// 25 are all there is, which is the difference between an operator scrolling
+	// and an operator concluding their county is missing and typing a code by
+	// hand. The table is 3,269 rows in memory; the second pass is not worth
+	// caching to avoid.
+	query := q.Get("q")
+	all := wxzones.Search(query, 0)
+	page := all
+	if len(page) > limit {
+		page = page[:limit]
+	}
+	writeJSONStatus(w, http.StatusOK, map[string]any{
+		"counties": page,
+		"total":    len(all),
+		"limit":    limit,
+	})
 }
 
 func (s *server) wxStatusHandler(w http.ResponseWriter, r *http.Request) {
