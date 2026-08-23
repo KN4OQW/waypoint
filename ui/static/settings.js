@@ -314,7 +314,7 @@ function buildEdit(c) {
       modemFrom(c.modem || {})),
     display: displayFrom(c.display || {}),
     lcd: lcdFrom(c.lcd || {}),
-    dmr:     { color_code: d.color_code, id: d.id, embedded_lc_only: !!d.embedded_lc_only, dump_ta_data: !!d.dump_ta_data, beacons: !!d.beacons, self_only: !!d.self_only },
+    dmr:     { color_code: d.color_code, id: d.id, embedded_lc_only: !!d.embedded_lc_only, dump_ta_data: !!d.dump_ta_data, beacons: !!d.beacons, self_only: !!d.self_only, talker_alias: d.talker_alias || "" },
     dmrnet:  { slot1: !!d.slot1, slot2: !!d.slot2, shim_enabled: !!d.shim_enabled },
     modes:   Object.fromEntries((c.modes || []).map((m) => [m.key, !!m.enabled])),
     ysf:     ysfFrom(c.ysf || {}),
@@ -917,6 +917,22 @@ function panelDmr() {
     toggleRow("dmrnet", "slot2", msg("dmr.timeSlot2Enabled")) +
     toggleRow("dmr", "embedded_lc_only", msg("dmr.embeddedLcOnly")) +
     nodeLockRow());
+  // Talker Alias: what a receiving radio shows instead of a bare DMR ID. The
+  // values are the wire values the daemon stores, and "" is OFF — a node that has
+  // never chosen one transmits exactly what it does today. The names come from
+  // the phonebook, so the note says where to go when the list is empty.
+  const taOpts = [
+    ["", msg("dmr.talkerAliasOff")],
+    ["callsign", msg("dmr.talkerAliasCallsign")],
+    ["callsign + name", msg("dmr.talkerAliasCallsignName")],
+    ["name", msg("dmr.talkerAliasName")],
+  ].map(([v, label]) =>
+    `<option value="${esc(v)}"${((edit.dmr || {}).talker_alias || "") === v ? " selected" : ""}>${esc(label)}</option>`
+  ).join("");
+  const talkerAlias = card(msg("dmr.talkerAliasTitle"),
+    row(msg("dmr.talkerAlias"),
+      `<select data-sec="dmr" data-key="talker_alias" aria-label="${esc(msg("dmr.talkerAlias"))}">${taOpts}</select>`) +
+    note(msg("dmr.talkerAliasNote")));
   // The message relay is off by default and deliberately so: with it on, waypointd
   // is in the path of every DMR frame, and a waypointd restart costs about three
   // and a half seconds of DMR (measured on the bench). The note says that rather
@@ -936,7 +952,7 @@ function panelDmr() {
   // Both wanted: the relay control sits in the right-hand stack with the other
   // cards, and the readiness findings go under the whole panel where they can
   // comment on any of it.
-  return `<div class="grid2">${master}<div class="stack">${slots}${timers}${relay}</div></div>` +
+  return `<div class="grid2">${master}<div class="stack">${slots}${timers}${talkerAlias}${relay}</div></div>` +
     note(msg("dmr.hangTimerClamp")) + findingsCard("dmr");
 }
 
