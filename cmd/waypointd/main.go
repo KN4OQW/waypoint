@@ -43,6 +43,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/mqtt"
 	"github.com/KN4OQW/waypoint/internal/netconfig"
 	"github.com/KN4OQW/waypoint/internal/netwatch"
+	"github.com/KN4OQW/waypoint/internal/notify"
 	"github.com/KN4OQW/waypoint/internal/nxdnhosts"
 	"github.com/KN4OQW/waypoint/internal/p25hosts"
 	"github.com/KN4OQW/waypoint/internal/paths"
@@ -165,6 +166,10 @@ type server struct {
 	// tests that do not exercise the surface, and the handlers answer 503 rather
 	// than panicking on a partially-built server.
 	phonebook *phonebook.Store
+	// notifier turns things that happened into messages somebody receives
+	// (notify.go). Nil until startNotify runs, and nil on a node with no event
+	// store — the queue lives there.
+	notifier *notify.Dispatcher
 	// identity resolves a station's display name for the AUTHENTICATED dashboard:
 	// the phonebook over DMRIds.dat (identity.go). Nil disables decoration
 	// entirely, which is exactly what a node with no phonebook gets.
@@ -2028,6 +2033,8 @@ func (s *server) newMux() *http.ServeMux {
 	// route above: its entries carry email addresses, and the gate's default-deny
 	// is what keeps them off an anonymous response.
 	s.registerPhonebookRoutes(mux)
+	// Notification test-send and the parked list (notify.go).
+	s.registerNotifyRoutes(mux)
 	mux.Handle("/", s.rootHandler(http.FileServerFS(ui.FS())))
 	return mux
 }
@@ -2593,6 +2600,11 @@ func main() {
 		// The message service transmits through that relay, so it starts after it.
 		// It costs a goroutine parked on an empty queue when nobody sends anything.
 		s.startMessages(context.Background())
+		// The notifier drains its queue on its own goroutine and subscribes to the
+		// hub for the events worth telling somebody about. It starts after the
+		// message service because an inbound message is one of those events, and
+		// costs a goroutine parked on an empty queue on a node that notifies nobody.
+		s.startNotify(context.Background())
 		// Update poller (D2 / #15): periodically refresh the stack and waypointd
 		// available-update caches and drive opt-in quiet-window auto-apply. Live mode
 		// only. Ticks every 15 min so it reliably lands in the one-hour quiet window; a

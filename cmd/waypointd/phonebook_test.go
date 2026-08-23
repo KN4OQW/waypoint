@@ -222,7 +222,10 @@ func TestPhonebookRejections(t *testing.T) {
 		// The DMR ID cases are the reason the wire type decodes into an int64: a
 		// uint32 field would answer these with a JSON decoder's overflow message
 		// instead of a limit the operator can act on.
-		{"DMR ID too wide", map[string]any{"callsign": "W1AW", "dmr_id": 5000000000}, "dmr_id"},
+		// int64, not an untyped constant: on a 32-bit target (the armv6 the image
+		// ships) an untyped 5000000000 defaults to int and does not fit, so this
+		// file would not compile for the architecture it is meant to protect.
+		{"DMR ID too wide", map[string]any{"callsign": "W1AW", "dmr_id": int64(5000000000)}, "dmr_id"},
 		{"DMR ID zero", map[string]any{"callsign": "W1AW", "dmr_id": 0}, "dmr_id"},
 		{"DMR ID negative", map[string]any{"callsign": "W1AW", "dmr_id": -1}, "dmr_id"},
 	} {
