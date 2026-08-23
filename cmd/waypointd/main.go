@@ -34,6 +34,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/events"
 	"github.com/KN4OQW/waypoint/internal/hostsrc"
 	"github.com/KN4OQW/waypoint/internal/hub"
+	"github.com/KN4OQW/waypoint/internal/idresolve"
 	"github.com/KN4OQW/waypoint/internal/lcd"
 	"github.com/KN4OQW/waypoint/internal/lcd/hd44780"
 	"github.com/KN4OQW/waypoint/internal/m17hosts"
@@ -164,6 +165,10 @@ type server struct {
 	// tests that do not exercise the surface, and the handlers answer 503 rather
 	// than panicking on a partially-built server.
 	phonebook *phonebook.Store
+	// identity resolves a station's display name for the AUTHENTICATED dashboard:
+	// the phonebook over DMRIds.dat (identity.go). Nil disables decoration
+	// entirely, which is exactly what a node with no phonebook gets.
+	identity *idresolve.Chain
 
 	// Atomic-update surface (RFC-0014 / issue #13). update holds the manifest URL,
 	// release key, and OS seams; updateArgs is the `-update` invocation the apply
@@ -1664,7 +1669,7 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	send := func(e hub.Event) bool {
-		b, err := json.Marshal(e)
+		b, err := json.Marshal(s.decorateEvent(e))
 		if err != nil {
 			return true
 		}
@@ -1735,7 +1740,9 @@ func (s *server) history(w http.ResponseWriter, r *http.Request) {
 	if evs == nil {
 		evs = []hub.Event{}
 	}
-	_ = json.NewEncoder(w).Encode(evs)
+	// Decorated on the way out, not on the way in (identity.go): the stored event
+	// is untouched, and a corrected phonebook name fixes the history too.
+	_ = json.NewEncoder(w).Encode(s.decorateEvents(evs))
 }
 
 // overridesView serves GET /api/overrides: the override records that shape the
@@ -2415,6 +2422,8 @@ func main() {
 	// status, no service in front of it. It is attached here so the surface exists
 	// the moment the daemon serves, rather than being built per request.
 	s.phonebook = phonebook.New(st)
+	// The dashboard's display-name chain over that same phonebook (identity.go).
+	s.identity = identityChain(s.phonebook)
 	// Assigned through the interfaces rather than passed directly, so a build
 	// without one of them hands the service a genuinely nil interface instead of a
 	// non-nil one wrapping a nil pointer.
@@ -2427,7 +2436,13 @@ func main() {
 		pubLive = s.agg
 	}
 	s.publicSvc = publicview.NewService(s.publicStore, pubHistory, pubLive).
-		WithIDDatabase(publicview.DMRIDsProbe(*dmrIDs))
+		WithIDDatabase(publicview.DMRIDsProbe(*dmrIDs)).
+		// The same chain the dashboard uses, but reached through an interface whose
+		// only method returns a callsign (D3): the public page may publish that an
+		// operator was heard, never the name or address the phonebook holds for
+		// them. Passing s.identity here rather than a second chain is deliberate —
+		// two chains could drift into disagreeing about who a station is.
+		WithResolver(publicResolver(s.identity))
 	// Anonymous by design, and the only routes that are. What they reach still
 	// 404s unless the operator opted in (public.go).
 	//

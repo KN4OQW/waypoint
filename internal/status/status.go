@@ -36,7 +36,19 @@ type Transmission struct {
 	Network   string    `json:"network,omitempty"`
 	Direction string    `json:"direction"` // "rf" | "network"
 	StartedAt time.Time `json:"started_at"`
-	expiresAt time.Time // watchdog deadline — not serialized
+	// SourceName is the operator's name for Source, from the phonebook, for the
+	// AUTHENTICATED dashboard only (D4). It is stamped by the handlers that serve
+	// /api/status and the WebSocket, never by the aggregator — the aggregator hands
+	// the same snapshot to every caller, so writing a name into one would be a data
+	// race as well as a disclosure. Empty on a node with no phonebook row for the
+	// station, and `omitempty` then drops it from the JSON entirely.
+	//
+	// statusEqual compares the whole struct with reflect.DeepEqual and needs no
+	// exception for this: the aggregator never writes the field, so it is zero on
+	// both sides of every comparison the aggregator makes. Decoration happens
+	// strictly after Snapshot, on a copy.
+	SourceName string    `json:"source_name,omitempty"`
+	expiresAt  time.Time // watchdog deadline — not serialized
 }
 
 // Link is the up/down state of a network reflector or a gateway daemon.

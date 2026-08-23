@@ -164,6 +164,13 @@ func TestNeverPublicFieldNamesAbsent(t *testing.T) {
 		"Lat", "Lon", "Latitude", "Longitude", "Coord",
 		"Config", "Password", "Token", "Secret", "Log", "Audit",
 		"Network", "Dest", "Talkgroup", "Slot",
+		// The phonebook (D3). The resolver chain can put an operator's real name
+		// and email next to a callsign, and the authenticated dashboard shows the
+		// name. Neither may reach an anonymous visitor: a callsign is already
+		// public by licence, a name attached to it by this node's operator is not,
+		// and an email address never is. Banned by name as well as absent by
+		// shape, so a future field arrives as a failure that says what it leaked.
+		"FullName", "Name", "Email", "Operator", "Person", "Contact", "Display",
 	}
 	for _, v := range []any{Status{}, Heard{}, Counters{}, LastHeardResult{}, CountersResult{}} {
 		typ := reflect.TypeOf(v)
