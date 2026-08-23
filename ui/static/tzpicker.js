@@ -274,8 +274,26 @@
     list.setAttribute("role", "listbox");
     list.hidden = true;
 
+    // The empty state lives OUTSIDE the listbox, not as a row inside it.
+    //
+    // It used to be an <li role="presentation"> in the <ul>, which axe fails on
+    // aria-required-children: a role=listbox must contain role=option children,
+    // and one holding only a presentational row is a listbox with nothing in it.
+    // The county and timezone pickers had the same markup and never tripped it
+    // only because nothing ever scanned them with an empty result — the callsign
+    // picker's "keep typing" state is reached constantly, which is what surfaced
+    // it. So there is no listbox at all when there is nothing to list: this is a
+    // status message beside the input, and aria-expanded goes back to false
+    // because no popup of options is showing.
+    const empty = doc.createElement("div");
+    empty.className = "tz-empty";
+    empty.id = listId + "-empty";
+    empty.setAttribute("role", "status");
+    empty.hidden = true;
+
     wrap.appendChild(input);
     wrap.appendChild(list);
+    wrap.appendChild(empty);
     mount.appendChild(wrap);
 
     function optId(i) { return listId + "-opt-" + i; }
@@ -284,12 +302,11 @@
       list.innerHTML = "";
       if (!open) {
         list.hidden = true;
+        empty.hidden = true;
         input.setAttribute("aria-expanded", "false");
         input.removeAttribute("aria-activedescendant");
         return;
       }
-      list.hidden = false;
-      input.setAttribute("aria-expanded", "true");
       if (!matches.length) {
         // A note REPLACES the generic no-match line rather than sitting under it.
         // An empty list has more than one cause and they need different answers:
@@ -298,18 +315,20 @@
         // line for either would send an operator looking for a person who is
         // there. The source says which case it is; only when it has nothing to
         // add does the caller's own noMatchText stand.
-        const li = doc.createElement("li");
-        li.className = "tz-empty";
-        li.id = listId + "-note";
-        li.setAttribute("role", "presentation");
-        li.textContent = listNote || opts.noMatchText || "No matches";
-        list.appendChild(li);
-        // Described, not merely drawn: a reason an operator cannot see is not a
-        // reason they were given.
-        input.setAttribute("aria-describedby", li.id);
+        list.hidden = true;
+        empty.hidden = false;
+        empty.textContent = listNote || opts.noMatchText || "No matches";
+        // Described as well as announced: role=status carries the message to a
+        // screen reader when it appears, and aria-describedby makes it reachable
+        // afterwards from the input it is about.
+        input.setAttribute("aria-expanded", "false");
+        input.setAttribute("aria-describedby", empty.id);
         input.removeAttribute("aria-activedescendant");
         return;
       }
+      empty.hidden = true;
+      list.hidden = false;
+      input.setAttribute("aria-expanded", "true");
       matches.forEach((it, i) => {
         const li = doc.createElement("li");
         li.className = "tz-opt" + (i === active ? " active" : "");

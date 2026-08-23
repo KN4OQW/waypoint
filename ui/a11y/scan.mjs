@@ -361,9 +361,25 @@ async function openCallsignPicker(page, which, query) {
   }
   await page.focus(sel);
   await page.fill(sel, query);
-  await page.waitForSelector(`[data-callsign-picker="${which}"] .tz-list li`, { timeout: 5000 });
-  const rows = await page.$(`[data-callsign-picker="${which}"] .tz-list li.tz-opt`);
-  if (!rows) return "empty";
+  // Wait for the OPTIONS, and treat a timeout as the empty case — not the other
+  // way round, and not on an either-or selector.
+  //
+  // Focusing the field fires its own search on the empty query, which renders the
+  // status box straight away. A selector that accepted either state therefore
+  // matched that box before this query's answer had left the daemon, and every
+  // populated pass silently became a skip: the gate went green having measured
+  // the one state it was not there to measure. Found by the scan reporting a skip
+  // against a node whose table demonstrably answered the same query over HTTP.
+  let rows = null;
+  try {
+    await page.waitForSelector(`[data-callsign-picker="${which}"] .tz-list li.tz-opt`, { timeout: 5000 });
+    rows = true;
+  } catch {
+    if (!await page.$(`[data-callsign-picker="${which}"] .tz-empty:not([hidden])`)) {
+      throw new Error(`the ${which} callsign picker showed neither options nor a reason; the scan would have passed without measuring it`);
+    }
+    return "empty";
+  }
   // Move the keyboard cursor off the first option so aria-activedescendant is
   // pointing at something the scan can see it pointing at.
   await page.keyboard.press("ArrowDown");
