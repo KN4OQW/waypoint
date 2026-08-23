@@ -255,3 +255,104 @@ documented. They do — not in size but in framing: there is no packet header wh
 one was specified. The reading is unambiguous and it makes the client simpler
 rather than harder, so this is reported rather than treated as a blocker, and no
 product code was written either way.
+
+## Addendum: what the hardware said
+
+Added after the desktop gained an ARM cross toolchain and the bench Pi 3 was
+available. This section supersedes [what was not done](#what-was-not-done) above:
+the build was done, and it changed the answer.
+
+### The `-S` server does not work on the target
+
+md380-emu was built as recommended — maintained upstream
+(`d7f4206`) plus a backported `ambeServer()` bound to `INADDR_LOOPBACK` rather
+than `INADDR_ANY` — cross-compiled armhf, and run on the bench Pi 3
+(armv7l, kernel 6.12.25+rpt-rpi-v7).
+
+It binds. It accepts a datagram. It then segfaults on the first request, in both
+directions, with no output. The same happens under `qemu-arm-static` on the
+desktop, and — decisively — **the DVSwitch fork's own unmodified binary,
+built identically, segfaults in exactly the same place.** So this is not the
+backport, and it is not the loopback change: the server path is broken on a
+current Raspberry Pi OS kernel, which is what md380tools issue #925 describes.
+
+The vocoder itself is fine on the same binary and the same machine. The file
+path decodes `sample.amb` to 56960 bytes of PCM — 178 frames, exit 0 — natively
+on the Pi. Only the server entry point dies.
+
+### The 46-line claim was wrong
+
+Recorded because this file made it. `ambeServer()` does not stand alone: it calls
+`encode_amb_buffer` and `decode_amb_buffer`, which are fork-only too and are not
+in upstream at all — upstream has only the file modes. The real backport is those
+two functions plus the server plus two header declarations, and it only compiles
+because `ambe_encode_thing2` and the firmware buffer symbols happen to exist
+upstream already. Still small, but not self-contained, and the claim was made
+from reading one function instead of trying to build it.
+
+### There is a working vocoder on the bench already
+
+The bench node carries `/usr/local/bin/wpambe` and `/tmp/md380_vocoder/`, from
+earlier Waypoint work: AD8DP's `md380_vocoder` library (Doug McLain, GPL-2.0,
+derived from md380tools) wrapped by a small `wpambe.c` that adapts it to
+Waypoint's existing external-encoder contract. Its header declares exactly the
+API this feature needs, with the layout already correct:
+
+	int  md380_init(void);
+	void md380_decode(uint8_t *ambe49, int16_t *pcm);  // 7 bytes MSB order -> 160 samples
+	void md380_encode(uint8_t *ambe49, int16_t *pcm);  // 160 samples -> 7 bytes MSB order
+	void md380_decode_fec(const uint8_t *ambe, int16_t *pcm);
+	void md380_encode_fec(uint8_t *ambe, const int16_t *pcm);
+
+"Packed into 7 uint8_t elements in MSB order" is the canonical form, so the
+conclusion above — that no repacking is needed — survives the change of vocoder.
+It also carries FEC variants, which Waypoint does not need because
+`internal/bus/frames` already does that and is golden-tested.
+
+`wpambe` runs on the Pi. The earlier `wpambe: vocoder init failed` in
+`/tmp/wpambe.err` was a working-directory problem, not a real failure:
+`md380_init()` loads its firmware images from the current directory, and from
+`/tmp/md380_vocoder` it initialises cleanly.
+
+### The real-time question, answered
+
+One second of 8 kHz audio — 50 frames — encoded through the library on the
+bench Pi 3:
+
+	real 0m0.051s   user 0m0.020s   sys 0m0.007s
+	16000 bytes of PCM in, 350 bytes (50 x 7) of AMBE out
+
+**About 1 ms per 20 ms frame, roughly 20x faster than real time**, single stream,
+on the Pi 3 that is the floor of the supported hardware. The design record noted
+that no published per-frame benchmark existed and that Prompt 8 would have to
+measure it. It is measured, and it is not close.
+
+The codewords are real, not zeros: the first frame of a 1 kHz tone encodes to
+`f8f011044ca880`, settling to `ff92020202 0800` in steady state. Byte 6 carries
+`0x80` on the first frame, which is the canonical bit-48 placement this file
+predicted.
+
+### What this means for D1 and D2
+
+D2's premise is gone. The `-S` UDP server is not a viable transport on the
+hardware Waypoint targets, and its whole protocol — the headerless dispatch, the
+one-request-at-a-time discipline, the straggler problem — exists only to talk to
+it. Linking `md380_vocoder` removes all of that: an in-process function call has
+no framing, no correlation problem and no timeout path.
+
+That also undermines D1's reasoning. The external vocoder service was justified
+as containing the licensed blob and the #925 crash risk in something restartable.
+A linked library contains neither, so the argument for keeping the vocoder out of
+process weakens considerably — while the argument for cgo gets cheaper, because
+D3 already accepts cgo for libopus in the same binary.
+
+There is a third option the plan never considered, and Waypoint already ships it:
+`internal/wxvoice` has an `ExternalVocoder` backend that shells out to an
+operator-supplied encoder command, which is exactly what `wpambe` was written
+for. It is encode-only today, and it is a pipe rather than a call, but it is an
+existing, shipped contract for "the operator supplies a vocoder we may not
+redistribute" — the same licensing problem this feature has.
+
+This is a decision for the maintainer, not a detail to settle in code. Prompts 3
+through 7 were not started, because Prompt 4's endpoint shape depends on which
+way it goes.
