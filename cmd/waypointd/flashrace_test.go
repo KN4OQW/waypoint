@@ -50,8 +50,21 @@ func TestFlashJobCopyIsSafeToEncodeWhileTheOwnerWrites(t *testing.T) {
 	f.job = &flashJob{ID: "1-race", Stage: flash.StageChoosing, Started: time.Now().UTC()}
 	held := *f.job // what start hands a caller
 
+	// wrote closes once the writer has actually published, so the assertion below
+	// waits for it instead of assuming 2000 encodes is long enough for the
+	// scheduler to have run the goroutine.
+	//
+	// It is not long enough, and that is not theoretical: this failed on the arm64
+	// runner with "the writer was never exercised" after an unrelated change made
+	// the package finish three times faster. The encodes are a tight loop with no
+	// blocking call in it, so on a busy or single-core runner the main goroutine can
+	// hold its P for all 2000 iterations and reach close(stop) before the writer has
+	// run once. Nothing in the language promises otherwise — an unsynchronised
+	// goroutine is guaranteed to run eventually, not by any particular point.
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
+	wrote := make(chan struct{})
+	var once sync.Once
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -62,12 +75,20 @@ func TestFlashJobCopyIsSafeToEncodeWhileTheOwnerWrites(t *testing.T) {
 			default:
 			}
 			f.publish(flash.Progress{Stage: flash.StageWriting, Done: i, Total: 100, Detail: "writing"})
+			once.Do(func() { close(wrote) })
 		}
 	}()
 	for i := 0; i < 2000; i++ {
 		if err := json.NewEncoder(io.Discard).Encode(&held); err != nil {
 			t.Fatalf("encode: %v", err)
 		}
+	}
+	// The race the test is about has already had its 2000 chances to happen by
+	// here; this only makes the "did the writer run at all" check deterministic.
+	select {
+	case <-wrote:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the writer goroutine never published; it was starved rather than racing")
 	}
 	close(stop)
 	wg.Wait()
