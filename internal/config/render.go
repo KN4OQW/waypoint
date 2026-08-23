@@ -699,6 +699,13 @@ func (m *Model) RenderMMDVM() string {
 		kb("Slot2", m.DMRNet.Slot2),
 	}
 	dmrNetLines = appendIfSet(dmrNetLines, kvPair{"ModeHang", m.DMRNet.ModeHang})
+	// Talker Alias injection (the Waypoint MMDVM-Host fork's InboundTalkerAlias).
+	// Emitted only when the operator has chosen a template: an unset feature adds
+	// no key, so the rendered INI is byte-identical to one from before the feature
+	// existed, and an upstream host that has never heard of the key never sees it.
+	if m.DMR.TalkerAlias != "" {
+		dmrNetLines = append(dmrNetLines, kb("InboundTalkerAlias", true))
+	}
 	sect(&b, "DMR Network", dmrNetLines...)
 	// The D-Star network talks to DStarGateway on the fixed 20010/20011 pair
 	// (MMDVM-Host [D-Star Network] already uses the modern GatewayAddress/

@@ -352,10 +352,11 @@ type ViewDMR struct {
 	// only way to switch the relay on was to edit the store by hand — and the
 	// messages page, reading the flag from here, reported the relay off on a node
 	// that was transmitting.
-	ShimEnabled    bool `json:"shim_enabled"`
-	EmbeddedLCOnly bool `json:"embedded_lc_only"`
-	DumpTAData     bool `json:"dump_ta_data"`
-	Beacons        bool `json:"beacons"`
+	ShimEnabled    bool   `json:"shim_enabled"`
+	EmbeddedLCOnly bool   `json:"embedded_lc_only"`
+	TalkerAlias    string `json:"talker_alias"`
+	DumpTAData     bool   `json:"dump_ta_data"`
+	Beacons        bool   `json:"beacons"`
 	// SelfOnly is WPSD's "Node Lock" moved into the DMR panel: Private (locked to
 	// this node's own DMR ID) when true, Public (allows other DMR IDs) when false.
 	// It is the single [DMR] SelfOnly bit — the "Node Lock" and "allow other DMR
@@ -488,6 +489,7 @@ func (m *Model) View(src Sources) *View {
 			Slot2:          m.DMRNet.Slot2,
 			ShimEnabled:    m.DMRNet.ShimEnabled,
 			EmbeddedLCOnly: m.DMR.EmbeddedLCOnly,
+			TalkerAlias:    m.DMR.TalkerAlias,
 			DumpTAData:     m.DMR.DumpTAData,
 			Beacons:        m.DMR.Beacons,
 			SelfOnly:       m.DMR.SelfOnly,
