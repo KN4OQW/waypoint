@@ -1138,7 +1138,7 @@
   "updates.updateNow": "UPDATE NOW",
   "updates.updatePolicy": "UPDATE POLICY",
   "updates.whatChanged": "What changed",
-  "wx.addCounty": "Add a county (SAME code)",
+  "wx.addCounty": "Add a county",
   "wx.addCountyCode": "Add a county by SAME code",
   "wx.addCountyPlaceholder": "Start typing a county name",
   "wx.addCountySearch": "Search for a county by name or SAME code",

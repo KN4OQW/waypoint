@@ -1138,7 +1138,7 @@
   "updates.updateNow": "METTRE À JOUR MAINTENANT",
   "updates.updatePolicy": "POLITIQUE DE MISE À JOUR",
   "updates.whatChanged": "Nouveautés",
-  "wx.addCounty": "Ajouter un comté (code SAME)",
+  "wx.addCounty": "Ajouter un comté",
   "wx.addCountyCode": "Ajouter un comté par code SAME",
   "wx.addCountyPlaceholder": "Saisissez un nom de comté",
   "wx.addCountySearch": "Rechercher un comté par nom ou code SAME",

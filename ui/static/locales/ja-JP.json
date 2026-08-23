@@ -1138,7 +1138,7 @@
   "updates.updateNow": "今すぐアップデート",
   "updates.updatePolicy": "アップデートポリシー",
   "updates.whatChanged": "変更内容",
-  "wx.addCounty": "郡を追加（SAME コード）",
+  "wx.addCounty": "郡を追加",
   "wx.addCountyCode": "SAME コードで郡を追加",
   "wx.addCountyPlaceholder": "郡名を入力してください",
   "wx.addCountySearch": "郡名または SAME コードで検索",
