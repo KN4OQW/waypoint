@@ -195,10 +195,10 @@ func TestStateTokenOutranksTheSameLettersInAName(t *testing.T) {
 // orders to agree would mean throwing that signal away.
 //
 // The DeKalb pair is the case this is really about, and it is real data: six
-// states have one, and the NWS table spells it "DeKalb" in four of them and
-// "De Kalb" in Illinois and Tennessee. Before squash() existed the two queries
-// returned disjoint sets — four counties and two — so an operator spelling it
-// the way their neighbours across the state line do found nothing.
+// states have one, and the NWS table spells it "DeKalb" in three of them and
+// "De Kalb" in the other three. Before squash() existed the two queries returned
+// disjoint sets of three, so an operator spelling it the way their neighbours
+// across the state line do found nothing.
 func TestSpellingVariantsReachTheSameCounties(t *testing.T) {
 	pairs := [][2]string{
 		{"dekalb", "de kalb"},
@@ -221,7 +221,7 @@ func TestSpellingVariantsReachTheSameCounties(t *testing.T) {
 // The DeKalb case spelled out, since it is the one that was broken: all six
 // states' DeKalb counties must be reachable by either spelling.
 func TestEveryDeKalbIsReachableBySpelling(t *testing.T) {
-	// AL, GA, IN, MO spell it "DeKalb"; IL and TN spell it "De Kalb".
+	// AL, GA and MO spell it "DeKalb"; IL, IN and TN spell it "De Kalb".
 	want := []string{"001049", "013089", "017037", "018033", "029063", "047041"}
 	for _, q := range []string{"dekalb", "de kalb"} {
 		got := codes(Search(q, 50))
@@ -279,6 +279,54 @@ func TestEmptyQueryReturnsTheTableCapped(t *testing.T) {
 	}
 	if got := Search("", 0); len(got) != Count() {
 		t.Fatalf("empty query with no cap returned %d, want all %d", len(got), Count())
+	}
+}
+
+// Within one score, the list reads alphabetically. This is the property the
+// original length tie-break broke: searching "fl" ties all 67 Florida counties,
+// and shortest-name-first opened the list with Bay, Lee, Clay, Gulf — an order
+// nobody scanning for their own county can follow.
+func TestResultsOfEqualRankReadAlphabetically(t *testing.T) {
+	got := Search("fl", 67)
+	var fl []County
+	for _, c := range got {
+		if c.State == "FL" {
+			fl = append(fl, c)
+		}
+	}
+	if len(fl) < 10 {
+		t.Fatalf("only %d Florida counties came back", len(fl))
+	}
+	for i := 1; i < len(fl); i++ {
+		if fl[i-1].Name > fl[i].Name {
+			t.Fatalf("out of order at %d: %q before %q", i, fl[i-1].Name, fl[i].Name)
+		}
+	}
+	if fl[0].Name != "Alachua" {
+		t.Errorf("first Florida county is %q, want Alachua", fl[0].Name)
+	}
+}
+
+// An exact name match still outranks a longer name that merely contains it, now
+// that the score band rather than the name length is what does it.
+func TestAnExactNameBeatsALongerOneContainingIt(t *testing.T) {
+	got := Search("monroe", 30)
+	if len(got) == 0 {
+		t.Fatal("no results")
+	}
+	if got[0].Name != "Monroe" {
+		t.Fatalf("first result is %q (%s), want an exact \"Monroe\"", got[0].Name, got[0].State)
+	}
+	// "Mainland Monroe" is still reachable, just lower.
+	var sawLonger bool
+	for _, c := range got {
+		if c.Name != "Monroe" {
+			sawLonger = true
+			break
+		}
+	}
+	if !sawLonger {
+		t.Error("no longer-named Monroe survived; they should rank lower, not vanish")
 	}
 }
 

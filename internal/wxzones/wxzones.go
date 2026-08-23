@@ -181,11 +181,11 @@ func normalize(s string) string {
 //
 // This exists because of a real row, not a hypothetical. Six states have a
 // DeKalb County and the NWS table does not spell it the same way twice: one word
-// in Alabama, Georgia, Indiana and Missouri, two words in Illinois and Tennessee.
-// Matching on words alone, "dekalb" found four of them and "de kalb" found the
-// other two, and an operator in De Kalb County, Illinois searching the way their
-// neighbours in Georgia would got nothing at all. Comparing both sides with the
-// spaces taken out makes the spelling stop mattering.
+// in Alabama, Georgia and Missouri, two words in Illinois, Indiana and
+// Tennessee. Matching on words alone, "dekalb" found three of them and "de kalb"
+// found the other three, and an operator in De Kalb County, Illinois searching
+// the way their neighbours in Georgia would got nothing at all. Comparing both
+// sides with the spaces taken out makes the spelling stop mattering.
 func squash(s string) string { return strings.ReplaceAll(s, " ", "") }
 
 // Search returns counties matching a free-text query, best first, capped at
@@ -228,9 +228,27 @@ func Search(query string, limit int) []County {
 		}
 		hits = append(hits, scored{c, score})
 	}
+	// Score first, then alphabetically within a score, then the code as the final
+	// tie-break so the order is total and the same query always returns the same
+	// list -- which the pure-render rule in CLAUDE.md wants, and which a picker
+	// that reshuffled under the operator's cursor would break.
+	//
+	// Alphabetical, specifically, and not "shortest name first". Length was the
+	// tie-break at first, to put an exact "Monroe" above "Mainland Monroe". It
+	// does that, but the band above already does it better -- an exact name match
+	// outscores a partial one by 300 -- and length wrecks the common case:
+	// searching "fl" ties all 67 Florida counties on score, and shortest-first
+	// opened the list with Bay, Lee, Clay, Gulf. Alphabetical is what an operator
+	// scanning for their own county expects to read.
 	sort.SliceStable(hits, func(i, j int) bool {
 		if hits[i].s != hits[j].s {
 			return hits[i].s > hits[j].s
+		}
+		if hits[i].c.State != hits[j].c.State {
+			return hits[i].c.State < hits[j].c.State
+		}
+		if hits[i].c.Name != hits[j].c.Name {
+			return hits[i].c.Name < hits[j].c.Name
 		}
 		return hits[i].c.SAME < hits[j].c.SAME
 	})
@@ -301,9 +319,6 @@ func match(tokens []string, c County, name, squashed, whole string) (int, bool) 
 		}
 	}
 
-	// Shorter names rank above longer ones at the same band, so an exact-ish
-	// "Monroe" beats "Mainland Monroe" when both merely matched.
-	score -= len(name)
 	return score, true
 }
 

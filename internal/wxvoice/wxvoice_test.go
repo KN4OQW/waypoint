@@ -24,20 +24,28 @@ func buildWAV(t *testing.T, pcm []int16, rate, channels int) []byte {
 			}
 		}
 	}
+	// A bytes.Buffer never fails a write, so these errors carry no information;
+	// they are discarded explicitly because the lint gate holds new code to
+	// zero findings and a bare call reads as an oversight rather than a decision.
 	var b bytes.Buffer
+	put := func(v any) {
+		if err := binary.Write(&b, binary.LittleEndian, v); err != nil {
+			t.Fatal(err)
+		}
+	}
 	b.WriteString("RIFF")
-	binary.Write(&b, binary.LittleEndian, uint32(36+data.Len()))
+	put(uint32(36 + data.Len()))
 	b.WriteString("WAVE")
 	b.WriteString("fmt ")
-	binary.Write(&b, binary.LittleEndian, uint32(16))
-	binary.Write(&b, binary.LittleEndian, uint16(1))        // PCM
-	binary.Write(&b, binary.LittleEndian, uint16(channels)) //
-	binary.Write(&b, binary.LittleEndian, uint32(rate))     //
-	binary.Write(&b, binary.LittleEndian, uint32(rate*2*channels))
-	binary.Write(&b, binary.LittleEndian, uint16(2*channels))
-	binary.Write(&b, binary.LittleEndian, uint16(16)) // bits
+	put(uint32(16))
+	put(uint16(1))        // PCM
+	put(uint16(channels)) //
+	put(uint32(rate))     //
+	put(uint32(rate * 2 * channels))
+	put(uint16(2 * channels))
+	put(uint16(16)) // bits
 	b.WriteString("data")
-	binary.Write(&b, binary.LittleEndian, uint32(data.Len()))
+	put(uint32(data.Len()))
 	b.Write(data.Bytes())
 	return b.Bytes()
 }

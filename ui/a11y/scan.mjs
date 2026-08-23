@@ -43,6 +43,9 @@ const TABS = [
   "general", "hardware", "setup", "lcd", "station", "modes",
   "brandmeister", "network", "gateways",
   "profiles", "phonebook", "notify", "updates", "system", "expert",
+  // The Weather panel arrived with its own combobox and routing matrix and was
+  // never in this list, so the gate had never seen it.
+  "weather",
 ];
 
 // The Modes tab's sub-tabs (mirrors MODE_SUBS in settings.js). These render the
@@ -181,6 +184,38 @@ async function seedPhonebook(context) {
       },
     });
   }
+}
+
+// Open the Weather panel's county picker with a real result list in it.
+//
+// The closed picker is a text box; everything this scan is here for — the
+// combobox/listbox pairing, aria-expanded, the option roles, aria-activedescendant
+// following the keyboard cursor, and the trailing "25 of 80 shown" note — only
+// exists in the DOM once it is open with matches. Scanning the panel as it loads
+// measures none of it.
+//
+// "fl" is chosen because it matches far more counties than one page holds, so the
+// truncation note renders too. The guard is the point: a picker that failed to
+// open would leave the plain text box on screen, axe would find nothing wrong
+// with it, and the scan would go green having measured the wrong markup.
+async function openCountyPicker(page, analyze, label) {
+  const input = "[data-wx-countypicker] input.tz-input";
+  if (!await page.$(input)) {
+    throw new Error("the county picker did not enhance; the scan would have passed without measuring it");
+  }
+  await page.focus(input);
+  await page.fill(input, "fl");
+  await page.waitForSelector("[data-wx-countypicker] .tz-list li.tz-opt", { timeout: 5000 });
+  // Move the keyboard cursor off the first option so aria-activedescendant is
+  // pointing at something the scan can see it pointing at.
+  await page.keyboard.press("ArrowDown");
+  if (!await page.evaluate(() => {
+    const i = document.querySelector("[data-wx-countypicker] input.tz-input");
+    return i && i.getAttribute("aria-expanded") === "true" && !!i.getAttribute("aria-activedescendant");
+  })) {
+    throw new Error("the county picker opened without its combobox state; the scan would be measuring a closed control");
+  }
+  await analyze(page, `${label} settings#weather (county picker open)`);
 }
 
 // Force the two Phonebook states the seeded data cannot produce on its own.
@@ -385,6 +420,11 @@ for (const theme of THEMES) for (const mode of MODES) {
       // the plain pass, so the panel above is still scanned as it loads.
       if (t.tab === "phonebook") {
         await openPhonebookStates(page, analyze, vp.key);
+      }
+      // The county picker's open state, for the same reason: the combobox markup
+      // only exists once it has been opened and has matches in it.
+      if (t.tab === "weather") {
+        await openCountyPicker(page, analyze, vp.key);
       }
     }
 
