@@ -436,9 +436,16 @@ const authScreenHead = `<!doctype html><html lang="en"><head><meta charset="utf-
   :root{--accent:#35d07f;--accent-soft:rgba(53,208,127,.13);--bg:#06070a;--panel:#0f1218;--panel-line:#1c222c;--field:#0a0d12;--field-line:#262c38;--ink:#e4ebf4;--ink-head:#eef2f7;--muted:#8a94a6;--bad:#ff6b6b;--mono:ui-monospace,"SF Mono",Consolas,Menlo,monospace;--sans:system-ui,-apple-system,"Segoe UI",Arial,sans-serif;}
   :root[data-theme="amber"]{--accent:#f0a935;--accent-soft:rgba(240,169,53,.13);}
   :root[data-theme="ice"]{--accent:#4db8ff;--accent-soft:rgba(77,184,255,.13);}
-  :root[data-mode="light"]{--accent:#12a35a;--accent-soft:rgba(18,163,90,.12);--bg:#eef1f6;--panel:#fff;--panel-line:#dde3ec;--field:#f5f7fb;--field-line:#ccd4e0;--ink:#1a2130;--ink-head:#0e1420;--muted:#566072;--bad:#cc3333;}
+  /* Light mode. These accents are the CORRECTED ones from ui/static/settings.html,
+     not the values this file shipped with: #12a35a was 3.27:1 on white and
+     #1f77c9 was 4.09:1 on --bg, both below AA. The app fixed them (#121); these
+     screens kept the old palette because nothing measured them — the axe harness
+     authenticates before it scans, so it never saw the claim or login page. The
+     rotation screen is the first pre-auth screen it does see, and it failed on
+     exactly this. Keep the three in step with settings.html. */
+  :root[data-mode="light"]{--accent:#0e7c45;--accent-soft:rgba(14,124,69,.12);--bg:#eef1f6;--panel:#fff;--panel-line:#dde3ec;--field:#f5f7fb;--field-line:#ccd4e0;--ink:#1a2130;--ink-head:#0e1420;--muted:#566072;--bad:#cc3333;}
   :root[data-mode="light"][data-theme="amber"]{--accent:#9a5d05;--accent-soft:rgba(154,93,5,.12);}
-  :root[data-mode="light"][data-theme="ice"]{--accent:#1f77c9;--accent-soft:rgba(31,119,201,.12);}
+  :root[data-mode="light"][data-theme="ice"]{--accent:#1d6eba;--accent-soft:rgba(29,110,186,.12);}
   *{box-sizing:border-box;}html,body{margin:0;padding:0;}
   body{background:radial-gradient(ellipse 90% 60% at 78% -10%,var(--accent-soft),transparent 55%),var(--bg);color:var(--ink);font-family:var(--sans);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
   .card{width:100%;max-width:380px;background:var(--panel);border:1px solid var(--panel-line);border-radius:14px;padding:26px 24px 28px;}
@@ -450,7 +457,11 @@ const authScreenHead = `<!doctype html><html lang="en"><head><meta charset="utf-
   label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;margin-bottom:14px;}
   input{display:block;width:100%;margin-top:6px;background:var(--field);border:1px solid var(--field-line);border-radius:8px;padding:12px;color:var(--ink);font-size:15px;font-family:var(--mono);min-height:44px;}
   input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
-  button{width:100%;margin-top:8px;background:var(--accent);color:#04120a;border:0;border-radius:8px;padding:13px;font-size:14px;font-weight:600;font-family:var(--mono);letter-spacing:.5px;cursor:pointer;min-height:48px;}
+  /* color:--bg, not a fixed near-black. The accent is bright in dark mode and dark
+     in light mode, so a single hardcoded ink can only pass in one of them; --bg is
+     the surface the accent is already sized against, which is what .btn.primary in
+     the app does and for the same reason. */
+  button{width:100%;margin-top:8px;background:var(--accent);color:var(--bg);border:0;border-radius:8px;padding:13px;font-size:14px;font-weight:600;font-family:var(--mono);letter-spacing:.5px;cursor:pointer;min-height:48px;}
   button:focus-visible{outline:2px solid var(--ink-head);outline-offset:2px;}
   .err{margin:0 0 14px;color:var(--bad);font-size:13px;font-family:var(--mono);}
   a{color:var(--accent);}
