@@ -46,6 +46,12 @@ var (
 	ErrBadCallsign   = errors.New("phonebook: a callsign is required")
 	ErrBadDMRID      = errors.New("phonebook: a DMR ID must be a positive number no wider than 32 bits")
 	ErrBadEmail      = errors.New("phonebook: an email address must contain @ and no spaces")
+	// ErrHasAccount is a delete refused because a login is keyed to the entry.
+	// accounts.phonebook_id is ON DELETE RESTRICT rather than CASCADE precisely so
+	// that removing somebody from the phonebook cannot silently delete their login
+	// (RFC-0002 Amendment 1). The API answers 409 and the panel tells the operator
+	// to revoke the login first.
+	ErrHasAccount = errors.New("phonebook: an account signs in as this entry")
 )
 
 // Entry is one operator.
@@ -352,6 +358,9 @@ func (s *Store) Update(e Entry) (Entry, error) {
 func (s *Store) Delete(id int64) error {
 	res, err := s.db.Exec(`DELETE FROM phonebook WHERE id = ?`, id)
 	if err != nil {
+		if isForeignKeyConflict(err) {
+			return ErrHasAccount
+		}
 		return err
 	}
 	n, err := res.RowsAffected()
@@ -385,6 +394,25 @@ func isUniqueConflict(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "constraint failed") &&
 		(strings.Contains(msg, "primary key") || strings.Contains(msg, "unique"))
+}
+
+// isForeignKeyConflict reports whether err is SQLite's foreign-key violation.
+//
+// SQLITE_CONSTRAINT_FOREIGNKEY is extended result code 787, surfaced by
+// modernc.org/sqlite through the same Code() method isUniqueConflict reads, with
+// the same message fallback for the same reason.
+//
+// Worth knowing before trusting this: store.Open applies _pragma=foreign_keys(1)
+// only when the path is not ":memory:", so an in-memory store does not enforce
+// foreign keys at all and this never fires there. A test that means to exercise
+// the RESTRICT must use an on-disk store or it passes vacuously.
+func isForeignKeyConflict(err error) bool {
+	var coded interface{ Code() int }
+	if errors.As(err, &coded) && coded.Code() == 787 {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "constraint failed") && strings.Contains(msg, "foreign key")
 }
 
 // conflict turns a constraint violation into the sentinel naming WHICH attribute

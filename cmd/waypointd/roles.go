@@ -47,6 +47,14 @@ var routePolicy = map[string]auth.Role{
 	"/api/ws":      auth.RoleViewer,
 	"/api/whoami":  auth.RoleViewer,
 	"/api/map":     auth.RoleViewer,
+	// Changing your OWN password, which every account must be able to do whatever
+	// its role. The amendment's mapping table does not list it, but its prose
+	// fixes it: forced rotation refuses "every route except the password-change
+	// route" for an account of ANY role, so leaving this to the default-deny would
+	// make a viewer or operator created with must_rotate=1 unable to rotate and
+	// therefore unable to use the node at all. Placed here deliberately, which is
+	// what the default-deny rule asks for.
+	"/api/password": auth.RoleViewer,
 
 	// --- operator and above: what the radio does ---------------------------
 	// The redacted config view is NOT viewer: it names the node's networks,
@@ -106,6 +114,12 @@ var routePolicy = map[string]auth.Role{
 	"/api/map/position":       auth.RoleAdmin,
 	"/api/import/apply":       auth.RoleAdmin,
 	"/api/buses/migrate":      auth.RoleAdmin,
+	// Notifications landed after the amendment was written, so its mapping table
+	// does not name them. Placed rather than left to the default: the panel holds
+	// an SMTP account's credentials and a test send puts the node's identity in
+	// somebody's inbox, which is "what the node is to the outside world" — the
+	// line the amendment draws for admin.
+	"/api/notify/": auth.RoleAdmin,
 }
 
 // rank orders the roles so "at least this role" is a comparison. It is not a

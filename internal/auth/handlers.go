@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -243,7 +244,18 @@ func (a *Auth) gateClaimed(w http.ResponseWriter, r *http.Request, next http.Han
 		next.ServeHTTP(w, r)
 		return
 	}
-	if _, ok := a.authenticate(r); ok {
+	if sess, ok := a.authenticate(r); ok {
+		// Authenticated, but the account may still be carrying an admin-chosen
+		// password. Forced rotation refuses every route but the password change,
+		// and roles.go does that for the API; what it cannot do is decide what the
+		// PAGE is, because "/" is not an /api/ path. So the page is decided here,
+		// beside the claim and login screens it is a third case of: a caller who is
+		// past the wall but not yet free of it gets a self-contained screen rather
+		// than the dashboard shell they cannot use.
+		if a.mustRotate(sess) && isPageAsset(r) {
+			writePlaceholder(w, rotatePlaceholder)
+			return
+		}
 		next.ServeHTTP(w, r)
 		return
 	}
@@ -254,6 +266,28 @@ func (a *Auth) gateClaimed(w http.ResponseWriter, r *http.Request, next http.Han
 		return
 	}
 	writeErrorMode(w, http.StatusUnauthorized, "authentication required", "login")
+}
+
+// mustRotate reports whether the session's owner still owes a password rotation.
+//
+// A session with no owner (a pre-amendment row the migration could not attribute,
+// or an account deleted mid-flight) is NOT treated as owing one: the rotation
+// screen would be a dead end for a caller who has nothing to rotate. Those cases
+// are already handled downstream — roles.go answers 401 when it cannot resolve the
+// caller — and duplicating that judgement here would give two answers to one
+// question.
+func (a *Auth) mustRotate(sess Session) bool {
+	if sess.AccountID == 0 {
+		return false
+	}
+	acct, err := a.store.AccountByID(sess.AccountID)
+	if err != nil {
+		if !errors.Is(err, ErrNoSuchAccount) {
+			a.logf("auth: resolving session owner for rotation check failed: %v", err)
+		}
+		return false
+	}
+	return acct.MustRotate
 }
 
 // isPageAsset reports whether the request is for the top-level HTML page. Pre-auth
@@ -314,6 +348,53 @@ var loginPlaceholder = authScreen(
 	"Enter your admin credentials to manage this Waypoint node.",
 	"/api/session", "Log in", false)
 
+// The forced-rotation screen (RFC-0002 Amendment 1).
+//
+// An admin who creates an account chooses its first password, so for a moment two
+// people know it. must_rotate is what makes that moment brief: until the account
+// rotates, the gate serves this instead of the dashboard and roles.go refuses
+// every route but /api/password.
+//
+// It asks for the current password even though the caller is already
+// authenticated. That is not belt-and-braces — a session left open on an
+// unattended screen must not be enough to take an account over, and the rotation
+// flag does not change that.
+//
+// There is no username field: the account is whoever the session says it is, and
+// offering to change somebody else's password from here would be a different
+// route with a different permission.
+var rotatePlaceholder = rotateScreen()
+
+func rotateScreen() string {
+	return authHead("Set a new password") + `
+<body>
+  <form id="f" class="card" autocomplete="on">
+    <div class="brand"><svg width="24" height="24" viewBox="0 0 512 512" fill="var(--accent)" aria-hidden="true"><path d="M256 474 C201 410 138 362 138 284 A118 118 0 0 1 374 284 C374 362 311 410 256 474 Z"></path></svg><b>WAYPOINT</b></div>
+    <h1>Set a new password</h1>
+    <p class="sub">This account was created with a password somebody else chose. Set your own to finish signing in — nothing else on this node will open until you do.</p>
+    <p class="err" id="err" role="alert" hidden></p>
+    <label>Current password<input id="current" type="password" autocomplete="current-password" required autofocus></label>
+    <label>New password<input id="password" type="password" autocomplete="new-password" required minlength="8"></label>
+    <label>Confirm new password<input id="confirm" type="password" autocomplete="new-password" required minlength="8"></label>
+    <button type="submit">Set password</button>
+  </form>
+<script>
+  var f=document.getElementById("f"),err=document.getElementById("err");
+  function show(m){err.textContent=m;err.hidden=false;return false;}
+  f.addEventListener("submit",function(e){
+    e.preventDefault();err.hidden=true;
+    var c=document.getElementById("current").value,p=document.getElementById("password").value;
+    if(p!==document.getElementById("confirm").value){return show("Passwords do not match");}
+    if(p.length<8){return show("Password must be at least 8 characters");}
+    if(p===c){return show("The new password must be different from the current one");}
+    fetch("/api/password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({current_password:c,new_password:p})})
+      .then(function(r){if(r.ok){location.href="/";return;}return r.json().then(function(j){show((j&&j.error)||"Request failed");});})
+      .catch(function(){show("Network error — check the connection and try again");});
+  });
+</script>
+</body></html>`
+}
+
 // lockoutHelp is the "forgotten it?" disclosure, on the login screen only. The
 // claim screen does not need it: there is no password to have forgotten yet.
 func lockoutHelp(kind string) string {
@@ -337,24 +418,19 @@ func lockoutHelp(kind string) string {
     </details>`
 }
 
-// authScreen builds a self-contained first-run page. withConfirm adds a
-// confirm-password field and the 8-char client-side check (the API enforces the
-// floor too); endpoint is where the form POSTs.
-func authScreen(kind, heading, sub, endpoint, submit string, withConfirm bool) string {
-	confirmField := ""
-	confirmJS := ""
-	if withConfirm {
-		confirmField = `<label>Confirm password<input id="confirm" type="password" autocomplete="new-password" required minlength="8"></label>`
-		confirmJS = `if(p!==document.getElementById('confirm').value){return show('Passwords do not match');}
-      if(p.length<8){return show('Password must be at least 8 characters');}`
-	}
-	pwAutocomplete := "current-password"
-	if withConfirm {
-		pwAutocomplete = "new-password"
-	}
-	return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+// authScreenHead is the shared <head> of every pre-auth screen: the theme-restore
+// script and the whole stylesheet. It is one constant rather than three copies so
+// the claim, login and rotation screens cannot drift apart visually — they are the
+// same surface seen at three moments, and an operator who meets two of them in one
+// sitting should not be able to tell they were built separately.
+//
+// The literal {{TITLE}} is the page title, substituted by authHead. It is a token
+// rather than a Sprintf verb because this stylesheet is full of percent signs
+// (gradients, widths, viewport units) and every one of them would be a format
+// verb — a class of bug that shows up as a mangled page, not a compile error.
+const authScreenHead = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Waypoint · ` + heading + `</title>
+<title>Waypoint · {{TITLE}}</title>
 <script>(function(){try{var m=localStorage.getItem("wp-mode");if(m===null&&window.matchMedia&&matchMedia("(prefers-color-scheme: light)").matches)m="light";if(m==="light")document.documentElement.setAttribute("data-mode","light");var t=localStorage.getItem("wp-theme");if(t&&t!=="phosphor")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
 <style>
   :root{--accent:#35d07f;--accent-soft:rgba(53,208,127,.13);--bg:#06070a;--panel:#0f1218;--panel-line:#1c222c;--field:#0a0d12;--field-line:#262c38;--ink:#e4ebf4;--ink-head:#eef2f7;--muted:#8a94a6;--bad:#ff6b6b;--mono:ui-monospace,"SF Mono",Consolas,Menlo,monospace;--sans:system-ui,-apple-system,"Segoe UI",Arial,sans-serif;}
@@ -387,6 +463,29 @@ func authScreen(kind, heading, sub, endpoint, submit string, withConfirm bool) s
   .help pre{padding:9px 10px;margin:8px 0;overflow-x:auto;}
   .help code{padding:1px 5px;}
 </style></head>
+`
+
+// authHead renders the shared head with a page title.
+func authHead(title string) string {
+	return strings.Replace(authScreenHead, "{{TITLE}}", title, 1)
+}
+
+// authScreen builds a self-contained first-run page. withConfirm adds a
+// confirm-password field and the 8-char client-side check (the API enforces the
+// floor too); endpoint is where the form POSTs.
+func authScreen(kind, heading, sub, endpoint, submit string, withConfirm bool) string {
+	confirmField := ""
+	confirmJS := ""
+	if withConfirm {
+		confirmField = `<label>Confirm password<input id="confirm" type="password" autocomplete="new-password" required minlength="8"></label>`
+		confirmJS = `if(p!==document.getElementById('confirm').value){return show('Passwords do not match');}
+      if(p.length<8){return show('Password must be at least 8 characters');}`
+	}
+	pwAutocomplete := "current-password"
+	if withConfirm {
+		pwAutocomplete = "new-password"
+	}
+	return authHead(heading) + `
 <body>
   <form id="f" class="card" autocomplete="on">
     <div class="brand"><svg width="24" height="24" viewBox="0 0 512 512" fill="var(--accent)" aria-hidden="true"><path d="M256 474 C201 410 138 362 138 284 A118 118 0 0 1 374 284 C374 362 311 410 256 474 Z"></path></svg><b>WAYPOINT</b></div>

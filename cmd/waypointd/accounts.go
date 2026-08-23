@@ -56,6 +56,16 @@ func toAccountView(a auth.Account) accountView {
 	}
 }
 
+// whoamiView is the whoami response, as a named type rather than a map so the
+// amendment's field audit has a declaration to walk. Growing a field here is the
+// thing that test is watching for: this is the one route a viewer reaches, and its
+// shape is what holds the GET /api/config denial up.
+type whoamiView struct {
+	Username string `json:"username"`
+	Role     string `json:"role"`
+	Callsign string `json:"callsign"`
+}
+
 // whoami answers "who am I and what may I do", for every authenticated account.
 //
 // It exists so a viewer never needs GET /api/config to paint the sidebar's
@@ -83,11 +93,16 @@ func (s *server) whoami(w http.ResponseWriter, r *http.Request) {
 	if m, err := config.Load(s.store); err == nil {
 		callsign = m.General.Callsign
 	}
-	writeJSON(w, map[string]any{
-		"username":    acct.Username,
-		"role":        string(acct.Role),
-		"callsign":    callsign,
-		"must_rotate": acct.MustRotate,
+	// Three fields, and the amendment's test asserts there is no fourth. The
+	// rotation flag is deliberately NOT among them: a must-rotate account cannot
+	// reach this route at all (roles.go refuses everything but /api/password), so
+	// a field reporting the flag could never be read by the client that needs it.
+	// The client learns it from the gate instead — the rotation screen at "/" and
+	// the 403 mode:"rotate" — which is the same way it learns "claim" and "login".
+	writeJSON(w, whoamiView{
+		Username: acct.Username,
+		Role:     string(acct.Role),
+		Callsign: callsign,
 	})
 }
 
