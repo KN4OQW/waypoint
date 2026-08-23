@@ -180,3 +180,98 @@ func collapse(b []byte) string {
 	}
 	return s[:cut]
 }
+
+// LookupIDs resolves a SET of DMR IDs to their rows in one pass over the table.
+//
+// It is the reverse of LookupCallsign and exists for the phonebook's refresh: a
+// node keeps a handful of imported entries, and after the table is re-downloaded
+// each of them has to be re-read to see whether RadioID changed the callsign or
+// the name behind the ID it was imported under.
+//
+// One pass for the whole set rather than one pass per ID. A phonebook of fifty
+// entries would otherwise be fifty scans of a 6.4 MB file — on a Pi Zero reading
+// from SD that is the difference between a background task nobody notices and one
+// that thrashes the card for a minute. The map costs one entry per WANTED id, not
+// per row, so a fifty-entry phonebook holds fifty records however large the table
+// grows.
+//
+// Table is not used here for the same reason LookupCallsign does not use it: the
+// 6.6 MB export measured 35.5 MB of live heap once loaded, on a board whose
+// smallest supported configuration has 512 MB. This holds one 64 KB buffer.
+//
+// Keying on the ID rather than the callsign is deliberate. RadioID issues the ID
+// and it is the stable half: a vanity callsign change rewrites the callsign
+// against the same ID, and that is precisely the update a refresh should carry
+// through. Matching on callsign would find the old row under the old name and
+// never notice.
+//
+// IDs absent from the table are absent from the result rather than being reported
+// as an error. A row can leave the export — an ID lapses, or a regional list the
+// operator's node does not carry it in — and the caller's job there is to leave
+// the entry alone, not to delete somebody's identity because a download changed.
+//
+// A missing file yields no records and no error, matching Load and LookupCallsign:
+// a node that has never reached the internet has no table, and there is nothing to
+// sync rather than something wrong.
+func LookupIDs(path string, ids []uint32) (map[uint32]Record, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	want := make(map[uint32]struct{}, len(ids))
+	for _, id := range ids {
+		want[id] = struct{}{}
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	out := make(map[uint32]Record, len(want))
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 || line[0] == '#' || line[0] == ';' {
+			continue
+		}
+		idField, rest := nextField(line)
+		id64, err := strconv.ParseUint(string(idField), 10, 32)
+		if err != nil {
+			continue // a bad line is skipped, never fatal — same tolerance as Parse
+		}
+		id := uint32(id64)
+		if _, wanted := want[id]; !wanted {
+			continue
+		}
+		callField, nameRest := nextField(rest)
+		if len(callField) == 0 {
+			continue
+		}
+		// First row wins for a given ID. The export is sorted ascending by ID and an
+		// ID is issued once, so a duplicate means a hand-edited or concatenated file;
+		// taking the first keeps the answer stable across runs rather than depending
+		// on which copy of the row came last.
+		if _, seen := out[id]; seen {
+			continue
+		}
+		out[id] = Record{
+			ID:       id,
+			Callsign: strings.ToUpper(string(callField)),
+			Name:     collapse(nameRest),
+		}
+		// Every wanted ID found: stop reading. A phonebook's IDs are typically low
+		// and the export is ID-ascending, so this commonly ends the scan well before
+		// the end of the file.
+		if len(out) == len(want) {
+			break
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

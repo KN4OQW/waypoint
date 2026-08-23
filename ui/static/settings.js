@@ -4952,6 +4952,8 @@ document.getElementById("panels").addEventListener("click", (e) => {
   if (pbGrantBtn) { pbBeginGrant(pbGrantBtn.dataset.pbGrant); return; }
   const pbRev = e.target.closest("[data-pb-revoke]");
   if (pbRev) { pbRevoke(pbRev.dataset.pbRevoke); return; }
+  const pbImp = e.target.closest("[data-pb-import]");
+  if (pbImp) { pbImport(pbImp.dataset.pbImport); return; }
   const pbA = e.target.closest("[data-pb-action]");
   if (pbA) {
     switch (pbA.dataset.pbAction) {
@@ -4959,6 +4961,7 @@ document.getElementById("panels").addEventListener("click", (e) => {
       case "cancel": pbCancelEdit(); break;
       case "grant": pbGrant(); break;
       case "cancelGrant": pbCancelGrant(); break;
+      case "find": pbFind(); break;
     }
     return;
   }
@@ -5184,6 +5187,14 @@ document.getElementById("panels").addEventListener("change", (e) => {
 // re-render so the keyboard user stays put.
 document.getElementById("panels").addEventListener("keydown", (e) => {
   const t = e.target;
+  // Enter in the public-list search runs it. The field is not in a <form>, so
+  // nothing would happen otherwise, and pressing Enter after typing a callsign is
+  // what everyone does.
+  if (t && t.id === "pb-find" && e.key === "Enter") {
+    e.preventDefault();
+    pbFind();
+    return;
+  }
   // Modes sub-tab strip: arrows move between tabs, Home/End jump to the ends
   // (WAI-ARIA tabs pattern). Enter/Space need no handler — they are real buttons.
   const mt = t.closest && t.closest("[data-modesub]");
@@ -5619,6 +5630,16 @@ const pb = {
   grant: { username: "", password: "", role: "operator" },
   grantErr: "",
   grantField: "",
+  // --- import from the public ID table ------------------------------------
+  // The operator's roster is a handful of people and the public export is over
+  // 300,000 rows, so the way in is a search rather than a list: type a callsign,
+  // see the IDs issued to it, add the one that is them.
+  //
+  // find mirrors the General tab's #140 lookup because it is the same question
+  // asked in the same shape — deliberately, so an operator who has met one
+  // recognises the other.
+  find: { status: "idle", callsign: "", records: [], truncated: false, available: true, err: "" },
+  findQuery: "",
 };
 
 // pbAccountsFor returns the accounts keyed to a phonebook entry. Several may share
@@ -5808,7 +5829,7 @@ function pbTable() {
     return `<tr>` +
       `<td class="call">${esc(e.callsign)}</td>` +
       `<td class="num">${e.dmr_id ? esc(String(e.dmr_id)) : dash}</td>` +
-      `<td>${cell(e.full_name)}</td>` +
+      `<td>${cell(e.full_name)}${pbSourceMark(e)}</td>` +
       `<td>${cell(e.email)}</td>` +
       `<td>${pbLoginCell(e)}</td>` +
       `<td class="rowacts">` +
@@ -5831,6 +5852,18 @@ function pbTable() {
       `<th scope="col">${esc(msg("phonebook.login"))}</th>` +
       `<th scope="col"><span class="sr-only">${esc(msg("phonebook.actions"))}</span></th>` +
     `</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+// pbSourceMark flags an entry that came from the public list and is still being
+// kept in step with it.
+//
+// It is on the Name column because the name and the callsign are what the refresh
+// may rewrite, and an operator who wonders why a name changed on its own should
+// find the answer next to the thing that changed. A hand-typed entry carries no
+// mark at all: the ordinary case should not need a badge.
+function pbSourceMark(e) {
+  if (e.source !== "dmrids") return "";
+  return ` <span class="pill src" title="${esc(msg("phonebook.trackedHelp"))}">${esc(msg("phonebook.tracked"))}</span>`;
 }
 
 // pbLoginCell is the Login column: every account keyed to this entry, each with
@@ -5877,6 +5910,127 @@ function pbLoginCell(e) {
     const why = last ? `<span class="none">${esc(msg("phonebook.lastAdmin"))}</span>` : "";
     return `<div class="loginrow"><code>${esc(a.username)}</code>${rotate}${sel}${revoke}${why}</div>`;
   }).join("");
+}
+
+// pbFind asks the public ID table which DMR IDs are issued to a callsign.
+//
+// It reuses GET /api/dmr/ids, the route the General tab's #140 lookup already
+// uses: one scanner, one validation, one place the answer's shape is decided. The
+// phonebook panel is admin-only and that route is operator-or-above, so an admin
+// reaching it needs no new permission.
+async function pbFind() {
+  const el = document.getElementById("pb-find");
+  const cs = String((el ? el.value : pb.findQuery) || "").trim();
+  pb.findQuery = cs;
+  if (!cs) {
+    pb.find = { status: "nocall", callsign: "", records: [], truncated: false, available: true, err: "" };
+    renderPanel();
+    return;
+  }
+  pbReadForm();
+  pb.find = { status: "busy", callsign: cs, records: [], truncated: false, available: true, err: "" };
+  renderPanel();
+  try {
+    const r = await fetch("/api/dmr/ids?callsign=" + encodeURIComponent(cs));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const body = await r.json();
+    pb.find = {
+      status: "done",
+      // What the server actually searched: a suffixed callsign falls back to the
+      // base call, and the operator should see which one answered.
+      callsign: body.callsign || cs,
+      records: body.records || [],
+      truncated: !!body.truncated,
+      available: !!body.available,
+      err: "",
+    };
+  } catch (e) {
+    pb.find = { status: "error", callsign: cs, records: [], truncated: false, available: true, err: String((e && e.message) || e).trim() };
+  }
+  renderPanel();
+}
+
+// pbImport creates the entry from one of those rows.
+//
+// It posts the ID alone. The server does the lookup again and writes what the
+// table says, so what lands in the phonebook is the published row rather than
+// whatever this page happened to be showing — which is what lets the entry be
+// marked as coming from the public list and kept in step with it afterwards.
+async function pbImport(id) {
+  pbReadForm();
+  try {
+    const r = await fetch("/api/phonebook/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dmr_id: Number(id) }),
+    });
+    if (!r.ok) {
+      const detail = await r.json().catch(() => ({}));
+      pb.err = detail.reason === "no_table" ? msg("phonebook.findNoTable")
+        : detail.reason === "not_listed" ? msg("phonebook.findNotListed")
+        : (detail.error || "").trim() || msg("phonebook.importFailed");
+    } else {
+      pb.err = "";
+    }
+  } catch (e) {
+    pb.err = String((e && e.message) || e).trim();
+  }
+  await pbLoad();
+  renderPanel();
+}
+
+// pbFindCard is the search and its answer.
+//
+// Every branch says what happened AND what to do about it, the same rule the
+// General tab's lookup follows: an empty table is fixed on this node from the
+// Updates tab, an unlisted callsign is fixed at radioid.net, and those are not the
+// same errand.
+function pbFindCard() {
+  const F = pb.find;
+  const call = esc(F.callsign);
+  const already = (id) => pb.entries.some((e) => String(e.dmr_id) === String(id));
+
+  let out = "";
+  if (F.status === "busy") {
+    out = note(esc(msg("phonebook.findBusy")));
+  } else if (F.status === "nocall") {
+    out = note(esc(msg("phonebook.findNoCallsign")));
+  } else if (F.status === "error") {
+    out = `<div class="note" role="alert" style="color:var(--bad);border-color:var(--bad)">` +
+      `${esc(msg("phonebook.findFailed"))}${F.err ? ` <span class="none">${esc(F.err)}</span>` : ""}</div>`;
+  } else if (F.status === "done") {
+    if (!F.available) {
+      out = note(esc(msg("phonebook.findNoTable")));
+    } else if (!F.records.length) {
+      out = note(msg("phonebook.findNoMatch", { callsign: `<b>${call}</b>` }));
+    } else {
+      const head = F.records.length === 1
+        ? msg("phonebook.findOne", { callsign: `<b>${call}</b>` })
+        : msg("phonebook.findMany", { callsign: `<b>${call}</b>`, count: F.records.length });
+      const tail = F.truncated ? " " + esc(msg("phonebook.findTruncated", { count: F.records.length })) : "";
+      const rows = F.records.map((r) => {
+        const id = String(r.id);
+        const name = r.name ? `<span class="idfind-name">${esc(r.name)}</span>` : "";
+        // An ID already in the phonebook says so instead of offering a button
+        // whose only outcome is the uniqueness conflict.
+        const action = already(id)
+          ? `<span class="idfind-cur">${esc(msg("phonebook.findAlready"))}</span>`
+          : `<button type="button" class="btn ghost" data-pb-import="${esc(id)}" ` +
+            `aria-label="${esc(msg("phonebook.findAddLabel", { callsign: F.callsign, id }))}">${esc(msg("common.add"))}</button>`;
+        return `<li><span class="idfind-id">${esc(id)}</span>${name}${action}</li>`;
+      }).join("");
+      out = `<div class="idfind-out"><p class="idfind-head">${head}${tail}</p><ul class="idfind-list">${rows}</ul></div>`;
+    }
+  }
+
+  return card(msg("phonebook.findTitle"),
+    note(msg("phonebook.findHelp")) +
+    `<div class="row"><label for="pb-find">${esc(msg("phonebook.callsign"))}</label>` +
+      `<div class="idfind">` +
+        `<input id="pb-find" value="${esc(pb.findQuery)}" placeholder="KN4OQW" data-pb-findinput="1">` +
+        `<button type="button" class="btn ghost idfind-go" data-pb-action="find">${esc(msg("phonebook.findGo"))}</button>` +
+      `</div></div>` +
+    out);
 }
 
 // pbBeginGrant opens the grant form for one phonebook entry.
@@ -6097,7 +6251,10 @@ function panelPhonebook() {
         : "") +
     `</div>`);
 
-  return `<div class="grid2">${list}${form}</div>`;
+  // The find card sits beside the entry form rather than replacing it: adding
+  // somebody by hand and looking them up in the public list are two ways to do the
+  // same thing, and an operator should not have to switch modes to choose.
+  return `<div class="grid2">${list}${form + pbFindCard()}</div>`;
 }
 
 // pbAfterRender keeps the form model in step with the inputs.
