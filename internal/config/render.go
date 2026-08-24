@@ -1556,6 +1556,18 @@ func (m *Model) RenderDMRGateway() string {
 		rptPort = gwShim.GatewayBindPort
 	}
 	sect(&b, "General",
+		// Id is the node's own DMR ID and it is not optional. DMRGateway's
+		// CMMDVMNetwork constructor asserts `id > 0U` (MMDVMNetwork.cpp:52), so a
+		// missing or zero Id is not a warning or a degraded mode — the daemon
+		// aborts on SIGABRT before it opens a socket, and systemd restarts it into
+		// the same abort forever.
+		//
+		// This was measured, not read: after DMRGateway was updated on the bench
+		// the gateway crash-looped 75 times in a few minutes on that exact
+		// assertion, with the rendered [General] carrying everything except Id.
+		// Older builds took the same key and simply did not check it, which is why
+		// the omission survived this long unnoticed.
+		kv("Id", m.General.ID),
 		kv("RptAddress", "127.0.0.1"),
 		kv("RptPort", rptPort),
 		kv("LocalAddress", "127.0.0.1"),

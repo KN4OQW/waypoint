@@ -461,3 +461,21 @@ func TestAZelloChannelAloneIsNotABus(t *testing.T) {
 		t.Fatal("a bus with only a Zello channel was accepted")
 	}
 }
+
+// DMRGateway's CMMDVMNetwork constructor asserts `id > 0U`, so a rendered
+// [General] without Id does not degrade — the daemon aborts before it opens a
+// socket and systemd restarts it into the same abort forever. Measured on the
+// bench: 75 restarts in a few minutes after the gateway was updated, on a config
+// that carried every other key.
+func TestDMRGatewayCarriesTheNodesID(t *testing.T) {
+	m := &Model{General: General{Callsign: "KN4OQW", ID: "3180202"}}
+	out := m.RenderDMRGateway()
+
+	gen := out
+	if i := strings.Index(out, "\n[Log]"); i > 0 {
+		gen = out[:i]
+	}
+	if !strings.Contains(gen, "Id=3180202") {
+		t.Errorf("[General] has no Id; DMRGateway aborts on `id > 0U`:\n%s", gen)
+	}
+}
