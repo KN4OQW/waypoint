@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/KN4OQW/waypoint/internal/bus/frames"
+	"github.com/KN4OQW/waypoint/internal/bus/peer"
 	"github.com/KN4OQW/waypoint/internal/bus/zello"
 	"github.com/KN4OQW/waypoint/internal/config"
 )
@@ -184,4 +185,35 @@ func zelloMode(id string) config.Mode { return config.Mode("zello:" + id) }
 // destination goes to the bridge above instead of to a loopback.
 func zelloAttachment(id string) (mode config.Mode, fmode frames.Mode) {
 	return zelloMode(id), frames.ModeDMR
+}
+
+// --- the seam between the run loop and the codecs -----------------------------
+
+// zelloSink is one live Zello endpoint as the run loop sees it. The run loop is
+// built untagged and knows nothing about libopus or the vocoder; everything
+// tag-gated sits behind this.
+type zelloSink interface {
+	// Emit hands the run loop's emission for this endpoint to the channel. It is
+	// called with header, voice and terminator frames alike, because the stream
+	// bracketing Zello needs is derived from them.
+	Emit(f frames.Frame) error
+	// Close ends the connection.
+	Close() error
+}
+
+// newZelloSink builds an endpoint. It is a variable so the tagged build can
+// replace it: an untagged binary refuses rather than silently running a bus with
+// its Zello channels missing, because a bridge that is quietly not bridging looks
+// exactly like one whose far end is idle.
+var newZelloSink = func(config.BusZello, config.BusVocoder, func(frames.Frame)) (zelloSink, error) {
+	return nil, fmt.Errorf("bus: this build has no Zello support; rebuild with -tags zello")
+}
+
+// envFor builds the cross-peer envelope for a frame that entered the cluster at
+// this node on a Zello endpoint. It is the same envelope a loopback datagram
+// gets, so RFC-0016's cross-peer loop prevention treats Zello-origin audio
+// exactly like RF-origin audio and a peered bus cannot send it back.
+func envFor(node string, mode config.Mode, busID string) *peer.Envelope {
+	e := peer.NewEnvelope(node, string(mode), busID)
+	return &e
 }

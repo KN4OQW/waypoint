@@ -97,6 +97,14 @@ func runOwner(cfgPath, dmridsPath, nodeID string) {
 		}
 	}
 
+	// Zello endpoints join the router as ordinary attachments under a synthetic
+	// mode, which is what lets RFC-0003 §5 arbitrate an RF talker against a Zello
+	// one with no special case anywhere in the router.
+	for _, z := range bc.Zello {
+		zm, zf := zelloAttachment(z.ID)
+		rcfg.Attachments = append(rcfg.Attachments, router.Attachment{Mode: zm, FMode: zf})
+	}
+
 	resolver := loadResolver(dmridsPath)
 
 	h := hub.New()
@@ -111,6 +119,7 @@ func runOwner(cfgPath, dmridsPath, nodeID string) {
 		eps:         make(map[config.Mode]*endpoint),
 		remoteModes: remoteModes,
 		byMode:      make(map[config.Mode][]*memberLink),
+		zello:       make(map[config.Mode]zelloSink),
 	}
 	for _, a := range rcfg.Attachments {
 		io.params[a.Mode] = a.Params
@@ -122,9 +131,41 @@ func runOwner(cfgPath, dmridsPath, nodeID string) {
 	startEventPublisher(ctx, bc.MQTT, bc.Bus.ID, h) // D4: republish events to MQTT (best-effort)
 
 	frameCh := make(chan inbound, 256)
+
+	// Zello endpoints, before the loopbacks so a failure here stops the bus before
+	// it has bound anything. A configured channel that cannot start is fatal
+	// rather than skipped: a bus silently running without one of its channels
+	// looks exactly like one whose far end is idle, and an operator would have no
+	// way to tell the difference.
+	for _, z := range bc.Zello {
+		if bc.Vocoder == nil {
+			log.Fatalf("zello channel %q needs a vocoder, but the rendered config names no firmware images", z.Channel)
+		}
+		zm := zelloMode(z.ID)
+		inject := func(f frames.Frame) {
+			select {
+			case frameCh <- inbound{mode: zm, frame: &f, env: envFor(nodeID, zm, bc.Bus.ID)}:
+			default:
+				// The run loop is behind. Dropping is right for audio: the frame
+				// is only useful now, and blocking here would stall every other
+				// attachment on the bus behind one slow channel.
+			}
+		}
+		zs, err := newZelloSink(z, *bc.Vocoder, inject)
+		if err != nil {
+			log.Fatalf("zello channel %q: %v", z.Channel, err)
+		}
+		io.zello[zm] = zs
+		defer zs.Close()
+		log.Printf("attached zello: channel %q as %s, %d ms packets", z.Channel, zm, z.PacketMS)
+	}
+
 	for _, a := range rcfg.Attachments {
 		if remoteModes[a.Mode] {
 			continue // a member's mode has no local loopback; it rides the peer link
+		}
+		if io.zello[a.Mode] != nil {
+			continue // a Zello endpoint's I/O is a WebSocket, not a loopback
 		}
 		lb, err := loopbackFrom(bc, a.Mode)
 		if err != nil {
@@ -204,6 +245,10 @@ type busIO struct {
 	eps         map[config.Mode]*endpoint
 	remoteModes map[config.Mode]bool
 	byMode      map[config.Mode][]*memberLink // members contributing each mode
+	// zello holds one live endpoint per bridged channel, keyed by the synthetic
+	// mode it occupies on the bus. A destination found here is transcoded rather
+	// than constructed into a mode's wire framing.
+	zello map[config.Mode]zelloSink
 }
 
 // handleFrame runs one inbound frame (local loopback datagram or injected member
@@ -235,6 +280,15 @@ func (io *busIO) handleFrame(bus *router.Bus, in inbound) {
 	for _, em := range bus.Ingest(in.mode, f, time.Now()) {
 		if io.remoteModes[em.Dst] {
 			io.emitToMembers(em, env)
+			continue
+		}
+		// A Zello destination leaves the AMBE world here. This is the one branch
+		// on the bus that transcodes, and it is deliberately at the edge: the
+		// router above it still copied codewords verbatim.
+		if zs := io.zello[em.Dst]; zs != nil {
+			if err := zs.Emit(em.Frame); err != nil {
+				log.Printf("zello %s: %v", em.Dst, err)
+			}
 			continue
 		}
 		out, err := constructFrame(em.Dst, em.Frame, io.params[em.Dst], io.resolver)

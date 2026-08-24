@@ -179,6 +179,32 @@ without Zello stays pure Go, and add libopus to the CustomPiOS image and the ARM
 toolchain. If libopus cannot be cleanly added to the image, that is the trigger to
 reconsider D1's rejected alternative and move the transport out of process.
 
+#### The cross build, proved
+
+The whole feature cross-compiles and links for armhf from the desktop, which was
+D3's open risk. The recipe is worth writing down because three parts of it are
+not guessable:
+
+	CC=arm-linux-gnueabihf-gcc CGO_ENABLED=1 GOOS=linux GOARCH=arm GOARM=6 \
+	CGO_CFLAGS="-I<opus>/include" \
+	CGO_LDFLAGS="-L<vocoder> -L<opus>/lib -Xlinker --just-symbols=<syms>/symbols_d02.032" \
+	go build -tags "zello nolibopusfile" -ldflags '-extldflags "-lm"' ./cmd/waypoint-bus
+
+- `nolibopusfile` is hraban/opus's own tag. libopusfile is not used and its
+  header is absent on plain build hosts, so without this the build fails on a
+  dependency the feature does not have.
+- `--just-symbols` supplies the firmware entry points as addresses. The archive
+  it accompanies must have had `firmware.o` and `ram.o` removed, or the binary
+  carries the licensed blob.
+- `-lm` has to arrive through `-extldflags`, not `CGO_LDFLAGS`. cgo appends the
+  package's own `-lopus` *after* everything in CGO_LDFLAGS, and static libopus
+  needs libm resolved after it — put `-lm` in CGO_LDFLAGS and the link fails on
+  `floorf`, `lrintf` and `sqrt` with no indication that ordering is the problem.
+
+The result was checked rather than assumed: the linked `waypoint-bus` is 15.6 MB,
+starts on the bench Pi 3, and a byte-probe from the middle of the firmware image
+does not appear anywhere in it.
+
 ### D4 — One WebSocket per Zello channel
 
 Forced by Zello, not chosen. API.md states verbatim: "Connecting to multiple
