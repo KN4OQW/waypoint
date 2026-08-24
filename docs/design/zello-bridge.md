@@ -85,39 +85,86 @@ completely, but it doubles the latency budget on a 20 ms audio path and puts PTT
 arbitration across a broker, which is exactly the thing RFC-0003 §5 solves
 in-process. Keep it in reserve for the case named in D3.
 
-### D2 — Vocoder: md380-emu as an external service
+### D2 — Vocoder: md380_vocoder linked via cgo, runtime firmware load
 
-The router is codec-free by contract: it regroups codewords for the destination's
-cadence and copies them verbatim, and its package comment says "No vocoder, no
-DSP." A Zello attachment is the first thing on the bus that must transcode, so the
-vocoder sits at the endpoint edge, never inside the router, and the router's
-guarantee is preserved.
+*Revised after the Prompt 2 stop, superseding both the original decision and its
+first revision.* The md380-emu `-S` server segfaults on kernel 6.12.25
+(md380tools #925) in both our build and DVSwitch's own unmodified binary; only
+the server entry point dies, the vocoder is healthy. AD8DP's `md380_vocoder`
+library (GPL-2.0-or-later, compatible with this project's GPL-3.0) exposes
+`md380_encode`/`md380_decode` over the canonical 7-byte MSB-packed 49-bit form
+directly, and measured 592 us for encode and decode together per 20 ms frame on the bench
+Pi 3 — thirty-three times real time, on the kernel where the server dies.
 
-md380-emu is the primary path: software, already the source of the fixtures the
-frames tests are pinned against, run as a persistent `-S` UDP server on
-127.0.0.1:2470. It stays an external, restartable process rather than being linked
-in — the AMBE+2 firmware blob is licensed and must never be redistributed
-(fetch-at-enable, never committed), and md380tools issue #925 has it segfaulting
-on some recent Raspberry Pi OS kernels. An out-of-process vocoder makes that a
-restart instead of a daemon crash.
+It links into `waypoint-bus` behind the `zello` build tag.
 
-*Revised after Prompt 1.* Build **maintained upstream plus a patch**, not the
-DVSwitch fork. `-e` encode is in upstream today; only `ambeServer()` is
-fork-only, and it is 46 self-contained lines. The fork's entire history is one
-squashed commit from 2018, so taking the whole vocoder from it to get those 46
-lines buys an unmaintained tree and forecloses any fix for #925.
+The isolation the external service bought is already provided elsewhere. The
+firmware blob is loaded at runtime from a configured path, fetched at enable,
+never linked: upstream's Makefile objcopy-embeds the `.img` files into the
+artifact and **must not be built that way**, since that redistributes the blob in
+every `.deb` and image. And a vocoder crash is contained by the one-process-per-bus
+model under `waypoint-bus@.service` — it kills one bus daemon, not waypointd.
 
-The patch must also bind the server to loopback. As shipped it binds
-`INADDR_ANY`, which on a node is an unauthenticated network service answering
-anyone on the LAN who sends it 320 bytes. See
-[docs/zello/ground-truth.md](../zello/ground-truth.md).
+Two properties the binding must hold, both established on hardware rather than
+assumed:
 
-An optional `vocoder = hardware` path drives a DV3000/ThumbDV for operators who
-own one: better audio, less CPU, and the only fully licensed option, since the
-DVSI chip carries its own licence.
+- **Zero the 7-byte output before every encode.** `md380_encode` ORs into bytes
+  0-5 rather than assigning them. Encoding a frame into a `0xff`-filled buffer
+  returns `ffffffffffff00` where a zeroed buffer returns `f8f011044ca880` — the
+  same frame, unrecognisable.
+- **Use only the plain entry points.** The 72-bit FEC form stays
+  `internal/bus/frames`' business, which is golden-tested. The library's
+  `md380_encode_fec`/`md380_decode_fec` are not used; applying protection twice
+  is noise on the air that nothing in between reports.
 
-codec2 does not apply — it is not AMBE-compatible and a codec2 frame will not
-decode on a DMR radio. mbelib is decode-only.
+ARM-only. CI runs against the golden fixtures; vocoder-touching tests gate on
+hardware; Pi Zero 2 W joins the validation matrix unverified.
+
+The DV3000/ThumbDV path stays as the optional hardware alternative and the fully
+licensed option, since the licence rides on the DVSI chip. The `ExternalVocoder`
+pipe in `internal/wxvoice` is the named fallback **only** if the runtime-load
+variant cannot be kept clean — a separate helper can be built on-device with
+linked firmware without tainting shipped binaries — and that contract is
+otherwise untouched. codec2 and mbelib remain inapplicable: codec2 is not
+AMBE-compatible and will not decode on a DMR radio, and mbelib is decode-only.
+
+#### Runtime load, proved on the bench
+
+The bytes and the symbols are separable, which is what makes the runtime load
+possible. `md380_vocoder.o`'s references to firmware functions are resolved at
+link time from md380tools' `symbols_d02.032`, which is addresses and no code; the
+bytes those addresses point at are mapped at run time with `MAP_FIXED` from files
+the operator supplies. `md380_init()` is then only
+`mprotect((void*)0x800c000, 0xf2c00, PROT_EXEC)` over the region already mapped —
+`0xf2c00` is exactly the length of the D002.032 image.
+
+Linked without `firmware.o` and `ram.o` on the bench Pi 3, the test binary is
+67 KB with 56 KB of text, against a 994 KB firmware image that is nowhere in it,
+and it produces `f8f011044ca880` for a 1 kHz tone — byte-identical to the
+linked-blob build's output for the same input.
+
+#### Both directions are stateful
+
+Encoding the same frame twice does not give the same codeword. Frame 0 of a
+1 kHz tone encodes to `f8f011044ca880` as the first operation after Open and to
+`ff920202020800` immediately after — and `ff920202020800` is exactly what a
+continuous tone settles to from frame 2 onwards. The encoder has adapted.
+
+Three consequences for the endpoint. A codeword cannot be cached and replayed.
+Frames must be fed in order. And two streams cannot share a vocoder even
+sequentially without the first corrupting the second's model — which, with one
+vocoder per process, is another reason a bus transcodes one talker at a time.
+RFC-0003 §5's arbitration is doing real work here rather than merely being
+reused.
+
+#### The first frame is near-silent
+
+Decoding a 50-frame sequence, frame 0 comes back at rms 38 against an input of
+8485, frame 1 at 7444, and everything after at ~9167 for a steady-state ratio of
+1.08. That is one frame of model warm-up, not a fault, and it means the first
+20 ms of every transmission is lost unless the decoder is primed. The endpoint
+has to account for it; a bridge that does not will clip the first syllable of
+every over.
 
 ### D3 — Opus: hraban/opus, behind a build tag
 
