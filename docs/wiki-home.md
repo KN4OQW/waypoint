@@ -30,6 +30,7 @@ they need when they *cannot* reach the documentation on their own node.
 |---|---|
 | The images themselves | [the latest release](https://github.com/KN4OQW/waypoint/releases/latest) |
 | Setting up a batch of nodes from the boot partition | [docs/provisioning.md](https://github.com/KN4OQW/waypoint/blob/main/docs/provisioning.md) |
+| Bridging a bus to a Zello channel | [docs/zello.md](https://github.com/KN4OQW/waypoint/blob/main/docs/zello.md) |
 | What Waypoint covers vs Pi-Star / WPSD | [docs/pistar-parity.md](https://github.com/KN4OQW/waypoint/blob/main/docs/pistar-parity.md) |
 | Everything that is built, in detail | [docs/features.md](https://github.com/KN4OQW/waypoint/blob/main/docs/features.md) |
 | Why something is built the way it is | [RFCs, in Discussions](https://github.com/KN4OQW/waypoint/discussions) |

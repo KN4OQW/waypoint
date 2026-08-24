@@ -191,6 +191,39 @@ async function seedPhonebook(context) {
   }
 }
 
+// Seed a bus with a mode attachment and a Zello channel.
+//
+// Without this the Gateways tab is scanned with no buses at all, so the bus card,
+// its attachment blocks and every Zello control render their empty states and
+// axe measures markup no operator will ever see. That is the failure mode this
+// scan exists to avoid: a green run over the one state that was not the point.
+//
+// Seeded through the config API for the same reason as the phonebook — driving
+// the forms would make this a UI test that happens to run axe. Failures are
+// swallowed; a rerun against an already-seeded node is a no-op either way.
+async function seedBusesAndZello(context) {
+  const put = (section, data) =>
+    context.request.put(`${BASE}/api/config/${section}`, { data }).catch(() => {});
+
+  await put("buses", [{ id: "bus-001", name: "Scan Bus", enabled: true }]);
+  await put("attachments", [{ bus_id: "bus-001", mode: "dmr", slot: "2", default_tg: "91" }]);
+  // Two accounts so the channel's account picker has something to choose
+  // between, and so both credential states are on screen: one that signs its own
+  // tokens and one on a pasted token, which renders the expiry warning.
+  await put("zello_accounts", [
+    {
+      name: "scan-bridge", username: "scan-bridge", password: "scan-password",
+      issuer: "SCAN-ISSUER.aaaa", private_key: "-----BEGIN PRIVATE KEY-----scan-----END PRIVATE KEY-----",
+      auth_token: "", enabled: true,
+    },
+    { name: "scan-legacy", username: "scan-legacy", password: "scan-password", issuer: "", private_key: "", auth_token: "scan-token", enabled: false },
+  ]);
+  await put("zello_channels", [
+    { id: "zch-001", bus_id: "bus-001", channel: "Scan Channel", account_ref: "scan-bridge", listen_only: false, packet_ms: 60, enabled: true },
+    { id: "zch-002", bus_id: "bus-001", channel: "Scan Listen", account_ref: "scan-bridge", listen_only: true, packet_ms: 20, enabled: false },
+  ]);
+}
+
 // Open the Weather panel's county picker with a real result list in it.
 //
 // The closed picker is a text box; everything this scan is here for — the
@@ -443,6 +476,7 @@ for (const theme of THEMES) for (const mode of MODES) {
   }, [theme, mode]);
   await authenticate(context);
   await seedPhonebook(context);
+  await seedBusesAndZello(context);
   const page = await context.newPage();
 
   for (const vp of VIEWPORTS) {

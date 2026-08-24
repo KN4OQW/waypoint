@@ -1,0 +1,315 @@
+package config
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/KN4OQW/waypoint/internal/store"
+)
+
+// This file is the model/store half of Zello bridging: two sections
+// (zello_accounts[], zello_channels[]) and their validator.
+//
+// A Zello channel is NOT an entry in attachments[]. That was the tempting shape
+// and it is the wrong one. attachments[] carries a *mode* onto a bus, and every
+// rule over it — the reframe tier, the converter-pair table, "a mode appears on
+// at most one bus" — is about modes converting to other modes. A Zello channel
+// converts to nothing; it leaves the AMBE world entirely at the endpoint edge.
+// Putting it in attachments[] would mean teaching busModeSetReason about a
+// pseudo-mode that satisfies none of its rules, and every existing bus would be
+// revalidated against a table that had grown a member it cannot reason about.
+//
+// Kept separate, the mode-set validator is untouched and the headline case works
+// out of the box: a bus with one DMR attachment is already valid today (the pair
+// scan finds no pairs), so "DMR talkgroup <-> one Zello channel" needs no change
+// to what a legal bus is.
+//
+// The account/channel split mirrors networks[]/attachments[]: the secret lives in
+// one place and is referenced by name, so a token is stored once however many
+// channels use it, and rotating it is one edit.
+
+// ZelloAccount is one Zello identity the node can talk as.
+//
+// Waypoint never ships an account or a token. The operator creates a dedicated
+// bridge account and obtains a key from developers.zello.com; the sample
+// development token that yields expires after 30 days, which is an operational
+// fact the UI has to surface rather than a one-time setup step.
+type ZelloAccount struct {
+	// Name identifies the account within the node. Referenced by
+	// ZelloChannel.AccountRef.
+	Name string `json:"name"`
+
+	// Username is the Zello account the gateway talks as. Without it the
+	// connection is anonymous, which Zello treats as listen-only.
+	Username string `json:"username"`
+
+	// Password is the account password. Write-only in projections: the View
+	// carries HasPassword, never this.
+	Password string `json:"password"`
+
+	// Issuer and PrivateKey are the key material from developers.zello.com under
+	// Keys. With them the node mints its own token whenever it dials, and nothing
+	// ever expires that an operator has to notice.
+	//
+	// This is the supported way to run a bridge. The alternative below — pasting
+	// a Sample Development Token — stops working after 30 days, silently, and the
+	// operator finds out when somebody mentions the channel has been quiet.
+	//
+	// PrivateKey is write-only in projections and excluded from portable
+	// profiles. It is a longer-lived secret than a token, which is the trade: a
+	// token copied off a node is worth sixty seconds, and this is what Zello's
+	// own design expects a server to hold.
+	Issuer     string `json:"issuer"`
+	PrivateKey string `json:"private_key"`
+
+	// AuthToken is a pre-minted JWT, for an operator who has only the Sample
+	// Development Token. It expires 30 days after it was issued and there is
+	// nothing Waypoint can do about that, so Issuer+PrivateKey is preferred
+	// whenever both are present. Write-only in projections.
+	AuthToken string `json:"auth_token"`
+
+	Enabled bool `json:"enabled"`
+}
+
+// CanMintTokens reports whether this account carries the key material to sign its
+// own tokens, which is the arrangement that does not expire.
+func (a ZelloAccount) CanMintTokens() bool {
+	return strings.TrimSpace(a.Issuer) != "" && strings.TrimSpace(a.PrivateKey) != ""
+}
+
+// ZelloChannel bridges one bus to one Zello channel.
+//
+// One row is one WebSocket connection, because consumer Zello supports exactly
+// one channel per logon — API.md: "Connecting to multiple channels (up to 100) is
+// currently supported for Zello Work only." A bus that fans out to three channels
+// is three rows and three connections.
+type ZelloChannel struct {
+	// ID is the row's stable identifier.
+	ID string `json:"id"`
+
+	// BusID names the bus this channel attaches to (RFC-0003 §4).
+	BusID string `json:"bus_id"`
+
+	// Channel is the Zello channel name, as it appears in the Zello app.
+	Channel string `json:"channel"`
+
+	// AccountRef names the ZelloAccount to log on with. Never the credential
+	// itself — the channel row is safe to display.
+	AccountRef string `json:"account_ref"`
+
+	// ListenOnly joins without transmitting. Set it deliberately rather than by
+	// leaving the account's username blank, so a receive-only bridge is visible
+	// as a choice and a misconfigured account is not mistaken for one.
+	ListenOnly bool `json:"listen_only"`
+
+	// PacketMS is the Opus packet duration. Zero means DefaultZelloPacketMS.
+	// Zello documents 2.5-60 ms; Opus itself only has 5, 10, 20, 40 and 60, and
+	// the validator holds to the intersection.
+	PacketMS int `json:"packet_ms,omitempty"`
+
+	Enabled bool `json:"enabled"`
+}
+
+// DefaultZelloPacketMS is Zello's own default, from the codec_header example
+// gD4BPA== in their documentation: 60 ms. It costs latency and saves bandwidth
+// against 20 ms, and matching the vendor's default is the safer starting point
+// for a bridge whose far end is every Zello client in the channel.
+const DefaultZelloPacketMS = 60
+
+// zelloPacketSizes is the intersection of Zello's documented 2.5-60 ms range and
+// the frame sizes Opus actually has. A duration inside Zello's range but not an
+// Opus frame size — 30 ms is the obvious one — is refused here, because libopus
+// rejects it later with an error that does not say which value was wrong.
+var zelloPacketSizes = map[int]bool{5: true, 10: true, 20: true, 40: true, 60: true}
+
+// DefaultZelloAccounts and DefaultZelloChannels are empty: a fresh node bridges
+// nothing, and the feature is inert until an operator supplies an account.
+func DefaultZelloAccounts() []ZelloAccount { return []ZelloAccount{} }
+func DefaultZelloChannels() []ZelloChannel { return []ZelloChannel{} }
+
+// ValidateZello is the save-time validator, a pure function of the sections it
+// spans so an invalid pair can never persist.
+//
+// It enforces:
+//   - a channel's bus_id references an existing bus;
+//   - a channel's account_ref resolves to a ZelloAccount — the channel row never
+//     embeds a secret;
+//   - account names and channel ids are unique;
+//   - one row per (bus, channel): the same channel twice on one bus would be two
+//     connections echoing each other's traffic back onto the bus;
+//   - a packet duration Opus and Zello both accept;
+//   - an enabled channel names a channel and an enabled account that can do what
+//     the row asks — an account with no username cannot transmit, so pairing one
+//     with a non-listen-only channel is refused rather than discovered at the
+//     first key-up as "listen only connection".
+func ValidateZello(accounts []ZelloAccount, channels []ZelloChannel, buses []Bus) error {
+	byName := make(map[string]ZelloAccount, len(accounts))
+	for _, a := range accounts {
+		name := strings.TrimSpace(a.Name)
+		if name == "" {
+			return fmt.Errorf("a Zello account has no name; give it one so channels can reference it")
+		}
+		if _, dup := byName[name]; dup {
+			return fmt.Errorf("two Zello accounts are both named %q; names must be unique", name)
+		}
+		byName[name] = a
+	}
+
+	busIDs := make(map[string]bool, len(buses))
+	for _, b := range buses {
+		busIDs[b.ID] = true
+	}
+
+	seenID := make(map[string]bool, len(channels))
+	seenPair := make(map[string]bool, len(channels))
+	for _, c := range channels {
+		id := strings.TrimSpace(c.ID)
+		if id == "" {
+			return fmt.Errorf("a Zello channel row has no id")
+		}
+		if seenID[id] {
+			return fmt.Errorf("two Zello channel rows share the id %q", id)
+		}
+		seenID[id] = true
+
+		if !busIDs[c.BusID] {
+			return fmt.Errorf("Zello channel %q references bus %q, which does not exist", id, c.BusID)
+		}
+
+		name := strings.TrimSpace(c.Channel)
+		if name == "" {
+			return fmt.Errorf("Zello channel %q has no channel name; enter the channel as it appears in Zello", id)
+		}
+		pair := c.BusID + "\x00" + name
+		if seenPair[pair] {
+			return fmt.Errorf("bus %q is bridged to the Zello channel %q twice; "+
+				"two connections to one channel would echo each other's traffic back onto the bus", c.BusID, name)
+		}
+		seenPair[pair] = true
+
+		if c.PacketMS != 0 && !zelloPacketSizes[c.PacketMS] {
+			return fmt.Errorf("Zello channel %q has a packet size of %d ms; Opus supports 5, 10, 20, 40 or 60",
+				id, c.PacketMS)
+		}
+
+		ref := strings.TrimSpace(c.AccountRef)
+		if ref == "" {
+			return fmt.Errorf("Zello channel %q names no account; add a Zello account and select it", id)
+		}
+		acct, ok := byName[ref]
+		if !ok {
+			return fmt.Errorf("Zello channel %q references the account %q, which does not exist", id, ref)
+		}
+
+		if !c.Enabled {
+			continue
+		}
+		if !acct.Enabled {
+			return fmt.Errorf("Zello channel %q is enabled but its account %q is not; enable the account or disable the channel", id, ref)
+		}
+		if !acct.CanMintTokens() && strings.TrimSpace(acct.AuthToken) == "" {
+			return fmt.Errorf("Zello account %q has no credentials; add the issuer and private key from "+
+				"developers.zello.com under Keys, or paste a sample development token (which stops working "+
+				"after 30 days)", ref)
+		}
+		// Every connection needs a real account, including a listen-only one.
+		// API.md says an omitted username connects anonymously; measured against
+		// the live service, an anonymous logon is refused with `invalid username`
+		// whether or not listen_only is set. Refusing here means the operator
+		// finds out while configuring rather than at the first connect.
+		if strings.TrimSpace(acct.Username) == "" {
+			return fmt.Errorf("Zello account %q has no username; Zello refuses a logon with no account, "+
+				"including a listen-only one, so a bridge needs a dedicated Zello account", ref)
+		}
+	}
+	return nil
+}
+
+// EffectivePacketMS resolves the channel's Opus packet duration.
+func (c ZelloChannel) EffectivePacketMS() int {
+	if c.PacketMS == 0 {
+		return DefaultZelloPacketMS
+	}
+	return c.PacketMS
+}
+
+// SetZelloAccounts writes the zello_accounts[] section through the validator,
+// applying the write-only secret rule the rest of the store uses: a blank
+// password, private key or auth token keeps the stored one, a non-blank one
+// replaces it.
+//
+// This is not a convenience. The View never carries either value, so the panel
+// editing an account genuinely does not have them — without blank-preserve,
+// saving any other field on an existing account would silently erase the token
+// and the bridge would stop connecting for reasons the operator could not see.
+// Clearing a secret deliberately is done by removing the account.
+func SetZelloAccounts(s *store.Store, raw []byte, by string) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var accounts []ZelloAccount
+	if err := dec.Decode(&accounts); err != nil {
+		return err
+	}
+
+	var existing []ZelloAccount
+	if _, err := s.GetInto("zello_accounts", &existing); err != nil {
+		return err
+	}
+	prior := make(map[string]ZelloAccount, len(existing))
+	for _, a := range existing {
+		prior[a.Name] = a
+	}
+	for i := range accounts {
+		old, had := prior[accounts[i].Name]
+		if !had {
+			continue
+		}
+		if accounts[i].Password == "" {
+			accounts[i].Password = old.Password
+		}
+		if accounts[i].AuthToken == "" {
+			accounts[i].AuthToken = old.AuthToken
+		}
+		if accounts[i].PrivateKey == "" {
+			accounts[i].PrivateKey = old.PrivateKey
+		}
+	}
+
+	var channels []ZelloChannel
+	if _, err := s.GetInto("zello_channels", &channels); err != nil {
+		return err
+	}
+	var buses []Bus
+	if _, err := s.GetInto("buses", &buses); err != nil {
+		return err
+	}
+	if err := ValidateZello(accounts, channels, buses); err != nil {
+		return err
+	}
+	return s.Set("zello_accounts", accounts, by)
+}
+
+// SetZelloChannels writes the zello_channels[] section through the validator,
+// against the currently stored accounts and buses.
+func SetZelloChannels(s *store.Store, raw []byte, by string) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var channels []ZelloChannel
+	if err := dec.Decode(&channels); err != nil {
+		return err
+	}
+	var accounts []ZelloAccount
+	if _, err := s.GetInto("zello_accounts", &accounts); err != nil {
+		return err
+	}
+	var buses []Bus
+	if _, err := s.GetInto("buses", &buses); err != nil {
+		return err
+	}
+	if err := ValidateZello(accounts, channels, buses); err != nil {
+		return err
+	}
+	return s.Set("zello_channels", channels, by)
+}

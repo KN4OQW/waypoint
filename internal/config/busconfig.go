@@ -44,6 +44,86 @@ type BusConfig struct {
 	// MQTT is the broker + topic prefix this bus publishes its events to (D4).
 	// Absent ⇒ the daemon runs without event publishing (tests/demo).
 	MQTT *BusMQTT `json:"mqtt,omitempty"`
+
+	// Zello is the set of Zello channels this bus bridges to, one per WebSocket
+	// connection because consumer Zello permits one channel per logon. Absent on
+	// a bus that bridges no channel, so such a bus renders byte-identically to
+	// before this feature existed.
+	Zello []BusZello `json:"zello,omitempty"`
+
+	// ZelloSourceID is the single DMR ID every inbound Zello transmission is
+	// sourced from. It is the node's own ID.
+	//
+	// One ID, deliberately, and not a per-user mapping. A Zello user without a
+	// DMR registration has no ID to borrow, and one who has an ID has not
+	// authorised this node to transmit as them — putting either on the air means
+	// originating traffic under an identity the node does not hold. Who is
+	// actually talking travels as the Talker Alias instead, which is what that
+	// field is for.
+	ZelloSourceID uint32 `json:"zello_source_id,omitempty"`
+
+	// ZelloAlias is the talker-alias template applied to inbound Zello
+	// transmissions: "", "callsign", "callsign + name" or "name". Empty is off
+	// and emits no DMRA frames at all.
+	ZelloAlias string `json:"zello_alias,omitempty"`
+
+	// Vocoder names the AMBE+2 firmware images to map at run time. Present only
+	// when Zello is, because nothing else on the bus needs a vocoder — the
+	// reframe tier copies codewords verbatim.
+	Vocoder *BusVocoder `json:"vocoder,omitempty"`
+}
+
+// VocoderFirmwareFile and VocoderRAMFile are the image names under VocoderDir.
+// They are fetched when the operator enables bridging and never shipped: AMBE+2
+// is patented and the firmware may not be redistributed, so no Waypoint artifact
+// contains them.
+const (
+	VocoderFirmwareFile = "md380fw.img"
+	VocoderRAMFile      = "md380ram.img"
+)
+
+// BusVocoder points at the firmware images the vocoder maps at run time.
+type BusVocoder struct {
+	FirmwarePath string `json:"firmware_path"`
+	RAMPath      string `json:"ram_path"`
+}
+
+// BusZello is one Zello channel as the daemon reads it: the channel plus the
+// account credentials, already resolved, because the daemon has no store.
+//
+// The credentials are here in the clear, which is the same posture as the
+// rendered gateway INIs carrying DMR network passwords: these files live under
+// the state tree, are written by waypointd, and are not world-readable. What must
+// never happen is a credential travelling further than that — which is why
+// zello_accounts[] is excluded from portable profiles and why the View carries
+// only HasPassword and HasAuthToken.
+type BusZello struct {
+	// ID is the store row this endpoint came from, so an event or a log line can
+	// be traced back to the row an operator edits.
+	ID string `json:"id"`
+
+	// Channel is the Zello channel name.
+	Channel string `json:"channel"`
+
+	// Username and Password are the account. An empty username means an
+	// anonymous connection, which Zello treats as listen-only.
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+
+	// Issuer and PrivateKey let the daemon mint a fresh token for every dial, so
+	// nothing expires. Preferred over AuthToken when present.
+	Issuer     string `json:"issuer,omitempty"`
+	PrivateKey string `json:"private_key,omitempty"`
+
+	// AuthToken is a pre-minted token, used only when there is no key material.
+	// A sample development token expires 30 days after it was issued.
+	AuthToken string `json:"auth_token,omitempty"`
+
+	// ListenOnly joins without transmitting.
+	ListenOnly bool `json:"listen_only,omitempty"`
+
+	// PacketMS is the Opus packet duration, already defaulted.
+	PacketMS int `json:"packet_ms"`
 }
 
 // DefaultBusHangTime is the fallback voice hang when the rendered config leaves
@@ -96,13 +176,18 @@ func (c BusConfig) Validate() error {
 	// lives in the Peering block, not Attachments — so count both. A member is a
 	// real bus endpoint (its voice reframes to the local modes and back), so a bus
 	// with one local mode + one member is a valid two-endpoint hub.
-	endpoints := len(c.Attachments)
+	// A Zello channel is an endpoint like any other. It was left out of this count
+	// when the feature was added, so the headline case — one DMR attachment
+	// bridged to one Zello channel — read as a one-endpoint bus and the daemon
+	// refused to start on a configuration the UI had just accepted. Found on the
+	// bench, not in a test, which is why there is one below it now.
+	endpoints := len(c.Attachments) + len(c.Zello)
 	if c.Peering != nil {
 		endpoints += len(c.Peering.Members)
 	}
 	if endpoints < 2 {
-		return fmt.Errorf("bus %q has %d endpoint(s) (%d local + %d peer member(s)); a bus needs at least 2 to hub",
-			c.Bus.ID, endpoints, len(c.Attachments), peeringMemberCount(c.Peering))
+		return fmt.Errorf("bus %q has %d endpoint(s) (%d local + %d peer member(s) + %d Zello channel(s)); a bus needs at least 2 to hub",
+			c.Bus.ID, endpoints, len(c.Attachments), peeringMemberCount(c.Peering), len(c.Zello))
 	}
 	return nil
 }

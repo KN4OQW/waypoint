@@ -36,6 +36,13 @@ type Paths struct {
 	// rendered configs reference files under here by PATH — never PEM content
 	// (RFC-0002 posture). The pairing/transport layer populates the files.
 	PeeringDir string
+	// VocoderDir is where the AMBE+2 firmware images the vocoder maps at run time
+	// live. They are fetched when an operator enables Zello bridging and are never
+	// committed, never packaged and never linked — the licence does not permit
+	// redistributing them, so a rendered config references them by PATH exactly as
+	// PeeringDir's certs are referenced. Empty ⇒ no vocoder block, which is what a
+	// bus with no Zello channel renders.
+	VocoderDir string
 	// MQTTBroker is the local mosquitto host:port the bus daemons publish their
 	// events to (RFC-0003 Addendum / D4). Rendered into each bus config so the
 	// broker is never hardcoded in the daemon; empty ⇒ no MQTT block (the daemon
@@ -343,11 +350,74 @@ func (m *Model) renderBusConfig(id string, paths Paths) string {
 		}
 		bc.Peering = bp
 	}
+	// Zello endpoints, with the account credentials resolved. The daemon has no
+	// store, so the secret is carried here the same way the gateway INIs carry a
+	// DMR network password — these files are waypointd-owned under the state tree
+	// and are not world-readable.
+	bc.Zello = m.busZelloFor(id)
+	if len(bc.Zello) > 0 {
+		// The node's own DMR ID. Not a phonebook lookup and deliberately not one:
+		// phonebook_isolation_test.go makes it a rule that no phonebook row ever
+		// reaches a rendered config, because a name in a generated file is a
+		// behaviour change nobody asked for and an address would be a PII
+		// disclosure. General.ID is station identity, already rendered into every
+		// MMDVM-Host config, and is the only ID this node legitimately holds.
+		if n, err := strconv.ParseUint(strings.TrimSpace(m.General.ID), 10, 32); err == nil {
+			bc.ZelloSourceID = uint32(n)
+		}
+		bc.ZelloAlias = m.DMR.TalkerAlias
+	}
+	if len(bc.Zello) > 0 && paths.VocoderDir != "" {
+		bc.Vocoder = &BusVocoder{
+			FirmwarePath: filepath.Join(paths.VocoderDir, VocoderFirmwareFile),
+			RAMPath:      filepath.Join(paths.VocoderDir, VocoderRAMFile),
+		}
+	}
+
 	raw, err := bc.Marshal()
 	if err != nil {
 		return "{}\n"
 	}
 	return string(raw) + "\n"
+}
+
+// busZelloFor resolves the enabled Zello channels attached to one bus into the
+// endpoint rows the daemon reads, joining each to its account.
+//
+// A channel whose account is missing or disabled is skipped rather than rendered
+// half-formed: the save-time validator already refuses that pairing, so reaching
+// it here means the store was edited underneath us, and a bus that starts without
+// one of its channels is a better outcome than one that fails to start at all.
+func (m *Model) busZelloFor(id string) []BusZello {
+	if len(m.ZelloChannels) == 0 {
+		return nil
+	}
+	accounts := make(map[string]ZelloAccount, len(m.ZelloAccounts))
+	for _, a := range m.ZelloAccounts {
+		accounts[a.Name] = a
+	}
+	var out []BusZello
+	for _, c := range m.ZelloChannels {
+		if c.BusID != id || !c.Enabled {
+			continue
+		}
+		a, ok := accounts[c.AccountRef]
+		if !ok || !a.Enabled {
+			continue
+		}
+		out = append(out, BusZello{
+			ID:         c.ID,
+			Channel:    c.Channel,
+			Username:   a.Username,
+			Password:   a.Password,
+			Issuer:     a.Issuer,
+			PrivateKey: a.PrivateKey,
+			AuthToken:  a.AuthToken,
+			ListenOnly: c.ListenOnly,
+			PacketMS:   c.EffectivePacketMS(),
+		})
+	}
+	return out
 }
 
 // renderMemberConfig is the RFC-0016 member-side config for one membership — a
@@ -1486,6 +1556,18 @@ func (m *Model) RenderDMRGateway() string {
 		rptPort = gwShim.GatewayBindPort
 	}
 	sect(&b, "General",
+		// Id is the node's own DMR ID and it is not optional. DMRGateway's
+		// CMMDVMNetwork constructor asserts `id > 0U` (MMDVMNetwork.cpp:52), so a
+		// missing or zero Id is not a warning or a degraded mode — the daemon
+		// aborts on SIGABRT before it opens a socket, and systemd restarts it into
+		// the same abort forever.
+		//
+		// This was measured, not read: after DMRGateway was updated on the bench
+		// the gateway crash-looped 75 times in a few minutes on that exact
+		// assertion, with the rendered [General] carrying everything except Id.
+		// Older builds took the same key and simply did not check it, which is why
+		// the omission survived this long unnoticed.
+		kv("Id", m.General.ID),
 		kv("RptAddress", "127.0.0.1"),
 		kv("RptPort", rptPort),
 		kv("LocalAddress", "127.0.0.1"),

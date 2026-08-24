@@ -1,0 +1,424 @@
+//go:build zello
+
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"math/rand"
+	"os"
+	"sync"
+	"time"
+
+	"github.com/KN4OQW/waypoint/internal/backoff"
+	"github.com/KN4OQW/waypoint/internal/bus/frames"
+	"github.com/KN4OQW/waypoint/internal/bus/zello"
+	"github.com/KN4OQW/waypoint/internal/config"
+	"github.com/KN4OQW/waypoint/internal/vocoder"
+)
+
+// zello.go is the tagged half of the Zello endpoint: the parts that need libopus
+// and the AMBE+2 firmware. The buffering and the router edge are in
+// zellobridge.go, untagged, so they are tested in CI.
+
+func init() { newZelloSink = openZelloSink }
+
+// The vocoder is process-global because the firmware is mapped at fixed
+// addresses; internal/vocoder refuses a second one. Every Zello endpoint on this
+// bus therefore shares it, which is safe in the outbound direction because
+// RFC-0003 §5 gives the bus one token and so one talker at a time.
+//
+// Inbound is not covered by that, and this is the sharp edge. Two bridged
+// channels can have far-end talkers at the same moment, and the transcode happens
+// BEFORE the frames reach the router's arbitration — so without a gate they would
+// interleave through one stateful vocoder and corrupt each other's audio rather
+// than one of them simply losing. inboundGate admits one inbound stream at a time
+// and drops the rest, which is §5 rule 2's shape applied one layer earlier,
+// where the constraint actually lives.
+var (
+	vocOnce sync.Once
+	vocInst *vocoder.Vocoder
+	vocErr  error
+
+	inboundGate struct {
+		sync.Mutex
+		owner string    // endpoint id currently transcoding inbound audio
+		last  time.Time // when it last produced a frame
+	}
+)
+
+// inboundIdle is how long a silent inbound owner keeps the vocoder before another
+// channel may claim it. It matches the bus hang time's intent: long enough to
+// bridge gaps inside an over, short enough that a finished transmission frees the
+// codec promptly.
+const inboundIdle = 2 * time.Second
+
+func sharedVocoder(v config.BusVocoder) (*vocoder.Vocoder, error) {
+	vocOnce.Do(func() {
+		vocInst, vocErr = vocoder.Open(vocoder.Config{FirmwarePath: v.FirmwarePath, RAMPath: v.RAMPath})
+	})
+	return vocInst, vocErr
+}
+
+// claimInbound admits one endpoint to the shared vocoder for inbound audio.
+func claimInbound(id string, now time.Time) bool {
+	inboundGate.Lock()
+	defer inboundGate.Unlock()
+	if inboundGate.owner != "" && inboundGate.owner != id && now.Sub(inboundGate.last) < inboundIdle {
+		return false
+	}
+	inboundGate.owner, inboundGate.last = id, now
+	return true
+}
+
+func releaseInbound(id string) {
+	inboundGate.Lock()
+	defer inboundGate.Unlock()
+	if inboundGate.owner == id {
+		inboundGate.owner = ""
+	}
+}
+
+// zelloEndpoint is one bridged channel: a WebSocket, a bridge, and the stream
+// bracketing that turns a bus transmission into a Zello voice message.
+type zelloEndpoint struct {
+	cfg    config.BusZello
+	srcID  uint32
+	inject func(frames.Frame)
+
+	mu       sync.Mutex
+	cli      *zello.Client
+	br       *zelloBridge
+	outbound uint32 // Zello stream id we are transmitting on; 0 = idle
+	lastOut  time.Time
+
+	inStream  uint32 // synthesized bus stream id for the inbound transmission
+	inFrom    string // the Zello username currently talking, for the talker alias
+	inRate    int    // sample rate of the inbound stream, from its codec_header
+	inSeq     uint8  // DMR per-stream packet counter for the frames we inject
+	closeOnce sync.Once
+	done      chan struct{}
+}
+
+func openZelloSink(z config.BusZello, v config.BusVocoder, srcID uint32, inject func(frames.Frame)) (zelloSink, error) {
+	// Checked before opening so the common first-run failure says what to do.
+	// mmap on a missing file reports "no such file or directory" against a path
+	// the operator never typed, which reads as a bug in Waypoint rather than as
+	// the one setup step only they can perform.
+	for _, f := range []struct{ what, path string }{
+		{"firmware image", v.FirmwarePath},
+		{"SRAM image", v.RAMPath},
+	} {
+		if _, err := os.Stat(f.path); err != nil {
+			return nil, fmt.Errorf("the AMBE+2 %s is not at %s. Waypoint does not ship it: "+
+				"the vocoder is patented and may not be redistributed, so the images have to be put "+
+				"there by hand. See docs/zello.md", f.what, f.path)
+		}
+	}
+
+	voc, err := sharedVocoder(v)
+	if err != nil {
+		return nil, fmt.Errorf("vocoder: %w", err)
+	}
+	enc, err := zello.NewEncoder(zello.DefaultSampleRate, z.PacketMS)
+	if err != nil {
+		return nil, err
+	}
+	dec, err := zello.NewDecoder(zello.DefaultSampleRate)
+	if err != nil {
+		return nil, err
+	}
+
+	e := &zelloEndpoint{
+		cfg:    z,
+		srcID:  srcID,
+		inRate: zello.DefaultSampleRate,
+		inject: inject,
+		br:     newZelloBridge(voc, enc, dec, z.PacketMS),
+		done:   make(chan struct{}),
+	}
+	go e.run()
+	return e, nil
+}
+
+// run keeps a connection up. The client is deliberately not self-healing, so the
+// reconnect schedule lives here, next to the endpoint state that has to be
+// discarded when a connection ends.
+func (e *zelloEndpoint) run() {
+	b := &backoff.Backoff{Initial: time.Second, Max: 2 * time.Minute, Rand: rand.Float64}
+	for {
+		select {
+		case <-e.done:
+			return
+		default:
+		}
+
+		// Minted per dial when key material is present, so nothing expires
+		// between reconnects. A pre-minted token is the fallback for an operator
+		// who has only the sample one, and it stops working after 30 days.
+		token, err := e.token()
+		if err != nil {
+			d := b.Next()
+			log.Printf("zello %q: %v; retrying in %s", e.cfg.Channel, err, d.Round(time.Second))
+			select {
+			case <-time.After(d):
+			case <-e.done:
+				return
+			}
+			continue
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		cli, err := zello.Dial(ctx, zello.Config{
+			Channel:    e.cfg.Channel,
+			AuthToken:  token,
+			Username:   e.cfg.Username,
+			Password:   e.cfg.Password,
+			ListenOnly: e.cfg.ListenOnly,
+		})
+		cancel()
+		if err != nil {
+			d := b.Next()
+			log.Printf("zello %q: %v; retrying in %s", e.cfg.Channel, err, d.Round(time.Second))
+			select {
+			case <-time.After(d):
+			case <-e.done:
+				return
+			}
+			continue
+		}
+
+		b.Reset()
+		log.Printf("zello %q: connected", e.cfg.Channel)
+		e.mu.Lock()
+		e.cli = cli
+		e.mu.Unlock()
+
+		e.pump(cli)
+
+		e.mu.Lock()
+		e.cli = nil
+		e.outbound = 0
+		e.br.Reset()
+		e.mu.Unlock()
+		releaseInbound(e.cfg.ID)
+
+		if err := cli.Err(); err != nil {
+			log.Printf("zello %q: disconnected: %v", e.cfg.Channel, err)
+		}
+	}
+}
+
+// pump reads one connection until it ends.
+func (e *zelloEndpoint) pump(cli *zello.Client) {
+	events, audio := cli.Events(), cli.Audio()
+	for {
+		select {
+		case <-e.done:
+			cli.Close()
+			return
+
+		case ev, ok := <-events:
+			if !ok {
+				return
+			}
+			switch ev.Command {
+			case zello.EvtOnStreamStart:
+				log.Printf("zello %q: %s is talking", e.cfg.Channel, ev.From)
+				e.beginInbound(ev.From, ev.CodecHeader)
+			case zello.EvtOnStreamStop:
+				e.endInbound()
+			case zello.EvtOnError:
+				log.Printf("zello %q: server error: %s", e.cfg.Channel, ev.Error)
+			}
+
+		case p, ok := <-audio:
+			if !ok {
+				return
+			}
+			e.onInboundAudio(p)
+		}
+	}
+}
+
+func (e *zelloEndpoint) beginInbound(from, codecHeader string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.inFrom = from
+
+	// The far end picks its own rate and announces it here. Decoding at the rate
+	// this end happens to transmit at produces audio at the wrong speed rather
+	// than an error, so the decoder is rebuilt whenever the stream disagrees.
+	if h, err := zello.ParseCodecHeader(codecHeader); err == nil && int(h.SampleRateHz) != e.inRate {
+		if dec, err := zello.NewDecoder(int(h.SampleRateHz)); err == nil {
+			e.inRate = int(h.SampleRateHz)
+			e.br.SetDecoder(dec)
+			log.Printf("zello %q: inbound stream is %d Hz", e.cfg.Channel, h.SampleRateHz)
+		} else {
+			log.Printf("zello %q: cannot decode %d Hz: %v", e.cfg.Channel, h.SampleRateHz, err)
+		}
+	}
+	// A fresh stream id per inbound transmission, so the router's echo
+	// suppression and its per-stream bus_busy accounting treat each over
+	// separately.
+	e.inStream = uint32(time.Now().UnixNano())
+	e.inSeq = 0
+	e.br.Reset()
+
+	// A voice header opens the transmission. Without one a radio gets voice
+	// bursts for a call it was never told about: MMDVM-Host builds its embedded
+	// link control from the header, and the superframe positions the router
+	// numbers are the fragments of that same link control. The header is what
+	// makes them mean anything.
+	e.inject(frames.Frame{
+		Kind:        frames.KindHeader,
+		SrcID:       e.srcID,
+		SrcCallsign: from,
+		Stream:      frames.Stream{ID: e.inStream},
+	})
+}
+
+func (e *zelloEndpoint) endInbound() {
+	e.mu.Lock()
+	stream, seq := e.inStream, e.inSeq
+	e.inStream, e.inFrom = 0, ""
+	e.br.Reset()
+	e.mu.Unlock()
+	releaseInbound(e.cfg.ID)
+	if stream != 0 {
+		e.inject(frames.Frame{Kind: frames.KindTerminator, SrcID: e.srcID, Stream: frames.Stream{ID: stream, Seq: seq}})
+	}
+}
+
+func (e *zelloEndpoint) onInboundAudio(p zello.StreamPacket) {
+	now := time.Now()
+	if !claimInbound(e.cfg.ID, now) {
+		return // another channel is mid-transcode; see inboundGate
+	}
+
+	e.mu.Lock()
+	stream := e.inStream
+	if stream == 0 {
+		// Audio without an on_stream_start. Synthesize a stream rather than drop
+		// it: the event and the first packets race on the wire, and losing the
+		// start of every over to that race would be worse than a missing log line.
+		stream = uint32(now.UnixNano())
+		e.inStream = stream
+	}
+	from := e.inFrom
+	groups, err := e.br.ToBus(p.Data)
+	e.mu.Unlock()
+
+	if err != nil {
+		log.Printf("zello %q: %v", e.cfg.Channel, err)
+		return
+	}
+	for _, g := range groups {
+		e.mu.Lock()
+		seq := e.inSeq
+		e.inSeq++
+		e.mu.Unlock()
+		e.inject(frames.Frame{
+			Kind:  frames.KindVoice,
+			SrcID: e.srcID,
+			// SrcCallsign carries the Zello username rather than a callsign. The
+			// bus daemon has no phonebook — that is a project rule, not an
+			// omission — so who is talking can only be what the wire said, and
+			// this is the field the frame layer has for a textual source.
+			SrcCallsign: from,
+			Stream:      frames.Stream{ID: stream, Seq: seq},
+			AMBE:        g,
+		})
+	}
+}
+
+// Emit sends one bus emission to the channel, opening and closing the Zello
+// stream around the transmission.
+func (e *zelloEndpoint) Emit(f frames.Frame) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	cli := e.cli
+	if cli == nil {
+		return nil // not connected; the bus keeps running and run() is retrying
+	}
+	if e.cfg.ListenOnly {
+		return nil
+	}
+
+	switch f.Kind {
+	case frames.KindTerminator:
+		return e.stopLocked(cli)
+
+	case frames.KindVoice:
+		if e.outbound == 0 {
+			enc := e.br.enc.(*zello.Encoder)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			id, err := cli.StartStream(ctx, enc.CodecHeader(), e.cfg.PacketMS)
+			cancel()
+			if err != nil {
+				return fmt.Errorf("start_stream: %w", err)
+			}
+			e.outbound = id
+			e.br.Reset()
+		}
+		pkts, err := e.br.FromBus(f.AMBE)
+		if err != nil {
+			return err
+		}
+		for _, pkt := range pkts {
+			if err := cli.SendAudio(e.outbound, pkt); err != nil {
+				return fmt.Errorf("sending audio: %w", err)
+			}
+		}
+		e.lastOut = time.Now()
+	}
+	return nil
+}
+
+func (e *zelloEndpoint) stopLocked(cli *zello.Client) error {
+	if e.outbound == 0 {
+		return nil
+	}
+	id := e.outbound
+	e.outbound = 0
+	e.br.Reset()
+	return cli.StopStream(id)
+}
+
+func (e *zelloEndpoint) Close() error {
+	e.closeOnce.Do(func() { close(e.done) })
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.cli != nil {
+		e.stopLocked(e.cli)
+		return e.cli.Close()
+	}
+	return nil
+}
+
+// token supplies the auth_token for one logon.
+//
+// The key material is preferred whenever it is present: a token minted here is
+// good for a minute, is created fresh for every reconnect, and nothing an
+// operator has to remember ever expires. The stored AuthToken is only for an
+// operator who has pasted the Sample Development Token instead, and that stops
+// working 30 days after it was issued — silently, from the node's point of view,
+// which is why the failure has to name the possibility.
+func (e *zelloEndpoint) token() (string, error) {
+	if e.cfg.Issuer != "" && e.cfg.PrivateKey != "" {
+		tok, err := zello.TokenSigner{
+			Issuer:        e.cfg.Issuer,
+			PrivateKeyPEM: e.cfg.PrivateKey,
+		}.Token(zello.DefaultTokenTTL)
+		if err != nil {
+			return "", fmt.Errorf("minting a token: %w", err)
+		}
+		return tok, nil
+	}
+	if e.cfg.AuthToken == "" {
+		return "", fmt.Errorf("no Zello credentials: add the issuer and private key, or a token")
+	}
+	return e.cfg.AuthToken, nil
+}

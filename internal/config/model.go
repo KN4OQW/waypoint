@@ -55,6 +55,11 @@ type Model struct {
 	// renderer/daemon consumes them yet — this PR is the model/store seam only.
 	Buses       []Bus        `json:"buses"`
 	Attachments []Attachment `json:"attachments"`
+	// Zello bridging: the accounts the node can talk as and the channels each bus
+	// bridges to. Deliberately NOT entries in Attachments[] — see zello.go for
+	// why the mode-set validator must not learn about them.
+	ZelloAccounts []ZelloAccount `json:"zello_accounts"`
+	ZelloChannels []ZelloChannel `json:"zello_channels"`
 	// Bus LAN peering (RFC-0016): paired nodes and the remote edges of local buses.
 	// Ordinary store rows following the RFC-0001 conventions; no transport/render
 	// consumes them yet — this is the model/store seam.
@@ -759,6 +764,8 @@ func (m *Model) sections() map[string]any {
 		"nxdn2dmr":           &m.NXDN2DMR,
 		"buses":              &m.Buses,
 		"attachments":        &m.Attachments,
+		"zello_accounts":     &m.ZelloAccounts,
+		"zello_channels":     &m.ZelloChannels,
 		"peers":              &m.Peers,
 		"wx":                 &m.WX,
 		"station_location":   &m.StationLocation,
