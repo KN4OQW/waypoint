@@ -23,9 +23,10 @@ and silently discards it. There is no error and nothing in any log. If messages
 
 **Your node needs a DMR ID.** `Settings → General → Station Identity → DMR ID` is
 the one almost everybody wants; `Settings → Modes → DMR → DMR ID override` is a
-per-mode override that most nodes leave blank. If you do not know your ID, fill in
-your callsign on the General tab and press **Find my ID** — it reads the DMR ID
-table the node already downloads and offers whatever is issued to that callsign.
+per-mode override that most nodes leave blank. If you do not know your ID, start
+typing your callsign in the General tab's Callsign box — it searches the DMR ID
+table the node already downloads and lists whatever is issued to that callsign,
+and choosing one fills the ID in.
 
 **The message relay has to be on.** See the next section.
 

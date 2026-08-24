@@ -135,6 +135,24 @@ type Frame struct {
 	// AMBE holds the codewords carried by THIS frame, in transmission order, each
 	// exactly AMBEBytes long. Reframing copies these verbatim (no vocoder).
 	AMBE [][]byte
+
+	// VoiceSeq is the frame's position in the DMR voice superframe, 0-5 (A-F).
+	//
+	// DMR does not carry six identical voice frames. Frame A carries the voice
+	// sync; frames B-F carry embedded signalling instead, and a receiving radio
+	// needs that structure to assemble the link control and stay locked. The
+	// position is what tells MMDVM-Host which embedded fragment to insert, since
+	// it regenerates the embedded LC and the EMB itself from its own copy of the
+	// link control (DMRSlot.cpp: m_netEmbeddedLC.getData(data, dmrData.getN())).
+	//
+	// Zero is therefore both "frame A" and the zero value, which is deliberate:
+	// a caller that does not set it gets every frame marked as a sync frame,
+	// which is what this constructor did unconditionally before the field
+	// existed. That is wrong for originating a transmission -- the radio never
+	// receives the link control and decodes noise -- but it is the behaviour the
+	// reframing path has always had, so adding the field changes nothing for a
+	// caller that ignores it.
+	VoiceSeq uint8
 }
 
 // Params are the per-attachment translation parameters (RFC-0003 §3) the

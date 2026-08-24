@@ -98,6 +98,10 @@ type server struct {
 	// transmits queued messages one at a time through the relay. Nil when there is
 	// no event store to record into, and the API answers 503 rather than pretending.
 	msgs *messages.Service
+	// weather owns the alert subscription and the transmissions it produces.
+	// Nil on a node where messaging is unavailable, since an alert with no way
+	// to be sent is not worth subscribing for.
+	weather *weatherService
 	// listenAddr is the HTTPS address the daemon was told to serve on. It is shown
 	// READ-ONLY on the System tab: it is deployment-owned via the packaged systemd
 	// unit, and editing it live would move the UI out from under the browser doing
@@ -403,16 +407,27 @@ func (s *server) dmrTalkgroups(w http.ResponseWriter, _ *http.Request) {
 // response says when it bit; the page does not silently show a prefix.
 const dmrIDLookupLimit = 100
 
-// dmrIDLookupResponse is GET /api/dmr/ids?callsign=…
+// dmrIDSearchLimit caps the type-ahead's answer. It is far smaller than
+// dmrIDLookupLimit because the two are answering different questions: an exact
+// callsign's IDs are a set the operator wants all of, while a prefix's matches
+// are a window they are narrowing by typing. Fifty is more than fits on screen,
+// so a longer list would only be scrolled past on the way to typing another
+// letter — and the ranking (see dmrids.SearchCallsigns) is what makes the top of
+// a truncated window the useful part rather than an arbitrary slice.
+const dmrIDSearchLimit = 50
+
+// dmrIDLookupResponse is GET /api/dmr/ids?callsign=… and ?prefix=…
 type dmrIDLookupResponse struct {
 	// Callsign is what was actually looked up: trimmed and upper-cased, and with a
 	// portable suffix dropped when that was the only way to find anything. The page
 	// shows it, so an operator who typed KN4OQW/P can see it answered on KN4OQW.
+	// For a prefix search it echoes the normalized prefix that was searched.
 	Callsign string `json:"callsign"`
-	// Records is every issued ID behind that callsign, ascending. Never null: an
-	// empty list is a legitimate answer and the page renders it as "no match".
+	// Records is every issued ID behind that callsign, ascending — or, for a prefix
+	// search, the ranked matching rows. Never null: an empty list is a legitimate
+	// answer and the page renders it as "no match".
 	Records []dmrids.Record `json:"records"`
-	// Truncated reports that the scan stopped at the limit.
+	// Truncated reports that there were more matches than were returned.
 	Truncated bool `json:"truncated,omitempty"`
 	// Available reports whether the ID table is on disk at all. A node that has
 	// never reached the internet has no table, and "no suggestions because there is
@@ -420,6 +435,13 @@ type dmrIDLookupResponse struct {
 	// callsign is not in the database" — the first is fixable from the Updates tab,
 	// the second means going to radioid.net.
 	Available bool `json:"available"`
+	// MinPrefix is the shortest prefix a search will answer, sent only on the
+	// prefix path. The page needs it to say "keep typing" instead of rendering an
+	// empty list as "nobody matches", and carrying it in the answer is what stops
+	// the number being written down twice — a copy in the JavaScript would be free
+	// to drift from the constant that actually enforces it. Answering a short
+	// prefix costs nothing to serve: the scanner returns before it opens the file.
+	MinPrefix int `json:"min_prefix,omitempty"`
 }
 
 // dmrIDLookup answers "which DMR IDs are issued to this callsign" from the cached
@@ -434,9 +456,18 @@ type dmrIDLookupResponse struct {
 // That is not about the scanner — LookupCallsign only ever returns whole rows it
 // matched exactly, so no query can make it emit something else — it is about not
 // standing up an endpoint that walks a 6.6 MB file for arbitrary input.
+//
+// It also answers ?prefix=…, the type-ahead behind the callsign pickers. Same
+// route rather than a second one because it is the same table, the same reader
+// and the same answer shape; a separate endpoint would be a second place to
+// decide what a row looks like on the wire, and the two would drift.
 func (s *server) dmrIDLookup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONStatus(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if q := r.URL.Query(); q.Has("prefix") {
+		s.dmrIDSearch(w, strings.TrimSpace(q.Get("prefix")))
 		return
 	}
 	cs := strings.TrimSpace(r.URL.Query().Get("callsign"))
@@ -470,6 +501,65 @@ func (s *server) dmrIDLookup(w http.ResponseWriter, r *http.Request) {
 		Truncated: truncated,
 		Available: dmrIDTablePresent(s.dmrIDs),
 	})
+}
+
+// dmrIDSearch answers the type-ahead: the ranked rows whose callsign starts with
+// what has been typed so far.
+//
+// A prefix below dmrids.SearchPrefixMin is answered, not refused. It is not a bad
+// request — it is somebody two letters into typing a callsign, and a 400 there
+// would make the page render an error for the normal state of a picker being used
+// correctly. The answer carries MinPrefix so the page can say "keep typing", and
+// it costs nothing to serve because the scanner returns before opening the file.
+//
+// Anything that is not callsign-shaped IS refused, for the reason the exact
+// lookup refuses it: not because the scanner could be made to emit something
+// else, but so that a 6.6 MB file is not walked for arbitrary input. The shape
+// check is looser here by exactly one thing — a prefix has no minimum length,
+// since a length rule that rejected what somebody had typed so far would be the
+// same mistake as the 400 above.
+func (s *server) dmrIDSearch(w http.ResponseWriter, prefix string) {
+	if !prefixShaped(prefix) {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "not a callsign prefix: " + prefix})
+		return
+	}
+	recs, truncated, err := dmrids.SearchCallsigns(s.dmrIDs, prefix, dmrIDSearchLimit)
+	if err != nil {
+		// Same rule as the exact lookup: an unreadable table is the node's problem
+		// and is reported without naming the path.
+		log.Printf("dmr id search: reading the id table failed: %v", err)
+		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": "the DMR ID table could not be read"})
+		return
+	}
+	if recs == nil {
+		recs = []dmrids.Record{}
+	}
+	writeJSON(w, dmrIDLookupResponse{
+		Callsign:  strings.ToUpper(prefix),
+		Records:   recs,
+		Truncated: truncated,
+		Available: dmrIDTablePresent(s.dmrIDs),
+		MinPrefix: dmrids.SearchPrefixMin,
+	})
+}
+
+// prefixShaped is callsignShaped without the minimum length: the same letters,
+// digits and single optional `/P`-style suffix, bounded the same way at the top,
+// but accepting the one and two characters somebody has typed on the way to a
+// whole callsign. An empty prefix is shaped — it is what an empty picker sends —
+// and SearchCallsigns answers it with nothing.
+func prefixShaped(p string) bool {
+	base, suffix, hasSuffix := strings.Cut(p, "/")
+	if !hasSuffix {
+		base, suffix, hasSuffix = strings.Cut(p, "-")
+	}
+	if !alnum(base) || len(base) > 10 {
+		return false
+	}
+	if hasSuffix && (!alnum(suffix) || len(suffix) > 4) {
+		return false
+	}
+	return true
 }
 
 // dmrIDTablePresent reports whether there is an ID table to search. It stats
@@ -634,6 +724,27 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 	// Event-history retention validates on save (retention_days must be >= 0;
 	// 0 = keep forever), so route it through SetHistory rather than the generic
 	// merge (RFC-0004).
+	// The weather section carries the feed password and a policy that has to be
+	// coherent before it can transmit anything, so it is routed through SetWX
+	// rather than the generic merge.
+	if section == "wx" {
+		if err := config.SetWX(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// Station coordinates are validated as a pair -- a latitude without a
+	// longitude is a half-finished edit, not a position.
+	if section == "station_location" {
+		if err := config.SetStationLocation(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if section == "history" {
 		if err := config.SetHistory(s.store, body, "api"); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -688,6 +799,27 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if section == "attachments" {
 		if err := config.SetAttachments(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// Zello bridging: both sections write through their validator so a channel can
+	// never persist pointing at a bus or an account that does not exist, or at an
+	// account that cannot do what the row asks. Accounts additionally blank-preserve
+	// their two secrets — the View never carries them, so a panel saving any other
+	// field would otherwise erase the token.
+	if section == "zello_accounts" {
+		if err := config.SetZelloAccounts(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if section == "zello_channels" {
+		if err := config.SetZelloChannels(s.store, body, "api"); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -1958,6 +2090,7 @@ func (s *server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/config/apply", s.configApply)
 	mux.HandleFunc("/api/config/", s.configView) // PUT /api/config/{section}
 	s.messagesRoutes(mux)                        // text messages (messages.go)
+	s.weatherRoutes(mux)                         // weather alerts (weather.go)
 	mux.HandleFunc("/api/overrides", s.overridesView)
 	mux.HandleFunc("/api/buses/validate", s.busesValidate)     // dry-run attach validator (RFC-0003 §2)
 	mux.HandleFunc("/api/buses/migrate", s.busesMigrate)       // seed buses from the dormant bridges (§4)
@@ -2213,6 +2346,7 @@ func main() {
 	updatePollInterval := flag.Duration("update-poll-interval", 6*time.Hour, "how often waypointd checks for stack/binary updates and evaluates quiet-window auto-apply (RFC-0014)")
 	busConfigDir := flag.String("bus-config-dir", paths.EtcDir, "directory for rendered mode-bus configs (waypoint-bus-<id>.json), consumed by waypoint-bus@<id>.service (RFC-0003)")
 	peeringDir := flag.String("peering-dir", paths.PeeringDir, "directory holding LAN-peering cert/key files (node.key, peer-*.crt) referenced by rendered bus peering blocks (RFC-0016)")
+	vocoderDir := flag.String("vocoder-dir", paths.VocoderDir, "directory holding the AMBE+2 firmware images the Zello bridge's vocoder maps at run time; the operator supplies them, Waypoint never ships them")
 	peeringBootstrapAddr := flag.String("peering-bootstrap-addr", "0.0.0.0:42501", "listen address for the RFC-0016 pairing bootstrap channel (plain TCP; the short code authenticates the exchange)")
 	storePath := flag.String("store", paths.StorePath, "path to the SQLite configuration store")
 	// First-boot setup (docs/provisioning.md). The wizard is on by default: a node
@@ -2356,6 +2490,7 @@ func main() {
 			DAPNETGateway: *dapnetgwINI,
 			BusConfigDir:  *busConfigDir,
 			PeeringDir:    *peeringDir,
+			VocoderDir:    *vocoderDir,
 			// D4: the broker each bus daemon publishes its events to, rendered into the
 			// bus config. Empty in demo mode (no broker), so demo bus configs carry no
 			// MQTT block and the daemon runs without publishing.
@@ -2614,6 +2749,12 @@ func main() {
 		// message service because an inbound message is one of those events, and
 		// costs a goroutine parked on an empty queue on a node that notifies nobody.
 		s.startNotify(context.Background())
+		// The weather broadcast rides the message service, so it starts after it.
+		// Like the relay it reconciles against the store rather than starting
+		// once: a county added in the panel takes effect without a restart, and
+		// a node with the feature off — the default — finds nothing to do.
+		s.weather = newWeatherService(s)
+		go s.weather.run(context.Background(), wxReconcileInterval)
 		// Update poller (D2 / #15): periodically refresh the stack and waypointd
 		// available-update caches and drive opt-in quiet-window auto-apply. Live mode
 		// only. Ticks every 15 min so it reliably lands in the one-hour quiet window; a

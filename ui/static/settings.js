@@ -27,6 +27,7 @@ const TABS = [
   { id: "network",      tag: "NW" },
   { id: "gateways",     tag: "GW" },
   { id: "profiles",     tag: "PF" },
+  { id: "weather",      tag: "WX" },
   { id: "publicview",   tag: "PV" },
   { id: "phonebook",    tag: "PB" },
   { id: "notify",       tag: "NT" },
@@ -337,6 +338,33 @@ function buildEdit(c) {
     // body carries retention_days as JSON number, not string (the store field is
     // an int). Falls back to the 7-day default if the view somehow omits it.
     history: { retention_days: (c.history || {}).retention_days ?? 7 },
+    // The weather section, with the password blanked on the way in: blank means
+    // "keep the stored one", and has_password drives the placeholder. Same rule
+    // as every other secret-bearing section.
+    wx: (() => {
+      const w = c.wx || {};
+      return {
+        enabled: !!w.enabled,
+        broker: w.broker || "", username: w.username || "",
+        password: "", has_password: !!w.has_password,
+        counties: (w.counties || []).slice(),
+        talkgroups: (w.talkgroups || []).slice(),
+        classes: JSON.parse(JSON.stringify(w.classes || {})),
+        overrides: (w.overrides || []).slice(),
+        announce_actions: (w.announce_actions || []).slice(),
+        holdoff: w.holdoff || "", max_defer: w.max_defer || "",
+        max_text_units: w.max_text_units || 200,
+        voice: Object.assign({ enabled: false, piper_path: "", model_path: "", speaker: -1,
+                               length_scale: 1, vocoder: "none", dongle_device: "",
+                               external_command: "", talkgroups: [],
+                               tone_enabled: true, tone_hz_a: 1050, tone_hz_b: 0,
+                               tone_millis: 1500 }, w.voice || {}),
+      };
+    })(),
+    station_location: {
+      latitude: (c.station_location || {}).latitude ?? "",
+      longitude: (c.station_location || {}).longitude ?? "",
+    },
     // Automatic CW identification (Station Settings tab). enable defaults ON when
     // the view omits it — a missing key must never read as "identification off",
     // which is a legal obligation no operator opted out of by accident. callsign
@@ -367,6 +395,20 @@ function buildEdit(c) {
     // exists here). tg_map is expanded to editable rows and folded back on save.
     buses: (c.buses || []).map((b) => ({ id: b.id, name: b.name || "", enabled: !!b.enabled })),
     attachments: (c.attachments || []).map(attachFrom),
+    // Zello bridging. An account's three secrets are never sent to the browser —
+    // the view carries only has_* — so each starts blank here and is sent only if
+    // the operator types one. A blank field on save keeps what is stored.
+    zello_accounts: (c.zello_accounts || []).map((a) => ({
+      name: a.name || "", username: a.username || "", issuer: a.issuer || "",
+      password: "", private_key: "", auth_token: "",
+      has_password: !!a.has_password, has_private_key: !!a.has_private_key,
+      has_auth_token: !!a.has_auth_token, can_mint_tokens: !!a.can_mint_tokens,
+      enabled: !!a.enabled,
+    })),
+    zello_channels: (c.zello_channels || []).map((z) => ({
+      id: z.id, bus_id: z.bus_id, channel: z.channel || "", account_ref: z.account_ref || "",
+      listen_only: !!z.listen_only, packet_ms: z.packet_ms || 0, enabled: !!z.enabled,
+    })),
     // Bus LAN peering (RFC-0016): the redacted peer rows (fingerprints visible,
     // cert/key never) and the remote (via-peer) attachments. Discovery + pending
     // pairings are fetched dynamically (they are not config sections).
@@ -803,8 +845,9 @@ function nodeLockRow() {
 // --- panels --------------------------------------------------------------
 function panelGeneral() {
   const left = card(msg("general.stationIdentity"),
-    input("general", "callsign", { label: msg("general.callsign") }) +
-    idLookupRow() +
+    callsignRow() +
+    note(msg("general.callsignHelp")) +
+    input("general", "id", { label: msg("general.dmrId"), placeholder: "3180202" }) +
     input("general", "location", { label: msg("general.location") }) +
     input("general", "url", { label: msg("general.dashboardUrl") }));
   const radio = card(msg("general.radioFrequency"),
@@ -1316,126 +1359,68 @@ function shortErr(err) {
 let dmrMasters = []; // cached /api/dmr/masters, for the master dropdowns
 let dmrTGs = [];     // cached /api/dmr/talkgroups, for the searchable TG picker (RFC-0010)
 
-// --- DMR ID lookup (#140) -------------------------------------------------
-// Result of the last callsign -> DMR ID lookup against /api/dmr/ids, which reads
-// the DMRIds.dat the node already downloads for the gateways. Page state only: it
-// is never saved, and choosing a row goes through setField like any other edit,
-// so nothing here bypasses Apply.
+// --- station callsign + DMR ID (#140) --------------------------------------
 //
-// The lookup NEVER writes the ID by itself, not even when the table returns a
-// single unambiguous row. A callsign can have several IDs issued to it — most of
-// the multi-ID callsigns in the table are one operator's block of consecutive
-// numbers, and only that operator knows which one this node uses — so the page
-// offers and the operator chooses. Guessing here would be a wrong number logged
-// into a live network, which is worse than a lookup that saved nobody a keystroke.
-let idLookup = { status: "idle", callsign: "", records: [], truncated: false, available: true };
-// Which callsign the automatic lookup has already been spent on. The lookup scans
-// a 6.6 MB file, so the panel fires it at most once per callsign per page load,
-// and only when the DMR ID field is empty — a node that is already configured
-// never pays for it at all.
-let idLookupAuto = "";
-// Set when the operator asked, so the result takes focus and is read out. The
-// automatic suggestion deliberately does not: moving focus because a panel
-// finished rendering would yank an operator out of whatever they were doing.
-let idLookupAnnounce = false;
-
-async function runIDLookup(cs, announce) {
-  const call = String(cs || "").trim();
-  if (!call) {
-    idLookup = { status: "nocall", callsign: "", records: [], truncated: false, available: true };
-    idLookupAnnounce = !!announce;
-    repaintGeneral();
-    return;
-  }
-  // Mark the callsign spent here rather than only at the automatic call site, so a
-  // manual press does not leave the automatic path free to scan the same file
-  // again on the very next render.
-  idLookupAuto = call.toUpperCase();
-  idLookup = { status: "busy", callsign: call, records: [], truncated: false, available: true };
-  repaintGeneral();
-  try {
-    const r = await fetch("/api/dmr/ids?callsign=" + encodeURIComponent(call));
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    const body = await r.json();
-    idLookup = {
-      status: "done",
-      // The server answers with what it actually searched: a suffixed callsign
-      // falls back to the base call, and the operator should see which one the
-      // answer is about rather than wonder.
-      callsign: body.callsign || call,
-      records: body.records || [],
-      truncated: !!body.truncated,
-      available: !!body.available,
-    };
-  } catch (err) {
-    idLookup = { status: "error", callsign: call, records: [], truncated: false, available: true, error: shortErr(err) };
-  }
-  idLookupAnnounce = !!announce;
-  repaintGeneral();
-}
-
-// repaintGeneral re-renders only while the General tab is the one on screen. The
-// lookup is asynchronous and the operator is free to walk away from it mid-scan; a
-// result landing afterwards must not rebuild whatever panel they moved to.
-function repaintGeneral() {
-  if (state.tab === "general") renderPanel();
-}
-
-// idLookupRow is the General tab's DMR ID field: the ordinary text input, a button
-// that asks the table what IDs the callsign has, and the answer underneath.
+// These two fields used to be a text box and a "Find my ID" button whose answer
+// arrived in a results panel underneath, where each row carried a Use button
+// that wrote the ID. That worked, but it made the operator ask for something the
+// page could simply offer, and it put the answer somewhere other than the field
+// it was an answer about.
 //
-// It is hand-built rather than input()+something because the result has to live
-// inside the same .row — enhanceHelp attaches "help.general.id" to that row, and a
-// second row would give the field two help disclosures.
-function idLookupRow() {
-  const cur = (edit.general || {}).id == null ? "" : (edit.general || {}).id;
-  const call = ((edit.general || {}).callsign || "").trim();
-  // Fire the automatic suggestion for an unconfigured node. Deferred out of the
-  // render: runIDLookup re-renders, and re-entering renderPanel from inside itself
-  // would build the panel on top of the one being returned.
-  // idLookupAuto alone guards the re-entry: runIDLookup marks the callsign spent
-  // before its first render, so the busy repaint cannot start a second scan.
-  if (!cur && call && idLookupAuto !== call.toUpperCase()) setTimeout(() => runIDLookup(call, false), 0);
-  const control =
-    `<div class="idfind">` +
-      `<input data-sec="general" data-key="id" data-kind="str" value="${esc(cur)}">` +
-      `<button type="button" class="btn ghost idfind-go" data-idlookup="1">${esc(msg("general.findMyId"))}</button>` +
-    `</div>`;
-  return `<div class="row"><label>${esc(msg("general.dmrId"))}</label>${control}${idLookupOut(cur)}</div>`;
+// The Callsign field is now the search. Typing it lists the rows the public ID
+// table holds for that callsign, and choosing one fills the DMR ID.
+//
+// The old code carried a deliberate rule — the lookup NEVER wrote an ID by
+// itself, because a callsign can have several issued to it and only the operator
+// knows which one this node uses. That rule is intact, not dropped. The choice
+// simply moved into the dropdown: every issued ID is a separate option, labelled
+// with the row's name to tell a block of consecutive numbers apart, and nothing
+// is written until one is chosen. What is gone is the automatic scan that fired
+// on render for an unconfigured node — with the IDs listed as you type, a
+// suggestion nobody asked for has nothing left to add.
+//
+// The nine-digit hotspot IDs an operator derives from their base ID are not
+// issued rows and are in no export, so a pick is a starting point on this tab:
+// the field stays editable and the operator appends their own two digits.
+
+// generalPickCallsign commits a choice from the Callsign picker.
+//
+// Both halves go through setField, so they are ordinary unsaved edits that Apply
+// writes like any other — the picker bypasses nothing.
+function generalPickCallsign(call, rec) {
+  setField("general", "callsign", call);
+  // Free text (no row behind it) sets the callsign and stops. Overwriting a
+  // configured DMR ID because somebody corrected a typo in their callsign would
+  // be the picker editing a field it was not asked about — and on this tab that
+  // field may hold a derived hotspot ID that is in no table.
+  //
+  // It also does NOT re-render, and that is load-bearing rather than an
+  // omission. Free text commits on BLUR, and blur fires on the mousedown that is
+  // on its way to clicking something — so rebuilding the panel there would
+  // destroy the control being clicked before the click landed, and the operator's
+  // press would go nowhere. Nothing on screen needs redrawing for it either:
+  // setField has already marked the edit unsaved, and the callsign is not shown
+  // anywhere else on this panel.
+  if (!rec || !rec.id) return;
+  // A chosen row is different: it comes from a mousedown the picker has already
+  // cancelled, so no blur is in flight, and the DMR ID field below IS rendered
+  // from the model and has to be redrawn to show what was just filled in.
+  setField("general", "id", String(rec.id));
+  renderPanel();
 }
 
-// idLookupOut renders the answer. Every branch says what happened AND what to do
-// about it: an empty table is fixed on this node, an unlisted callsign is fixed at
-// radioid.net, and those are not the same errand.
-function idLookupOut(cur) {
-  const L = idLookup;
-  if (L.status === "idle") return "";
-  const call = esc(L.callsign);
-  const box = (html) => `<div class="idfind-out" id="id-lookup-out" tabindex="-1" role="status">${html}</div>`;
-  switch (L.status) {
-    case "nocall":
-      return box(esc(msg("general.idLookupNoCallsign")));
-    case "busy":
-      return box(esc(msg("general.idLookupBusy")));
-    case "error":
-      return box(esc(msg("general.idLookupFailed")) + (L.error ? ` <span class="idfind-dim">${esc(L.error)}</span>` : ""));
-  }
-  if (!L.available) return box(msg("general.idLookupNoTable"));
-  if (!L.records.length) return box(msg("general.idLookupNoMatch", { callsign: `<b>${call}</b>`, radioid: extLink("https://radioid.net/", "radioid.net") }));
-
-  const head = L.records.length === 1
-    ? msg("general.idLookupOne", { callsign: `<b>${call}</b>` })
-    : msg("general.idLookupMany", { callsign: `<b>${call}</b>`, count: L.records.length });
-  const tail = L.truncated ? ` ${esc(msg("general.idLookupTruncated", { count: L.records.length }))}` : "";
-  const rows = L.records.map((r) => {
-    const id = String(r.id);
-    const name = r.name ? `<span class="idfind-name">${esc(r.name)}</span>` : "";
-    const action = id === String(cur)
-      ? `<span class="idfind-cur">${esc(msg("general.idLookupInUse"))}</span>`
-      : `<button type="button" class="btn ghost" data-iduse="${esc(id)}" aria-label="${esc(msg("general.idLookupUse", { id }))}">${esc(msg("general.idLookupUseShort"))}</button>`;
-    return `<li><span class="idfind-id">${esc(id)}</span>${name}${action}</li>`;
-  }).join("");
-  return box(`<p class="idfind-head">${head}${tail}</p><ul class="idfind-list">${rows}</ul>`);
+// callsignRow is the General tab's Callsign field: the type-ahead, with the
+// plain input inside the mount as the fallback (D7).
+//
+// Hand-built rather than input()+something for the same reason idLookupRow was:
+// enhanceHelp attaches the row's help disclosure to a .row, and a second row
+// would give the field two of them.
+function callsignRow() {
+  const cur = (edit.general || {}).callsign == null ? "" : (edit.general || {}).callsign;
+  return `<div class="row"><label>${esc(msg("general.callsign"))}</label>` +
+    `<div class="cspick" data-callsign-picker="general">` +
+      `<input data-sec="general" data-key="callsign" data-kind="str" placeholder="KN4OQW" value="${esc(cur)}">` +
+    `</div></div>`;
 }
 
 const slotSelect = (sel, attrs) =>
@@ -1642,6 +1627,357 @@ function levelSelect(daemon, field) {
 // panelSystem is the System tab (#29): the MQTT data plane and the per-daemon log
 // levels, which were command-line flags until they became store sections, plus the
 // deployment-owned listen address shown read-only.
+
+// The Weather panel: which hazards this node broadcasts, for which counties, and
+// where they go.
+//
+// Everything the feature varies on is a control here rather than a constant in
+// Go, which is why the panel is long. The one thing it deliberately does NOT
+// offer is a "send a test alert" button on the same card as the live settings --
+// that lives under its own heading with its own confirmation, because it keys a
+// transmitter.
+
+// Weather fields that are lists or numbers rather than plain strings, collected
+// from their own inputs at save time. They are separate because a comma-separated
+// talkgroup list is not a store field shape -- the store wants numbers.
+// cleanWx drops the view-only flag and the blank password before the PUT. The
+// store rejects unknown fields, and a blank password means "keep the stored
+// one" -- sending it would be harmless but sending has_password would 400.
+function cleanWx(w) {
+  const out = Object.assign({}, w);
+  delete out.has_password;
+  if (!out.password) delete out.password;
+  return out;
+}
+
+// --- callsign type-ahead ---------------------------------------------------
+//
+// The public RadioID export is 310,364 rows, so a callsign field that offers
+// what the node already knows has to be a search rather than a list. One source
+// backs both pickers — the phonebook's entry form and the General tab's station
+// callsign — because it is the same table answering the same question, and two
+// copies of "what does a row look like in a dropdown" would drift.
+//
+// The list is a SUGGESTION, never a constraint. Both pickers run with freeText,
+// so a callsign the export has never heard of is typed and accepted exactly as
+// it always was: the export records who has registered a DMR ID, which is a
+// smaller set than the callsigns that exist, and a node whose ID table has never
+// been downloaded has no list at all. That is why every empty answer below says
+// which kind of empty it is instead of one shrug for all of them.
+
+// callsignMinPrefix is the shortest prefix the daemon will search, learned from
+// its own answer rather than written down here. The server enforces it
+// (dmrids.SearchPrefixMin) and a second copy in this file would be free to drift
+// from the one that matters. Zero until the first answer lands, which is why the
+// note below is conditional rather than assumed.
+let callsignMinPrefix = 0;
+
+// callsignSource backs both callsign pickers.
+//
+// Answering a prefix shorter than the minimum costs the daemon nothing — the
+// scanner returns before it opens the file — so this asks from the first
+// keystroke rather than counting characters locally, and gets the minimum back
+// to explain itself with.
+function callsignSource(q) {
+  const query = String(q || "").trim();
+  return fetch("/api/dmr/ids?prefix=" + encodeURIComponent(query), { headers: { Accept: "application/json" } })
+    .then((r) => {
+      // A 400 is the daemon saying "that is not a callsign shape", which happens
+      // while somebody types a space or a punctuation mark into the box. It is an
+      // empty answer, not a failed request: rejecting here would leave the last
+      // list on screen under text that no longer has anything to do with it.
+      if (r.status === 400) return { records: [] };
+      return r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status));
+    })
+    .then((b) => {
+      if (typeof b.min_prefix === "number" && b.min_prefix > 0) callsignMinPrefix = b.min_prefix;
+      const recs = b.records || [];
+      const items = recs.map((r) => ({
+        value: r.callsign,
+        label: r.callsign,
+        // The ID is what tells two rows of the same callsign apart, and it is the
+        // field being chosen as much as the callsign is. Composed here rather
+        // than in Go: a user-facing string generated in Go cannot be translated
+        // (CLAUDE.md), so the daemon sends the parts.
+        sub: String(r.id) + (r.name ? " · " + r.name : ""),
+        data: r,
+      }));
+      return { items, note: callsignNote(query, b, items.length) };
+    });
+}
+
+// callsignNote is what the picker says about the list as a whole. Each branch
+// answers a different question an operator would otherwise have to guess at, and
+// the empty ones matter most: an empty dropdown with nothing said about it reads
+// as "this person is not registered", which is the wrong conclusion three times
+// out of four.
+function callsignNote(query, body, shown) {
+  // Still typing. Said rather than left blank, because a picker that does
+  // nothing for two keystrokes looks broken.
+  if (callsignMinPrefix && query.length > 0 && query.length < callsignMinPrefix) {
+    return msg("callsign.keepTyping", { count: callsignMinPrefix });
+  }
+  if (!query.length) return msg("callsign.typeToSearch");
+  // No table at all is fixed on the Updates tab; an unlisted callsign is fixed at
+  // radioid.net, or by simply typing it. Sending an operator on the wrong errand
+  // is worse than saying nothing, which is the rule the #140 lookup set.
+  if (body.available === false) return msg("callsign.noTable");
+  if (!shown) return msg("callsign.noMatch");
+  // A window, said so. Fifty rows with nothing saying they are fifty of many
+  // reads as all of them.
+  if (body.truncated) return msg("callsign.showing", { shown: shown });
+  return "";
+}
+
+// wxCountySource backs the county picker's type-ahead. It asks the daemon rather
+// than filtering a list in the browser, because the ranking that decides which
+// county comes first lives in internal/wxzones and is tested there -- state
+// abbreviations outranking the same letters inside a name, spelling-insensitive
+// matching for the four counties the NWS table spells "DeKalb" and the two it
+// spells "De Kalb". A second implementation of that in JavaScript would be a
+// second thing to keep right, and the 3,269-row table is 95 KB to ship to a
+// browser on every settings load besides.
+//
+// The endpoint reaches no network of its own -- the table is compiled into the
+// daemon -- so this works on a node that has never had one.
+function wxCountySource(q) {
+  const url = "/api/wx/counties?limit=25" + (q ? "&q=" + encodeURIComponent(q) : "");
+  return fetch(url, { headers: { Accept: "application/json" } })
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
+    .then((b) => {
+      const list = b.counties || [];
+      const items = list.map((c) => ({
+        value: c.same,
+        // Composed here, not in Go: a user-facing string generated in Go cannot
+        // be translated (CLAUDE.md), so the daemon sends the parts and the panel
+        // assembles them.
+        label: c.name + (c.state ? ", " + c.state : ""),
+        sub: c.same + (c.wfo ? " \u00b7 " + c.wfo : ""),
+        data: c,
+      }));
+      // Say when the list is cut short. 25 of Florida's 67 counties with nothing
+      // saying so reads as all of them, and an operator whose county is not among
+      // them concludes it is missing.
+      const total = typeof b.total === "number" ? b.total : items.length;
+      return { items, note: total > items.length ? msg("wx.countyShowing", { shown: items.length, total }) : "" };
+    });
+}
+
+// wxAddCounty is the single way a county joins the list, so the picker and the
+// typed-code fallback cannot disagree about what gets stored or what is refused.
+//
+// Every field the picker knows is stored, not just the code. config.WXCounty
+// carries the name, UGC, state and office precisely so a county still reads
+// correctly when a later release's table no longer has it -- storing the code
+// alone would throw that away at the one moment it could be captured.
+function wxAddCounty(c) {
+  if (!edit.wx) return false;
+  const code = (c.same || "").trim();
+  // Refused here as well as in the store, so the operator is told before
+  // pressing Apply rather than after.
+  if (!/^[0-9]{6}$/.test(code)) { banner(msg("wx.badSameCode"), "err"); return false; }
+  if ((edit.wx.counties || []).some((x) => x.same === code)) { banner(msg("wx.duplicateCounty"), "err"); return false; }
+  edit.wx.counties = (edit.wx.counties || []).concat([{
+    same: code,
+    ugc: c.ugc || "",
+    name: c.name || "",
+    state: c.state || "",
+    wfo: c.wfo || "",
+  }]);
+  wxMarkDirty();
+  renderPanel();
+  return true;
+}
+
+// wxResolveStoredCounties fills in the names for codes the store holds without
+// one -- a configuration imported from a WPSD card, or one hand-edited back when
+// typing six digits was the only way to add a county. Without this those rows
+// show as bare numbers forever, since nothing else ever looks them up.
+//
+// Runs once per load. wxCountiesResolved guards it because it re-renders the
+// panel on success and would otherwise call itself.
+let wxCountiesResolved = false;
+function wxResolveStoredCounties() {
+  if (wxCountiesResolved || !edit.wx) return;
+  const missing = (edit.wx.counties || []).filter((c) => c.same && !c.name).map((c) => c.same);
+  if (!missing.length) { wxCountiesResolved = true; return; }
+  wxCountiesResolved = true;
+  fetch("/api/wx/counties?same=" + encodeURIComponent(missing.join(",")), { headers: { Accept: "application/json" } })
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
+    .then((b) => {
+      const by = {};
+      (b.counties || []).forEach((c) => { by[c.same] = c; });
+      let changed = false;
+      (edit.wx.counties || []).forEach((c) => {
+        const found = by[c.same];
+        if (!found || c.name) return;
+        c.ugc = found.ugc; c.name = found.name; c.state = found.state; c.wfo = found.wfo;
+        changed = true;
+      });
+      // Deliberately NOT marked dirty. Naming a county the operator already
+      // chose is the panel reading the store, not the operator editing it, and
+      // enabling Apply because a label was filled in would ask them to save a
+      // change they did not make.
+      if (changed) renderPanel();
+    })
+    .catch(() => { /* leave the codes showing as codes */ });
+}
+
+// wxMarkDirty is what every weather control that is not data-sec/data-key bound
+// has to call. See the note in the input listener for why the collect-at-Apply
+// design needed it.
+function wxMarkDirty() {
+  dirty.add("wx");
+  refreshActions();
+}
+
+function wxCollect() {
+  if (!edit.wx) return;
+  const nums = (id) => (document.getElementById(id)?.value || "")
+    .split(",").map((x) => parseInt(x.trim(), 10)).filter((n) => Number.isFinite(n) && n > 0);
+  const tgs = document.getElementById("wx-tgs");
+  if (tgs) edit.wx.talkgroups = nums("wx-tgs");
+  const vtgs = document.getElementById("wx-voice-tgs");
+  if (vtgs) edit.wx.voice.talkgroups = nums("wx-voice-tgs");
+  const mt = document.getElementById("wx-maxtext");
+  if (mt && mt.value) edit.wx.max_text_units = parseInt(mt.value, 10);
+  const ls = document.getElementById("wx-lengthscale");
+  if (ls && ls.value) edit.wx.voice.length_scale = parseFloat(ls.value);
+  const vc = document.getElementById("wx-vocoder");
+  if (vc) edit.wx.voice.vocoder = vc.value;
+  const num = (id, dflt) => {
+    const el = document.getElementById(id);
+    if (!el) return undefined;
+    const n = parseInt(el.value, 10);
+    return Number.isFinite(n) ? n : dflt;
+  };
+  const ta = num("wx-tone-a"); if (ta !== undefined) edit.wx.voice.tone_hz_a = ta;
+  const tb = num("wx-tone-b"); if (tb !== undefined) edit.wx.voice.tone_hz_b = tb;
+  const tm = num("wx-tone-ms"); if (tm !== undefined) edit.wx.voice.tone_millis = tm;
+}
+
+// Fire a test transmission. Confirmed first, because it keys a transmitter and
+// everyone on the talkgroup hears it.
+async function wxSendTest() {
+  if (!confirm(msg("wx.testConfirm"))) return;
+  try {
+    const r = await fetch("/api/wx/test", { method: "POST", headers: { "Accept": "application/json" } });
+    const b = await r.json().catch(() => ({}));
+    banner(r.ok ? msg("wx.testSent") : (b.error || msg("wx.testFailed")), r.ok ? "ok" : "err");
+  } catch (err) {
+    banner(msg("wx.testFailed"), "err");
+  }
+}
+
+function panelWeather() {
+  const wx = edit.wx || {};
+  const voice = wx.voice || {};
+  const loc = edit.station_location || {};
+
+  const enable = card(msg("wx.broadcast"),
+    toggle("wx", "enabled", msg("wx.enabled")) +
+    note(msg("wx.enabledNote")));
+
+  // Where the node is. This is used to suggest counties and nothing else; the
+  // note says so, because a coordinate box on a radio dashboard reasonably
+  // makes an operator wonder whether it is about to be published.
+  const where = card(msg("wx.stationLocation"),
+    input("station_location", "latitude", { label: msg("wx.latitude") }) +
+    input("station_location", "longitude", { label: msg("wx.longitude") }) +
+    note(msg("wx.locationNote")));
+
+  const countyRows = (wx.counties || []).map((c, i) => `
+    <div class="row" data-wx-county="${i}">
+      <label>${esc(c.name ? c.name + (c.state ? ", " + c.state : "") : c.same)}</label>
+      <span class="mono">${esc(c.same)}${c.wfo ? " &middot; " + esc(c.wfo) : ""}</span>
+      <button type="button" class="btn small" data-wx-county-remove="${i}">${esc(msg("common.remove"))}</button>
+    </div>`).join("");
+  // The add control is a type-ahead over the county table the daemon ships, with
+  // the plain code box left inside the mount as the fallback: enhanceCountyPickers
+  // hides the mount's children on success, so if the component is missing or its
+  // init throws, an operator still has the box and the Add button that worked
+  // before it existed (the same progressive-enhancement rule the timezone picker
+  // follows).
+  const counties = card(msg("wx.counties"),
+    (countyRows || note(msg("wx.noCounties"))) +
+    row(msg("wx.addCounty"),
+      `<div data-wx-countypicker>` +
+        `<input type="text" id="wx-county-add" placeholder="012113" aria-label="${esc(msg("wx.addCountyCode"))}">` +
+        `<button type="button" class="btn" id="wx-county-add-btn">${esc(msg("common.add"))}</button>` +
+      `</div>`) +
+    note(msg("wx.countiesNote")));
+
+  // The routing matrix. Class rows are the coarse control an operator thinks in;
+  // the per-alert overrides below beat them.
+  const cls = wx.classes || {};
+  const classRow = (code, label) => {
+    const r = cls[code] || {};
+    return `<div class="toggle-row"><span class="name">${esc(label)}</span>` +
+      `<button type="button" class="pill ${r.sms ? "on" : "off"}" data-wx-class="${code}.sms" aria-pressed="${!!r.sms}" aria-label="${esc(label)} ${esc(msg("wx.sms"))}">${esc(msg("wx.sms"))}</button> ` +
+      `<button type="button" class="pill ${r.voice ? "on" : "off"}" data-wx-class="${code}.voice" aria-pressed="${!!r.voice}" aria-label="${esc(label)} ${esc(msg("wx.voice"))}">${esc(msg("wx.voice"))}</button></div>`;
+  };
+  const routing = card(msg("wx.routing"),
+    classRow("W", msg("wx.classW")) +
+    classRow("A", msg("wx.classA")) +
+    classRow("Y", msg("wx.classY")) +
+    classRow("S", msg("wx.classS")) +
+    note(msg("wx.routingNote")));
+
+  const tgs = card(msg("wx.talkgroups"),
+    row(msg("wx.alertTalkgroups"),
+      `<input type="text" data-wx-dirty id="wx-tgs" value="${esc((wx.talkgroups || []).join(", "))}" aria-label="${esc(msg("wx.alertTalkgroups"))}">`) +
+    row(msg("wx.messageLimit"),
+      `<input type="number" data-wx-dirty min="1" max="2000" id="wx-maxtext" value="${esc(wx.max_text_units || 200)}" aria-label="${esc(msg("wx.messageLimit"))}">`) +
+    note(msg("wx.talkgroupsNote")));
+
+  // Voice. The backend row is the honest part: a node with no vocoder shows
+  // "none" and the note says what that means, rather than offering a switch that
+  // appears to work.
+  const voiceCard = card(msg("wx.voiceTitle"),
+    toggleRow("wx.voice", "enabled", msg("wx.voiceEnabled")) +
+    input("wx.voice", "piper_path", { label: msg("wx.piperPath"), placeholder: "piper" }) +
+    input("wx.voice", "model_path", { label: msg("wx.modelPath") }) +
+    row(msg("wx.speakingRate"),
+      `<input type="number" step="0.1" min="0.1" max="4" data-wx-dirty id="wx-lengthscale" value="${esc(voice.length_scale || 1)}" aria-label="${esc(msg("wx.speakingRate"))}">`) +
+    row(msg("wx.vocoder"),
+      `<select data-wx-dirty id="wx-vocoder" aria-label="${esc(msg("wx.vocoder"))}">` +
+      ["none", "dongle", "external"].map((v) =>
+        `<option value="${v}"${(voice.vocoder || "none") === v ? " selected" : ""}>${esc(msg("wx.vocoder." + v))}</option>`).join("") +
+      `</select>`) +
+    input("wx.voice", "dongle_device", { label: msg("wx.dongleDevice"), placeholder: "/dev/ttyUSB0" }) +
+    input("wx.voice", "external_command", { label: msg("wx.externalCommand") }) +
+    toggleRow("wx.voice", "tone_enabled", msg("wx.toneEnabled")) +
+    row(msg("wx.toneHz"),
+      `<input type="number" min="100" max="3000" data-wx-dirty id="wx-tone-a" value="${esc(voice.tone_hz_a || 1050)}" aria-label="${esc(msg("wx.toneHz"))}">`) +
+    row(msg("wx.toneHz2"),
+      `<input type="number" min="0" max="3000" data-wx-dirty id="wx-tone-b" value="${esc(voice.tone_hz_b || 0)}" aria-label="${esc(msg("wx.toneHz2"))}">`) +
+    row(msg("wx.toneMs"),
+      `<input type="number" min="100" max="10000" step="100" data-wx-dirty id="wx-tone-ms" value="${esc(voice.tone_millis || 1500)}" aria-label="${esc(msg("wx.toneMs"))}">`) +
+    note(msg("wx.toneNote")) +
+    row(msg("wx.voiceTalkgroups"),
+      `<input type="text" data-wx-dirty id="wx-voice-tgs" value="${esc((voice.talkgroups || []).join(", "))}" placeholder="${esc((wx.talkgroups || []).join(", "))}" aria-label="${esc(msg("wx.voiceTalkgroups"))}">`) +
+    note(msg("wx.voiceNote")));
+
+  const timing = card(msg("wx.timing"),
+    input("wx", "holdoff", { label: msg("wx.holdoff"), placeholder: "2s" }) +
+    input("wx", "max_defer", { label: msg("wx.maxDefer"), placeholder: "120s" }) +
+    note(msg("wx.timingNote")));
+
+  const feed = card(msg("wx.feed"),
+    input("wx", "broker", { label: msg("wx.broker"), placeholder: "wss://mqtt.wxalerts.org/mqtt" }) +
+    input("wx", "username", { label: msg("wx.username") }) +
+    row(msg("wx.password"), `<input data-sec="wx" data-key="password" type="password" value="${esc(wx.password || "")}" placeholder="${wx.has_password ? msg("common.passwordUnchanged") : ""}" aria-label="${esc(msg("wx.password"))}">`) +
+    note(msg("wx.feedNote")));
+
+  // Its own card, its own button, away from the settings. It transmits.
+  const test = card(msg("wx.test"),
+    row(msg("wx.testAlert"),
+      `<button type="button" class="btn" id="wx-test-btn">${esc(msg("wx.testSend"))}</button>`) +
+    note(msg("wx.testNote")));
+
+  return enable + where + counties + routing + tgs + voiceCard + timing + feed + test;
+}
+
 function panelSystem(c) {
   const q = edit.mqtt || (edit.mqtt = {});
   const hasPw = !!((c.mqtt || {}).has_password);
@@ -2221,6 +2557,21 @@ function attachFrom(a) {
 // cleanAttachment folds an edit attachment back into the store shape: _tgrows ->
 // tg_map object (dropping blank rows), and only the fields meaningful for the
 // mode. A bus holds NO secret — there is no password field to strip or preserve.
+// cleanZelloAccount drops the UI-only has_*/can_mint flags (the store rejects
+// unknown fields) and sends each secret only when one was typed.
+//
+// Blank is not "clear it", it is "keep what is stored" — the browser never
+// receives these values, so a panel saving any other field would otherwise erase
+// the token and the bridge would stop connecting with nothing on screen to say
+// why. Clearing a credential deliberately is done by deleting the account.
+function cleanZelloAccount(a) {
+  return {
+    name: a.name || "", username: a.username || "", issuer: a.issuer || "",
+    password: a.password || "", private_key: a.private_key || "", auth_token: a.auth_token || "",
+    enabled: !!a.enabled,
+  };
+}
+
 function cleanAttachment(a) {
   const out = { bus_id: a.bus_id, mode: a.mode, credentials_ref: a.credentials_ref || "" };
   if (a.mode === "dmr") {
@@ -2248,7 +2599,76 @@ function panelGateways() {
     ? buses.map(busCard).join("")
     : note(msg("gateways.noBusesYetBus"));
   const create = `<div class="row"><button type="button" class="btn" id="bus-create">${msg("gateways.createBus")}</button></div>`;
-  return `<div class="stack">${peersCard()}${migrate}${list}${create}</div>`;
+  return `<div class="stack">${peersCard()}${migrate}${list}${create}${zelloAccountsCard()}</div>`;
+}
+
+// zelloAccountsCard is the Zello identities this node can talk as.
+//
+// One account per node in practice: Zello permits a single session per account,
+// so an account shared with the operator's phone signs one of them out
+// continuously. The copy says so rather than leaving it to be discovered.
+function zelloAccountsCard() {
+  const accts = edit.zello_accounts || [];
+  const rows = accts.map(zelloAccountBlock).join("");
+  const empty = accts.length ? "" : note(msg("zello.noAccountsYet"));
+  const add = `<div class="row"><button type="button" class="btn" id="zello-acct-add">${msg("zello.addAccount")}</button></div>`;
+  return card(msg("zello.accounts"), note(msg("zello.dedicatedAccountNote")) + empty + rows + add);
+}
+
+function zelloAccountBlock(a, i) {
+  const en = `<button type="button" class="pill ${a.enabled ? "on" : "off"}" data-zaen="${i}" aria-pressed="${a.enabled}" aria-label="${esc(msg("zello.accountEnabled"))}">${a.enabled ? "ENABLED" : "DISABLED"}</button>`;
+  const del = `<button type="button" class="btn danger" data-zadel="${i}">${msg("zello.delete")}</button>`;
+  const head = `<div class="toggle-row"><span class="name">${esc(a.name || msg("zello.unnamedAccount"))}</span>${en}${del}</div>`;
+  // A secret already stored shows as set and nothing more; typing replaces it.
+  const secret = (key, label, stored) => row(label,
+    `<input type="password" autocomplete="new-password" data-za="${i}" data-zakey="${esc(key)}" value="${esc(a[key] || "")}" aria-label="${esc(label)}" placeholder="${esc(stored ? msg("zello.storedLeaveBlank") : msg("zello.notSet"))}">`);
+  const text = (key, label, ph) => row(label,
+    `<input data-za="${i}" data-zakey="${esc(key)}" value="${esc(a[key] || "")}" aria-label="${esc(label)}" placeholder="${esc(ph || "")}">`);
+  // Which credential arrangement this account is on. The pasted-token one stops
+  // working after 30 days and takes the bridge down silently, so it is called out
+  // here rather than left for the operator to find when the channel goes quiet.
+  const mode = a.can_mint_tokens
+    ? note(msg("zello.mintsItsOwnTokens"))
+    : (a.has_auth_token ? `<div class="note bus-down">${esc(msg("zello.pastedTokenExpires"))}</div>` : "");
+  return `<div class="attach">${head}` +
+    text("name", msg("zello.accountName"), "kn4oqw-bridge") +
+    text("username", msg("zello.username"), "") +
+    secret("password", msg("zello.password"), a.has_password) +
+    text("issuer", msg("zello.issuer"), "") +
+    secret("private_key", msg("zello.privateKey"), a.has_private_key) +
+    secret("auth_token", msg("zello.authTokenOptional"), a.has_auth_token) +
+    mode + `</div>`;
+}
+
+// zelloChannelRows are the Zello channels attached to one bus — the same shape as
+// a mode attachment, because that is what they are to an operator: another thing
+// on the lane.
+function zelloChannelRows(busId) {
+  const chans = (edit.zello_channels || []).filter((z) => z.bus_id === busId);
+  const accts = edit.zello_accounts || [];
+  const rows = chans.map((z) => {
+    const i = edit.zello_channels.indexOf(z);
+    const en = `<button type="button" class="pill ${z.enabled ? "on" : "off"}" data-zcen="${i}" aria-pressed="${z.enabled}" aria-label="${esc(msg("zello.channelEnabled"))}">${z.enabled ? "ENABLED" : "DISABLED"}</button>`;
+    const del = `<button type="button" class="btn" data-zcdel="${i}">${msg("zello.detach")}</button>`;
+    const head = `<div class="toggle-row"><span class="name">${msg("zello.zelloChannel")}</span>${en}${del}</div>`;
+    const name = row(msg("zello.channelName"),
+      `<input data-zc="${i}" data-zckey="channel" value="${esc(z.channel)}" aria-label="${esc(msg("zello.channelName"))}" placeholder="${esc(msg("zello.asShownInApp"))}">`);
+    const acct = row(msg("zello.account"),
+      `<select data-zc="${i}" data-zckey="account_ref" aria-label="${esc(msg("zello.account"))}"><option value="">${msg("zello.chooseAccount")}</option>` +
+      accts.map((a) => `<option value="${esc(a.name)}"${z.account_ref === a.name ? " selected" : ""}>${esc(a.name)}</option>`).join("") + `</select>`);
+    // Only the sizes Opus actually has, inside Zello's documented range. A value
+    // between them is refused by libopus with an error naming nothing useful.
+    const sizes = [5, 10, 20, 40, 60];
+    const pkt = row(msg("zello.packetSize"),
+      `<select data-zc="${i}" data-zckey="packet_ms" aria-label="${esc(msg("zello.packetSize"))}">` +
+      sizes.map((n) => `<option value="${n}"${(z.packet_ms || 60) === n ? " selected" : ""}>${n} ms${n === 60 ? " — " + msg("zello.default") : ""}</option>`).join("") + `</select>`);
+    const lo = `<div class="toggle-row"><span class="name">${msg("zello.listenOnly")}</span><button type="button" class="pill ${z.listen_only ? "on" : "off"}" data-zcbool="${i}" data-zbkey="listen_only" aria-pressed="${z.listen_only}" aria-label="${esc(msg("zello.listenOnly"))}">${z.listen_only ? "ON" : "OFF"}</button></div>`;
+    return `<div class="attach">${head}${name}${acct}${pkt}${lo}</div>`;
+  }).join("");
+  const add = (edit.zello_accounts || []).length
+    ? `<div class="row"><button type="button" class="btn" data-zcadd="${esc(busId)}">${msg("zello.addChannel")}</button></div>`
+    : note(msg("zello.addAnAccountFirst"));
+  return rows + add;
 }
 
 function busCard(bus) {
@@ -2269,7 +2689,7 @@ function busCard(bus) {
   const lowNote = (bus.enabled && total < 2) ? note(msg("busCard.busNeedsLeastTwo")) : "";
   const attHTML = atts.map((a) => attachmentBlock(a, edit.attachments.indexOf(a))).join("");
   const remoteHTML = remotes.map(remoteAttachmentBlock).join("");
-  return `<div class="card bus-card">${head}${downNote}${nameRow}${disableNote}${lowNote}${attHTML}${remoteHTML}${attachPickerHTML(bus.id)}</div>`;
+  return `<div class="card bus-card">${head}${downNote}${nameRow}${disableNote}${lowNote}${attHTML}${remoteHTML}${attachPickerHTML(bus.id)}${zelloChannelRows(bus.id)}</div>`;
 }
 
 // remoteAttachmentBlock renders a via-peer edge: mode @ peer, DORMANT when the peer
@@ -2400,6 +2820,16 @@ function detachRemote(key) {
 
 // newBusId mints a short, unique, stable id (bus-N) — the id drives the rendered
 // file name and unit (waypoint-bus@<id>.service), so it must not collide.
+// newZelloChannelId mints a row id unique within this node, the same shape
+// newBusId uses so the two read alike in the store.
+function newZelloChannelId() {
+  const ids = new Set((edit.zello_channels || []).map((z) => z.id));
+  for (let n = 1; ; n++) {
+    const id = "zch-" + String(n).padStart(3, "0");
+    if (!ids.has(id)) return id;
+  }
+}
+
 function newBusId() {
   const ids = new Set((edit.buses || []).map((b) => b.id));
   let n = 1;
@@ -3928,6 +4358,7 @@ function renderPanel() {
     case "notify":       box.innerHTML = panelNotify(); ntAfterRender(); break;
     case "updates":      box.innerHTML = panelUpdates(); break;
     case "brandmeister": box.innerHTML = panelBrandmeister(); break;
+    case "weather":      box.innerHTML = panelWeather(); wxResolveStoredCounties(); break;
     case "system":       box.innerHTML = panelSystem(c); break;
     case "expert":       box.innerHTML = panelExpert(c, state.health); break;
     case "gateways":     box.innerHTML = panelGateways(); break;
@@ -3939,16 +4370,8 @@ function renderPanel() {
   // as that label's control when it assigns for/id pairs.
   enhanceHelp(box);
   enhanceTzPickers(box);
-  // A DMR ID lookup the operator ASKED for takes focus, so the answer is read out
-  // and reachable without hunting for it. renderPanel replaces the panel wholesale,
-  // so a role="status" region is new markup rather than a changed one and cannot be
-  // relied on to announce; moving focus is what actually works here. The automatic
-  // suggestion never sets the flag — see idLookupAnnounce.
-  if (idLookupAnnounce) {
-    idLookupAnnounce = false;
-    const out = document.getElementById("id-lookup-out");
-    if (out) out.focus();
-  }
+  enhanceCountyPickers(box);
+  enhanceCallsignPickers(box);
 }
 
 // enhanceTzPickers upgrades every [data-tzpicker] mount in the freshly rendered
@@ -3983,6 +4406,79 @@ function enhanceTzPickers(box) {
     } catch (e) {
       // D7: leave the native control visible and working.
       netTzHandle = null;
+    }
+  });
+}
+
+// enhanceCountyPickers upgrades the Weather panel's [data-wx-countypicker] mount
+// to the type-ahead over the shipped county table. Same shape and same rules as
+// enhanceTzPickers: it runs after every render because the panel is rebuilt
+// wholesale, and it is guarded and wrapped so a missing or throwing component
+// leaves the plain code box and its Add button in place and working (D7).
+//
+// The mount holds BOTH the code box and the Add button, so enhancing hides the
+// pair together. A visible Add button beside an enhanced picker would read the
+// hidden box it no longer edits and do nothing.
+// enhanceCallsignPickers upgrades every [data-callsign-picker] mount to the
+// type-ahead over the public ID list. Same rules as the two enhancers above: it
+// runs after every render because the panel is rebuilt wholesale, and it is
+// guarded and wrapped so a missing or throwing component leaves an ordinary text
+// box that still submits (D7).
+//
+// freeText is the setting that matters here and it is not a detail. The public
+// export lists who has registered a DMR ID, not who holds a licence, and a node
+// that has never been online has no export at all — so a callsign box that only
+// accepted what the list contained would refuse perfectly real callsigns, and
+// refuse every callsign on a fresh node. The list suggests; the operator decides.
+function enhanceCallsignPickers(box) {
+  if (typeof WPTz === "undefined" || !WPTz.createTzPicker) return;
+  box.querySelectorAll("[data-callsign-picker]").forEach((mount, i) => {
+    const native = mount.querySelector("input");
+    if (!native) return;
+    const which = mount.dataset.callsignPicker;
+    try {
+      WPTz.createTzPicker(mount, {
+        source: callsignSource,
+        value: native.value || "",
+        freeText: true,
+        ariaLabel: msg("callsign.search"),
+        placeholder: native.getAttribute("placeholder") || "",
+        noMatchText: msg("callsign.noMatch"),
+        idBase: "cspick-" + which + "-" + i,
+        onSelect: (call, item) => {
+          // Keep the hidden fallback in step with the model, so pbReadForm and
+          // the General tab's setField both read what the picker committed.
+          native.value = call;
+          const rec = item && item.data ? item.data : null;
+          if (which === "general") { generalPickCallsign(call, rec); return; }
+          if (rec) { pbPick(rec); return; }
+          pbPickFree(call);
+        },
+      });
+    } catch (e) {
+      // Leave the plain text box visible and working.
+    }
+  });
+}
+
+function enhanceCountyPickers(box) {
+  if (typeof WPTz === "undefined" || !WPTz.createTzPicker) return;
+  box.querySelectorAll("[data-wx-countypicker]").forEach((mount, i) => {
+    try {
+      WPTz.createTzPicker(mount, {
+        source: wxCountySource,
+        value: "",
+        ariaLabel: msg("wx.addCountySearch"),
+        placeholder: msg("wx.addCountyPlaceholder"),
+        noMatchText: msg("wx.noCountyMatch"),
+        idBase: "wxcounty-" + i,
+        // Choosing a county IS the action; there is no second confirming click.
+        // The whole row is handed over, so every field the store keeps is stored
+        // rather than just the code that was matched on.
+        onSelect: (code, item) => { wxAddCounty(item && item.data ? item.data : { same: code }); },
+      });
+    } catch (e) {
+      // Leave the native box and Add button visible and working.
     }
   });
 }
@@ -4022,6 +4518,10 @@ function banner(msg, kind) {
 }
 
 async function apply() {
+  // Collect the weather panel's list and number fields first. They are not
+  // data-sec/data-key bound because a comma-separated talkgroup list is not the
+  // shape the store wants, so nothing else would pick them up.
+  wxCollect();
   if (!dirty.size || applying) return;
   applying = true;
   const btn = document.getElementById("btn-apply");
@@ -4034,7 +4534,9 @@ async function apply() {
         : sec === "dstargw" ? cleanDstargw(edit.dstargw)
         : sec === "pocsag" ? cleanPocsag(edit.pocsag)
         : sec === "mqtt" ? cleanMqtt(edit.mqtt)
+        : sec === "wx" ? cleanWx(edit.wx)
         : sec === "attachments" ? (edit.attachments || []).map(cleanAttachment)
+        : sec === "zello_accounts" ? (edit.zello_accounts || []).map(cleanZelloAccount)
         : edit[sec];
       const r = await fetch("/api/config/" + sec, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!r.ok) throw new Error(sec + ": " + (await r.text()).trim());
@@ -4817,6 +5319,15 @@ async function applyHost() {
 document.getElementById("panels").addEventListener("input", (e) => {
   const t = e.target;
   if (!t.dataset) return;
+  // --- Weather panel free fields ---
+  // The talkgroup lists, the message limit and the tone numbers are read out of
+  // the DOM by wxCollect() at Apply time rather than being data-sec/data-key
+  // bound, because a comma-separated list is not the shape the store wants. That
+  // left them marking nothing dirty, and Apply is disabled until something is:
+  // an operator who changed ONLY a weather field watched the button stay grey
+  // and lost the edit. Collecting a value is not the same as noticing it
+  // changed, and only the second one enables the button.
+  if (t.dataset.wxDirty != null) { wxMarkDirty(); return; }
   // --- network editable fields (connections + VLANs: guarded apply) ---
   if (t.dataset.netmethod != null) {
     netIPv4Target(t.dataset.netmethod).method = t.value;
@@ -4836,6 +5347,16 @@ document.getElementById("panels").addEventListener("input", (e) => {
   if (t.dataset.busname != null) { const b = (edit.buses || []).find((x) => x.id === t.dataset.busname); if (b) { b.name = t.value; dirty.add("buses"); } return; }
   if (t.dataset.tgmap != null) { const a = edit.attachments[+t.dataset.tgmap]; a._tgrows[+t.dataset.tgi][t.dataset.tgk] = t.value; dirty.add("attachments"); return; }
   if (t.dataset.attach != null) { edit.attachments[+t.dataset.attach][t.dataset.akey] = t.value; dirty.add("attachments"); return; }
+  // --- Zello ---
+  if (t.dataset.za != null) { edit.zello_accounts[+t.dataset.za][t.dataset.zakey] = t.value; dirty.add("zello_accounts"); return; }
+  if (t.dataset.zc != null) {
+    const z = edit.zello_channels[+t.dataset.zc];
+    // packet_ms is a number in the store; a string here would be rejected as the
+    // wrong type rather than merged.
+    z[t.dataset.zckey] = t.dataset.zckey === "packet_ms" ? (parseInt(t.value, 10) || 0) : t.value;
+    dirty.add("zello_channels");
+    return;
+  }
   // --- per-daemon log levels (System tab). logging is a map of per-daemon
   // objects, so it needs its own path rather than the flat data-sec/data-key pair.
   if (t.dataset.log != null) {
@@ -4914,6 +5435,32 @@ document.getElementById("panels").addEventListener("input", (e) => {
   }
 });
 document.getElementById("panels").addEventListener("click", (e) => {
+  // --- Weather panel ---
+  // Handled first for the same reason the Public View block is: these controls
+  // carry their own data attributes and must not be captured by a more general
+  // selector further down.
+  const wxCls = e.target.closest("[data-wx-class]");
+  if (wxCls) {
+    const [code, ch] = wxCls.dataset.wxClass.split(".");
+    edit.wx.classes = edit.wx.classes || {};
+    edit.wx.classes[code] = edit.wx.classes[code] || {};
+    edit.wx.classes[code][ch] = !edit.wx.classes[code][ch];
+    wxMarkDirty();
+    renderPanel(); return;
+  }
+  const wxRm = e.target.closest("[data-wx-county-remove]");
+  if (wxRm) {
+    edit.wx.counties.splice(Number(wxRm.dataset.wxCountyRemove), 1);
+    wxMarkDirty();
+    renderPanel(); return;
+  }
+  if (e.target.closest("#wx-county-add-btn")) {
+    const el = document.getElementById("wx-county-add");
+    wxAddCounty({ same: (el.value || "").trim() });
+    return;
+  }
+  if (e.target.closest("#wx-test-btn")) { wxSendTest(); return; }
+
   // --- Public View panel (D1-D8) ---
   // Handled before everything else so its controls cannot be captured by a more
   // general selector below. Each writes immediately; there is no Apply here.
@@ -4952,8 +5499,6 @@ document.getElementById("panels").addEventListener("click", (e) => {
   if (pbGrantBtn) { pbBeginGrant(pbGrantBtn.dataset.pbGrant); return; }
   const pbRev = e.target.closest("[data-pb-revoke]");
   if (pbRev) { pbRevoke(pbRev.dataset.pbRevoke); return; }
-  const pbImp = e.target.closest("[data-pb-import]");
-  if (pbImp) { pbImport(pbImp.dataset.pbImport); return; }
   const pbA = e.target.closest("[data-pb-action]");
   if (pbA) {
     switch (pbA.dataset.pbAction) {
@@ -4961,7 +5506,6 @@ document.getElementById("panels").addEventListener("click", (e) => {
       case "cancel": pbCancelEdit(); break;
       case "grant": pbGrant(); break;
       case "cancelGrant": pbCancelGrant(); break;
-      case "find": pbFind(); break;
     }
     return;
   }
@@ -4980,17 +5524,6 @@ document.getElementById("panels").addEventListener("click", (e) => {
     const body = document.getElementById(id);
     if (body) body.classList.toggle("sr-only", !open);
     hb.setAttribute("aria-expanded", String(open));
-    return;
-  }
-  // --- DMR ID lookup (#140) ---
-  // The button asks the cached table what IDs the General callsign has; a row's
-  // Use button commits one through setField, so it is an ordinary unsaved edit
-  // that Apply writes like any other.
-  if (e.target.closest("[data-idlookup]")) { runIDLookup((edit.general || {}).callsign, true); return; }
-  const idu = e.target.closest("[data-iduse]");
-  if (idu) {
-    setField("general", "id", idu.dataset.iduse);
-    renderPanel(); // the list re-renders with the chosen row marked as the one in use
     return;
   }
   // --- Modes sub-tab strip (D4) ---
@@ -5135,6 +5668,42 @@ document.getElementById("panels").addEventListener("click", (e) => {
   if (adel) { detachMode(+adel.dataset.attachdel); return; }
   const abool = e.target.closest("[data-attachbool]");
   if (abool) { const a = edit.attachments[+abool.dataset.attachbool]; a[abool.dataset.abkey] = !a[abool.dataset.abkey]; dirty.add("attachments"); renderPanel(); refreshActions(); return; }
+  // --- Zello ---
+  if (e.target.id === "zello-acct-add") {
+    (edit.zello_accounts = edit.zello_accounts || []).push({
+      name: "", username: "", issuer: "", password: "", private_key: "", auth_token: "",
+      has_password: false, has_private_key: false, has_auth_token: false,
+      can_mint_tokens: false, enabled: false,
+    });
+    dirty.add("zello_accounts"); renderPanel(); refreshActions(); return;
+  }
+  const zaen = e.target.closest("[data-zaen]");
+  if (zaen) { const a = edit.zello_accounts[+zaen.dataset.zaen]; a.enabled = !a.enabled; dirty.add("zello_accounts"); renderPanel(); refreshActions(); return; }
+  const zadel = e.target.closest("[data-zadel]");
+  if (zadel) {
+    const a = edit.zello_accounts[+zadel.dataset.zadel];
+    // Deleting an account that channels still name would leave them dangling, and
+    // the server refuses that on save. Say so here rather than at Apply.
+    const used = (edit.zello_channels || []).filter((z) => z.account_ref === a.name).length;
+    if (used) { alert(msg("zello.accountStillUsed")); return; }
+    edit.zello_accounts.splice(+zadel.dataset.zadel, 1);
+    dirty.add("zello_accounts"); renderPanel(); refreshActions(); return;
+  }
+  const zcadd = e.target.closest("[data-zcadd]");
+  if (zcadd) {
+    (edit.zello_channels = edit.zello_channels || []).push({
+      id: newZelloChannelId(), bus_id: zcadd.dataset.zcadd, channel: "",
+      account_ref: (edit.zello_accounts[0] || {}).name || "", listen_only: false,
+      packet_ms: 60, enabled: false,
+    });
+    dirty.add("zello_channels"); renderPanel(); refreshActions(); return;
+  }
+  const zcen = e.target.closest("[data-zcen]");
+  if (zcen) { const z = edit.zello_channels[+zcen.dataset.zcen]; z.enabled = !z.enabled; dirty.add("zello_channels"); renderPanel(); refreshActions(); return; }
+  const zcdel = e.target.closest("[data-zcdel]");
+  if (zcdel) { edit.zello_channels.splice(+zcdel.dataset.zcdel, 1); dirty.add("zello_channels"); renderPanel(); refreshActions(); return; }
+  const zcbool = e.target.closest("[data-zcbool]");
+  if (zcbool) { const z = edit.zello_channels[+zcbool.dataset.zcbool]; z[zcbool.dataset.zbkey] = !z[zcbool.dataset.zbkey]; dirty.add("zello_channels"); renderPanel(); refreshActions(); return; }
   const tgadd = e.target.closest("[data-tgadd]");
   if (tgadd) { const a = edit.attachments[+tgadd.dataset.tgadd]; (a._tgrows = a._tgrows || []).push({ from: "", to: "" }); dirty.add("attachments"); renderPanel(); refreshActions(); return; }
   const tgdel = e.target.closest("[data-tgdel]");
@@ -5187,14 +5756,6 @@ document.getElementById("panels").addEventListener("change", (e) => {
 // re-render so the keyboard user stays put.
 document.getElementById("panels").addEventListener("keydown", (e) => {
   const t = e.target;
-  // Enter in the public-list search runs it. The field is not in a <form>, so
-  // nothing would happen otherwise, and pressing Enter after typing a callsign is
-  // what everyone does.
-  if (t && t.id === "pb-find" && e.key === "Enter") {
-    e.preventDefault();
-    pbFind();
-    return;
-  }
   // Modes sub-tab strip: arrows move between tabs, Home/End jump to the ends
   // (WAI-ARIA tabs pattern). Enter/Space need no handler — they are real buttons.
   const mt = t.closest && t.closest("[data-modesub]");
@@ -5632,14 +6193,18 @@ const pb = {
   grantField: "",
   // --- import from the public ID table ------------------------------------
   // The operator's roster is a handful of people and the public export is over
-  // 300,000 rows, so the way in is a search rather than a list: type a callsign,
-  // see the IDs issued to it, add the one that is them.
+  // 300,000 rows, so the way in is a search — and it is the Callsign field
+  // itself, rather than a second card below the form. Typing a callsign is what
+  // an operator does either way; making that one box also offer the rows behind
+  // what they typed removes a choice that was never interesting (am I adding
+  // somebody by hand, or from the list?) without removing either outcome.
   //
-  // find mirrors the General tab's #140 lookup because it is the same question
-  // asked in the same shape — deliberately, so an operator who has met one
-  // recognises the other.
-  find: { status: "idle", callsign: "", records: [], truncated: false, available: true, err: "" },
-  findQuery: "",
+  // picked is the public row the operator chose from the dropdown, or null. It
+  // exists for PROVENANCE, not for the form: the fields it fills are ordinary
+  // form fields the operator may then edit, and this remembers which row they
+  // came from so pbSubmit can tell an imported entry from a typed one. Cleared
+  // whenever the identity fields stop matching it — see pbPickedIntact.
+  picked: null,
 };
 
 // pbAccountsFor returns the accounts keyed to a phonebook entry. Several may share
@@ -5718,11 +6283,20 @@ function pbBeginEdit(id) {
   };
   pb.err = "";
   pb.field = "";
+  // Editing an existing row is not a pick from the public list, whatever was in
+  // the form a moment ago: the entry already has its own provenance and the save
+  // path for an edit is the ordinary update either way.
+  pb.picked = null;
   renderPanel();
   // Move focus into the form. The panel is rebuilt wholesale, so the operator who
   // clicked Edit halfway down a long list would otherwise be left where they were
   // with no indication that anything opened.
-  const first = document.getElementById("pb-callsign");
+  //
+  // The combobox, not #pb-callsign: that id belongs to the plain input the picker
+  // hides, and focusing a hidden element does nothing at all. It falls back to the
+  // plain one for the case where the picker did not enhance (D7).
+  const first = document.querySelector('[data-callsign-picker="pb"] input.tz-input') ||
+    document.getElementById("pb-callsign");
   if (first) first.focus();
 }
 
@@ -5730,6 +6304,7 @@ function pbCancelEdit() {
   pbReadForm();
   pb.editing = null;
   pb.form = pbBlankForm();
+  pb.picked = null;
   pb.err = "";
   pb.field = "";
   renderPanel();
@@ -5751,6 +6326,23 @@ function pbBody() {
 async function pbSubmit() {
   pbReadForm();
   const editing = pb.editing;
+  // A new entry whose identity fields are still exactly the row picked from the
+  // dropdown goes in as an IMPORT, not as an ordinary create. That is not a
+  // shortcut — it is the difference between an entry the node knows came from the
+  // public list, and will carry a reissued callsign through when the table is
+  // next downloaded, and one it believes the operator typed and will never touch
+  // again. Only on create: /api/phonebook/import creates, and an edit of an
+  // existing row is the operator's own change either way.
+  if (!editing && pbPickedIntact()) {
+    const created = await pbImportPicked();
+    if (!created) { renderPanel(); return; }
+    pb.editing = null;
+    pb.form = pbBlankForm();
+    pb.picked = null;
+    await pbLoad();
+    renderPanel();
+    return;
+  }
   const path = editing ? "/api/phonebook/" + encodeURIComponent(editing) : "/api/phonebook";
   try {
     const r = await fetch(path, {
@@ -5772,6 +6364,7 @@ async function pbSubmit() {
     // what was actually stored — the callsign comes back uppercased.
     pb.editing = null;
     pb.form = pbBlankForm();
+    pb.picked = null;
     pb.err = "";
     pb.field = "";
   } catch (e) {
@@ -5912,52 +6505,112 @@ function pbLoginCell(e) {
   }).join("");
 }
 
-// pbFind asks the public ID table which DMR IDs are issued to a callsign.
+// pbPick records the row chosen from the callsign dropdown and fills the form
+// from it.
 //
-// It reuses GET /api/dmr/ids, the route the General tab's #140 lookup already
-// uses: one scanner, one validation, one place the answer's shape is decided. The
-// phonebook panel is admin-only and that route is operator-or-above, so an admin
-// reaching it needs no new permission.
-async function pbFind() {
-  const el = document.getElementById("pb-find");
-  const cs = String((el ? el.value : pb.findQuery) || "").trim();
-  pb.findQuery = cs;
-  if (!cs) {
-    pb.find = { status: "nocall", callsign: "", records: [], truncated: false, available: true, err: "" };
-    renderPanel();
-    return;
-  }
-  pbReadForm();
-  pb.find = { status: "busy", callsign: cs, records: [], truncated: false, available: true, err: "" };
-  renderPanel();
-  try {
-    const r = await fetch("/api/dmr/ids?callsign=" + encodeURIComponent(cs));
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    const body = await r.json();
-    pb.find = {
-      status: "done",
-      // What the server actually searched: a suffixed callsign falls back to the
-      // base call, and the operator should see which one answered.
-      callsign: body.callsign || cs,
-      records: body.records || [],
-      truncated: !!body.truncated,
-      available: !!body.available,
-      err: "",
-    };
-  } catch (e) {
-    pb.find = { status: "error", callsign: cs, records: [], truncated: false, available: true, err: String((e && e.message) || e).trim() };
-  }
+// Choosing a row is an explicit "this is the person", so it OVERWRITES the DMR
+// ID and the name rather than filling only what is blank. Filling only blanks
+// would leave an operator who picked the wrong row first with a form quietly
+// carrying half of one person and half of another, and there would be nothing on
+// screen to say so. The email is never touched: the export carries no address,
+// so there is nothing to overwrite it with.
+function pbPick(rec) {
+  pb.picked = rec || null;
+  if (!rec) return;
+  pb.form.callsign = rec.callsign || "";
+  pb.form.dmr_id = rec.id ? String(rec.id) : "";
+  pb.form.full_name = rec.name || "";
+  pb.err = "";
+  pb.field = "";
   renderPanel();
 }
 
-// pbImport creates the entry from one of those rows.
+// pbPickFree records a callsign typed rather than chosen.
 //
-// It posts the ID alone. The server does the lookup again and writes what the
+// It sets the callsign and NOTHING else. A callsign the public list has never
+// heard of is the case this whole field exists to keep working, and the operator
+// is filling the rest in themselves; clearing their DMR ID because they corrected
+// a typo in the callsign would be the picker taking over a form it only assists
+// with. Dropping `picked` is the point: what is in the form no longer came from
+// a published row, so it must not be saved claiming it did.
+// It deliberately does not re-render. This runs from BLUR, and blur fires on the
+// mousedown heading for a click — rebuilding the panel here would destroy the Add
+// button under the operator's finger before the click landed. Nothing needs
+// redrawing anyway: the model is current and the picker already shows the text.
+function pbPickFree(callsign) {
+  pb.picked = null;
+  pb.form.callsign = callsign || "";
+}
+
+// pbImportPicked creates the picked row, then adds an email if one was typed.
+//
+// Two requests, because /api/phonebook/import deliberately takes a DMR ID and
+// nothing else — the whole point of that shape is that the client cannot claim a
+// field came from the public list. So the address goes on afterwards through the
+// ordinary update, which is safe precisely because the server treats an
+// email-only change as additive and leaves the entry tracking the list (only the
+// callsign, ID and name make a row the operator's own).
+//
+// A failed second request leaves the entry created and the address missing, and
+// says so rather than pretending the save worked: the operator can add it with
+// Edit, and an error that silently swallowed the address would be worse.
+async function pbImportPicked() {
+  const created = await pbImport(pb.picked.id);
+  if (!created) return null;
+  const email = pb.form.email.trim();
+  if (!email || !created.id) return created;
+  try {
+    const r = await fetch("/api/phonebook/" + encodeURIComponent(created.id), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        callsign: created.callsign,
+        dmr_id: created.dmr_id == null ? null : Number(created.dmr_id),
+        full_name: created.full_name || "",
+        email: email,
+      }),
+    });
+    if (!r.ok) {
+      const detail = await r.json().catch(() => ({}));
+      pb.err = (detail.error || msg("phonebook.importEmailFailed")).trim();
+      pb.field = detail.field || "email";
+    }
+  } catch (e) {
+    pb.err = String((e && e.message) || e).trim();
+  }
+  return created;
+}
+
+// pbPickedIntact reports whether the form still holds the row that was picked.
+//
+// This is the client half of the rule the server already enforces on an update:
+// the callsign, the DMR ID and the name are the fields the public list owns, and
+// editing any of them makes the entry the operator's own. So an edited form is
+// saved as an ordinary entry even though it began as a pick, and only an
+// untouched one is saved as an import. The email is excluded on purpose and for
+// the same reason the server excludes it — the export has no address, so adding
+// one is additive rather than a disagreement.
+function pbPickedIntact() {
+  const p = pb.picked;
+  if (!p) return false;
+  return pb.form.callsign.trim().toUpperCase() === String(p.callsign || "").toUpperCase() &&
+    pb.form.dmr_id.trim() === String(p.id || "") &&
+    pb.form.full_name.trim() === String(p.name || "");
+}
+
+// pbImport creates an entry from a public row, and is what preserves provenance.
+//
+// It posts the ID alone. The server does the lookup itself and writes what the
 // table says, so what lands in the phonebook is the published row rather than
 // whatever this page happened to be showing — which is what lets the entry be
-// marked as coming from the public list and kept in step with it afterwards.
+// marked as coming from the public list and kept in step with it when the table
+// is next downloaded. A client that could post the callsign and name alongside
+// could mark anything it liked as published.
+//
+// Returns the created entry, or null when the server refused. The caller decides
+// what to do about it; this only translates the refusal into something an
+// operator can act on.
 async function pbImport(id) {
-  pbReadForm();
   try {
     const r = await fetch("/api/phonebook/import", {
       method: "POST",
@@ -5969,68 +6622,16 @@ async function pbImport(id) {
       pb.err = detail.reason === "no_table" ? msg("phonebook.findNoTable")
         : detail.reason === "not_listed" ? msg("phonebook.findNotListed")
         : (detail.error || "").trim() || msg("phonebook.importFailed");
-    } else {
-      pb.err = "";
+      pb.field = detail.field || "";
+      return null;
     }
+    pb.err = "";
+    pb.field = "";
+    return await r.json().catch(() => ({}));
   } catch (e) {
     pb.err = String((e && e.message) || e).trim();
+    return null;
   }
-  await pbLoad();
-  renderPanel();
-}
-
-// pbFindCard is the search and its answer.
-//
-// Every branch says what happened AND what to do about it, the same rule the
-// General tab's lookup follows: an empty table is fixed on this node from the
-// Updates tab, an unlisted callsign is fixed at radioid.net, and those are not the
-// same errand.
-function pbFindCard() {
-  const F = pb.find;
-  const call = esc(F.callsign);
-  const already = (id) => pb.entries.some((e) => String(e.dmr_id) === String(id));
-
-  let out = "";
-  if (F.status === "busy") {
-    out = note(esc(msg("phonebook.findBusy")));
-  } else if (F.status === "nocall") {
-    out = note(esc(msg("phonebook.findNoCallsign")));
-  } else if (F.status === "error") {
-    out = `<div class="note" role="alert" style="color:var(--bad);border-color:var(--bad)">` +
-      `${esc(msg("phonebook.findFailed"))}${F.err ? ` <span class="none">${esc(F.err)}</span>` : ""}</div>`;
-  } else if (F.status === "done") {
-    if (!F.available) {
-      out = note(esc(msg("phonebook.findNoTable")));
-    } else if (!F.records.length) {
-      out = note(msg("phonebook.findNoMatch", { callsign: `<b>${call}</b>` }));
-    } else {
-      const head = F.records.length === 1
-        ? msg("phonebook.findOne", { callsign: `<b>${call}</b>` })
-        : msg("phonebook.findMany", { callsign: `<b>${call}</b>`, count: F.records.length });
-      const tail = F.truncated ? " " + esc(msg("phonebook.findTruncated", { count: F.records.length })) : "";
-      const rows = F.records.map((r) => {
-        const id = String(r.id);
-        const name = r.name ? `<span class="idfind-name">${esc(r.name)}</span>` : "";
-        // An ID already in the phonebook says so instead of offering a button
-        // whose only outcome is the uniqueness conflict.
-        const action = already(id)
-          ? `<span class="idfind-cur">${esc(msg("phonebook.findAlready"))}</span>`
-          : `<button type="button" class="btn ghost" data-pb-import="${esc(id)}" ` +
-            `aria-label="${esc(msg("phonebook.findAddLabel", { callsign: F.callsign, id }))}">${esc(msg("common.add"))}</button>`;
-        return `<li><span class="idfind-id">${esc(id)}</span>${name}${action}</li>`;
-      }).join("");
-      out = `<div class="idfind-out"><p class="idfind-head">${head}${tail}</p><ul class="idfind-list">${rows}</ul></div>`;
-    }
-  }
-
-  return card(msg("phonebook.findTitle"),
-    note(msg("phonebook.findHelp")) +
-    `<div class="row"><label for="pb-find">${esc(msg("phonebook.callsign"))}</label>` +
-      `<div class="idfind">` +
-        `<input id="pb-find" value="${esc(pb.findQuery)}" placeholder="KN4OQW" data-pb-findinput="1">` +
-        `<button type="button" class="btn ghost idfind-go" data-pb-action="find">${esc(msg("phonebook.findGo"))}</button>` +
-      `</div></div>` +
-    out);
 }
 
 // pbBeginGrant opens the grant form for one phonebook entry.
@@ -6212,6 +6813,18 @@ function pbInput(id, key, label, opts) {
     o.maxlength ? `maxlength="${esc(String(o.maxlength))}"` : "",
     bad ? `aria-invalid="true" aria-describedby="pb-error"` : "",
   ].filter(Boolean).join(" ");
+  // The callsign field is a type-ahead over the public ID list. The plain input
+  // stays inside the mount as the fallback: enhanceCallsignPickers hides it and
+  // puts the combobox in its place, and if that component is missing or throws,
+  // this is a working text box that still submits (D7). It is also what
+  // pbReadForm reads, so the two are kept in step rather than the model having
+  // two homes.
+  if (o.picker) {
+    return row(label,
+      `<div class="cspick" data-callsign-picker="${esc(o.picker)}">` +
+        `<input ${attrs}>` +
+      `</div>`);
+  }
   return row(label, `<input ${attrs}>`);
 }
 
@@ -6238,7 +6851,8 @@ function panelPhonebook() {
   const editing = pb.editing != null;
   const form = card(editing ? msg("phonebook.editTitle") : msg("phonebook.addTitle"),
     err +
-    pbInput("pb-callsign", "callsign", msg("phonebook.callsign"), { placeholder: "KN4OQW" }) +
+    pbInput("pb-callsign", "callsign", msg("phonebook.callsign"), { placeholder: "KN4OQW", picker: "pb" }) +
+    note(msg("phonebook.callsignHelp")) +
     pbInput("pb-dmrid", "dmr_id", msg("phonebook.dmrId"), { inputmode: "numeric", placeholder: "3180202" }) +
     pbInput("pb-name", "full_name", msg("phonebook.fullName")) +
     pbInput("pb-email", "email", msg("phonebook.email"), { type: "email", placeholder: "operator@example.com" }) +
@@ -6251,10 +6865,12 @@ function panelPhonebook() {
         : "") +
     `</div>`);
 
-  // The find card sits beside the entry form rather than replacing it: adding
-  // somebody by hand and looking them up in the public list are two ways to do the
-  // same thing, and an operator should not have to switch modes to choose.
-  return `<div class="grid2">${list}${form + pbFindCard()}</div>`;
+  // One form. Searching the public list used to be a second card below this one,
+  // which asked the operator to decide up front whether they were adding somebody
+  // by hand or from the list — a choice with no consequence, since both end in
+  // the same four fields. The Callsign box does both now: it offers the rows
+  // behind what is typed, and accepts what is typed when it offers nothing.
+  return `<div class="grid2">${list}${form}</div>`;
 }
 
 // pbAfterRender keeps the form model in step with the inputs.

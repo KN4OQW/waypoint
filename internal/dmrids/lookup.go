@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -274,4 +275,182 @@ func LookupIDs(path string, ids []uint32) (map[uint32]Record, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// SearchPrefixMin is the shortest prefix SearchCallsigns will answer.
+//
+// It is three because that is already the floor the HTTP surface applies to a
+// whole callsign, and a prefix shorter than the shortest callsign cannot be
+// narrowing anything: "K" would return the alphabetically first rows of a
+// 310,364-row table, which is the table's alphabet rather than a suggestion.
+// Callers ask for the minimum rather than hard-coding it so the picker can say
+// "keep typing" instead of showing an empty list.
+const SearchPrefixMin = 3
+
+// SearchCallsigns returns the rows whose callsign STARTS WITH prefix, ranked, at
+// most limit of them. The bool reports that more matched than were returned, so a
+// caller can say the list is a window rather than presenting it as the whole
+// answer.
+//
+// This is the type-ahead half of the pair. LookupCallsign answers "which IDs are
+// issued to this exact callsign", which is the question once you know the
+// callsign; this answers "which callsigns look like what I have typed so far",
+// which is the question before you do.
+//
+// # Ranking
+//
+// Callsign ascending, then ID ascending. That puts an EXACT match first for free
+// and without a special case, because a string sorts before every string that
+// extends it — KN4OQW precedes KN4OQWA — so the row an operator who has finished
+// typing wants is already at the top of the list they are reading.
+//
+// # Why a bounded insert rather than collect-then-sort
+//
+// A three-character prefix can match tens of thousands of rows, and collecting
+// them all to sort and then throw all but fifty away would allocate megabytes on
+// a board with 512 MB. The scan instead keeps the best `limit` seen so far in
+// rank order and drops the rest as it goes: memory is limit records however large
+// the table or the match set grows, and the common row costs one comparison
+// against the worst kept one.
+//
+// Truncating on rank rather than on file order is the part that matters. Stopping
+// the scan at the first `limit` matches, as LookupCallsign does, would return the
+// lowest-numbered IDs that happen to match — an arbitrary set that routinely
+// EXCLUDES the exact match the operator was typing towards, because their ID is
+// not usually among the numerically smallest. The full scan is what makes the top
+// of the list mean something.
+//
+// # Cost
+//
+// One pass, one 64 KB buffer, no index. Measured over the real August 2026 export
+// (311,146 rows, 6.6 MB) by BenchmarkSearchCallsigns; the comparable exact scan
+// in LookupCallsign measured 11.8 ms on a Ryzen 7 5700G with the file in page
+// cache, and this does the same read with a prefix compare and a bounded insert
+// on top.
+//
+// On the hardware that matters, measured end to end through HTTPS on a Pi 3
+// (armv7, table on SD): **200-240 ms**, against 43 ms for a below-minimum query
+// that returns before opening the file. So the scan itself is roughly 160-200 ms.
+//
+// An earlier draft of this comment guessed "some multiple of the desktop figure
+// on the first call and page-cached afterwards". The first half was right — it is
+// about 17x — but the second half was wrong: repeated identical queries measured
+// 209, 202 and 230 ms, with no warm-cache improvement at all. The file is already
+// in page cache after the first read; what the time is actually spent on is
+// scanning 311k lines on a 1.2 GHz ARM core, so it is CPU-bound and there is no
+// second call that gets cheaper. What misled the guess was reasoning from the
+// desktop, where the same work is fast enough that the I/O looks like the cost.
+//
+// 200 ms is comfortable for a type-ahead but it is not free, which is why the
+// browser debounces at 150 ms and why a prefix below SearchPrefixMin is answered
+// without touching the file: a keystroke is not a scan, a pause is. If this ever
+// needs to be cheaper, the measurement above says to attack the per-line work,
+// not the read.
+//
+// A limit of zero or less means no limit, matching LookupCallsign. Nothing calls
+// it that way and the HTTP surface always passes one: an unbounded search over
+// the real export would return every matching row, which for a short prefix is a
+// response no page wants.
+//
+// A missing file yields no records and no error, matching its siblings: a node
+// that has never reached the internet has no table, and "no suggestions" is the
+// right answer there rather than a failure.
+func SearchCallsigns(path, prefix string, limit int) ([]Record, bool, error) {
+	want := normalizeCallsign(prefix)
+	if len(want) < SearchPrefixMin {
+		return nil, false, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	// Read-only handle: Close has no buffered write to report failing, and the
+	// result is already in hand by the time it runs.
+	defer func() { _ = f.Close() }()
+
+	wantB := []byte(want)
+	var out []Record
+	truncated := false
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		// Bytes, not Text: all but a few of the 310k lines are discarded
+		// immediately and Text would allocate a string for every one of them.
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 || line[0] == '#' || line[0] == ';' {
+			continue
+		}
+		idField, rest := nextField(line)
+		callField, nameRest := nextField(rest)
+		if !hasPrefixFold(callField, wantB) {
+			continue
+		}
+		id64, err := strconv.ParseUint(string(idField), 10, 32)
+		if err != nil {
+			continue // a bad line is skipped, never fatal — same tolerance as Parse
+		}
+		rec := Record{
+			ID:       uint32(id64),
+			Callsign: strings.ToUpper(string(callField)),
+			Name:     collapse(nameRest),
+		}
+		if limit > 0 && len(out) >= limit {
+			// The buffer is full: a row no better than the worst kept one is
+			// dropped without being built into the list. This is the branch almost
+			// every match takes once the list has filled.
+			if !rankLess(rec, out[len(out)-1]) {
+				truncated = true
+				continue
+			}
+			truncated = true
+		}
+		at := sort.Search(len(out), func(i int) bool { return rankLess(rec, out[i]) })
+		out = append(out, Record{})
+		copy(out[at+1:], out[at:])
+		out[at] = rec
+		if limit > 0 && len(out) > limit {
+			out = out[:limit]
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, false, err
+	}
+	return out, truncated, nil
+}
+
+// rankLess is the order SearchCallsigns returns rows in: callsign ascending, then
+// ID ascending. See that function's comment for why an exact match needs no case
+// of its own here.
+func rankLess(a, b Record) bool {
+	if a.Callsign != b.Callsign {
+		return a.Callsign < b.Callsign
+	}
+	return a.ID < b.ID
+}
+
+// hasPrefixFold is bytes.HasPrefix with ASCII case folding, so a row the export
+// spells in lower case matches an upper-cased query. It is written out rather
+// than upper-casing the field first because that would allocate a string for
+// every one of the 310k rows the scan rejects.
+//
+// ASCII-only folding is correct here and not a shortcut: a callsign is letters
+// and digits, and the two separators the export uses (`/` and `-`) are unaffected
+// by case in any locale.
+func hasPrefixFold(b, prefix []byte) bool {
+	if len(b) < len(prefix) {
+		return false
+	}
+	for i := 0; i < len(prefix); i++ {
+		c := b[i]
+		if c >= 'a' && c <= 'z' {
+			c -= 'a' - 'A'
+		}
+		if c != prefix[i] {
+			return false
+		}
+	}
+	return true
 }

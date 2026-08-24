@@ -55,6 +55,11 @@ type Model struct {
 	// renderer/daemon consumes them yet — this PR is the model/store seam only.
 	Buses       []Bus        `json:"buses"`
 	Attachments []Attachment `json:"attachments"`
+	// Zello bridging: the accounts the node can talk as and the channels each bus
+	// bridges to. Deliberately NOT entries in Attachments[] — see zello.go for
+	// why the mode-set validator must not learn about them.
+	ZelloAccounts []ZelloAccount `json:"zello_accounts"`
+	ZelloChannels []ZelloChannel `json:"zello_channels"`
 	// Bus LAN peering (RFC-0016): paired nodes and the remote edges of local buses.
 	// Ordinary store rows following the RFC-0001 conventions; no transport/render
 	// consumes them yet — this is the model/store seam.
@@ -64,6 +69,15 @@ type Model struct {
 	// address and the play-out deadline / jitter-buffer defaults the renderer sources
 	// (never hardcoded). Store-only; no secret.
 	Peering Peering `json:"peering"`
+	// Weather alert broadcasting: which hazards, for which counties, onto which
+	// talkgroups. Configuration only — the ingest, the policy and the delivery
+	// consume this from elsewhere. See wx.go for why this is a broadcast rather
+	// than a subscription feature.
+	WX WX `json:"wx"`
+	// The station's coordinates, used to suggest which counties to monitor. It
+	// deliberately does NOT feed the public grid square; see
+	// station_location.go.
+	StationLocation StationLocation `json:"station_location"`
 	// LCD is the Waypoint-native HD44780 driver (store-only; drives no INI).
 	LCD LCD `json:"lcd"`
 	// History is the event-history retention policy (store-only; drives no INI).
@@ -750,7 +764,11 @@ func (m *Model) sections() map[string]any {
 		"nxdn2dmr":           &m.NXDN2DMR,
 		"buses":              &m.Buses,
 		"attachments":        &m.Attachments,
+		"zello_accounts":     &m.ZelloAccounts,
+		"zello_channels":     &m.ZelloChannels,
 		"peers":              &m.Peers,
+		"wx":                 &m.WX,
+		"station_location":   &m.StationLocation,
 		"remote_attachments": &m.RemoteAttachments,
 		"peering":            &m.Peering,
 		"lcd":                &m.LCD,

@@ -291,3 +291,77 @@ func TestVoiceStartEndBracketing(t *testing.T) {
 		t.Fatalf("want exactly one bus_voice_end, got %d", got)
 	}
 }
+
+// A DMR destination needs its voice frames numbered across the A-F superframe.
+// Frame A carries the sync; B-F are where MMDVM-Host writes the embedded link
+// control fragments a radio assembles to decode the call.
+//
+// Nothing set this. Every frame the bus emitted to DMR was therefore frame A, so
+// the link control never arrived and a radio keyed up and played nothing. That is
+// what the bench showed for Zello-to-RF, and it was never Zello-specific: any
+// source without a superframe concept of its own — YSF, NXDN, a Zello endpoint —
+// hit it the moment it was bridged to DMR.
+func TestVoiceFramesToDMRAreNumberedAcrossTheSuperframe(t *testing.T) {
+	b := newBus(&capture{}, 3*time.Second, config.ModeYSF, config.ModeDMR)
+	now := time.Now()
+
+	// YSF carries 5 codewords a frame and DMR takes 3, so the reframer emits a
+	// varying number of DMR frames per inbound one — which is exactly why the
+	// numbering has to be the destination's own and cannot be copied from the
+	// source.
+	var got []uint8
+	for i := 0; i < 6; i++ {
+		for _, em := range b.Ingest(config.ModeYSF, voice(config.ModeYSF, 1, 5, byte(i*5)), now) {
+			if em.Dst == config.ModeDMR && em.Frame.Kind == frames.KindVoice {
+				got = append(got, em.Frame.VoiceSeq)
+			}
+		}
+	}
+	if len(got) < frames.DMRVoiceSuperframe+1 {
+		t.Fatalf("only %d DMR voice frames emitted; need more than one superframe to see the wrap", len(got))
+	}
+	for i, n := range got {
+		if want := uint8(i % frames.DMRVoiceSuperframe); n != want {
+			t.Fatalf("frame %d has VoiceSeq %d, want %d (sequence so far: %v)", i, n, want, got)
+		}
+	}
+}
+
+// The count is per transmission: the next over starts at frame A again, or its
+// first burst is labelled as a mid-superframe fragment and the radio has no sync
+// to lock to.
+func TestTheSuperframeCountRestartsEachTransmission(t *testing.T) {
+	b := newBus(&capture{}, time.Millisecond, config.ModeYSF, config.ModeDMR)
+	now := time.Now()
+
+	first := func() uint8 {
+		t.Helper()
+		for _, em := range b.Ingest(config.ModeYSF, voice(config.ModeYSF, 1, 5, 0), now) {
+			if em.Dst == config.ModeDMR && em.Frame.Kind == frames.KindVoice {
+				return em.Frame.VoiceSeq
+			}
+		}
+		t.Fatal("no DMR voice frame emitted")
+		return 0
+	}
+	if n := first(); n != 0 {
+		t.Fatalf("first frame of a transmission has VoiceSeq %d, want 0", n)
+	}
+	// Push far enough into the superframe that a carried-over counter would show.
+	for i := 0; i < 4; i++ {
+		b.Ingest(config.ModeYSF, voice(config.ModeYSF, 1, 5, byte(i)), now)
+	}
+
+	// Release the token and start a new transmission on a new stream.
+	now = now.Add(time.Second)
+	b.MaybeRelease(now)
+	for _, em := range b.Ingest(config.ModeYSF, voice(config.ModeYSF, 2, 5, 0), now) {
+		if em.Dst == config.ModeDMR && em.Frame.Kind == frames.KindVoice {
+			if em.Frame.VoiceSeq != 0 {
+				t.Fatalf("a new transmission started at VoiceSeq %d, want 0", em.Frame.VoiceSeq)
+			}
+			return
+		}
+	}
+	t.Fatal("the second transmission emitted no DMR voice frame")
+}

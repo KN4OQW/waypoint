@@ -437,20 +437,36 @@ file. A list already refreshing reports `busy` rather than being run twice.
 
 `DMRIds.dat` is downloaded for the gateways' callsign resolution, and the settings
 page reads the same cache to answer the question a new operator actually has:
-*what is my DMR ID?* **Find my ID** on the General tab resolves the callsign
-against the table and offers what it finds, rather than sending the operator to
-radioid.net to copy a number across by hand (#140).
+*what is my DMR ID?* Rather than sending them to radioid.net to copy a number
+across by hand (#140), the **Callsign field itself** is a type-ahead over the
+table — on the General tab, where choosing a row fills in the DMR ID, and on the
+Phonebook tab, where it fills in the ID and the name.
 
 - `GET /api/dmr/ids?callsign=KN4OQW` → `{ "callsign", "records": [{id, callsign,
-  name}], "truncated", "available" }`. `records` is ordered by ID and is never
-  `null`; `available` is false when the node has never downloaded the table, which
-  is a different answer to an operator than "your callsign is not listed".
+  name}], "truncated", "available" }`. Every ID issued to that exact callsign,
+  ordered by ID and never `null`; `available` is false when the node has never
+  downloaded the table, which is a different answer to an operator than "your
+  callsign is not listed".
+- `GET /api/dmr/ids?prefix=KN4OQ` → the same shape plus `min_prefix`. The rows
+  whose callsign *starts with* the prefix, ranked by callsign then ID — which
+  puts an exact match first without a rule for it, since a string sorts before
+  every string that extends it. A prefix shorter than `min_prefix` is answered
+  with an empty list rather than refused: it is somebody part-way through typing,
+  and it costs nothing to serve because the scanner returns before opening the
+  file.
 
 This adds no outbound request — it is a second reader of a file that was already
-being fetched, under the same operator-visible off switch. The lookup streams the
+being fetched, under the same operator-visible off switch. Both lookups stream the
 file rather than loading it: the table parses to 35.5 MB of live heap, which is not
-memory a Pi Zero should spend to answer one question. A callsign with several IDs
-issued to it is common, and the page always offers the choice; it never picks one.
+memory a Pi Zero should spend to answer one question. The prefix search keeps only
+the best fifty rows as it scans, so its memory is fifty records however many match.
+
+A callsign with several IDs issued to it is common, and the page always offers the
+choice; it never picks one. Each issued ID is its own option in the dropdown,
+labelled with the row's name so a block of consecutive numbers can be told apart.
+And the list only ever suggests: the export records who has registered an ID, not
+who holds a licence, so a callsign it has never heard of is typed and accepted
+exactly as it always was — as is every callsign on a node that has no table yet.
 
 ## What is not here yet
 

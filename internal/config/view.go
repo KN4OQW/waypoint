@@ -25,6 +25,11 @@ type View struct {
 	FM       ViewFM        `json:"fm"`
 	LCD      ViewLCD       `json:"lcd"`
 	History  ViewHistory   `json:"history"`
+	WX       ViewWX        `json:"wx"`
+	// StationLocation is a straight projection. Coordinates are not a secret in
+	// the write-only sense -- an operator who set them can see them -- but note
+	// that they do NOT reach any public surface; see station_location.go.
+	StationLocation StationLocation `json:"station_location"`
 	// StationID shares the Station Settings tab with History.
 	StationID ViewStationID `json:"station_id"`
 	Update    ViewUpdate    `json:"update"`
@@ -35,6 +40,12 @@ type View struct {
 	// credentials_ref against Networks[] (also in this view).
 	Buses       []Bus        `json:"buses"`
 	Attachments []Attachment `json:"attachments"`
+	// Zello bridging. Channels project verbatim — a channel row deliberately
+	// holds no secret, only a reference to the account that does. Accounts are
+	// projected through ViewZelloAccount, which carries HasPassword/HasAuthToken
+	// and never the values.
+	ZelloAccounts []ViewZelloAccount `json:"zello_accounts"`
+	ZelloChannels []ZelloChannel     `json:"zello_channels"`
 	// Bus LAN peering (RFC-0016). Peers ARE redacted — the pinned peer certificate
 	// and this node's per-peering key are write-only secrets; only the fingerprint
 	// is viewable (PeerView). Remote attachments carry no secret and project
@@ -110,6 +121,37 @@ type ViewLCD struct {
 	ActivityInterrupt bool          `json:"activity_interrupt"`
 	LingerSecs        string        `json:"linger_secs"`
 	Pages             []ViewLCDPage `json:"pages"`
+}
+
+// ViewWX is the Weather panel's read model. Everything projects except the feed
+// password, which follows the write-only rule the other secret-bearing sections
+// use even though this particular credential is public: a projection that
+// returns some passwords and not others is a rule nobody can audit.
+//
+// Subscriptions is projected rather than left for the panel to build, because
+// the trailing "/#" on each county filter is load-bearing and easy to omit --
+// the feed keys alerts by ETN at the last level so that a county under two
+// hazards shows both. One authority for that string, and it is the same one the
+// ingest subscribes with.
+type ViewWX struct {
+	Enabled      bool              `json:"enabled"`
+	Broker       string            `json:"broker"`
+	Username     string            `json:"username"`
+	HasPassword  bool              `json:"has_password"`
+	Counties     []WXCounty        `json:"counties"`
+	Talkgroups   []uint32          `json:"talkgroups"`
+	Classes      map[string]WXRule `json:"classes"`
+	Overrides    []WXOverride      `json:"overrides"`
+	Actions      []string          `json:"announce_actions"`
+	Holdoff      string            `json:"holdoff"`
+	MaxDefer     string            `json:"max_defer"`
+	MaxTextUnits int               `json:"max_text_units"`
+	Voice        WXVoice           `json:"voice"`
+	// VoiceTalkgroups is the EFFECTIVE list — the voice list when one is set,
+	// otherwise the alert talkgroups. Projected so the panel shows what will
+	// actually happen rather than an empty field that behaves as though full.
+	VoiceTalkgroups []uint32 `json:"voice_talkgroups"`
+	Subscriptions   []string `json:"subscriptions"`
 }
 
 // ViewHistory is the Station Settings tab's read model for event-history
@@ -666,6 +708,28 @@ func (m *Model) View(src Sources) *View {
 		})
 	}
 	v.History = ViewHistory{RetentionDays: m.History.RetentionDays}
+	v.WX = ViewWX{
+		Enabled:         m.WX.Enabled,
+		Broker:          m.WX.Broker,
+		Username:        m.WX.Username,
+		HasPassword:     m.WX.Password != "",
+		Counties:        append([]WXCounty(nil), m.WX.Counties...),
+		Talkgroups:      append([]uint32(nil), m.WX.Talkgroups...),
+		Classes:         map[string]WXRule{},
+		Overrides:       append([]WXOverride(nil), m.WX.Overrides...),
+		Actions:         append([]string(nil), m.WX.AnnounceActions...),
+		Holdoff:         m.WX.Holdoff,
+		MaxDefer:        m.WX.MaxDefer,
+		MaxTextUnits:    m.WX.MaxTextUnits,
+		Voice:           m.WX.Voice,
+		VoiceTalkgroups: m.WX.VoiceTalkgroups(),
+		Subscriptions:   m.WX.WXSubscriptions(),
+	}
+	v.WX.Voice.Talkgroups = append([]uint32(nil), m.WX.Voice.Talkgroups...)
+	for k, r := range m.WX.Classes {
+		v.WX.Classes[k] = r
+	}
+	v.StationLocation = m.StationLocation
 	v.StationID = ViewStationID{
 		Enable:            m.StationID.Enable,
 		TimeMins:          m.StationID.TimeMins,
@@ -677,6 +741,24 @@ func (m *Model) View(src Sources) *View {
 		Channel: m.Update.Channel, CheckEnabled: m.Update.CheckEnabled, AutoApply: m.Update.AutoApply,
 		QuietWindow: m.Update.QuietWindow, AllowUnrevertable: m.Update.AllowUnrevertable,
 	}
+	// A Zello account holds two bearer credentials — the account password and the
+	// JWT — and reporting that one is unset must never disclose the other, so the
+	// projection carries field presence and nothing else.
+	v.ZelloAccounts = make([]ViewZelloAccount, 0, len(m.ZelloAccounts))
+	for _, a := range m.ZelloAccounts {
+		v.ZelloAccounts = append(v.ZelloAccounts, ViewZelloAccount{
+			Name:          a.Name,
+			Username:      a.Username,
+			Issuer:        a.Issuer, // public: it identifies the key, not the secret
+			HasPassword:   a.Password != "",
+			HasPrivateKey: a.PrivateKey != "",
+			HasAuthToken:  a.AuthToken != "",
+			CanMintTokens: a.CanMintTokens(),
+			Enabled:       a.Enabled,
+		})
+	}
+	v.ZelloChannels = append([]ZelloChannel(nil), m.ZelloChannels...)
+
 	// Buses/attachments project verbatim (no secrets). Copy the slices so the view
 	// never aliases the model's backing arrays.
 	v.Buses = append([]Bus(nil), m.Buses...)
@@ -729,4 +811,24 @@ func (m *Model) View(src Sources) *View {
 		M17Gateway:    FileLogLevels{Display: m.Logging.M17Gateway.display("1"), File: m.Logging.M17Gateway.file("0")},
 	}
 	return v
+}
+
+// ViewZelloAccount is a Zello identity as the UI sees it: everything except the
+// two secrets. Password and AuthToken are write-only, so the panel can report
+// that a token is missing without ever being able to read the one that is there.
+type ViewZelloAccount struct {
+	Name     string `json:"name"`
+	Username string `json:"username"`
+	// Issuer is public — it names the key pair, and its first segment is a
+	// base64 of the account it belongs to. The private key is what must not
+	// travel, and it never does.
+	Issuer        string `json:"issuer"`
+	HasPassword   bool   `json:"has_password"`
+	HasPrivateKey bool   `json:"has_private_key"`
+	HasAuthToken  bool   `json:"has_auth_token"`
+	// CanMintTokens tells the panel whether this account is on the arrangement
+	// that does not expire, so it can warn about the 30-day one instead of
+	// leaving the operator to discover it when the channel goes quiet.
+	CanMintTokens bool `json:"can_mint_tokens"`
+	Enabled       bool `json:"enabled"`
 }

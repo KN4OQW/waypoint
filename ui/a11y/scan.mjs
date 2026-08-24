@@ -43,6 +43,9 @@ const TABS = [
   "general", "hardware", "setup", "lcd", "station", "modes",
   "brandmeister", "network", "gateways",
   "profiles", "phonebook", "notify", "updates", "system", "expert",
+  // The Weather panel arrived with its own combobox and routing matrix and was
+  // never in this list, so the gate had never seen it.
+  "weather",
 ];
 
 // The Modes tab's sub-tabs (mirrors MODE_SUBS in settings.js). These render the
@@ -188,6 +191,71 @@ async function seedPhonebook(context) {
   }
 }
 
+// Seed a bus with a mode attachment and a Zello channel.
+//
+// Without this the Gateways tab is scanned with no buses at all, so the bus card,
+// its attachment blocks and every Zello control render their empty states and
+// axe measures markup no operator will ever see. That is the failure mode this
+// scan exists to avoid: a green run over the one state that was not the point.
+//
+// Seeded through the config API for the same reason as the phonebook — driving
+// the forms would make this a UI test that happens to run axe. Failures are
+// swallowed; a rerun against an already-seeded node is a no-op either way.
+async function seedBusesAndZello(context) {
+  const put = (section, data) =>
+    context.request.put(`${BASE}/api/config/${section}`, { data }).catch(() => {});
+
+  await put("buses", [{ id: "bus-001", name: "Scan Bus", enabled: true }]);
+  await put("attachments", [{ bus_id: "bus-001", mode: "dmr", slot: "2", default_tg: "91" }]);
+  // Two accounts so the channel's account picker has something to choose
+  // between, and so both credential states are on screen: one that signs its own
+  // tokens and one on a pasted token, which renders the expiry warning.
+  await put("zello_accounts", [
+    {
+      name: "scan-bridge", username: "scan-bridge", password: "scan-password",
+      issuer: "SCAN-ISSUER.aaaa", private_key: "-----BEGIN PRIVATE KEY-----scan-----END PRIVATE KEY-----",
+      auth_token: "", enabled: true,
+    },
+    { name: "scan-legacy", username: "scan-legacy", password: "scan-password", issuer: "", private_key: "", auth_token: "scan-token", enabled: false },
+  ]);
+  await put("zello_channels", [
+    { id: "zch-001", bus_id: "bus-001", channel: "Scan Channel", account_ref: "scan-bridge", listen_only: false, packet_ms: 60, enabled: true },
+    { id: "zch-002", bus_id: "bus-001", channel: "Scan Listen", account_ref: "scan-bridge", listen_only: true, packet_ms: 20, enabled: false },
+  ]);
+}
+
+// Open the Weather panel's county picker with a real result list in it.
+//
+// The closed picker is a text box; everything this scan is here for — the
+// combobox/listbox pairing, aria-expanded, the option roles, aria-activedescendant
+// following the keyboard cursor, and the trailing "25 of 80 shown" note — only
+// exists in the DOM once it is open with matches. Scanning the panel as it loads
+// measures none of it.
+//
+// "fl" is chosen because it matches far more counties than one page holds, so the
+// truncation note renders too. The guard is the point: a picker that failed to
+// open would leave the plain text box on screen, axe would find nothing wrong
+// with it, and the scan would go green having measured the wrong markup.
+async function openCountyPicker(page, analyze, label) {
+  const input = "[data-wx-countypicker] input.tz-input";
+  if (!await page.$(input)) {
+    throw new Error("the county picker did not enhance; the scan would have passed without measuring it");
+  }
+  await page.focus(input);
+  await page.fill(input, "fl");
+  await page.waitForSelector("[data-wx-countypicker] .tz-list li.tz-opt", { timeout: 5000 });
+  // Move the keyboard cursor off the first option so aria-activedescendant is
+  // pointing at something the scan can see it pointing at.
+  await page.keyboard.press("ArrowDown");
+  if (!await page.evaluate(() => {
+    const i = document.querySelector("[data-wx-countypicker] input.tz-input");
+    return i && i.getAttribute("aria-expanded") === "true" && !!i.getAttribute("aria-activedescendant");
+  })) {
+    throw new Error("the county picker opened without its combobox state; the scan would be measuring a closed control");
+  }
+  await analyze(page, `${label} settings#weather (county picker open)`);
+}
+
 // Force the two Phonebook states the seeded data cannot produce on its own.
 //
 // The grant form replaces the entry form in the second column, so it is never
@@ -197,39 +265,29 @@ async function seedPhonebook(context) {
 // honest for an accessibility scan: what is being measured is the markup the
 // operator meets, and this is that markup.
 async function openPhonebookStates(page, analyze, label) {
-  // The public-list search, in its two interesting states: results with Add
-  // buttons, and the no-match branch whose copy is the longest prose on the panel.
-  // Both are driven through the real control rather than by poking state, so the
-  // scan sees the markup an operator actually produces.
-  await page.fill("#pb-find", "KN4OQW").catch(() => {});
-  await page.click('[data-pb-action="find"]').catch(() => {});
-  await page.waitForTimeout(400);
-  // Two different reasons the results can be empty, and only one is a bug.
-  //
-  // A node with no ID table cannot produce this state at all — the panel says so
-  // instead, which is correct behaviour and is itself scanned below. CI passes a
-  // fixture table so the state DOES exist there; a developer running the scan
-  // against a node that has never downloaded it gets the skip and a line saying
-  // why, rather than a failure about something that is working.
-  //
-  // A table that IS present and still returns nothing is a regression, and that
-  // one throws: the alternative is a green scan of markup nobody looked at.
-  const noTable = await page.evaluate(() =>
-    !!document.querySelector(".idfind-out, .note") &&
-    /public ID database/i.test(document.body.textContent || "")).catch(() => false);
-  const gotRows = await page.evaluate(() => !!document.querySelector(".idfind-list li")).catch(() => false);
-  if (gotRows) {
-    await analyze(page, `${label} settings#phonebook (public-list results)`);
-  } else if (noTable) {
-    console.log(`  skip ${ctxLabel} ${label} settings#phonebook (public-list results) — this node has no ID table`);
+  // The callsign type-ahead, in its two interesting states: an open dropdown of
+  // matching rows, and the empty branch whose note carries the longest prose on
+  // the panel. Both are driven through the real control rather than by poking
+  // state, so the scan sees the markup an operator actually produces — and both
+  // ASSERT the state rendered, because a closed combobox is a plain text box and
+  // scanning one measures nothing.
+  if (await openCallsignPicker(page, "pb", "KN4OQ") === "rows") {
+    await analyze(page, `${label} settings#phonebook (callsign picker open)`);
   } else {
-    throw new Error("the public-list search returned nothing and the panel did not say why; the scan would have passed without measuring it");
+    console.log(`  skip ${ctxLabel} ${label} settings#phonebook (callsign picker open) — this node has no ID table`);
   }
 
-  await page.fill("#pb-find", "ZZ9ZZZ").catch(() => {});
-  await page.click('[data-pb-action="find"]').catch(() => {});
-  await page.waitForTimeout(400);
-  await analyze(page, `${label} settings#phonebook (public-list no match)`);
+  // The empty branch, which every node can produce: its note REPLACES the generic
+  // no-match line and is carried by aria-describedby rather than merely drawn, so
+  // it is worth a pass of its own whether or not there is a table to search.
+  await openCallsignPicker(page, "pb", "ZZ9ZZZ");
+  await analyze(page, `${label} settings#phonebook (callsign picker no match)`);
+
+  // Leave the picker closed and the field empty again, so the states forced below
+  // are measured on the panel as it normally renders.
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => { pb.form.callsign = ""; pb.picked = null; renderPanel(); }).catch(() => {});
+  await page.waitForTimeout(200);
 
   await page.evaluate(() => {
     const first = (pb.entries || [])[0];
@@ -318,35 +376,72 @@ async function open(page, tab, sub) {
   await page.waitForTimeout(250);
 }
 
-// Put the General tab's DMR ID lookup (#140) into its answered state and scan
-// that, because the default render never shows it: the block only exists after a
-// callsign has been looked up, so the ordinary settings#general pass walks past
-// the list, its Use buttons and its "in use" marker without seeing any of them.
+// openCallsignPicker drives one of the two callsign type-aheads and reports what
+// it reached: "rows" when the dropdown has options in it, "empty" when it opened
+// with only its note, or throws when the control did not enhance at all.
 //
-// The state is seeded directly rather than by typing a callsign and pressing the
-// button. A real lookup needs a DMRIds.dat on the machine, which CI does not have
-// and should not need for an accessibility scan; seeding also pins the awkward
-// cases — a row already in use, and a truncated list — that a live table would
-// only produce for particular callsigns. If the settings page ever stops carrying
-// these globals the evaluate throws, the catch swallows it, and the scan degrades
-// to the plain panel rather than failing for the wrong reason.
-async function openIDLookup(page) {
-  await page.evaluate(() => {
-    edit.general = Object.assign({}, edit.general, { callsign: "N0SZ", id: "3101901" });
-    idLookup = {
-      status: "done",
-      callsign: "N0SZ",
-      records: [
-        { id: 3101900, callsign: "N0SZ", name: "Rocky" },
-        { id: 3101901, callsign: "N0SZ", name: "Rocky" },
-        { id: 3101902, callsign: "N0SZ", name: "" },
-      ],
-      truncated: true,
-      available: true,
-    };
-    renderPanel();
-  }).catch(() => {});
-  await page.waitForTimeout(150);
+// The two empty results are not the same thing and only one is a bug. A node that
+// has never downloaded the RadioID export has nothing to search, and the picker
+// saying so is correct behaviour — CI passes a fixture table so the populated
+// state exists there deterministically, while a developer running this against a
+// node with no table should get a skip and a line saying why rather than a
+// failure about something that is working. A picker that never enhanced IS a
+// bug either way, because then the scan is measuring a plain text box.
+async function openCallsignPicker(page, which, query) {
+  const sel = `[data-callsign-picker="${which}"] input.tz-input`;
+  if (!await page.$(sel)) {
+    throw new Error(`the ${which} callsign picker did not enhance; the scan would have passed without measuring it`);
+  }
+  await page.focus(sel);
+  await page.fill(sel, query);
+  // Wait for the OPTIONS, and treat a timeout as the empty case — not the other
+  // way round, and not on an either-or selector.
+  //
+  // Focusing the field fires its own search on the empty query, which renders the
+  // status box straight away. A selector that accepted either state therefore
+  // matched that box before this query's answer had left the daemon, and every
+  // populated pass silently became a skip: the gate went green having measured
+  // the one state it was not there to measure. Found by the scan reporting a skip
+  // against a node whose table demonstrably answered the same query over HTTP.
+  let rows = null;
+  try {
+    await page.waitForSelector(`[data-callsign-picker="${which}"] .tz-list li.tz-opt`, { timeout: 5000 });
+    rows = true;
+  } catch {
+    if (!await page.$(`[data-callsign-picker="${which}"] .tz-empty:not([hidden])`)) {
+      throw new Error(`the ${which} callsign picker showed neither options nor a reason; the scan would have passed without measuring it`);
+    }
+    return "empty";
+  }
+  // Move the keyboard cursor off the first option so aria-activedescendant is
+  // pointing at something the scan can see it pointing at.
+  await page.keyboard.press("ArrowDown");
+  if (!await page.evaluate((s) => {
+    const i = document.querySelector(s);
+    return i && i.getAttribute("aria-expanded") === "true" && !!i.getAttribute("aria-activedescendant");
+  }, sel)) {
+    throw new Error(`the ${which} callsign picker opened without its combobox state; the scan would be measuring a closed control`);
+  }
+  return "rows";
+}
+
+// The General tab's callsign type-ahead, open with matches in it.
+//
+// It replaced a "Find my ID" button whose answer arrived in a panel below the
+// field, so what used to be scanned here was static markup that could be faked
+// by assigning to a state variable. A combobox cannot: the role=listbox, its
+// role=option children and the aria-activedescendant cursor only exist in the
+// DOM once it is open with matches, and a scan of the closed control is a scan
+// of a plain text box. So this drives the real control and THROWS if the state
+// did not render — a pass that went green on the wrong markup would be worse
+// than no pass at all.
+async function openIDLookup(page, analyze, label) {
+  const got = await openCallsignPicker(page, "general", "N0SZ");
+  if (got !== "rows") {
+    console.log(`  skip ${ctxLabel} ${label} settings#general (callsign picker open) — this node has no ID table`);
+    return;
+  }
+  await analyze(page, `${label} settings#general (callsign picker open)`);
 }
 
 // Drive every sidebar group to the wanted state through its own disclosure button,
@@ -381,6 +476,7 @@ for (const theme of THEMES) for (const mode of MODES) {
   }, [theme, mode]);
   await authenticate(context);
   await seedPhonebook(context);
+  await seedBusesAndZello(context);
   const page = await context.newPage();
 
   for (const vp of VIEWPORTS) {
@@ -412,18 +508,22 @@ for (const theme of THEMES) for (const mode of MODES) {
     for (const t of TARGETS) {
       await open(page, t.tab, t.sub);
       await analyze(page, `${vp.key} settings#${t.sub ? `${t.tab}/${t.sub}` : t.tab}`);
-      // The General tab has a second state worth scanning: the DMR ID lookup with
-      // an answer in it. Done after the plain pass so the panel above is scanned
-      // as it actually loads.
+      // The General tab has a second state worth scanning: the callsign picker
+      // open, with rows in it. Done after the plain pass so the panel above is
+      // scanned as it actually loads.
       if (t.tab === "general" && !t.sub) {
-        await openIDLookup(page);
-        await analyze(page, `${vp.key} settings#general (ID lookup answered)`);
+        await openIDLookup(page, analyze, vp.key);
       }
       // The Phonebook panel's two other states: the grant form, and an account
       // whose controls are disabled because it is the last admin. Both are after
       // the plain pass, so the panel above is still scanned as it loads.
       if (t.tab === "phonebook") {
         await openPhonebookStates(page, analyze, vp.key);
+      }
+      // The county picker's open state, for the same reason: the combobox markup
+      // only exists once it has been opened and has matches in it.
+      if (t.tab === "weather") {
+        await openCountyPicker(page, analyze, vp.key);
       }
     }
 

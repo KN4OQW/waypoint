@@ -162,3 +162,107 @@ test("detectTimezone: returns null when the runtime throws or reports nothing", 
     global.Intl = realIntl;
   }
 });
+
+// --- the item shape the county picker added ---------------------------------
+//
+// createTzPicker was generalized rather than copied so the county picker and the
+// timezone picker share one ARIA implementation (see the file header). These
+// cover the pure half of that generalization; the DOM component is still checked
+// by hand and by the axe job, as it was before.
+
+test("toItems: a plain string is its own value and label", () => {
+  assert.deepEqual(WPTz.toItems(["America/Chicago"]), [
+    { value: "America/Chicago", label: "America/Chicago", sub: "", data: undefined },
+  ]);
+});
+
+test("toItems: an object keeps value, label and sub", () => {
+  assert.deepEqual(WPTz.toItems([{ value: "012113", label: "Santa Rosa, FL", sub: "012113" }]), [
+    { value: "012113", label: "Santa Rosa, FL", sub: "012113", data: undefined },
+  ]);
+});
+
+// The county picker has to store five fields when a row is chosen, so whatever a
+// caller hangs on `data` must survive normalization untouched. Re-fetching the
+// row it just rendered to get those fields back would be the picker asking the
+// server what it already knows.
+test("toItems: data rides along untouched", () => {
+  const county = { same: "012113", ugc: "FLC113", name: "Santa Rosa", state: "FL", wfo: "MOB" };
+  const got = WPTz.toItems([{ value: "012113", label: "Santa Rosa, FL", data: county }]);
+  assert.equal(got[0].data, county);
+});
+
+// A label is what the operator reads. An item that arrived without one must fall
+// back to the value rather than render an empty row they cannot tell apart from
+// the next empty row.
+test("toItems: a missing label falls back to the value", () => {
+  assert.deepEqual(WPTz.toItems([{ value: "012113" }]), [
+    { value: "012113", label: "012113", sub: "", data: undefined },
+  ]);
+});
+
+test("toItems: junk entries normalize to empty rather than throwing", () => {
+  assert.deepEqual(WPTz.toItems([null, undefined, 7]), [
+    { value: "", label: "", sub: "", data: undefined },
+    { value: "", label: "", sub: "", data: undefined },
+    { value: "", label: "", sub: "", data: undefined },
+  ]);
+  assert.deepEqual(WPTz.toItems(null), []);
+});
+
+test("filterItems: matches the label, the value and the sub", () => {
+  const items = WPTz.toItems([
+    { value: "012113", label: "Santa Rosa, FL", sub: "012113" },
+    { value: "012033", label: "Escambia, FL", sub: "012033" },
+  ]);
+  assert.equal(WPTz.filterItems("santa", items).length, 1);
+  // Reachable by the code as well as the name, since an operator migrating from
+  // a hand-written configuration already knows the code.
+  assert.equal(WPTz.filterItems("012033", items).length, 1);
+  assert.equal(WPTz.filterItems("fl", items).length, 2);
+});
+
+test("filterItems: an empty query returns everything, and a miss returns nothing", () => {
+  const items = WPTz.toItems([{ value: "a", label: "Alpha" }, { value: "b", label: "Beta" }]);
+  assert.equal(WPTz.filterItems("   ", items).length, 2);
+  assert.equal(WPTz.filterItems("qqzz", items).length, 0);
+});
+
+// --- freeText: a value the list does not contain ---------------------------
+//
+// The rule the callsign pickers depend on. The public ID table is an export of
+// who has registered, not of who exists, so text that matched no option has to
+// survive — a picker that erased an unlisted callsign would be worse than none.
+
+test("tzFreeAction: without freeText, unmatched typing is discarded (D6)", () => {
+  assert.deepEqual(WPTz.tzFreeAction("Europe/Atlant", "Europe/Berlin", false), {
+    commit: false, value: "Europe/Berlin",
+  });
+});
+
+test("tzFreeAction: with freeText, unmatched typing becomes the value", () => {
+  assert.deepEqual(WPTz.tzFreeAction("KN4OQW", "", true), { commit: true, value: "KN4OQW" });
+});
+
+test("tzFreeAction: typing that equals the held value commits nothing", () => {
+  // No onSelect for a no-op: re-committing on every blur would fire the caller's
+  // handler for merely tabbing through a field nobody edited.
+  assert.deepEqual(WPTz.tzFreeAction("KN4OQW", "KN4OQW", true), { commit: false, value: "KN4OQW" });
+  assert.deepEqual(WPTz.tzFreeAction("  KN4OQW  ", "KN4OQW", true), { commit: false, value: "KN4OQW" });
+});
+
+test("tzFreeAction: clearing the field commits the empty value", () => {
+  // Emptying a callsign box means "no callsign". A picker that held onto the last
+  // value would leave the form carrying something visibly deleted.
+  assert.deepEqual(WPTz.tzFreeAction("", "KN4OQW", true), { commit: true, value: "" });
+  assert.deepEqual(WPTz.tzFreeAction("   ", "KN4OQW", true), { commit: true, value: "" });
+});
+
+test("tzFreeAction: the committed value is trimmed", () => {
+  assert.deepEqual(WPTz.tzFreeAction("  W1AW ", "", true), { commit: true, value: "W1AW" });
+});
+
+test("tzFreeAction: junk arguments never throw", () => {
+  assert.deepEqual(WPTz.tzFreeAction(null, null, true), { commit: false, value: "" });
+  assert.deepEqual(WPTz.tzFreeAction(undefined, "KN4OQW", false), { commit: false, value: "KN4OQW" });
+});

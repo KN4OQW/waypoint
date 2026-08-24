@@ -12,6 +12,7 @@ image/src/build.log
 image/src/workspace-*/
 image/src/image-*/
 /hostseed
+/wxzoneseed
 /.wrangler/
 
 # Claude Code's scratch worktrees. These are working copies of THIS repository —

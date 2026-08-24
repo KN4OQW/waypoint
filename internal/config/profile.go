@@ -33,6 +33,11 @@ var profileSections = []string{
 	// and how" — and supersede the cross-mode bridges above, so they are captured
 	// by a profile like the bridges they replace.
 	"buses", "attachments",
+	// Zello channels are connection topology like the buses they attach to, so a
+	// profile carries them. The accounts are NOT here: zello_accounts[] holds a
+	// bearer token and an account password, which must never travel in a portable
+	// profile — the same reason peers[] is excluded.
+	"zello_channels",
 }
 
 // profileExcluded is every store section a profile must NOT touch: device
@@ -59,7 +64,19 @@ var profileSections = []string{
 // profile, and the server address is this node's plumbing rather than a network
 // it connects to — a profile that carried somebody else's mail server would send
 // this node's notifications through it.
-var profileExcluded = []string{"general", "modem", "display", "lcd", "history", "station_id", "update", "peers", "remote_attachments", "peering", "mqtt", "logging", "notify"}
+//
+// The station's coordinates and its weather-alert policy are excluded for a
+// reason a profile cannot work around: both are tied to where the node
+// physically is. A profile is portable between nodes, and importing a Pensacola
+// profile onto a node in Seattle must not leave it broadcasting Florida tornado
+// warnings to its talkgroup — which is what carrying the monitored counties
+// would do. The coordinates are the same argument in its purest form, and they
+// are node identity in the way general is. wx additionally carries the feed
+// password, which is the mqtt reasoning as well.
+// zello_accounts is excluded for the same reason as peers: it holds a bearer
+// token and an account password for the operator's own Zello identity, and a
+// profile is meant to be portable between nodes and shareable.
+var profileExcluded = []string{"general", "modem", "display", "lcd", "history", "station_id", "update", "peers", "remote_attachments", "peering", "mqtt", "logging", "notify", "wx", "station_location", "zello_accounts"}
 
 // profileSecretFields registers the secret-bearing fields per section — shared by
 // export scrub and activate reconcile so the two can never drift. The values are

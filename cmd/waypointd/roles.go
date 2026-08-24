@@ -92,6 +92,13 @@ var routePolicy = map[string]auth.Role{
 	"/api/network/status":    auth.RoleOperator,
 	"/api/network/wifi/scan": auth.RoleOperator,
 	"/api/network/timezones": auth.RoleOperator,
+	// The county picker behind the Weather panel. Operator for the same reason
+	// the reflector and talkgroup pickers are: it reads a list that ships in the
+	// binary so a config panel an operator may edit can be filled in. It changes
+	// nothing and reaches no network. /api/wx/status and /api/wx/test are NOT
+	// here -- one reports on a running feed and the other keys a transmitter, so
+	// they take the default-deny to admin.
+	"/api/wx/counties": auth.RoleOperator,
 
 	// --- admin only --------------------------------------------------------
 	// Everything below changes who may reach the node, or what the node is to the
