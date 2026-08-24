@@ -40,6 +40,12 @@ type View struct {
 	// credentials_ref against Networks[] (also in this view).
 	Buses       []Bus        `json:"buses"`
 	Attachments []Attachment `json:"attachments"`
+	// Zello bridging. Channels project verbatim — a channel row deliberately
+	// holds no secret, only a reference to the account that does. Accounts are
+	// projected through ViewZelloAccount, which carries HasPassword/HasAuthToken
+	// and never the values.
+	ZelloAccounts []ViewZelloAccount `json:"zello_accounts"`
+	ZelloChannels []ZelloChannel     `json:"zello_channels"`
 	// Bus LAN peering (RFC-0016). Peers ARE redacted — the pinned peer certificate
 	// and this node's per-peering key are write-only secrets; only the fingerprint
 	// is viewable (PeerView). Remote attachments carry no secret and project
@@ -735,6 +741,21 @@ func (m *Model) View(src Sources) *View {
 		Channel: m.Update.Channel, CheckEnabled: m.Update.CheckEnabled, AutoApply: m.Update.AutoApply,
 		QuietWindow: m.Update.QuietWindow, AllowUnrevertable: m.Update.AllowUnrevertable,
 	}
+	// A Zello account holds two bearer credentials — the account password and the
+	// JWT — and reporting that one is unset must never disclose the other, so the
+	// projection carries field presence and nothing else.
+	v.ZelloAccounts = make([]ViewZelloAccount, 0, len(m.ZelloAccounts))
+	for _, a := range m.ZelloAccounts {
+		v.ZelloAccounts = append(v.ZelloAccounts, ViewZelloAccount{
+			Name:         a.Name,
+			Username:     a.Username,
+			HasPassword:  a.Password != "",
+			HasAuthToken: a.AuthToken != "",
+			Enabled:      a.Enabled,
+		})
+	}
+	v.ZelloChannels = append([]ZelloChannel(nil), m.ZelloChannels...)
+
 	// Buses/attachments project verbatim (no secrets). Copy the slices so the view
 	// never aliases the model's backing arrays.
 	v.Buses = append([]Bus(nil), m.Buses...)
@@ -787,4 +808,15 @@ func (m *Model) View(src Sources) *View {
 		M17Gateway:    FileLogLevels{Display: m.Logging.M17Gateway.display("1"), File: m.Logging.M17Gateway.file("0")},
 	}
 	return v
+}
+
+// ViewZelloAccount is a Zello identity as the UI sees it: everything except the
+// two secrets. Password and AuthToken are write-only, so the panel can report
+// that a token is missing without ever being able to read the one that is there.
+type ViewZelloAccount struct {
+	Name         string `json:"name"`
+	Username     string `json:"username"`
+	HasPassword  bool   `json:"has_password"`
+	HasAuthToken bool   `json:"has_auth_token"`
+	Enabled      bool   `json:"enabled"`
 }

@@ -44,6 +44,64 @@ type BusConfig struct {
 	// MQTT is the broker + topic prefix this bus publishes its events to (D4).
 	// Absent ⇒ the daemon runs without event publishing (tests/demo).
 	MQTT *BusMQTT `json:"mqtt,omitempty"`
+
+	// Zello is the set of Zello channels this bus bridges to, one per WebSocket
+	// connection because consumer Zello permits one channel per logon. Absent on
+	// a bus that bridges no channel, so such a bus renders byte-identically to
+	// before this feature existed.
+	Zello []BusZello `json:"zello,omitempty"`
+
+	// Vocoder names the AMBE+2 firmware images to map at run time. Present only
+	// when Zello is, because nothing else on the bus needs a vocoder — the
+	// reframe tier copies codewords verbatim.
+	Vocoder *BusVocoder `json:"vocoder,omitempty"`
+}
+
+// VocoderFirmwareFile and VocoderRAMFile are the image names under VocoderDir.
+// They are fetched when the operator enables bridging and never shipped: AMBE+2
+// is patented and the firmware may not be redistributed, so no Waypoint artifact
+// contains them.
+const (
+	VocoderFirmwareFile = "md380fw.img"
+	VocoderRAMFile      = "md380ram.img"
+)
+
+// BusVocoder points at the firmware images the vocoder maps at run time.
+type BusVocoder struct {
+	FirmwarePath string `json:"firmware_path"`
+	RAMPath      string `json:"ram_path"`
+}
+
+// BusZello is one Zello channel as the daemon reads it: the channel plus the
+// account credentials, already resolved, because the daemon has no store.
+//
+// The credentials are here in the clear, which is the same posture as the
+// rendered gateway INIs carrying DMR network passwords: these files live under
+// the state tree, are written by waypointd, and are not world-readable. What must
+// never happen is a credential travelling further than that — which is why
+// zello_accounts[] is excluded from portable profiles and why the View carries
+// only HasPassword and HasAuthToken.
+type BusZello struct {
+	// ID is the store row this endpoint came from, so an event or a log line can
+	// be traced back to the row an operator edits.
+	ID string `json:"id"`
+
+	// Channel is the Zello channel name.
+	Channel string `json:"channel"`
+
+	// Username and Password are the account. An empty username means an
+	// anonymous connection, which Zello treats as listen-only.
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+
+	// AuthToken is the JWT. A sample development token expires after 30 days.
+	AuthToken string `json:"auth_token"`
+
+	// ListenOnly joins without transmitting.
+	ListenOnly bool `json:"listen_only,omitempty"`
+
+	// PacketMS is the Opus packet duration, already defaulted.
+	PacketMS int `json:"packet_ms"`
 }
 
 // DefaultBusHangTime is the fallback voice hang when the rendered config leaves
