@@ -805,6 +805,27 @@ func (s *server) configPut(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// Zello bridging: both sections write through their validator so a channel can
+	// never persist pointing at a bus or an account that does not exist, or at an
+	// account that cannot do what the row asks. Accounts additionally blank-preserve
+	// their two secrets — the View never carries them, so a panel saving any other
+	// field would otherwise erase the token.
+	if section == "zello_accounts" {
+		if err := config.SetZelloAccounts(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if section == "zello_channels" {
+		if err := config.SetZelloChannels(s.store, body, "api"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	// Bus LAN peering (RFC-0016): peers carry write-only secrets (the pinned peer
 	// cert + this node's peering key), so blank-preserve them like a network
 	// password; remote attachments write through the peering validator. Both are

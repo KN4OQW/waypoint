@@ -218,3 +218,76 @@ func TestABusWithNoZelloChannelRendersNothingExtra(t *testing.T) {
 		t.Errorf("a bus with no Zello channel rendered %+v", got)
 	}
 }
+
+// The panel editing an account never has the secrets, because the View does not
+// carry them. Without blank-preserve, renaming a channel or toggling Enabled
+// would silently erase the token and the bridge would stop connecting with
+// nothing on screen to explain it.
+func TestZelloAccountSecretsSurviveAnEditThatOmitsThem(t *testing.T) {
+	st := newStore(t)
+	if err := SetBuses(st, []byte(`[{"id":"b1","name":"Bus 1","enabled":true}]`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	first := `[{"name":"bridge","username":"gw","password":"pw","auth_token":"jwt","enabled":true}]`
+	if err := SetZelloAccounts(st, []byte(first), "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The shape a UI would send back: everything it can see, nothing it cannot.
+	second := `[{"name":"bridge","username":"gw2","password":"","auth_token":"","enabled":true}]`
+	if err := SetZelloAccounts(st, []byte(second), "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []ZelloAccount
+	if _, err := st.GetInto("zello_accounts", &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d accounts", len(got))
+	}
+	if got[0].Username != "gw2" {
+		t.Errorf("the edit did not apply: username = %q", got[0].Username)
+	}
+	if got[0].Password != "pw" || got[0].AuthToken != "jwt" {
+		t.Errorf("secrets were erased by an edit that omitted them: %+v", got[0])
+	}
+}
+
+// A non-blank secret still replaces, or rotating an expired token would be
+// impossible — which it will be every 30 days on a sample development token.
+func TestANonBlankZelloSecretReplaces(t *testing.T) {
+	st := newStore(t)
+	if err := SetBuses(st, []byte(`[{"id":"b1","name":"Bus 1","enabled":true}]`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetZelloAccounts(st, []byte(`[{"name":"bridge","username":"gw","password":"pw","auth_token":"old","enabled":true}]`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetZelloAccounts(st, []byte(`[{"name":"bridge","username":"gw","password":"","auth_token":"new","enabled":true}]`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	var got []ZelloAccount
+	if _, err := st.GetInto("zello_accounts", &got); err != nil {
+		t.Fatal(err)
+	}
+	if got[0].AuthToken != "new" {
+		t.Errorf("token = %q, want the rotated value", got[0].AuthToken)
+	}
+	if got[0].Password != "pw" {
+		t.Errorf("password = %q; the untouched secret should have been preserved", got[0].Password)
+	}
+}
+
+// A channel that would dangle must be refused at the write, not discovered at
+// render time when the daemon is already trying to start.
+func TestWritingADanglingZelloChannelIsRefused(t *testing.T) {
+	st := newStore(t)
+	if err := SetBuses(st, []byte(`[{"id":"b1","name":"Bus 1","enabled":true}]`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	body := `[{"id":"z1","bus_id":"b1","channel":"Ham","account_ref":"missing","enabled":true}]`
+	if err := SetZelloChannels(st, []byte(body), "test"); err == nil {
+		t.Fatal("a channel referencing a non-existent account was persisted")
+	}
+}

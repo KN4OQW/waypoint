@@ -207,7 +207,14 @@ func (c ZelloChannel) EffectivePacketMS() int {
 }
 
 // SetZelloAccounts writes the zello_accounts[] section through the validator,
-// against the currently stored channels and buses.
+// applying the write-only secret rule the rest of the store uses: a blank
+// password or auth token keeps the stored one, a non-blank one replaces it.
+//
+// This is not a convenience. The View never carries either value, so the panel
+// editing an account genuinely does not have them — without blank-preserve,
+// saving any other field on an existing account would silently erase the token
+// and the bridge would stop connecting for reasons the operator could not see.
+// Clearing a secret deliberately is done by removing the account.
 func SetZelloAccounts(s *store.Store, raw []byte, by string) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -215,6 +222,28 @@ func SetZelloAccounts(s *store.Store, raw []byte, by string) error {
 	if err := dec.Decode(&accounts); err != nil {
 		return err
 	}
+
+	var existing []ZelloAccount
+	if _, err := s.GetInto("zello_accounts", &existing); err != nil {
+		return err
+	}
+	prior := make(map[string]ZelloAccount, len(existing))
+	for _, a := range existing {
+		prior[a.Name] = a
+	}
+	for i := range accounts {
+		old, had := prior[accounts[i].Name]
+		if !had {
+			continue
+		}
+		if accounts[i].Password == "" {
+			accounts[i].Password = old.Password
+		}
+		if accounts[i].AuthToken == "" {
+			accounts[i].AuthToken = old.AuthToken
+		}
+	}
+
 	var channels []ZelloChannel
 	if _, err := s.GetInto("zello_channels", &channels); err != nil {
 		return err
