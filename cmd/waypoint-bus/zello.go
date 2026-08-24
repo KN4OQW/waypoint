@@ -83,6 +83,7 @@ func releaseInbound(id string) {
 // bracketing that turns a bus transmission into a Zello voice message.
 type zelloEndpoint struct {
 	cfg    config.BusZello
+	srcID  uint32
 	inject func(frames.Frame)
 
 	mu       sync.Mutex
@@ -92,11 +93,12 @@ type zelloEndpoint struct {
 	lastOut  time.Time
 
 	inStream  uint32 // synthesized bus stream id for the inbound transmission
+	inFrom    string // the Zello username currently talking, for the talker alias
 	closeOnce sync.Once
 	done      chan struct{}
 }
 
-func openZelloSink(z config.BusZello, v config.BusVocoder, inject func(frames.Frame)) (zelloSink, error) {
+func openZelloSink(z config.BusZello, v config.BusVocoder, srcID uint32, inject func(frames.Frame)) (zelloSink, error) {
 	voc, err := sharedVocoder(v)
 	if err != nil {
 		return nil, fmt.Errorf("vocoder: %w", err)
@@ -112,6 +114,7 @@ func openZelloSink(z config.BusZello, v config.BusVocoder, inject func(frames.Fr
 
 	e := &zelloEndpoint{
 		cfg:    z,
+		srcID:  srcID,
 		inject: inject,
 		br:     newZelloBridge(voc, enc, dec, z.PacketMS),
 		done:   make(chan struct{}),
@@ -204,7 +207,7 @@ func (e *zelloEndpoint) pump(cli *zello.Client) {
 			switch ev.Command {
 			case zello.EvtOnStreamStart:
 				log.Printf("zello %q: %s is talking", e.cfg.Channel, ev.From)
-				e.beginInbound()
+				e.beginInbound(ev.From)
 			case zello.EvtOnStreamStop:
 				e.endInbound()
 			case zello.EvtOnError:
@@ -220,9 +223,10 @@ func (e *zelloEndpoint) pump(cli *zello.Client) {
 	}
 }
 
-func (e *zelloEndpoint) beginInbound() {
+func (e *zelloEndpoint) beginInbound(from string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.inFrom = from
 	// A fresh stream id per inbound transmission, so the router's echo
 	// suppression and its per-stream bus_busy accounting treat each over
 	// separately.
@@ -233,12 +237,12 @@ func (e *zelloEndpoint) beginInbound() {
 func (e *zelloEndpoint) endInbound() {
 	e.mu.Lock()
 	stream := e.inStream
-	e.inStream = 0
+	e.inStream, e.inFrom = 0, ""
 	e.br.Reset()
 	e.mu.Unlock()
 	releaseInbound(e.cfg.ID)
 	if stream != 0 {
-		e.inject(frames.Frame{Kind: frames.KindTerminator, Stream: frames.Stream{ID: stream}})
+		e.inject(frames.Frame{Kind: frames.KindTerminator, SrcID: e.srcID, Stream: frames.Stream{ID: stream}})
 	}
 }
 
@@ -257,6 +261,7 @@ func (e *zelloEndpoint) onInboundAudio(p zello.StreamPacket) {
 		stream = uint32(now.UnixNano())
 		e.inStream = stream
 	}
+	from := e.inFrom
 	groups, err := e.br.ToBus(p.Data)
 	e.mu.Unlock()
 
@@ -266,9 +271,15 @@ func (e *zelloEndpoint) onInboundAudio(p zello.StreamPacket) {
 	}
 	for _, g := range groups {
 		e.inject(frames.Frame{
-			Kind:   frames.KindVoice,
-			Stream: frames.Stream{ID: stream},
-			AMBE:   g,
+			Kind:  frames.KindVoice,
+			SrcID: e.srcID,
+			// SrcCallsign carries the Zello username rather than a callsign. The
+			// bus daemon has no phonebook — that is a project rule, not an
+			// omission — so who is talking can only be what the wire said, and
+			// this is the field the frame layer has for a textual source.
+			SrcCallsign: from,
+			Stream:      frames.Stream{ID: stream},
+			AMBE:        g,
 		})
 	}
 }

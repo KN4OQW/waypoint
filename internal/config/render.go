@@ -355,6 +355,18 @@ func (m *Model) renderBusConfig(id string, paths Paths) string {
 	// DMR network password — these files are waypointd-owned under the state tree
 	// and are not world-readable.
 	bc.Zello = m.busZelloFor(id)
+	if len(bc.Zello) > 0 {
+		// The node's own DMR ID. Not a phonebook lookup and deliberately not one:
+		// phonebook_isolation_test.go makes it a rule that no phonebook row ever
+		// reaches a rendered config, because a name in a generated file is a
+		// behaviour change nobody asked for and an address would be a PII
+		// disclosure. General.ID is station identity, already rendered into every
+		// MMDVM-Host config, and is the only ID this node legitimately holds.
+		if n, err := strconv.ParseUint(strings.TrimSpace(m.General.ID), 10, 32); err == nil {
+			bc.ZelloSourceID = uint32(n)
+		}
+		bc.ZelloAlias = m.DMR.TalkerAlias
+	}
 	if len(bc.Zello) > 0 && paths.VocoderDir != "" {
 		bc.Vocoder = &BusVocoder{
 			FirmwarePath: filepath.Join(paths.VocoderDir, VocoderFirmwareFile),

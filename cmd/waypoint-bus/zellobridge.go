@@ -2,11 +2,13 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/KN4OQW/waypoint/internal/bus/frames"
 	"github.com/KN4OQW/waypoint/internal/bus/peer"
 	"github.com/KN4OQW/waypoint/internal/bus/zello"
 	"github.com/KN4OQW/waypoint/internal/config"
+	"github.com/KN4OQW/waypoint/internal/talkeralias"
 )
 
 // zellobridge.go is the transcode between the bus's AMBE+2 codewords and Zello's
@@ -205,7 +207,7 @@ type zelloSink interface {
 // replace it: an untagged binary refuses rather than silently running a bus with
 // its Zello channels missing, because a bridge that is quietly not bridging looks
 // exactly like one whose far end is idle.
-var newZelloSink = func(config.BusZello, config.BusVocoder, func(frames.Frame)) (zelloSink, error) {
+var newZelloSink = func(config.BusZello, config.BusVocoder, uint32, func(frames.Frame)) (zelloSink, error) {
 	return nil, fmt.Errorf("bus: this build has no Zello support; rebuild with -tags zello")
 }
 
@@ -216,4 +218,74 @@ var newZelloSink = func(config.BusZello, config.BusVocoder, func(frames.Frame)) 
 func envFor(node string, mode config.Mode, busID string) *peer.Envelope {
 	e := peer.NewEnvelope(node, string(mode), busID)
 	return &e
+}
+
+// --- Talker Alias for inbound Zello audio -------------------------------------
+
+// zelloAliaser turns "who is talking on Zello" into the DMRA frames a radio
+// displays.
+//
+// Every inbound Zello transmission is sourced from one DMR ID — the node's own —
+// because a Zello user without a DMR registration has no ID to borrow and one who
+// has an ID has not authorised this node to transmit as them. The alias is
+// therefore the only thing that says who is actually speaking, which is what that
+// field exists for.
+//
+// The name comes off the wire, from the `from` on Zello's own on_stream_start,
+// carried here on the frame's SrcCallsign. It is NOT a phonebook lookup: the bus
+// daemon reads only rendered config, and internal/config's phonebook isolation
+// test makes it a rule that no phonebook row is ever rendered into one. So an
+// operator's callsign cannot reach this daemon, and the Zello handle is both what
+// is available and what is true.
+type zelloAliaser struct {
+	template talkeralias.Template
+	srcID    uint32
+	// sent remembers which streams have already had their alias, so it goes out
+	// once per transmission rather than once per frame.
+	sent map[uint32]bool
+}
+
+func newZelloAliaser(template string, srcID uint32) *zelloAliaser {
+	t := talkeralias.Template(template)
+	if t == talkeralias.TemplateOff || !t.Valid() || srcID == 0 {
+		return nil // off, unrecognised, or no ID to attribute it to: emit nothing
+	}
+	return &zelloAliaser{template: t, srcID: srcID, sent: map[uint32]bool{}}
+}
+
+// framesFor returns the DMRA frames for f, or nil.
+//
+// nil is the common answer — every frame after the first of a transmission, and
+// every transmission whose talker Zello did not name — and the caller treats it
+// as nothing to do rather than as a failure.
+func (a *zelloAliaser) framesFor(f frames.Frame) [][]byte {
+	if a == nil || f.Kind == frames.KindTerminator {
+		if a != nil && f.Kind == frames.KindTerminator {
+			delete(a.sent, f.Stream.ID)
+		}
+		return nil
+	}
+	if f.SrcCallsign == "" || a.sent[f.Stream.ID] {
+		return nil
+	}
+	a.sent[f.Stream.ID] = true
+
+	// The Zello name goes on the air as the operator wrote it.
+	//
+	// Deliberately NOT through Template.Render, which uppercases its argument.
+	// That is right for a callsign — a callsign has a canonical form — and wrong
+	// for a Zello account name, which is a display name whose case is part of it:
+	// "Booting6228" would reach the radio as "BOOTING6228". The template's three
+	// shapes are about combining a callsign with a full name, and there is no such
+	// pair here; only one string, from the wire. So the template decides whether
+	// an alias is emitted at all, and the name is passed through untouched.
+	text := strings.TrimSpace(f.SrcCallsign)
+	if text == "" {
+		return nil
+	}
+	out, err := talkeralias.Encode(a.srcID, text, talkeralias.ChooseFormat(text))
+	if err != nil {
+		return nil
+	}
+	return out
 }

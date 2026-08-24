@@ -51,6 +51,22 @@ type BusConfig struct {
 	// before this feature existed.
 	Zello []BusZello `json:"zello,omitempty"`
 
+	// ZelloSourceID is the single DMR ID every inbound Zello transmission is
+	// sourced from. It is the node's own ID.
+	//
+	// One ID, deliberately, and not a per-user mapping. A Zello user without a
+	// DMR registration has no ID to borrow, and one who has an ID has not
+	// authorised this node to transmit as them — putting either on the air means
+	// originating traffic under an identity the node does not hold. Who is
+	// actually talking travels as the Talker Alias instead, which is what that
+	// field is for.
+	ZelloSourceID uint32 `json:"zello_source_id,omitempty"`
+
+	// ZelloAlias is the talker-alias template applied to inbound Zello
+	// transmissions: "", "callsign", "callsign + name" or "name". Empty is off
+	// and emits no DMRA frames at all.
+	ZelloAlias string `json:"zello_alias,omitempty"`
+
 	// Vocoder names the AMBE+2 firmware images to map at run time. Present only
 	// when Zello is, because nothing else on the bus needs a vocoder — the
 	// reframe tier copies codewords verbatim.

@@ -244,21 +244,47 @@ concept. A Zello channel attached to more than one bus would break that symmetry
 and is deliberately out of scope for the first version — if it is wanted later it
 is a bus-semantics change, not a config change.
 
-### D6 — Identity: one column, not a new resolver
+### D6 — Identity: one DMR ID out, the Zello name back
 
-Add `zello_username` to the phonebook schema and to the resolver chain
-(phonebook, then DMRIds.dat, then the raw ID). Everything else is wiring into
-what exists.
+*Revised.* The original decision added `zello_username` to the phonebook and gave
+each Zello talker their own DMR ID through the resolver chain. Neither half
+survives contact with this codebase, for two separate reasons.
 
-Zello to RF: resolve the incoming `from` username to a DMR ID, or to a configured
-gateway ID when unknown, and feed the existing `Emitter.Observe` path so RF radios
-see who is talking. MMDVM-Host needs `EmbeddedLCOnly=off` for TA to pass.
+**One DMR ID, not a mapping.** A Zello user with no DMR registration has no ID to
+borrow, and one who has an ID has not authorised this node to transmit as them.
+Either way, per-user IDs mean originating traffic under an identity the node does
+not hold — on a network like BrandMeister that is transmitting as somebody else.
+So every inbound Zello transmission is sourced from the node's own ID, rendered
+from `General.ID`, and who is actually talking travels as the Talker Alias, which
+is the field that exists for exactly this.
 
-RF to Zello: consumer Zello attributes every stream to the account that logged on,
-so individual RF callsigns cannot appear as distinct Zello senders. The RF talker's
-alias travels as stream metadata, which some Zello clients will not surface. This
-is a limitation of the platform and should be documented as one rather than worked
-around.
+**The resolver cannot reach the daemon, by design.**
+[phonebook_isolation_test.go](../../internal/config/phonebook_isolation_test.go)
+makes it a rule that no phonebook row is ever rendered into a config: a name in a
+generated file is a behaviour change nobody asked for, and an address would be a
+PII disclosure into a world-readable file. `waypoint-bus` reads only rendered
+config. So a phonebook lookup is not available to it and a `zello_username` column
+would have nothing to feed — the schema change was written and then reverted
+rather than shipping a release-visible migration for a column nothing could use.
+
+What the alias carries instead is the `from` on Zello's own `on_stream_start`,
+travelling on the frame's `SrcCallsign`. That is available, it is true, and it is
+what the far end actually calls itself.
+
+The name is passed through untouched rather than through `Template.Render`, which
+uppercases. That is right for a callsign, which has a canonical form, and wrong
+for a Zello display name whose case is part of it: "Booting6228" would reach the
+radio as "BOOTING6228". The template's three shapes combine a callsign with a full
+name and there is no such pair here, so it decides only whether an alias is
+emitted at all.
+
+The outbound direction has no equivalent and cannot. One connection is one logon
+is one Zello identity, so every RF operator reaches the channel as the gateway
+account. That is Zello's model; document it rather than appear to work around it.
+
+**Unverified:** the DMRA frames are emitted onto the DMR attachment's loopback,
+which on this bus is a local DMRGateway rather than MMDVM-Host directly. Whether
+DMRGateway forwards them intact has not been tested, and belongs to Prompt 8.
 
 ### D7 — UI: an endpoint table and a lane view
 

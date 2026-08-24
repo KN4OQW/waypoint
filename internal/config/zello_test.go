@@ -330,3 +330,65 @@ func TestWritingADanglingZelloChannelIsRefused(t *testing.T) {
 		t.Fatal("a channel referencing a non-existent account was persisted")
 	}
 }
+
+// Every inbound Zello transmission is sourced from the node's own DMR ID. Not a
+// per-user mapping: a Zello user without a DMR registration has no ID to borrow,
+// and one who has an ID has not authorised this node to transmit as them.
+func TestTheRenderedBusCarriesTheNodesOwnDMRIDForZello(t *testing.T) {
+	m := &Model{
+		General:       General{ID: "3180202"},
+		DMR:           DMR{TalkerAlias: "callsign"},
+		Buses:         buses(),
+		Attachments:   []Attachment{{BusID: "b1", Mode: ModeDMR}},
+		ZelloAccounts: []ZelloAccount{okAccount()},
+		ZelloChannels: []ZelloChannel{okChannel()},
+	}
+	out := m.renderBusConfig("b1", Paths{})
+	var bc BusConfig
+	if err := json.Unmarshal([]byte(out), &bc); err != nil {
+		t.Fatalf("the rendered bus config does not parse: %v", err)
+	}
+	if bc.ZelloSourceID != 3180202 {
+		t.Errorf("zello_source_id = %d, want the node's own 3180202", bc.ZelloSourceID)
+	}
+	if bc.ZelloAlias != "callsign" {
+		t.Errorf("zello_alias = %q, want the node's talker-alias setting", bc.ZelloAlias)
+	}
+}
+
+// A bus with no Zello channel renders neither field, so it is byte-identical to
+// what it rendered before this feature existed.
+func TestABusWithoutZelloRendersNoIdentityFields(t *testing.T) {
+	m := &Model{
+		General:     General{ID: "3180202"},
+		DMR:         DMR{TalkerAlias: "callsign"},
+		Buses:       buses(),
+		Attachments: []Attachment{{BusID: "b1", Mode: ModeDMR}},
+	}
+	out := m.renderBusConfig("b1", Paths{})
+	if strings.Contains(out, "zello_source_id") || strings.Contains(out, "zello_alias") {
+		t.Errorf("a bus with no Zello channel rendered Zello identity fields: %s", out)
+	}
+}
+
+// The phonebook must never reach a rendered config — that rule has its own test
+// in phonebook_isolation_test.go, and it is why the Zello identity fields are the
+// node's own ID and its own alias setting rather than a per-user lookup. This
+// asserts the Zello renderer did not quietly become the exception.
+func TestTheZelloRenderTouchesNoPhonebookData(t *testing.T) {
+	m := &Model{
+		General:       General{ID: "3180202", Callsign: "KN4OQW"},
+		Buses:         buses(),
+		Attachments:   []Attachment{{BusID: "b1", Mode: ModeDMR}},
+		ZelloAccounts: []ZelloAccount{okAccount()},
+		ZelloChannels: []ZelloChannel{okChannel()},
+	}
+	out := m.renderBusConfig("b1", Paths{})
+	// The rendered config may name the station itself; what it must never carry
+	// is a mapping from some other operator's identity.
+	for _, forbidden := range []string{"zello_username", "phonebook", "full_name"} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("the rendered bus config carries %q: %s", forbidden, out)
+		}
+	}
+}

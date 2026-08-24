@@ -120,6 +120,7 @@ func runOwner(cfgPath, dmridsPath, nodeID string) {
 		remoteModes: remoteModes,
 		byMode:      make(map[config.Mode][]*memberLink),
 		zello:       make(map[config.Mode]zelloSink),
+		alias:       newZelloAliaser(bc.ZelloAlias, bc.ZelloSourceID),
 	}
 	for _, a := range rcfg.Attachments {
 		io.params[a.Mode] = a.Params
@@ -151,7 +152,7 @@ func runOwner(cfgPath, dmridsPath, nodeID string) {
 				// attachment on the bus behind one slow channel.
 			}
 		}
-		zs, err := newZelloSink(z, *bc.Vocoder, inject)
+		zs, err := newZelloSink(z, *bc.Vocoder, bc.ZelloSourceID, inject)
 		if err != nil {
 			log.Fatalf("zello channel %q: %v", z.Channel, err)
 		}
@@ -249,6 +250,9 @@ type busIO struct {
 	// mode it occupies on the bus. A destination found here is transcoded rather
 	// than constructed into a mode's wire framing.
 	zello map[config.Mode]zelloSink
+	// alias emits a Talker Alias for inbound Zello audio, so a radio shows who is
+	// speaking rather than only the node's own ID.
+	alias *zelloAliaser
 }
 
 // handleFrame runs one inbound frame (local loopback datagram or injected member
@@ -275,6 +279,18 @@ func (io *busIO) handleFrame(bus *router.Bus, in inbound) {
 		log.Printf("inbound %s header src=%d dst=%d stream=%08x", in.mode, f.SrcID, f.DstID, f.Stream.ID)
 	case frames.KindTerminator:
 		log.Printf("inbound %s terminator src=%d dst=%d stream=%08x", in.mode, f.SrcID, f.DstID, f.Stream.ID)
+	}
+
+	// A Talker Alias for inbound Zello audio, emitted once per transmission and
+	// before the voice it describes, so a radio has it when the audio opens.
+	if io.alias != nil && io.zello[in.mode] != nil {
+		for _, dg := range io.alias.framesFor(f) {
+			if ep := io.eps[config.ModeDMR]; ep != nil {
+				if err := ep.send(dg); err != nil {
+					log.Printf("send talker alias: %v", err)
+				}
+			}
+		}
 	}
 
 	for _, em := range bus.Ingest(in.mode, f, time.Now()) {

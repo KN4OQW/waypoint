@@ -8,6 +8,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/bus/router"
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/hub"
+	"github.com/KN4OQW/waypoint/internal/talkeralias"
 )
 
 // The real vocoder is the MD380's firmware on 32-bit ARM and the real Opus codec
@@ -307,5 +308,106 @@ func TestTheSyntheticModeCannotCollideWithARealOne(t *testing.T) {
 	}
 	if a, bm := zelloMode("one"), zelloMode("two"); a == bm {
 		t.Error("two endpoints on one bus share a mode token")
+	}
+}
+
+// --- Talker Alias -------------------------------------------------------------
+
+func aliasVoice(stream uint32, from string) frames.Frame {
+	return frames.Frame{
+		Kind: frames.KindVoice, SrcID: 3180202, SrcCallsign: from,
+		Stream: frames.Stream{ID: stream}, AMBE: busFrame(codewordsPerBusFrame),
+	}
+}
+
+// One alias per transmission, not one per frame. A radio needs it once; sending
+// it with every voice frame would put a burst of DMRA on the seam for the whole
+// over.
+func TestTheAliasIsEmittedOncePerTransmission(t *testing.T) {
+	a := newZelloAliaser("callsign", 3180202)
+	if a == nil {
+		t.Fatal("aliaser was disabled for a valid template and id")
+	}
+
+	first := a.framesFor(aliasVoice(1, "Booting6228"))
+	if len(first) == 0 {
+		t.Fatal("no alias on the first frame of a transmission")
+	}
+	for i := 0; i < 5; i++ {
+		if got := a.framesFor(aliasVoice(1, "Booting6228")); got != nil {
+			t.Fatalf("frame %d of the same stream emitted another alias", i+2)
+		}
+	}
+
+	// A new transmission gets its own.
+	if got := a.framesFor(aliasVoice(2, "Someone Else")); len(got) == 0 {
+		t.Error("a second transmission got no alias")
+	}
+}
+
+// The alias decodes back to the Zello name and the node's own DMR ID. This is the
+// end the radio sees, so it is worth asserting against the real decoder rather
+// than trusting the encoder.
+func TestTheAliasCarriesTheZelloNameAndTheNodesID(t *testing.T) {
+	a := newZelloAliaser("callsign", 3180202)
+	out := a.framesFor(aliasVoice(1, "Booting6228"))
+	if len(out) == 0 {
+		t.Fatal("no alias frames")
+	}
+	id, alias, _, err := talkeralias.Decode(out)
+	if err != nil {
+		t.Fatalf("the emitted frames do not decode: %v", err)
+	}
+	if id != 3180202 {
+		t.Errorf("alias source id = %d, want the node's own 3180202", id)
+	}
+	// Case preserved. A Zello account name is a display name, not a callsign, and
+	// putting "BOOTING6228" on a radio misrepresents what the operator is called.
+	if alias != "Booting6228" {
+		t.Errorf("alias = %q, want the Zello username with its case intact", alias)
+	}
+}
+
+// A transmission Zello did not name gets no alias rather than an invented one.
+// Announcing a guess is worse than announcing nothing.
+func TestNoAliasWithoutAName(t *testing.T) {
+	a := newZelloAliaser("callsign", 3180202)
+	if got := a.framesFor(aliasVoice(1, "")); got != nil {
+		t.Errorf("an unnamed talker produced an alias: %v", got)
+	}
+}
+
+// Off is the default and must emit nothing at all — not an empty frame, nothing —
+// so a node that has not asked for this puts no DMRA on the seam.
+func TestTheAliaserIsOffByDefault(t *testing.T) {
+	if a := newZelloAliaser("", 3180202); a != nil {
+		t.Error("an empty template produced an aliaser")
+	}
+	if a := newZelloAliaser("not-a-template", 3180202); a != nil {
+		t.Error("an unrecognised template produced an aliaser")
+	}
+	// No ID means nothing to attribute the alias to. Encoding would fail anyway;
+	// refusing here keeps the failure at configuration rather than per frame.
+	if a := newZelloAliaser("callsign", 0); a != nil {
+		t.Error("a zero source id produced an aliaser")
+	}
+	// The nil aliaser must be safe to call, because handleFrame does.
+	var nilA *zelloAliaser
+	if got := nilA.framesFor(aliasVoice(1, "x")); got != nil {
+		t.Error("a nil aliaser emitted frames")
+	}
+}
+
+// The per-stream memory has to be released, or a long-running bus accumulates an
+// entry for every transmission it has ever carried.
+func TestTheAliaserForgetsAStreamWhenItEnds(t *testing.T) {
+	a := newZelloAliaser("callsign", 3180202)
+	a.framesFor(aliasVoice(1, "Booting6228"))
+	if len(a.sent) != 1 {
+		t.Fatalf("sent has %d entries, want 1", len(a.sent))
+	}
+	a.framesFor(frames.Frame{Kind: frames.KindTerminator, Stream: frames.Stream{ID: 1}})
+	if len(a.sent) != 0 {
+		t.Errorf("sent still has %d entries after the terminator", len(a.sent))
 	}
 }
