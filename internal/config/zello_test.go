@@ -392,3 +392,45 @@ func TestTheZelloRenderTouchesNoPhonebookData(t *testing.T) {
 		}
 	}
 }
+
+// The vocoder block was rendered only when Paths.VocoderDir was set, and nothing
+// set it — so a bus with a Zello channel rendered no firmware paths and the
+// daemon refused to start. Nothing caught that, because nothing asserted the
+// rendered config was startable.
+func TestABusWithZelloRendersTheVocoderPaths(t *testing.T) {
+	m := &Model{
+		General:       General{ID: "3180202"},
+		Buses:         buses(),
+		Attachments:   []Attachment{{BusID: "b1", Mode: ModeDMR}},
+		ZelloAccounts: []ZelloAccount{okAccount()},
+		ZelloChannels: []ZelloChannel{okChannel()},
+	}
+	out := m.renderBusConfig("b1", Paths{VocoderDir: "/var/lib/waypoint/vocoder"})
+	var bc BusConfig
+	if err := json.Unmarshal([]byte(out), &bc); err != nil {
+		t.Fatalf("rendered bus config does not parse: %v", err)
+	}
+	if bc.Vocoder == nil {
+		t.Fatal("a bus with a Zello channel rendered no vocoder block; the daemon cannot start")
+	}
+	if bc.Vocoder.FirmwarePath != "/var/lib/waypoint/vocoder/"+VocoderFirmwareFile {
+		t.Errorf("firmware_path = %q", bc.Vocoder.FirmwarePath)
+	}
+	if bc.Vocoder.RAMPath != "/var/lib/waypoint/vocoder/"+VocoderRAMFile {
+		t.Errorf("ram_path = %q", bc.Vocoder.RAMPath)
+	}
+}
+
+// A bus with no Zello channel needs no vocoder and must render none, so it stays
+// byte-identical to what it produced before this feature existed.
+func TestABusWithoutZelloRendersNoVocoder(t *testing.T) {
+	m := &Model{
+		General:     General{ID: "3180202"},
+		Buses:       buses(),
+		Attachments: []Attachment{{BusID: "b1", Mode: ModeDMR}},
+	}
+	out := m.renderBusConfig("b1", Paths{VocoderDir: "/var/lib/waypoint/vocoder"})
+	if strings.Contains(out, "vocoder") {
+		t.Errorf("a bus with no Zello channel rendered a vocoder block: %s", out)
+	}
+}

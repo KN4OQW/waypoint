@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"os"
 	"sync"
 	"time"
 
@@ -99,6 +100,21 @@ type zelloEndpoint struct {
 }
 
 func openZelloSink(z config.BusZello, v config.BusVocoder, srcID uint32, inject func(frames.Frame)) (zelloSink, error) {
+	// Checked before opening so the common first-run failure says what to do.
+	// mmap on a missing file reports "no such file or directory" against a path
+	// the operator never typed, which reads as a bug in Waypoint rather than as
+	// the one setup step only they can perform.
+	for _, f := range []struct{ what, path string }{
+		{"firmware image", v.FirmwarePath},
+		{"SRAM image", v.RAMPath},
+	} {
+		if _, err := os.Stat(f.path); err != nil {
+			return nil, fmt.Errorf("the AMBE+2 %s is not at %s. Waypoint does not ship it: "+
+				"the vocoder is patented and may not be redistributed, so the images have to be put "+
+				"there by hand. See docs/zello.md", f.what, f.path)
+		}
+	}
+
 	voc, err := sharedVocoder(v)
 	if err != nil {
 		return nil, fmt.Errorf("vocoder: %w", err)

@@ -99,10 +99,22 @@ Pi 3 — thirty-three times real time, on the kernel where the server dies.
 It links into `waypoint-bus` behind the `zello` build tag.
 
 The isolation the external service bought is already provided elsewhere. The
-firmware blob is loaded at runtime from a configured path, fetched at enable,
-never linked: upstream's Makefile objcopy-embeds the `.img` files into the
-artifact and **must not be built that way**, since that redistributes the blob in
-every `.deb` and image. And a vocoder crash is contained by the one-process-per-bus
+firmware blob is loaded at runtime from a configured path, never linked:
+upstream's Makefile objcopy-embeds the `.img` files into the artifact and **must
+not be built that way**, since that redistributes the blob in every `.deb` and
+image.
+
+*Amended.* The earlier wording said "fetched at enable", and nothing fetches
+anything — **the operator puts the images in `/var/lib/waypoint/vocoder/`
+themselves**, and a bus with a Zello channel refuses to start until they are
+there, naming the file and the path. That is a decision, not an omission: an
+automatic download would be a new outbound request from every node to a
+third-party mirror, for a patented codec, which is exactly what the privacy gate
+in CLAUDE.md exists to stop ("when in doubt, the answer is no"). It also puts the
+act of obtaining a licensed blob where it belongs, with the person who decided to
+run the feature. If a fetch is wanted later it needs the privacy section filled
+in: no device identifier, an operator-visible off switch, documented, and covered
+by a test. And a vocoder crash is contained by the one-process-per-bus
 model under `waypoint-bus@.service` — it kills one bus daemon, not waypointd.
 
 Two properties the binding must hold, both established on hardware rather than
@@ -120,8 +132,11 @@ assumed:
 ARM-only. CI runs against the golden fixtures; vocoder-touching tests gate on
 hardware; Pi Zero 2 W joins the validation matrix unverified.
 
-The DV3000/ThumbDV path stays as the optional hardware alternative and the fully
-licensed option, since the licence rides on the DVSI chip. The `ExternalVocoder`
+The DV3000/ThumbDV path remains the intended hardware alternative and the fully
+licensed option, since the licence rides on the DVSI chip. **It is not
+implemented** — there is no serial or AMBEServer transport in `internal/vocoder`,
+and the operator documentation does not offer it. It is a decision on record, not
+a feature. The `ExternalVocoder`
 pipe in `internal/wxvoice` is the named fallback **only** if the runtime-load
 variant cannot be kept clean — a separate helper can be built on-device with
 linked firmware without tainting shipped binaries — and that contract is
@@ -204,6 +219,35 @@ not guessable:
 The result was checked rather than assumed: the linked `waypoint-bus` is 15.6 MB,
 starts on the bench Pi 3, and a byte-probe from the middle of the firmware image
 does not appear anywhere in it.
+
+#### How this ships is not yet decided
+
+The release workflow builds `waypoint-bus` with `CGO_ENABLED=0` and no build
+tags, so **no released binary contains Zello support**. Everything in this branch
+is reachable only from a local build. That is a packaging decision with release
+consequences and it is deliberately left open rather than settled inside a
+feature branch.
+
+Three ways out, in the order they seem preferable:
+
+1. **A second asset.** `waypoint-bus-zello-linux-<arch>`, cgo, tagged, fetched
+   and minisign-verified like the others but only installed when an operator
+   enables bridging. The default node stays pure Go and cross-compiles as it does
+   today, and a node that never bridges carries neither libopus nor a vocoder.
+   Costs: another release artifact, and the CI job needs an armhf libopus and the
+   md380_vocoder archive built without its firmware members.
+2. **Always cgo.** Simplest pipeline, and wrong for the same reason the tag
+   exists: every node's bus daemon would gain a libopus dependency for a feature
+   almost none of them run.
+3. **Ship nothing; document building it.** Honest and cheap, and it makes the
+   feature effectively unavailable to the operators it is for.
+
+Whichever is chosen, the CI job needs what the desktop needed: an armhf libopus
+(built from source here, since no multiarch package was installed), the
+`md380_vocoder` archive with `firmware.o` and `ram.o` removed, md380tools'
+`symbols_d02.032`, and `-lm` arriving through `-extldflags`. The recipe is above
+under D3. The firmware images themselves are never involved in the build and
+never shipped — the operator places them on the node.
 
 ### D4 — One WebSocket per Zello channel
 

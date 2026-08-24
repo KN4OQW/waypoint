@@ -45,6 +45,13 @@ const (
 	// which is why this is state and not a rendered output.
 	PeeringDir = StateDir + "/peering"
 
+	// VocoderDir holds the AMBE+2 firmware images the Zello bridge's vocoder maps
+	// at run time. The operator puts them here; Waypoint never ships them, and no
+	// release, image or package contains them — AMBE+2 is patented and the
+	// firmware may not be redistributed, so obtaining it is the operator's own
+	// act. A node with no Zello channel never looks in here.
+	VocoderDir = StateDir + "/vocoder"
+
 	// OverridesDir is the root of the operator's override drop-ins
 	// (<dir>/<daemon>.d/*.conf, RFC-0005). Operator-authored, so it is state: an
 	// apply merges it into the render and never rewrites it.

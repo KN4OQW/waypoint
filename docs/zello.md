@@ -103,14 +103,22 @@ key material, leave it empty.
 
 Zello carries Opus; the digital modes carry AMBE+2. Bridging them means decoding
 and re-encoding voice, and the AMBE+2 vocoder is patented — Waypoint cannot ship
-it.
+it, and does not.
 
-The node fetches the firmware images when you enable bridging. They are never
-included in a Waypoint release, an image, or a package, and they are not part of
-the software's licence. Enabling the feature is you deciding to obtain them.
+**You supply the two firmware images.** Put them here, readable by the node:
 
-If you own a DV3000 or ThumbDV dongle, that is the fully licensed alternative and
-the node can use it instead.
+	/var/lib/waypoint/vocoder/md380fw.img
+	/var/lib/waypoint/vocoder/md380ram.img
+
+They are not downloaded for you and they are in no Waypoint release, image or
+package. Obtaining them is your decision and your act; nothing about it is
+automated, and the node makes no request to get them.
+
+Until both files are there, a bus with a Zello channel refuses to start and says
+which file is missing and where it expected it.
+
+The first image is the unwrapped MD380 firmware; the second is its matching SRAM
+core. The tooling in the md380tools project produces both.
 
 ## What it sounds like, and what it cannot do
 
@@ -144,6 +152,7 @@ side does natively.
 | The channel stays offline and never comes online | The node cannot join that channel — either the name is not exactly right, or the account is not a member. Check the name character for character against the app first; it is the more common of the two and neither produces an error. |
 | `on_error` right after connecting | No channel by that name at all. |
 | The channel is silent after a month | A sample development token expired. Switch to the Issuer and Private Key. |
+| The bus will not start and names a missing image | The vocoder firmware is not in `/var/lib/waypoint/vocoder/`. See section 4 — you supply those files. |
 
 ## Privacy
 

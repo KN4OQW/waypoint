@@ -2346,6 +2346,7 @@ func main() {
 	updatePollInterval := flag.Duration("update-poll-interval", 6*time.Hour, "how often waypointd checks for stack/binary updates and evaluates quiet-window auto-apply (RFC-0014)")
 	busConfigDir := flag.String("bus-config-dir", paths.EtcDir, "directory for rendered mode-bus configs (waypoint-bus-<id>.json), consumed by waypoint-bus@<id>.service (RFC-0003)")
 	peeringDir := flag.String("peering-dir", paths.PeeringDir, "directory holding LAN-peering cert/key files (node.key, peer-*.crt) referenced by rendered bus peering blocks (RFC-0016)")
+	vocoderDir := flag.String("vocoder-dir", paths.VocoderDir, "directory holding the AMBE+2 firmware images the Zello bridge's vocoder maps at run time; the operator supplies them, Waypoint never ships them")
 	peeringBootstrapAddr := flag.String("peering-bootstrap-addr", "0.0.0.0:42501", "listen address for the RFC-0016 pairing bootstrap channel (plain TCP; the short code authenticates the exchange)")
 	storePath := flag.String("store", paths.StorePath, "path to the SQLite configuration store")
 	// First-boot setup (docs/provisioning.md). The wizard is on by default: a node
@@ -2489,6 +2490,7 @@ func main() {
 			DAPNETGateway: *dapnetgwINI,
 			BusConfigDir:  *busConfigDir,
 			PeeringDir:    *peeringDir,
+			VocoderDir:    *vocoderDir,
 			// D4: the broker each bus daemon publishes its events to, rendered into the
 			// bus config. Empty in demo mode (no broker), so demo bus configs carry no
 			// MQTT block and the daemon runs without publishing.
