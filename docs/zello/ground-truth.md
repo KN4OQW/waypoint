@@ -383,3 +383,63 @@ the message has to be right for the path that reaches the wire.
 Still unverified: everything after logon. No token was available, so no stream has
 been started, no audio has crossed, and `on_channel_status` has never been seen
 from the real service.
+
+## Addendum: three things the live service settled
+
+All measured on 2026-08-23 against `wss://zello.io/ws` with a real account.
+
+### A dedicated account is mandatory, not advisable
+
+Zello allows one session per account. Logging the bridge in **logs the operator
+out of the Zello app**, and logging back in on the phone logs the bridge out.
+Earlier notes called a dedicated bridge account the established pattern; it is
+not a pattern, it is a requirement, and a node sharing an operator's personal
+account will fight with their phone continuously.
+
+This was found the way such things usually are: the first live stream was sent
+successfully and nobody heard it, because the account it was sent from had just
+kicked its owner off.
+
+### The 30-day token is not a constraint
+
+This file, and the design record, treated the Sample Development Token's 30-day
+expiry as an operational fact the feature would have to live with — a monthly
+credential refresh, forever, with the bridge going silent when it was forgotten.
+
+That reading was wrong. The sample token is a convenience for trying the API
+without writing server code. The real mechanism is an RSA-signed JWT carrying two
+claims, and Zello's AUTH.md says exactly that: "We use only two - issuer and
+expiration." Their own reference implementation
+(`auth/go/tokenmanager.go`) sets `tokenExpirationSeconds = 60` — a fresh token per
+connection, a minute long.
+
+Proved rather than inferred: a token minted locally from the operator's issuer and
+private key, valid for 60 seconds, was accepted by the live service and reached
+`on_channel_status online`.
+
+So a node holding the issuer and the private key mints a token every time it
+dials and nothing an operator has to remember ever expires. The private key does
+not expire; it changes only if the operator regenerates the key pair. The trade is
+that the node holds a longer-lived signing key instead of a 30-day bearer token,
+which is the better secret to hold — it is what Zello's design expects a server to
+have, and a token copied off a node is worth a minute.
+
+### Anonymous logon does not work
+
+API.md describes `username` as "(optional for Zello Friends and Family) Username
+to logon with. If not provided the client will connect anonymously," and the
+config validator was written to allow a receive-only bridge on that basis.
+
+With a valid freshly minted token and no username, the live service refuses:
+
+	invalid username
+
+Both plain and with `listen_only` set. `invalid username` is not in the documented
+error table at API.md:613-631 at all. So every connection needs a real account,
+including a listen-only one, and the validator now refuses an account without a
+username instead of letting the operator find out at the first connect.
+
+This is the third documented behaviour of this API that the live service
+contradicts, after the token-less logon returning `not enough params` rather than
+`not authorized`. Treat API.md as a starting point and check anything load-bearing
+against the service.

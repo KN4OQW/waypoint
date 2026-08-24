@@ -94,8 +94,14 @@ type BusZello struct {
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
 
-	// AuthToken is the JWT. A sample development token expires after 30 days.
-	AuthToken string `json:"auth_token"`
+	// Issuer and PrivateKey let the daemon mint a fresh token for every dial, so
+	// nothing expires. Preferred over AuthToken when present.
+	Issuer     string `json:"issuer,omitempty"`
+	PrivateKey string `json:"private_key,omitempty"`
+
+	// AuthToken is a pre-minted token, used only when there is no key material.
+	// A sample development token expires 30 days after it was issued.
+	AuthToken string `json:"auth_token,omitempty"`
 
 	// ListenOnly joins without transmitting.
 	ListenOnly bool `json:"listen_only,omitempty"`

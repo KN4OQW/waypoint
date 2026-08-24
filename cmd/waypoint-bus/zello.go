@@ -132,10 +132,25 @@ func (e *zelloEndpoint) run() {
 		default:
 		}
 
+		// Minted per dial when key material is present, so nothing expires
+		// between reconnects. A pre-minted token is the fallback for an operator
+		// who has only the sample one, and it stops working after 30 days.
+		token, err := e.token()
+		if err != nil {
+			d := b.Next()
+			log.Printf("zello %q: %v; retrying in %s", e.cfg.Channel, err, d.Round(time.Second))
+			select {
+			case <-time.After(d):
+			case <-e.done:
+				return
+			}
+			continue
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		cli, err := zello.Dial(ctx, zello.Config{
 			Channel:    e.cfg.Channel,
-			AuthToken:  e.cfg.AuthToken,
+			AuthToken:  token,
 			Username:   e.cfg.Username,
 			Password:   e.cfg.Password,
 			ListenOnly: e.cfg.ListenOnly,
@@ -321,4 +336,29 @@ func (e *zelloEndpoint) Close() error {
 		return e.cli.Close()
 	}
 	return nil
+}
+
+// token supplies the auth_token for one logon.
+//
+// The key material is preferred whenever it is present: a token minted here is
+// good for a minute, is created fresh for every reconnect, and nothing an
+// operator has to remember ever expires. The stored AuthToken is only for an
+// operator who has pasted the Sample Development Token instead, and that stops
+// working 30 days after it was issued — silently, from the node's point of view,
+// which is why the failure has to name the possibility.
+func (e *zelloEndpoint) token() (string, error) {
+	if e.cfg.Issuer != "" && e.cfg.PrivateKey != "" {
+		tok, err := zello.TokenSigner{
+			Issuer:        e.cfg.Issuer,
+			PrivateKeyPEM: e.cfg.PrivateKey,
+		}.Token(zello.DefaultTokenTTL)
+		if err != nil {
+			return "", fmt.Errorf("minting a token: %w", err)
+		}
+		return tok, nil
+	}
+	if e.cfg.AuthToken == "" {
+		return "", fmt.Errorf("no Zello credentials: add the issuer and private key, or a token")
+	}
+	return e.cfg.AuthToken, nil
 }

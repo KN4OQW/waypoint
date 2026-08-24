@@ -466,9 +466,14 @@ data seeded rather than scanning its empty state.
 
 ### Prompt 7 — Docs
 
-How to obtain a Zello developer token and that the sample one expires every 30
-days; creating a dedicated bridge account; the ToS caveats; the libopus and
-CustomPiOS build notes; the optional DV3000 path. New user-facing strings go in
+How to obtain the Issuer and Private Key from developers.zello.com and why those
+are what to enter rather than the Sample Development Token — a node holding the
+key material mints its own token per connection and nothing expires, while a
+pasted sample token stops working after 30 days and takes the bridge down
+silently. That **a dedicated Zello account is required**, because Zello allows one
+session per account and a shared one fights with the operator's phone. That even a
+listen-only bridge needs that account, because anonymous logon is refused. The ToS
+caveats; the libopus and CustomPiOS build notes; the optional DV3000 path. New user-facing strings go in
 `ui/static/locales/en-US.json`, and `fr-FR`/`ja-JP` claim `_meta.reviewed`, so
 they are translated in the same branch or the `locales` CI job fails.
 
@@ -485,13 +490,28 @@ Pi 3, and check for the issue-#925 SIGSEGV under that box's kernel.
 
 ## What is not settled
 
-Zello's API is beta and documented as subject to change. Free-tier bridging runs
-on a dedicated account and a token refreshed every 30 days; that is ongoing
-operational fragility, not a one-time setup, and Waypoint must never ship an
-account or a token. Community bridges (asl-zello-bridge, zellostream) establish
-the pattern, but the pattern depends on Zello's continued goodwill. If free-tier
-gateway accounts get rate-limited or banned, the fallback is to document Zello
-Work, which does support multi-channel logon.
+Zello's API is beta and documented as subject to change, and three of its
+documented behaviours have already been measured to be wrong — see
+[ground-truth.md](../zello/ground-truth.md). Treat API.md as a starting point and
+check anything load-bearing against the service.
+
+The 30-day token refresh is no longer among the risks: a node with the Issuer and
+Private Key mints its own, and that was proved against the live service rather
+than inferred. What remains is that Waypoint must never ship an account or key
+material, that a bridge needs a Zello account of its own because Zello permits one
+session per account, and that free-tier bridging depends on Zello's continued
+goodwill. Community bridges (asl-zello-bridge, zellostream) establish the pattern.
+If free-tier gateway accounts get rate-limited or banned, the fallback is to
+document Zello Work, which does support multi-channel logon.
+
+The identity asymmetry is a limit, not a gap. One connection is one logon is one
+Zello identity, so every RF operator's audio reaches the channel as the gateway
+account whoever keyed up — individual callsigns cannot appear as distinct Zello
+senders, and N connections for N operators would mean N sets of their personal
+credentials and N gateway members in the channel, for a bus that can only carry
+one talker at a time anyway. Inbound is genuinely per-user, because
+`on_stream_start` carries `from`. Document the asymmetry rather than appearing to
+support something the platform does not.
 
 There is no published per-frame benchmark for md380-emu on a Pi 3. Real-time
 capability is inferred from DVSwitch's "Pi2, Pi3, H3, H5 are good matches" and

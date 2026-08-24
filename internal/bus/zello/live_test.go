@@ -127,3 +127,108 @@ func TestLiveLogon(t *testing.T) {
 		}
 	}
 }
+
+// TestLiveMintedTokenLogon proves the operator never has to touch a token again.
+//
+// The Sample Development Token expires after 30 days, and that was read as an
+// operational fact this feature would have to live with. It is not: a node
+// holding the issuer and the private key mints its own, and Zello's own
+// reference implementation mints one per connection with a sixty-second life.
+// This signs a token here and logs on with it, which is the only way to know the
+// signature and the claims are right.
+//
+//	ZELLO_ISSUER=... ZELLO_KEY_FILE=/path/to/key.pem ZELLO_CHANNEL=... \
+//	  go test ./internal/bus/zello -run TestLiveMintedToken -v
+func TestLiveMintedTokenLogon(t *testing.T) {
+	cfg := liveConfig(t)
+	issuer, keyFile := os.Getenv("ZELLO_ISSUER"), os.Getenv("ZELLO_KEY_FILE")
+	if issuer == "" || keyFile == "" {
+		t.Skip("set ZELLO_ISSUER and ZELLO_KEY_FILE to run this")
+	}
+	key, err := os.ReadFile(keyFile)
+	if err != nil {
+		t.Fatalf("reading the private key: %v", err)
+	}
+
+	tok, err := TokenSigner{Issuer: issuer, PrivateKeyPEM: string(key)}.Token(DefaultTokenTTL)
+	if err != nil {
+		t.Fatalf("minting a token: %v", err)
+	}
+	t.Logf("minted a %v token, %d bytes", DefaultTokenTTL, len(tok))
+
+	cfg.AuthToken = tok
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c, err := Dial(ctx, cfg)
+	if err != nil {
+		t.Fatalf("the service refused a token we minted: %v", err)
+	}
+	defer c.Close()
+	t.Log("LOGON ACCEPTED with a locally minted token")
+
+	deadline := time.After(20 * time.Second)
+	for {
+		select {
+		case ev, ok := <-c.Events():
+			if !ok {
+				t.Fatalf("connection closed: %v", c.Err())
+			}
+			if ev.Command == EvtOnChannelStatus {
+				t.Logf("channel %q %s, %d user(s)", ev.Channel, ev.Status, ev.UsersOnline)
+				return
+			}
+			if ev.Command == EvtOnError {
+				t.Fatalf("server error: %s", ev.Error)
+			}
+		case <-deadline:
+			t.Fatal("no on_channel_status within 20 s")
+		}
+	}
+}
+
+// TestLiveAnonymousLogon checks the documented anonymous path, which API.md
+// describes as: "(optional for Zello Friends and Family) Username to logon with.
+// If not provided the client will connect anonymously."
+//
+// A receive-only bridge would be the obvious use for it — no account, no password,
+// just listen — and the config validator was written to allow exactly that.
+func TestLiveAnonymousLogon(t *testing.T) {
+	cfg := liveConfig(t)
+	issuer, keyFile := os.Getenv("ZELLO_ISSUER"), os.Getenv("ZELLO_KEY_FILE")
+	if issuer == "" || keyFile == "" {
+		t.Skip("set ZELLO_ISSUER and ZELLO_KEY_FILE to run this")
+	}
+	key, err := os.ReadFile(keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer := TokenSigner{Issuer: issuer, PrivateKeyPEM: string(key)}
+
+	for _, tc := range []struct {
+		name       string
+		listenOnly bool
+	}{
+		{"anonymous", false},
+		{"anonymous listen-only", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tok, err := signer.Token(DefaultTokenTTL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			c, err := Dial(ctx, Config{
+				Channel:    cfg.Channel,
+				AuthToken:  tok,
+				ListenOnly: tc.listenOnly,
+			})
+			if err != nil {
+				t.Logf("REFUSED: %v", err)
+				return
+			}
+			defer c.Close()
+			t.Log("ACCEPTED — anonymous logon works as documented")
+		})
+	}
+}

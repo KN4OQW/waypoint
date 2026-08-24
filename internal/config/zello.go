@@ -49,11 +49,34 @@ type ZelloAccount struct {
 	// carries HasPassword, never this.
 	Password string `json:"password"`
 
-	// AuthToken is the JWT. Write-only in projections for the same reason —
-	// it is a bearer credential for the operator's Zello account.
+	// Issuer and PrivateKey are the key material from developers.zello.com under
+	// Keys. With them the node mints its own token whenever it dials, and nothing
+	// ever expires that an operator has to notice.
+	//
+	// This is the supported way to run a bridge. The alternative below — pasting
+	// a Sample Development Token — stops working after 30 days, silently, and the
+	// operator finds out when somebody mentions the channel has been quiet.
+	//
+	// PrivateKey is write-only in projections and excluded from portable
+	// profiles. It is a longer-lived secret than a token, which is the trade: a
+	// token copied off a node is worth sixty seconds, and this is what Zello's
+	// own design expects a server to hold.
+	Issuer     string `json:"issuer"`
+	PrivateKey string `json:"private_key"`
+
+	// AuthToken is a pre-minted JWT, for an operator who has only the Sample
+	// Development Token. It expires 30 days after it was issued and there is
+	// nothing Waypoint can do about that, so Issuer+PrivateKey is preferred
+	// whenever both are present. Write-only in projections.
 	AuthToken string `json:"auth_token"`
 
 	Enabled bool `json:"enabled"`
+}
+
+// CanMintTokens reports whether this account carries the key material to sign its
+// own tokens, which is the arrangement that does not expire.
+func (a ZelloAccount) CanMintTokens() bool {
+	return strings.TrimSpace(a.Issuer) != "" && strings.TrimSpace(a.PrivateKey) != ""
 }
 
 // ZelloChannel bridges one bus to one Zello channel.
@@ -186,13 +209,19 @@ func ValidateZello(accounts []ZelloAccount, channels []ZelloChannel, buses []Bus
 		if !acct.Enabled {
 			return fmt.Errorf("Zello channel %q is enabled but its account %q is not; enable the account or disable the channel", id, ref)
 		}
-		if strings.TrimSpace(acct.AuthToken) == "" {
-			return fmt.Errorf("Zello account %q has no auth token; obtain one from developers.zello.com "+
-				"(a sample development token expires after 30 days)", ref)
+		if !acct.CanMintTokens() && strings.TrimSpace(acct.AuthToken) == "" {
+			return fmt.Errorf("Zello account %q has no credentials; add the issuer and private key from "+
+				"developers.zello.com under Keys, or paste a sample development token (which stops working "+
+				"after 30 days)", ref)
 		}
-		if !c.ListenOnly && strings.TrimSpace(acct.Username) == "" {
-			return fmt.Errorf("Zello channel %q transmits but its account %q has no username; "+
-				"an anonymous Zello connection can only listen, so add a username or mark the channel listen-only", id, ref)
+		// Every connection needs a real account, including a listen-only one.
+		// API.md says an omitted username connects anonymously; measured against
+		// the live service, an anonymous logon is refused with `invalid username`
+		// whether or not listen_only is set. Refusing here means the operator
+		// finds out while configuring rather than at the first connect.
+		if strings.TrimSpace(acct.Username) == "" {
+			return fmt.Errorf("Zello account %q has no username; Zello refuses a logon with no account, "+
+				"including a listen-only one, so a bridge needs a dedicated Zello account", ref)
 		}
 	}
 	return nil
@@ -208,7 +237,8 @@ func (c ZelloChannel) EffectivePacketMS() int {
 
 // SetZelloAccounts writes the zello_accounts[] section through the validator,
 // applying the write-only secret rule the rest of the store uses: a blank
-// password or auth token keeps the stored one, a non-blank one replaces it.
+// password, private key or auth token keeps the stored one, a non-blank one
+// replaces it.
 //
 // This is not a convenience. The View never carries either value, so the panel
 // editing an account genuinely does not have them — without blank-preserve,
@@ -241,6 +271,9 @@ func SetZelloAccounts(s *store.Store, raw []byte, by string) error {
 		}
 		if accounts[i].AuthToken == "" {
 			accounts[i].AuthToken = old.AuthToken
+		}
+		if accounts[i].PrivateKey == "" {
+			accounts[i].PrivateKey = old.PrivateKey
 		}
 	}
 

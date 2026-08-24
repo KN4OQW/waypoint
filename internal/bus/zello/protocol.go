@@ -50,7 +50,25 @@ const (
 	ErrCodeFailedSendData   = "failed to send data"
 	ErrCodeInvalidAudio     = "invalid audio packet"
 	ErrCodeChannelsLimit    = "channels limit exceeded"
+
+	// ErrCodeInvalidUsername is NOT in Zello's documented error table. It was
+	// observed against the live service, and it is what an anonymous logon
+	// actually gets — see the note below.
+	ErrCodeInvalidUsername = "invalid username"
 )
+
+// Anonymous logon does not work, whatever API.md says.
+//
+// The documentation describes `username` as "(optional for Zello Friends and
+// Family) Username to logon with. If not provided the client will connect
+// anonymously," and a receive-only bridge is the obvious use for that: no
+// account, no password, just listen.
+//
+// Measured against the live service with a valid, freshly minted token, both a
+// plain anonymous logon and an anonymous logon with listen_only set are refused
+// with `invalid username` — a code the error table does not contain. So every
+// connection needs a real account, including a listen-only one, and the config
+// validator enforces that rather than discovering it at the first connect.
 
 // CodecHeader is start_stream's codec_header: four bytes describing how the
 // Opus payload is framed.

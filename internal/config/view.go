@@ -747,11 +747,14 @@ func (m *Model) View(src Sources) *View {
 	v.ZelloAccounts = make([]ViewZelloAccount, 0, len(m.ZelloAccounts))
 	for _, a := range m.ZelloAccounts {
 		v.ZelloAccounts = append(v.ZelloAccounts, ViewZelloAccount{
-			Name:         a.Name,
-			Username:     a.Username,
-			HasPassword:  a.Password != "",
-			HasAuthToken: a.AuthToken != "",
-			Enabled:      a.Enabled,
+			Name:          a.Name,
+			Username:      a.Username,
+			Issuer:        a.Issuer, // public: it identifies the key, not the secret
+			HasPassword:   a.Password != "",
+			HasPrivateKey: a.PrivateKey != "",
+			HasAuthToken:  a.AuthToken != "",
+			CanMintTokens: a.CanMintTokens(),
+			Enabled:       a.Enabled,
 		})
 	}
 	v.ZelloChannels = append([]ZelloChannel(nil), m.ZelloChannels...)
@@ -814,9 +817,18 @@ func (m *Model) View(src Sources) *View {
 // two secrets. Password and AuthToken are write-only, so the panel can report
 // that a token is missing without ever being able to read the one that is there.
 type ViewZelloAccount struct {
-	Name         string `json:"name"`
-	Username     string `json:"username"`
-	HasPassword  bool   `json:"has_password"`
-	HasAuthToken bool   `json:"has_auth_token"`
-	Enabled      bool   `json:"enabled"`
+	Name     string `json:"name"`
+	Username string `json:"username"`
+	// Issuer is public — it names the key pair, and its first segment is a
+	// base64 of the account it belongs to. The private key is what must not
+	// travel, and it never does.
+	Issuer        string `json:"issuer"`
+	HasPassword   bool   `json:"has_password"`
+	HasPrivateKey bool   `json:"has_private_key"`
+	HasAuthToken  bool   `json:"has_auth_token"`
+	// CanMintTokens tells the panel whether this account is on the arrangement
+	// that does not expire, so it can warn about the 30-day one instead of
+	// leaving the operator to discover it when the channel goes quiet.
+	CanMintTokens bool `json:"can_mint_tokens"`
+	Enabled       bool `json:"enabled"`
 }

@@ -398,6 +398,8 @@ func (m *Model) busZelloFor(id string) []BusZello {
 			Channel:    c.Channel,
 			Username:   a.Username,
 			Password:   a.Password,
+			Issuer:     a.Issuer,
+			PrivateKey: a.PrivateKey,
 			AuthToken:  a.AuthToken,
 			ListenOnly: c.ListenOnly,
 			PacketMS:   c.EffectivePacketMS(),

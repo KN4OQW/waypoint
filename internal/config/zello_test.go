@@ -10,6 +10,11 @@ func okAccount() ZelloAccount {
 	return ZelloAccount{Name: "bridge", Username: "kn4oqw-gw", Password: "pw", AuthToken: "jwt", Enabled: true}
 }
 
+func mintingAccount() ZelloAccount {
+	return ZelloAccount{Name: "bridge", Username: "kn4oqw-gw", Password: "pw",
+		Issuer: "ISS.abc", PrivateKey: "-----BEGIN PRIVATE KEY-----x-----END PRIVATE KEY-----", Enabled: true}
+}
+
 func okChannel() ZelloChannel {
 	return ZelloChannel{ID: "z1", BusID: "b1", Channel: "Ham Radio", AccountRef: "bridge", Enabled: true}
 }
@@ -80,19 +85,16 @@ func TestZelloValidationRejects(t *testing.T) {
 			wants:    "enable the account",
 		},
 		{
-			name:     "an enabled channel with no token",
+			name:     "an enabled channel with no credentials at all",
 			accounts: []ZelloAccount{func() ZelloAccount { a := okAccount(); a.AuthToken = ""; return a }()},
 			channels: []ZelloChannel{okChannel()},
 			wants:    "developers.zello.com",
 		},
 		{
-			// The failure this prevents is a transmit attempt that Zello refuses
-			// with "listen only connection" at the first key-up — long after the
-			// operator configured it and with nothing pointing at the cause.
-			name:     "a transmitting channel on an account with no username",
+			name:     "an account with no username",
 			accounts: []ZelloAccount{func() ZelloAccount { a := okAccount(); a.Username = ""; return a }()},
 			channels: []ZelloChannel{okChannel()},
-			wants:    "can only listen",
+			wants:    "dedicated Zello account",
 		},
 	}
 	for _, c := range cases {
@@ -108,15 +110,39 @@ func TestZelloValidationRejects(t *testing.T) {
 	}
 }
 
-// A listen-only channel needs no username, because an anonymous Zello connection
-// can still receive. Refusing it would block a legitimate receive-only bridge.
-func TestAListenOnlyChannelNeedsNoUsername(t *testing.T) {
+// Corrected against the live service. API.md says an omitted username connects
+// anonymously, and this test used to assert that a listen-only channel therefore
+// needed no account. Measured with a valid freshly minted token, both an
+// anonymous logon and an anonymous listen-only logon are refused with
+// `invalid username`, a code the documented error table does not contain.
+//
+// So a bridge always needs a dedicated Zello account, and the validator says so
+// while the operator is configuring rather than at the first connect.
+func TestEveryChannelNeedsAnAccountIncludingListenOnly(t *testing.T) {
 	a := okAccount()
 	a.Username = ""
 	c := okChannel()
 	c.ListenOnly = true
-	if err := ValidateZello([]ZelloAccount{a}, []ZelloChannel{c}, buses()); err != nil {
-		t.Fatalf("a listen-only channel with an anonymous account was refused: %v", err)
+	err := ValidateZello([]ZelloAccount{a}, []ZelloChannel{c}, buses())
+	if err == nil {
+		t.Fatal("an anonymous listen-only channel was accepted; Zello refuses that logon")
+	}
+	if !strings.Contains(err.Error(), "dedicated Zello account") {
+		t.Errorf("error %q should tell the operator they need their own account", err)
+	}
+}
+
+// Key material is the arrangement that does not expire, so an account carrying it
+// needs no pre-minted token at all.
+func TestAnAccountWithKeyMaterialNeedsNoToken(t *testing.T) {
+	if err := ValidateZello([]ZelloAccount{mintingAccount()}, []ZelloChannel{okChannel()}, buses()); err != nil {
+		t.Fatalf("an account that can mint its own tokens was refused: %v", err)
+	}
+	if !mintingAccount().CanMintTokens() {
+		t.Error("CanMintTokens() is false for an account with an issuer and a private key")
+	}
+	if okAccount().CanMintTokens() {
+		t.Error("CanMintTokens() is true for an account with only a pasted token")
 	}
 }
 
@@ -152,13 +178,26 @@ func TestTheViewNeverCarriesAZelloSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{`"pw"`, `"jwt"`, `"password"`, `"auth_token"`} {
+	m.ZelloAccounts[0].Issuer = "ISS.abc"
+	m.ZelloAccounts[0].PrivateKey = "-----BEGIN PRIVATE KEY-----SECRETKEYMATERIAL-----END PRIVATE KEY-----"
+	b, err = json.Marshal(m.View(Sources{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{`"pw"`, `"jwt"`, `"password"`, `"auth_token"`, "SECRETKEYMATERIAL", `"private_key"`} {
 		if strings.Contains(string(b), secret) {
 			t.Errorf("the view carried %s: %s", secret, b)
 		}
 	}
 	if !strings.Contains(string(b), `"has_password":true`) || !strings.Contains(string(b), `"has_auth_token":true`) {
 		t.Errorf("the view did not report the secrets as present: %s", b)
+	}
+	if !strings.Contains(string(b), `"has_private_key":true`) || !strings.Contains(string(b), `"can_mint_tokens":true`) {
+		t.Errorf("the view did not report the key material: %s", b)
+	}
+	// The issuer is not a secret and the panel needs it to show which key is in use.
+	if !strings.Contains(string(b), `"issuer":"ISS.abc"`) {
+		t.Errorf("the view dropped the issuer, which is public: %s", b)
 	}
 }
 
