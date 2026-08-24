@@ -509,8 +509,39 @@ No RFC drafted.
 
 On the bench Pi 3 with an MMDVM_HS_Dual_Hat and a DMR-6X2 Pro on BrandMeister:
 end-to-end keyed-RF in both directions. **No keyed-RF claim without on-air
-evidence** — captured logs and audio. Measure md380-emu against real time on the
-Pi 3, and check for the issue-#925 SIGSEGV under that box's kernel.
+evidence** — captured logs and audio.
+
+Everything below is either untested or tested only in isolation. The vocoder and
+the Zello client have each been proved separately; they have never run as one
+process, and nothing has carried real AMBE into a Zello channel or back.
+
+1. **RF to Zello.** Key up on the 6X2 Pro, hear it on a phone in the channel.
+   This is the first time the vocoder, the bridge and the WebSocket run together.
+2. **Zello to RF.** Talk on the phone, hear it out of the radio. Confirms the
+   inbound transcode, the injection through `Ingest`, and that the router
+   constructs a DMR burst from a synthesised frame.
+3. **Talker Alias, in full.** The DMRA frames are emitted onto the DMR
+   attachment's loopback, which on this bus is a local **DMRGateway**, not
+   MMDVM-Host directly. Nothing has established that DMRGateway forwards them.
+   Check every hop rather than only the radio: capture the loopback with
+   `tcpdump -i lo udp portrange 62031-62034` and confirm the DMRA datagrams
+   leave the bus; confirm they reach MMDVM-Host; confirm the 6X2 Pro displays
+   the Zello username with its case intact. `EmbeddedLCOnly` must be off for TA
+   to pass. **If DMRGateway drops them, say so and do not soften it** — the alias
+   silently never arriving while everything else works is exactly the failure
+   this project's rules exist to catch, and the fallback (emitting toward
+   MMDVM-Host directly, or via the datashim) is a design change, not a tweak.
+4. **The source ID on the air.** Confirm inbound Zello audio appears as the
+   node's own DMR ID and not as 0 or as anything borrowed.
+5. **Arbitration across the seam.** Key up on RF while somebody is talking on
+   Zello, and the reverse. The loser must be dropped with a `bus_busy` event
+   naming the winner, exactly as between two RF modes.
+6. **Vocoder timing under real load**, with a stream actually running rather
+   than in a benchmark loop, and a check for the issue-#925 SIGSEGV under this
+   box's kernel.
+7. **The first-frame warm-up.** Confirm whether the near-silent first decoded
+   frame is audible as a clipped syllable at the start of an over, and whether
+   priming the decoder fixes it.
 
 **Stop and report** if real time or on-air fails.
 

@@ -395,6 +395,20 @@ function buildEdit(c) {
     // exists here). tg_map is expanded to editable rows and folded back on save.
     buses: (c.buses || []).map((b) => ({ id: b.id, name: b.name || "", enabled: !!b.enabled })),
     attachments: (c.attachments || []).map(attachFrom),
+    // Zello bridging. An account's three secrets are never sent to the browser —
+    // the view carries only has_* — so each starts blank here and is sent only if
+    // the operator types one. A blank field on save keeps what is stored.
+    zello_accounts: (c.zello_accounts || []).map((a) => ({
+      name: a.name || "", username: a.username || "", issuer: a.issuer || "",
+      password: "", private_key: "", auth_token: "",
+      has_password: !!a.has_password, has_private_key: !!a.has_private_key,
+      has_auth_token: !!a.has_auth_token, can_mint_tokens: !!a.can_mint_tokens,
+      enabled: !!a.enabled,
+    })),
+    zello_channels: (c.zello_channels || []).map((z) => ({
+      id: z.id, bus_id: z.bus_id, channel: z.channel || "", account_ref: z.account_ref || "",
+      listen_only: !!z.listen_only, packet_ms: z.packet_ms || 0, enabled: !!z.enabled,
+    })),
     // Bus LAN peering (RFC-0016): the redacted peer rows (fingerprints visible,
     // cert/key never) and the remote (via-peer) attachments. Discovery + pending
     // pairings are fetched dynamically (they are not config sections).
@@ -2531,6 +2545,21 @@ function attachFrom(a) {
 // cleanAttachment folds an edit attachment back into the store shape: _tgrows ->
 // tg_map object (dropping blank rows), and only the fields meaningful for the
 // mode. A bus holds NO secret — there is no password field to strip or preserve.
+// cleanZelloAccount drops the UI-only has_*/can_mint flags (the store rejects
+// unknown fields) and sends each secret only when one was typed.
+//
+// Blank is not "clear it", it is "keep what is stored" — the browser never
+// receives these values, so a panel saving any other field would otherwise erase
+// the token and the bridge would stop connecting with nothing on screen to say
+// why. Clearing a credential deliberately is done by deleting the account.
+function cleanZelloAccount(a) {
+  return {
+    name: a.name || "", username: a.username || "", issuer: a.issuer || "",
+    password: a.password || "", private_key: a.private_key || "", auth_token: a.auth_token || "",
+    enabled: !!a.enabled,
+  };
+}
+
 function cleanAttachment(a) {
   const out = { bus_id: a.bus_id, mode: a.mode, credentials_ref: a.credentials_ref || "" };
   if (a.mode === "dmr") {
@@ -2558,7 +2587,76 @@ function panelGateways() {
     ? buses.map(busCard).join("")
     : note(msg("gateways.noBusesYetBus"));
   const create = `<div class="row"><button type="button" class="btn" id="bus-create">${msg("gateways.createBus")}</button></div>`;
-  return `<div class="stack">${peersCard()}${migrate}${list}${create}</div>`;
+  return `<div class="stack">${peersCard()}${migrate}${list}${create}${zelloAccountsCard()}</div>`;
+}
+
+// zelloAccountsCard is the Zello identities this node can talk as.
+//
+// One account per node in practice: Zello permits a single session per account,
+// so an account shared with the operator's phone signs one of them out
+// continuously. The copy says so rather than leaving it to be discovered.
+function zelloAccountsCard() {
+  const accts = edit.zello_accounts || [];
+  const rows = accts.map(zelloAccountBlock).join("");
+  const empty = accts.length ? "" : note(msg("zello.noAccountsYet"));
+  const add = `<div class="row"><button type="button" class="btn" id="zello-acct-add">${msg("zello.addAccount")}</button></div>`;
+  return card(msg("zello.accounts"), note(msg("zello.dedicatedAccountNote")) + empty + rows + add);
+}
+
+function zelloAccountBlock(a, i) {
+  const en = `<button type="button" class="pill ${a.enabled ? "on" : "off"}" data-zaen="${i}" aria-pressed="${a.enabled}" aria-label="${esc(msg("zello.accountEnabled"))}">${a.enabled ? "ENABLED" : "DISABLED"}</button>`;
+  const del = `<button type="button" class="btn danger" data-zadel="${i}">${msg("zello.delete")}</button>`;
+  const head = `<div class="toggle-row"><span class="name">${esc(a.name || msg("zello.unnamedAccount"))}</span>${en}${del}</div>`;
+  // A secret already stored shows as set and nothing more; typing replaces it.
+  const secret = (key, label, stored) => row(label,
+    `<input type="password" autocomplete="new-password" data-za="${i}" data-zakey="${esc(key)}" value="${esc(a[key] || "")}" aria-label="${esc(label)}" placeholder="${esc(stored ? msg("zello.storedLeaveBlank") : msg("zello.notSet"))}">`);
+  const text = (key, label, ph) => row(label,
+    `<input data-za="${i}" data-zakey="${esc(key)}" value="${esc(a[key] || "")}" aria-label="${esc(label)}" placeholder="${esc(ph || "")}">`);
+  // Which credential arrangement this account is on. The pasted-token one stops
+  // working after 30 days and takes the bridge down silently, so it is called out
+  // here rather than left for the operator to find when the channel goes quiet.
+  const mode = a.can_mint_tokens
+    ? note(msg("zello.mintsItsOwnTokens"))
+    : (a.has_auth_token ? `<div class="note bus-down">${esc(msg("zello.pastedTokenExpires"))}</div>` : "");
+  return `<div class="attach">${head}` +
+    text("name", msg("zello.accountName"), "kn4oqw-bridge") +
+    text("username", msg("zello.username"), "") +
+    secret("password", msg("zello.password"), a.has_password) +
+    text("issuer", msg("zello.issuer"), "") +
+    secret("private_key", msg("zello.privateKey"), a.has_private_key) +
+    secret("auth_token", msg("zello.authTokenOptional"), a.has_auth_token) +
+    mode + `</div>`;
+}
+
+// zelloChannelRows are the Zello channels attached to one bus — the same shape as
+// a mode attachment, because that is what they are to an operator: another thing
+// on the lane.
+function zelloChannelRows(busId) {
+  const chans = (edit.zello_channels || []).filter((z) => z.bus_id === busId);
+  const accts = edit.zello_accounts || [];
+  const rows = chans.map((z) => {
+    const i = edit.zello_channels.indexOf(z);
+    const en = `<button type="button" class="pill ${z.enabled ? "on" : "off"}" data-zcen="${i}" aria-pressed="${z.enabled}" aria-label="${esc(msg("zello.channelEnabled"))}">${z.enabled ? "ENABLED" : "DISABLED"}</button>`;
+    const del = `<button type="button" class="btn" data-zcdel="${i}">${msg("zello.detach")}</button>`;
+    const head = `<div class="toggle-row"><span class="name">${msg("zello.zelloChannel")}</span>${en}${del}</div>`;
+    const name = row(msg("zello.channelName"),
+      `<input data-zc="${i}" data-zckey="channel" value="${esc(z.channel)}" aria-label="${esc(msg("zello.channelName"))}" placeholder="${esc(msg("zello.asShownInApp"))}">`);
+    const acct = row(msg("zello.account"),
+      `<select data-zc="${i}" data-zckey="account_ref" aria-label="${esc(msg("zello.account"))}"><option value="">${msg("zello.chooseAccount")}</option>` +
+      accts.map((a) => `<option value="${esc(a.name)}"${z.account_ref === a.name ? " selected" : ""}>${esc(a.name)}</option>`).join("") + `</select>`);
+    // Only the sizes Opus actually has, inside Zello's documented range. A value
+    // between them is refused by libopus with an error naming nothing useful.
+    const sizes = [5, 10, 20, 40, 60];
+    const pkt = row(msg("zello.packetSize"),
+      `<select data-zc="${i}" data-zckey="packet_ms" aria-label="${esc(msg("zello.packetSize"))}">` +
+      sizes.map((n) => `<option value="${n}"${(z.packet_ms || 60) === n ? " selected" : ""}>${n} ms${n === 60 ? " — " + msg("zello.default") : ""}</option>`).join("") + `</select>`);
+    const lo = `<div class="toggle-row"><span class="name">${msg("zello.listenOnly")}</span><button type="button" class="pill ${z.listen_only ? "on" : "off"}" data-zcbool="${i}" data-zbkey="listen_only" aria-pressed="${z.listen_only}" aria-label="${esc(msg("zello.listenOnly"))}">${z.listen_only ? "ON" : "OFF"}</button></div>`;
+    return `<div class="attach">${head}${name}${acct}${pkt}${lo}</div>`;
+  }).join("");
+  const add = (edit.zello_accounts || []).length
+    ? `<div class="row"><button type="button" class="btn" data-zcadd="${esc(busId)}">${msg("zello.addChannel")}</button></div>`
+    : note(msg("zello.addAnAccountFirst"));
+  return rows + add;
 }
 
 function busCard(bus) {
@@ -2579,7 +2677,7 @@ function busCard(bus) {
   const lowNote = (bus.enabled && total < 2) ? note(msg("busCard.busNeedsLeastTwo")) : "";
   const attHTML = atts.map((a) => attachmentBlock(a, edit.attachments.indexOf(a))).join("");
   const remoteHTML = remotes.map(remoteAttachmentBlock).join("");
-  return `<div class="card bus-card">${head}${downNote}${nameRow}${disableNote}${lowNote}${attHTML}${remoteHTML}${attachPickerHTML(bus.id)}</div>`;
+  return `<div class="card bus-card">${head}${downNote}${nameRow}${disableNote}${lowNote}${attHTML}${remoteHTML}${attachPickerHTML(bus.id)}${zelloChannelRows(bus.id)}</div>`;
 }
 
 // remoteAttachmentBlock renders a via-peer edge: mode @ peer, DORMANT when the peer
@@ -2710,6 +2808,16 @@ function detachRemote(key) {
 
 // newBusId mints a short, unique, stable id (bus-N) — the id drives the rendered
 // file name and unit (waypoint-bus@<id>.service), so it must not collide.
+// newZelloChannelId mints a row id unique within this node, the same shape
+// newBusId uses so the two read alike in the store.
+function newZelloChannelId() {
+  const ids = new Set((edit.zello_channels || []).map((z) => z.id));
+  for (let n = 1; ; n++) {
+    const id = "zch-" + String(n).padStart(3, "0");
+    if (!ids.has(id)) return id;
+  }
+}
+
 function newBusId() {
   const ids = new Set((edit.buses || []).map((b) => b.id));
   let n = 1;
@@ -4416,6 +4524,7 @@ async function apply() {
         : sec === "mqtt" ? cleanMqtt(edit.mqtt)
         : sec === "wx" ? cleanWx(edit.wx)
         : sec === "attachments" ? (edit.attachments || []).map(cleanAttachment)
+        : sec === "zello_accounts" ? (edit.zello_accounts || []).map(cleanZelloAccount)
         : edit[sec];
       const r = await fetch("/api/config/" + sec, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!r.ok) throw new Error(sec + ": " + (await r.text()).trim());
@@ -5226,6 +5335,16 @@ document.getElementById("panels").addEventListener("input", (e) => {
   if (t.dataset.busname != null) { const b = (edit.buses || []).find((x) => x.id === t.dataset.busname); if (b) { b.name = t.value; dirty.add("buses"); } return; }
   if (t.dataset.tgmap != null) { const a = edit.attachments[+t.dataset.tgmap]; a._tgrows[+t.dataset.tgi][t.dataset.tgk] = t.value; dirty.add("attachments"); return; }
   if (t.dataset.attach != null) { edit.attachments[+t.dataset.attach][t.dataset.akey] = t.value; dirty.add("attachments"); return; }
+  // --- Zello ---
+  if (t.dataset.za != null) { edit.zello_accounts[+t.dataset.za][t.dataset.zakey] = t.value; dirty.add("zello_accounts"); return; }
+  if (t.dataset.zc != null) {
+    const z = edit.zello_channels[+t.dataset.zc];
+    // packet_ms is a number in the store; a string here would be rejected as the
+    // wrong type rather than merged.
+    z[t.dataset.zckey] = t.dataset.zckey === "packet_ms" ? (parseInt(t.value, 10) || 0) : t.value;
+    dirty.add("zello_channels");
+    return;
+  }
   // --- per-daemon log levels (System tab). logging is a map of per-daemon
   // objects, so it needs its own path rather than the flat data-sec/data-key pair.
   if (t.dataset.log != null) {
@@ -5537,6 +5656,42 @@ document.getElementById("panels").addEventListener("click", (e) => {
   if (adel) { detachMode(+adel.dataset.attachdel); return; }
   const abool = e.target.closest("[data-attachbool]");
   if (abool) { const a = edit.attachments[+abool.dataset.attachbool]; a[abool.dataset.abkey] = !a[abool.dataset.abkey]; dirty.add("attachments"); renderPanel(); refreshActions(); return; }
+  // --- Zello ---
+  if (e.target.id === "zello-acct-add") {
+    (edit.zello_accounts = edit.zello_accounts || []).push({
+      name: "", username: "", issuer: "", password: "", private_key: "", auth_token: "",
+      has_password: false, has_private_key: false, has_auth_token: false,
+      can_mint_tokens: false, enabled: false,
+    });
+    dirty.add("zello_accounts"); renderPanel(); refreshActions(); return;
+  }
+  const zaen = e.target.closest("[data-zaen]");
+  if (zaen) { const a = edit.zello_accounts[+zaen.dataset.zaen]; a.enabled = !a.enabled; dirty.add("zello_accounts"); renderPanel(); refreshActions(); return; }
+  const zadel = e.target.closest("[data-zadel]");
+  if (zadel) {
+    const a = edit.zello_accounts[+zadel.dataset.zadel];
+    // Deleting an account that channels still name would leave them dangling, and
+    // the server refuses that on save. Say so here rather than at Apply.
+    const used = (edit.zello_channels || []).filter((z) => z.account_ref === a.name).length;
+    if (used) { alert(msg("zello.accountStillUsed")); return; }
+    edit.zello_accounts.splice(+zadel.dataset.zadel, 1);
+    dirty.add("zello_accounts"); renderPanel(); refreshActions(); return;
+  }
+  const zcadd = e.target.closest("[data-zcadd]");
+  if (zcadd) {
+    (edit.zello_channels = edit.zello_channels || []).push({
+      id: newZelloChannelId(), bus_id: zcadd.dataset.zcadd, channel: "",
+      account_ref: (edit.zello_accounts[0] || {}).name || "", listen_only: false,
+      packet_ms: 60, enabled: false,
+    });
+    dirty.add("zello_channels"); renderPanel(); refreshActions(); return;
+  }
+  const zcen = e.target.closest("[data-zcen]");
+  if (zcen) { const z = edit.zello_channels[+zcen.dataset.zcen]; z.enabled = !z.enabled; dirty.add("zello_channels"); renderPanel(); refreshActions(); return; }
+  const zcdel = e.target.closest("[data-zcdel]");
+  if (zcdel) { edit.zello_channels.splice(+zcdel.dataset.zcdel, 1); dirty.add("zello_channels"); renderPanel(); refreshActions(); return; }
+  const zcbool = e.target.closest("[data-zcbool]");
+  if (zcbool) { const z = edit.zello_channels[+zcbool.dataset.zcbool]; z[zcbool.dataset.zbkey] = !z[zcbool.dataset.zbkey]; dirty.add("zello_channels"); renderPanel(); refreshActions(); return; }
   const tgadd = e.target.closest("[data-tgadd]");
   if (tgadd) { const a = edit.attachments[+tgadd.dataset.tgadd]; (a._tgrows = a._tgrows || []).push({ from: "", to: "" }); dirty.add("attachments"); renderPanel(); refreshActions(); return; }
   const tgdel = e.target.closest("[data-tgdel]");

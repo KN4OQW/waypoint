@@ -56,17 +56,35 @@ should not use it — see below.
 
 ## 3. Enter it on the node
 
-On the node's Zello settings, create an account entry with:
+Everything is on **Settings → Gateways**, below the buses.
+
+Under **Zello accounts**, press *Add Zello account* and fill in:
 
 | Field | Value |
 |---|---|
-| Username | the node's Zello account name |
-| Password | that account's password |
+| Name | anything; it is how channels refer to this account |
+| Zello username | the node's Zello account name |
+| Zello password | that account's password |
 | Issuer | from the developer portal |
 | Private key | from the developer portal |
+| Token | leave empty — see below |
 
-Then add a channel row naming the bus to bridge and the Zello channel name
-exactly as it appears in the app.
+Enable it. If the issuer and private key are both set, the card says the account
+signs its own tokens and nothing expires. If you used the token field instead, it
+warns you that the token stops working after 30 days.
+
+The three secrets are write-only. Once saved they are never shown again — the
+fields read *stored — leave blank to keep it*, and leaving them blank on a later
+edit keeps what is there. To change one, type the new value over it.
+
+Then, on the bus you want to bridge, press **Add Zello channel** and set the
+channel name exactly as the Zello app shows it, pick the account, and enable it.
+*Packet size* can stay at 60 ms, which is Zello's own default; 20 ms trades
+bandwidth for a little less delay. *Listen only* joins without transmitting.
+
+Press **Apply** when you are done. The node refuses a configuration it could not
+run — a channel with no account, an account with no username, a packet size Opus
+does not have — and says which, so nothing invalid reaches the daemon.
 
 ### Why not the Sample Development Token
 
