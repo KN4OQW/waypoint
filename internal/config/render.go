@@ -1555,25 +1555,83 @@ func (m *Model) RenderDMRGateway() string {
 	if gwShim.Enabled {
 		rptPort = gwShim.GatewayBindPort
 	}
+	// Resolved before [General] because Id needs it. Same expression the network
+	// blocks below use, so the identity the gateway declares to a master and the
+	// identity it logs in with cannot disagree.
+	dmrID := firstNonEmpty(m.DMR.ID, m.General.ID)
 	sect(&b, "General",
-		// Id is the node's own DMR ID and it is not optional. DMRGateway's
-		// CMMDVMNetwork constructor asserts `id > 0U` (MMDVMNetwork.cpp:52), so a
-		// missing or zero Id is not a warning or a degraded mode — the daemon
-		// aborts on SIGABRT before it opens a socket, and systemd restarts it into
-		// the same abort forever.
+		// Id is REQUIRED from pin 61771e2 onward and there is no safe default for
+		// it. Upstream moved the repeater's identity out of the wire and into this
+		// file: MMDVM-Host used to declare it in the 119-byte DMRC config message
+		// (DMRNetwork.cpp writeConfig, "DMRC" + the 4-byte id), and since
+		// MMDVM-Host b7d15b8 it sends a 4-byte "DMRP" ping carrying nothing at all.
+		// DMRGateway reads the id here instead (DMRGateway.cpp:314,
+		// m_id = m_conf.getId()).
 		//
-		// This was measured, not read: after DMRGateway was updated on the bench
-		// the gateway crash-looped 75 times in a few minutes on that exact
-		// assertion, with the rendered [General] carrying everything except Id.
-		// Older builds took the same key and simply did not check it, which is why
-		// the omission survived this long unnoticed.
-		kv("Id", m.General.ID),
+		// Omitting it aborts the daemon. An earlier draft of this comment said the
+		// opposite -- that a missing key "does not fail loudly" and the node simply
+		// announces DMR ID 0 to every master. That was wrong, and what misled it was
+		// reading only the parser: CConf really does start m_id at 0 (Conf.cpp:47)
+		// and really does not validate it. The check is in the consumer. That 0 is
+		// handed to CMMDVMNetwork's constructor (DMRGateway.cpp:886), which opens
+		// with assert(id > 0U) (MMDVMNetwork.cpp:52), and the Makefile never defines
+		// NDEBUG -- so the assert is live in the binary we ship. The daemon dies on
+		// SIGABRT before it opens a socket, and systemd restarts it into the
+		// identical abort forever. It never reaches a master to announce anything.
+		//
+		// Measured, not read: after DMRGateway was updated on the bench the gateway
+		// crash-looped 75 times in a few minutes on that exact assertion, with the
+		// rendered [General] carrying everything except Id. Older builds took the
+		// same key and never checked it, which is how the omission survived this
+		// long unnoticed -- the same shape as the MMDVM-Host [Info] removal.
+		kv("Id", dmrID),
 		kv("RptAddress", "127.0.0.1"),
 		kv("RptPort", rptPort),
 		kv("LocalAddress", "127.0.0.1"),
 		kv("LocalPort", def(m.DMRNet.GatewayPort, defaultDMRGatewayLocalPort)),
 		kv("Timeout", "10"),
 		kv("Daemon", "0"),
+	)
+	// [Info] is the other half of the same upstream move, and its contents are
+	// chosen to reproduce the OLD DMRC payload exactly rather than to fill in
+	// every key the parser accepts.
+	//
+	// What MMDVM-Host used to put on the wire, from the sprintf in writeConfig at
+	// pin 71e598c, was: callsign, RX frequency, TX frequency, power, colour code,
+	// and a single slots character derived from duplex + slot1 + slot2. Nothing
+	// else. DMRGateway rebuilds the full Homebrew RPTC config from those eight
+	// values plus the Latitude/Longitude/Height/Location/Description/URL it has
+	// always read from its own [Info] (DMRGateway.cpp:1319) — and this renderer
+	// has never written that section, so those have always defaulted. Emitting
+	// only the eight new keys therefore leaves what reaches a master byte-identical
+	// to what a working node sent before the pin bump.
+	//
+	// Latitude and Longitude are deliberately NOT rendered even though the model
+	// now has them (StationLocation). They were entered to pick weather counties —
+	// a private administrative act, as station_location.go argues at length — and
+	// publishing them to BrandMeister would be a new disclosure arriving as a side
+	// effect of a compatibility fix. If a node should announce its position, that
+	// is a consent decision somebody designs on purpose.
+	//
+	// Every key is spelled from Conf.cpp's own strcmp calls, NOT from upstream's
+	// sample DMRGateway.ini: 61771e2 shipped that sample with TXFRequency and
+	// RXFRequency while the parser compares "TXFrequency" and "RXFrequency"
+	// case-sensitively, so a node configured from the sample silently transmits on
+	// 0 Hz. Upstream corrected the sample by 2a3306d; the trap is recorded here
+	// because the next person to add a key will reach for the sample first.
+	sect(&b, "Info",
+		kv("Callsign", m.General.Callsign),
+		kv("RXFrequency", m.Modem.RXFreqHz),
+		kv("TXFrequency", m.Modem.TXFreqHz),
+		kv("Power", def(m.General.Power, "1")),
+		kv("ColorCode", def(m.DMR.ColorCode, DefaultDMRColorCode)),
+		// Duplex comes from the station, the two slots from the loopback — the same
+		// three values MMDVM-Host fed its slots character from (CDMRNetwork's
+		// constructor takes duplex from [General] Duplex and slot1/slot2 from
+		// [DMR Network]). DMRGateway derives the same character from them.
+		kb("Duplex", m.General.Duplex),
+		kb("Slot1", m.DMRNet.Slot1),
+		kb("Slot2", m.DMRNet.Slot2),
 	)
 	sect(&b, "Log", m.logSectionMQTT(m.Logging.DMRGateway)...)
 	sect(&b, "MQTT", m.mqttSection("Address", "Auth", MQTTNameDMRGateway)...)
@@ -1595,7 +1653,6 @@ func (m *Model) RenderDMRGateway() string {
 		kb("Enable", true),
 	)
 
-	dmrID := firstNonEmpty(m.DMR.ID, m.General.ID)
 	n := 0
 	// RFC-0003 Addendum A §1: emit the bus's [DMR Network] blocks FIRST, ahead of the
 	// operator's networks. DMRGateway's RF→network router is two-pass — Pass 1 tries
