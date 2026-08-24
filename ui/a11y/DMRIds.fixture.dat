@@ -1,11 +1,12 @@
 # A tiny stand-in for the RadioID DMRIds.dat export, for the accessibility scan
 # only. The real table is 311,146 rows and 6.4 MB and is downloaded at runtime;
-# a scan must not depend on the network, and a scan of the Phonebook panel's
-# public-list search must not depend on whether it succeeded.
+# a scan must not depend on the network, and a scan of the callsign type-aheads
+# must not depend on whether it succeeded.
 #
-# KN4OQW deliberately carries TWO ids. The panel renders one row per issued id,
-# and the seed imports the first — so the scan meets the list in its most
-# interesting state: one entry marked "already added" beside one still addable.
+# KN4OQW deliberately carries TWO ids. The picker renders one row per issued id,
+# and seedPhonebook imports the first — so the scan meets the dropdown in its
+# most interesting state: one row marked "already added" beside one still
+# addable.
 #
 # Same tab-separated shape as the real export: id, callsign, first name.
 3100001	W1AW	Hiram

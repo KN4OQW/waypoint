@@ -57,10 +57,10 @@ jobs:
           # cannot create, and the daemon exits when it cannot mint its cert.
           # -tls=false: the daemon serves HTTPS by default, and this job probes
           # http://127.0.0.1:8073, so the handshake would never complete.
-          # -dmr-ids: the Phonebook panel's public-list search is scanned in its
-          # answered state, and the real table is a 6.4 MB runtime download. The
-          # fixture makes the state exist deterministically instead of depending
-          # on whether a download succeeded on a CI runner.
+          # -dmr-ids: both callsign type-aheads are scanned with rows in the
+          # dropdown, and the real table behind them is a 6.4 MB runtime
+          # download. The fixture makes that state exist deterministically
+          # instead of depending on whether a download succeeded on a runner.
           ./waypointd -demo -addr 127.0.0.1:8073 -store "$RUNNER_TEMP/a11y.db" \
             -tls=false -tls-dir "$RUNNER_TEMP/tls" \
             -dmr-ids "$GITHUB_WORKSPACE/ui/a11y/DMRIds.fixture.dat" \
