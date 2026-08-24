@@ -326,9 +326,16 @@ The outbound direction has no equivalent and cannot. One connection is one logon
 is one Zello identity, so every RF operator reaches the channel as the gateway
 account. That is Zello's model; document it rather than appear to work around it.
 
-**Unverified:** the DMRA frames are emitted onto the DMR attachment's loopback,
-which on this bus is a local DMRGateway rather than MMDVM-Host directly. Whether
-DMRGateway forwards them intact has not been tested, and belongs to Prompt 8.
+**Does not work, and is filed as issue #279.** The DMRA frames are emitted onto
+the DMR attachment's loopback, which on this bus is a local DMRGateway rather
+than MMDVM-Host directly. Tested on air 2026-08-23: the radio shows only the
+node's DMR ID and the alias never appears. The encoding itself is fine — the
+frames decode back correctly in test — so the loss is somewhere between the bus
+and the radio, most likely DMRGateway not forwarding DMRA from a
+`[DMR Network N]`.
+
+Voice bridging works in both directions without it; the alias is the one part of
+D6 that does not.
 
 ### D7 — UI: an endpoint table and a lane view
 
