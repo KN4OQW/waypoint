@@ -184,6 +184,14 @@ func describeError(code string) string {
 		return code + " — too many channels for one connection; consumer Zello allows exactly one"
 	case ErrCodeChannelNotReady:
 		return code + " — wait for the channel to report online before transmitting"
+	case ErrCodeNotEnoughParams:
+		// Observed against the live service: a logon carrying a username and
+		// password but no auth_token is refused with this, not with "not
+		// authorized". The credentials are never evaluated, so an operator who
+		// has entered a working Zello password sees a failure that says nothing
+		// about the field that is actually missing.
+		return code + " — a Zello logon needs an auth token as well as an account; " +
+			"a username and password alone are refused before the credentials are checked"
 	case "":
 		return "no error code given"
 	default:

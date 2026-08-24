@@ -356,3 +356,30 @@ redistribute" — the same licensing problem this feature has.
 This is a decision for the maintainer, not a detail to settle in code. Prompts 3
 through 7 were not started, because Prompt 4's endpoint shape depends on which
 way it goes.
+
+## Addendum: the first live contact
+
+A logon was sent to `wss://zello.io/ws` with a real consumer account's username
+and password and no `auth_token`. The server answered:
+
+	{"error":"not enough params","seq":1}
+
+That is a sharper answer than AUTH.md gives, and it is worth having. The refusal
+is `not enough params`, not `not authorized` — the request is rejected as
+incomplete and the credentials are never evaluated at all. So the token is not an
+alternative to an account password, and a working Zello password proves nothing
+about whether a bridge will connect.
+
+It also confirms the auth model this package was built against rather than
+contradicting it, which is the outcome Prompt 3 could not reach without an
+account: `auth_token` really is required on consumer Zello, and the client's
+refusal to dial without one matches what the service does.
+
+`describeError` now names this case, because it is the failure an operator who
+has entered everything they think they need will actually hit. The save-time
+validator refuses an enabled account with no token before it gets that far, but
+the message has to be right for the path that reaches the wire.
+
+Still unverified: everything after logon. No token was available, so no stream has
+been started, no audio has crossed, and `on_channel_status` has never been seen
+from the real service.
