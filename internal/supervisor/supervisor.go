@@ -138,7 +138,16 @@ func (s *Supervisor) ObserveEvent(e hub.Event) {
 	if e.Type != status.TypeGatewayStatus || e.Network == "" {
 		return
 	}
-	_, login, ok := DMRGatewayStatus(e.Detail)
+	// Two shapes reach this point. A structured link event arrives with State
+	// already set, decoded from the daemon's own action vocabulary; a prose status
+	// message arrives with State empty and has to be read out of Detail. The
+	// structured one is preferred wherever it is present, because its meaning does
+	// not move when upstream rewords a log line — but the prose path stays, and is
+	// the only path on a node whose DMRGateway predates 2a3306d.
+	login, ok := triFromLinkState(e.State)
+	if !ok {
+		_, login, ok = DMRGatewayStatus(e.Detail)
+	}
 	if !ok {
 		return
 	}
@@ -488,14 +497,16 @@ func (s *Supervisor) publishClaim(a Attachment, d Decision, now time.Time) {
 		// The verdict travels with the prose. Detail already said "awaiting session
 		// evidence" in so many words; this is the same fact in a form a consumer can
 		// branch on without reading English.
-		State: linkState(d.Claim.Session),
+		State: LinkStateString(d.Claim.Session),
 	})
 }
 
-// linkState renders a session verdict as the status package's wire string. It
-// lives here rather than on Tri because Tri is used for unit and endpoint state
-// too, where "up"/"down" would be the wrong words.
-func linkState(t Tri) string {
+// LinkStateString renders a session verdict as the status package's wire string.
+// It lives here rather than on Tri because Tri is used for unit and endpoint state
+// too, where "up"/"down" would be the wrong words. Exported because the MQTT
+// consumer stamps the same vocabulary onto the structured link events it decodes,
+// and two spellings of "up" is exactly the drift this package keeps avoiding.
+func LinkStateString(t Tri) string {
 	switch t {
 	case TriYes:
 		return status.StateUp
@@ -503,5 +514,21 @@ func linkState(t Tri) string {
 		return status.StateDown
 	default:
 		return status.StateUnknown
+	}
+}
+
+// triFromLinkState reads back the wire string LinkStateString writes. ok is false
+// for an empty or unrecognised state, which is how a prose-only event — the ones
+// that carry no State at all — falls through to the Detail path.
+func triFromLinkState(state string) (Tri, bool) {
+	switch state {
+	case status.StateUp:
+		return TriYes, true
+	case status.StateDown:
+		return TriNo, true
+	case status.StateUnknown:
+		return TriUnknown, true
+	default:
+		return TriUnknown, false
 	}
 }

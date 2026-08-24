@@ -23,7 +23,10 @@ import (
 // slower, not wrong. What it buys meanwhile is real: DMRGateway announces a failed
 // login the instant the master says no, which no external probe can see at all.
 //
-// Verified against the pinned DMRGateway (79edbc4, DMRNetwork.cpp/DMRGateway.cpp).
+// Verified against the pinned DMRGateway (2a3306d, DMRNetwork.cpp/DMRGateway.cpp).
+// The earlier citation here named 79edbc4; the prose messages below are unchanged
+// between the two, but that pin predated the structured events DMRGatewayLink now
+// reads, so a reader checking the claim against it would not have found them.
 
 // ParseDMRGatewayStatusReply reads DMRGateway's answer to the "status" remote
 // command — "xlx:n/a net1:conn net2:disc" — into per-slot login state, keyed by
@@ -103,4 +106,50 @@ func DMRGatewayStatus(message string) (network string, login Tri, ok bool) {
 		}
 	}
 	return "", TriUnknown, false
+}
+
+// Structured link events, DMRGateway 2a3306d onward.
+//
+// The prose above is a hint precisely because it is prose. These are not: the
+// daemon publishes {"link":{"action":..,"reason":..,"network":..}} on its
+// <name>/json plane with the network's configured Name= in it, from a fixed
+// vocabulary that schema.json documents and that a wording change cannot silently
+// alter. Where both arrive, this one wins — see Supervisor.ObserveEvent.
+//
+// It does not replace the prose path. A node running an older DMRGateway publishes
+// only the prose, and both are kept so a pin rollback degrades to the previous
+// behaviour rather than to silence.
+//
+// The reasons are the interesting part. "auth" means the master answered the RPTK
+// authorisation with MSTNAK, which is the wrong-password case specifically and by
+// far the most common real support question — previously indistinguishable from
+// any other failed login. They are carried through to the event log rather than
+// interpreted here: what the supervisor needs is the verdict, and what an operator
+// needs is which of these it was.
+const (
+	dmrLinkLinking  = "linking"
+	dmrLinkUnlinked = "unlinked"
+	dmrLinkFailed   = "failed"
+)
+
+// DMRGatewayLink reads one structured link event into a login verdict.
+//
+// ok is false for an unrecognised action, which is deliberately not a failure:
+// upstream may add one, and a supervisor that read an unknown action as "down"
+// would restart a healthy node on the strength of a word it did not know.
+//
+// "linking" is TriYes. That reads oddly — it is the present participle — but the
+// daemon publishes it from the transition into connected state
+// (DMRGateway.cpp:786, guarded by isConnected() changing), not from the attempt.
+// The name matches the vocabulary the YSF/P25/NXDN gateways already use for the
+// same transition, which is why upstream chose it.
+func DMRGatewayLink(action string) (login Tri, ok bool) {
+	switch action {
+	case dmrLinkLinking:
+		return TriYes, true
+	case dmrLinkUnlinked, dmrLinkFailed:
+		return TriNo, true
+	default:
+		return TriUnknown, false
+	}
 }
