@@ -78,3 +78,44 @@ func TestResamplersHandleEmptyInput(t *testing.T) {
 		t.Errorf("Downsample16to8(nil) = %v", got)
 	}
 }
+
+// The far end announces its own rate; assuming 16 kHz made everyone sound wrong
+// rather than producing an error.
+func TestResampleTo8kHandlesTheRatesInPractice(t *testing.T) {
+	tone := func(n, rate int) []int16 {
+		v := make([]int16, n)
+		for i := range v {
+			v[i] = int16(8000 * math.Sin(2*math.Pi*300*float64(i)/float64(rate)))
+		}
+		return v
+	}
+	for _, rate := range []int{8000, 12000, 16000, 24000, 48000} {
+		ms := 60
+		in := tone(rate*ms/1000, rate)
+		out := ResampleTo8k(in, rate)
+		want := 8000 * ms / 1000
+		if len(out) != want {
+			t.Errorf("%d Hz: got %d samples, want %d (%d ms at 8 kHz)", rate, len(out), want, ms)
+			continue
+		}
+		rms := func(v []int16) float64 {
+			var e float64
+			for _, s := range v {
+				e += float64(s) * float64(s)
+			}
+			return math.Sqrt(e / float64(len(v)))
+		}
+		if r := rms(out) / rms(in); r < 0.8 || r > 1.2 {
+			t.Errorf("%d Hz: energy ratio %.2f", rate, r)
+		}
+	}
+}
+
+func TestResampleTo8kIsSafeOnDegenerateInput(t *testing.T) {
+	if got := ResampleTo8k(nil, 16000); got != nil {
+		t.Errorf("nil input gave %v", got)
+	}
+	if got := ResampleTo8k([]int16{1, 2, 3}, 0); got != nil {
+		t.Errorf("a zero rate gave %v", got)
+	}
+}

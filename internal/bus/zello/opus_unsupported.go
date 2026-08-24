@@ -15,6 +15,7 @@ var ErrNoOpus = errors.New("zello: built without the zello tag, so libopus is un
 const (
 	DefaultSampleRate = 16000
 	DefaultFrameMS    = 60
+	MaxPacketMS       = 120
 )
 
 // Encoder is unavailable without the tag.
@@ -40,3 +41,6 @@ func NewDecoder(int) (*Decoder, error) { return nil, ErrNoOpus }
 
 // Decode reports ErrNoOpus.
 func (d *Decoder) Decode([]byte) ([]int16, error) { return nil, ErrNoOpus }
+
+// SampleRate reports zero.
+func (d *Decoder) SampleRate() int { return 0 }

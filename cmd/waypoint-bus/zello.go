@@ -95,6 +95,7 @@ type zelloEndpoint struct {
 
 	inStream  uint32 // synthesized bus stream id for the inbound transmission
 	inFrom    string // the Zello username currently talking, for the talker alias
+	inRate    int    // sample rate of the inbound stream, from its codec_header
 	closeOnce sync.Once
 	done      chan struct{}
 }
@@ -131,6 +132,7 @@ func openZelloSink(z config.BusZello, v config.BusVocoder, srcID uint32, inject 
 	e := &zelloEndpoint{
 		cfg:    z,
 		srcID:  srcID,
+		inRate: zello.DefaultSampleRate,
 		inject: inject,
 		br:     newZelloBridge(voc, enc, dec, z.PacketMS),
 		done:   make(chan struct{}),
@@ -223,7 +225,7 @@ func (e *zelloEndpoint) pump(cli *zello.Client) {
 			switch ev.Command {
 			case zello.EvtOnStreamStart:
 				log.Printf("zello %q: %s is talking", e.cfg.Channel, ev.From)
-				e.beginInbound(ev.From)
+				e.beginInbound(ev.From, ev.CodecHeader)
 			case zello.EvtOnStreamStop:
 				e.endInbound()
 			case zello.EvtOnError:
@@ -239,10 +241,23 @@ func (e *zelloEndpoint) pump(cli *zello.Client) {
 	}
 }
 
-func (e *zelloEndpoint) beginInbound(from string) {
+func (e *zelloEndpoint) beginInbound(from, codecHeader string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.inFrom = from
+
+	// The far end picks its own rate and announces it here. Decoding at the rate
+	// this end happens to transmit at produces audio at the wrong speed rather
+	// than an error, so the decoder is rebuilt whenever the stream disagrees.
+	if h, err := zello.ParseCodecHeader(codecHeader); err == nil && int(h.SampleRateHz) != e.inRate {
+		if dec, err := zello.NewDecoder(int(h.SampleRateHz)); err == nil {
+			e.inRate = int(h.SampleRateHz)
+			e.br.SetDecoder(dec)
+			log.Printf("zello %q: inbound stream is %d Hz", e.cfg.Channel, h.SampleRateHz)
+		} else {
+			log.Printf("zello %q: cannot decode %d Hz: %v", e.cfg.Channel, h.SampleRateHz, err)
+		}
+	}
 	// A fresh stream id per inbound transmission, so the router's echo
 	// suppression and its per-stream bus_busy accounting treat each over
 	// separately.

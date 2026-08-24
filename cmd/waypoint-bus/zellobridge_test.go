@@ -55,10 +55,20 @@ func (f *fakeOpusEncoder) Encode(pcm []int16) ([]byte, error) {
 	return f.buf[:3], nil
 }
 
-type fakeOpusDecoder struct{ samples int }
+type fakeOpusDecoder struct {
+	samples int
+	rate    int
+}
 
 func (f *fakeOpusDecoder) Decode(pkt []byte) ([]int16, error) {
 	return make([]int16, f.samples), nil
+}
+
+func (f *fakeOpusDecoder) SampleRate() int {
+	if f.rate == 0 {
+		return 16000
+	}
+	return f.rate
 }
 
 func bridgeFor(packetMS int) (*zelloBridge, *fakeVocoder, *fakeOpusEncoder) {
@@ -409,5 +419,49 @@ func TestTheAliaserForgetsAStreamWhenItEnds(t *testing.T) {
 	a.framesFor(frames.Frame{Kind: frames.KindTerminator, Stream: frames.Stream{ID: 1}})
 	if len(a.sent) != 0 {
 		t.Errorf("sent still has %d entries after the terminator", len(a.sent))
+	}
+}
+
+// An inbound stream at 8 kHz needs no resampling; one at 16 kHz halves. Assuming
+// the latter made an 8 kHz stream arrive at half speed — audible as everyone
+// sounding wrong, with nothing logged, which is why the bridge asks the decoder
+// its rate rather than assuming one.
+func TestInboundAudioIsResampledFromTheStreamsOwnRate(t *testing.T) {
+	for _, tc := range []struct{ rate, packetSamples, wantCodewords int }{
+		{16000, 16 * 60, 1}, // 60 ms at 16 kHz -> 480 samples at 8 kHz -> 3 codewords
+		{8000, 8 * 60, 1},   // 60 ms at 8 kHz  -> 480 samples at 8 kHz -> 3 codewords
+	} {
+		voc := &fakeVocoder{}
+		enc := &fakeOpusEncoder{samples: 16 * 60}
+		dec := &fakeOpusDecoder{samples: tc.packetSamples, rate: tc.rate}
+		b := newZelloBridge(voc, enc, dec, 60)
+
+		got, err := b.ToBus([]byte{1, 2, 3})
+		if err != nil {
+			t.Fatalf("%d Hz: ToBus: %v", tc.rate, err)
+		}
+		if len(got) != tc.wantCodewords {
+			t.Errorf("%d Hz: got %d bus frame(s), want %d — the rate was not honoured",
+				tc.rate, len(got), tc.wantCodewords)
+		}
+	}
+}
+
+// Replacing the decoder mid-connection must not leave half a frame from the
+// previous stream in the buffer, or the first codeword of the new one is part of
+// somebody else's audio.
+func TestSetDecoderClearsBufferedAudio(t *testing.T) {
+	b, _, _ := bridgeFor(60)
+	// One 20 ms packet leaves under a full group pending.
+	b.dec = &fakeOpusDecoder{samples: 16 * 20, rate: 16000}
+	if _, err := b.ToBus([]byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.pendingCW) == 0 && len(b.toBus) == 0 {
+		t.Skip("nothing buffered to clear")
+	}
+	b.SetDecoder(&fakeOpusDecoder{samples: 16 * 60, rate: 16000})
+	if len(b.toBus) != 0 || len(b.pendingCW) != 0 {
+		t.Errorf("SetDecoder left %d samples and %d codewords buffered", len(b.toBus), len(b.pendingCW))
 	}
 }

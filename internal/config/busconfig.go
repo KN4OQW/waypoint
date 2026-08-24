@@ -176,13 +176,18 @@ func (c BusConfig) Validate() error {
 	// lives in the Peering block, not Attachments — so count both. A member is a
 	// real bus endpoint (its voice reframes to the local modes and back), so a bus
 	// with one local mode + one member is a valid two-endpoint hub.
-	endpoints := len(c.Attachments)
+	// A Zello channel is an endpoint like any other. It was left out of this count
+	// when the feature was added, so the headline case — one DMR attachment
+	// bridged to one Zello channel — read as a one-endpoint bus and the daemon
+	// refused to start on a configuration the UI had just accepted. Found on the
+	// bench, not in a test, which is why there is one below it now.
+	endpoints := len(c.Attachments) + len(c.Zello)
 	if c.Peering != nil {
 		endpoints += len(c.Peering.Members)
 	}
 	if endpoints < 2 {
-		return fmt.Errorf("bus %q has %d endpoint(s) (%d local + %d peer member(s)); a bus needs at least 2 to hub",
-			c.Bus.ID, endpoints, len(c.Attachments), peeringMemberCount(c.Peering))
+		return fmt.Errorf("bus %q has %d endpoint(s) (%d local + %d peer member(s) + %d Zello channel(s)); a bus needs at least 2 to hub",
+			c.Bus.ID, endpoints, len(c.Attachments), peeringMemberCount(c.Peering), len(c.Zello))
 	}
 	return nil
 }

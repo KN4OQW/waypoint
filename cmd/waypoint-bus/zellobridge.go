@@ -41,6 +41,7 @@ type opusEncoderIface interface {
 }
 type opusDecoderIface interface {
 	Decode(packet []byte) ([]int16, error)
+	SampleRate() int
 }
 
 // vocoderRate is the vocoder's sample rate and the bridge's internal one. Zello
@@ -130,7 +131,10 @@ func (b *zelloBridge) ToBus(packet []byte) ([][][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bridge: Opus decode: %w", err)
 	}
-	b.toBus = append(b.toBus, zello.Downsample16to8(wide)...)
+	// Resampled from whatever the far end announced, not from an assumed 16 kHz.
+	// A stream at another rate decoded fine and then played at the wrong speed —
+	// audible as everyone sounding wrong, with nothing logged.
+	b.toBus = append(b.toBus, zello.ResampleTo8k(wide, b.dec.SampleRate())...)
 
 	for len(b.toBus) >= vocoderFrameSamples {
 		cw, err := b.voc.Encode(b.toBus[:vocoderFrameSamples])
@@ -288,4 +292,13 @@ func (a *zelloAliaser) framesFor(f frames.Frame) [][]byte {
 		return nil
 	}
 	return out
+}
+
+// SetDecoder replaces the inbound Opus decoder, for when a stream announces a
+// rate other than the one this bridge was built with. Called between
+// transmissions, never during one.
+func (b *zelloBridge) SetDecoder(d opusDecoderIface) {
+	b.dec = d
+	b.toBus = b.toBus[:0]
+	b.pendingCW = b.pendingCW[:0]
 }

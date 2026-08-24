@@ -434,3 +434,30 @@ func TestABusWithoutZelloRendersNoVocoder(t *testing.T) {
 		t.Errorf("a bus with no Zello channel rendered a vocoder block: %s", out)
 	}
 }
+
+// The headline configuration: one mode attachment bridged to one Zello channel.
+// It was refused at daemon startup because the endpoint count ignored Zello,
+// after the UI and the save-time validator had both accepted it — the worst place
+// for a disagreement, since nothing the operator can see is wrong.
+func TestOneModeAndOneZelloChannelIsAStartableBus(t *testing.T) {
+	bc := BusConfig{
+		Bus:         Bus{ID: "b1", Name: "Bus 1", Enabled: true},
+		Attachments: []Attachment{{BusID: "b1", Mode: ModeDMR}},
+		Zello:       []BusZello{{ID: "z1", Channel: "Ham Radio", Username: "gw", AuthToken: "t", PacketMS: 60}},
+	}
+	if err := bc.Validate(); err != nil {
+		t.Fatalf("a DMR attachment bridged to one Zello channel was refused: %v", err)
+	}
+}
+
+// A bus with nothing but a Zello channel still has nowhere to hub to, so the
+// count must not be satisfied by Zello alone.
+func TestAZelloChannelAloneIsNotABus(t *testing.T) {
+	bc := BusConfig{
+		Bus:   Bus{ID: "b1", Name: "Bus 1", Enabled: true},
+		Zello: []BusZello{{ID: "z1", Channel: "Ham Radio", Username: "gw", AuthToken: "t", PacketMS: 60}},
+	}
+	if err := bc.Validate(); err == nil {
+		t.Fatal("a bus with only a Zello channel was accepted")
+	}
+}

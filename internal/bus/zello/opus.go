@@ -113,16 +113,30 @@ func NewDecoder(sampleRate int) (*Decoder, error) {
 	return &Decoder{dec: dec, sampleRate: sampleRate}, nil
 }
 
-// Decode expands one packet. maxFrameMS bounds the output buffer; 60 covers
-// every size Zello permits.
+// MaxPacketMS is the most audio one Opus packet can carry.
+//
+// Not 60. Zello's packet_duration caps at 60 ms and its codec_header allows two
+// frames per packet, and Opus itself permits a packet to hold up to 120 ms — so
+// the decode buffer is sized for what the format allows, not for what this end
+// chose to send.
+//
+// Measured the hard way: a buffer of one 60 ms frame made libopus answer
+// "buffer too small" for every packet a Zello phone sent, and the whole inbound
+// direction was silent while the connection looked healthy.
+const MaxPacketMS = 120
+
+// Decode expands one packet.
 func (d *Decoder) Decode(pkt []byte) ([]int16, error) {
 	if len(pkt) == 0 {
 		return nil, fmt.Errorf("zello: Opus decode: empty packet")
 	}
-	pcm := make([]int16, d.sampleRate*60/1000)
+	pcm := make([]int16, d.sampleRate*MaxPacketMS/1000)
 	n, err := d.dec.Decode(pkt, pcm)
 	if err != nil {
-		return nil, fmt.Errorf("zello: Opus decode: %w", err)
+		return nil, fmt.Errorf("zello: Opus decode at %d Hz: %w", d.sampleRate, err)
 	}
 	return pcm[:n], nil
 }
+
+// SampleRate is the rate this decoder was built for.
+func (d *Decoder) SampleRate() int { return d.sampleRate }

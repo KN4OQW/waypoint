@@ -48,3 +48,39 @@ func Downsample16to8(in []int16) []int16 {
 	}
 	return out
 }
+
+// ResampleTo8k converts PCM at any rate to the vocoder's 8 kHz.
+//
+// The two fixed-ratio helpers above are the hot path and stay; this is the
+// general case, needed because the far end chooses its own rate and announces it
+// in on_stream_start. Zello clients overwhelmingly send 16 kHz, but nothing in
+// the protocol says they must, and assuming it produced audio at the wrong speed
+// rather than an error — the failure mode with no symptom except that everyone
+// sounds wrong.
+//
+// Linear interpolation, for the same reason the fixed helpers use it: the signal
+// is about to go through AMBE+2 at 8 kHz, so there is no detail above 4 kHz for
+// anything more careful to preserve.
+func ResampleTo8k(in []int16, rate int) []int16 {
+	switch {
+	case len(in) == 0 || rate <= 0:
+		return nil
+	case rate == 8000:
+		return in
+	case rate == 16000:
+		return Downsample16to8(in)
+	}
+	out := make([]int16, len(in)*8000/rate)
+	for i := range out {
+		// Position in the source, in fixed point to avoid a float per sample.
+		pos := i * rate / 8000
+		frac := (i * rate) % 8000 * 256 / 8000
+		if pos+1 >= len(in) {
+			out[i] = in[len(in)-1]
+			continue
+		}
+		a, b := int32(in[pos]), int32(in[pos+1])
+		out[i] = int16(a + (b-a)*int32(frac)/256)
+	}
+	return out
+}
