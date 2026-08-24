@@ -136,6 +136,9 @@ type Bus struct {
 	voiceStart time.Time
 
 	// Per-transmission working state, reset on token acquire / release.
+	// voiceN counts emitted voice frames per destination, for the DMR superframe
+	// position — see fanout.
+	voiceN        map[config.Mode]uint8
 	reframers     map[config.Mode]*reframer
 	emitted       map[emitKey]bool // (dst mode, stream id) the bus itself put out — echo suppression (§5 rule 4)
 	busyAnnounced map[busyKey]bool // (loser mode, stream id) already surfaced as bus_busy — once per losing stream
@@ -163,6 +166,7 @@ func New(cfg Config, pub Publisher) *Bus {
 }
 
 func (b *Bus) resetTransmission() {
+	b.voiceN = make(map[config.Mode]uint8, len(b.cfg.Attachments))
 	b.reframers = make(map[config.Mode]*reframer, len(b.cfg.Attachments))
 	for _, a := range b.cfg.Attachments {
 		b.reframers[a.Mode] = newReframer(a.FMode)
@@ -249,6 +253,20 @@ func (b *Bus) fanout(origin config.Mode, f frames.Frame) []Emission {
 			for _, grp := range b.reframers[dst.Mode].push(f.AMBE) {
 				vf := framePassthrough(dst, f, frames.KindVoice)
 				vf.AMBE = grp
+				// The superframe position is the DESTINATION's, counted over the
+				// frames actually emitted to it, not copied from the source.
+				//
+				// Reframing changes how many frames come out, so a source's own
+				// numbering does not survive it, and a source that has no such
+				// concept (YSF, NXDN, a Zello endpoint) has none to copy. Leaving
+				// it zero marks every burst as the sync frame, and a DMR radio
+				// then never receives the link control and decodes noise — it
+				// keys up and plays nothing, which is exactly what the bench
+				// showed for Zello-to-RF before this existed.
+				//
+				// Only DMR destinations read it; for the others it is inert.
+				vf.VoiceSeq = b.voiceN[dst.Mode]
+				b.voiceN[dst.Mode] = (b.voiceN[dst.Mode] + 1) % frames.DMRVoiceSuperframe
 				out = append(out, b.emit(dst, vf))
 			}
 		}

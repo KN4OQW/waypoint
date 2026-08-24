@@ -96,6 +96,7 @@ type zelloEndpoint struct {
 	inStream  uint32 // synthesized bus stream id for the inbound transmission
 	inFrom    string // the Zello username currently talking, for the talker alias
 	inRate    int    // sample rate of the inbound stream, from its codec_header
+	inSeq     uint8  // DMR per-stream packet counter for the frames we inject
 	closeOnce sync.Once
 	done      chan struct{}
 }
@@ -262,18 +263,31 @@ func (e *zelloEndpoint) beginInbound(from, codecHeader string) {
 	// suppression and its per-stream bus_busy accounting treat each over
 	// separately.
 	e.inStream = uint32(time.Now().UnixNano())
+	e.inSeq = 0
 	e.br.Reset()
+
+	// A voice header opens the transmission. Without one a radio gets voice
+	// bursts for a call it was never told about: MMDVM-Host builds its embedded
+	// link control from the header, and the superframe positions the router
+	// numbers are the fragments of that same link control. The header is what
+	// makes them mean anything.
+	e.inject(frames.Frame{
+		Kind:        frames.KindHeader,
+		SrcID:       e.srcID,
+		SrcCallsign: from,
+		Stream:      frames.Stream{ID: e.inStream},
+	})
 }
 
 func (e *zelloEndpoint) endInbound() {
 	e.mu.Lock()
-	stream := e.inStream
+	stream, seq := e.inStream, e.inSeq
 	e.inStream, e.inFrom = 0, ""
 	e.br.Reset()
 	e.mu.Unlock()
 	releaseInbound(e.cfg.ID)
 	if stream != 0 {
-		e.inject(frames.Frame{Kind: frames.KindTerminator, SrcID: e.srcID, Stream: frames.Stream{ID: stream}})
+		e.inject(frames.Frame{Kind: frames.KindTerminator, SrcID: e.srcID, Stream: frames.Stream{ID: stream, Seq: seq}})
 	}
 }
 
@@ -301,6 +315,10 @@ func (e *zelloEndpoint) onInboundAudio(p zello.StreamPacket) {
 		return
 	}
 	for _, g := range groups {
+		e.mu.Lock()
+		seq := e.inSeq
+		e.inSeq++
+		e.mu.Unlock()
 		e.inject(frames.Frame{
 			Kind:  frames.KindVoice,
 			SrcID: e.srcID,
@@ -309,7 +327,7 @@ func (e *zelloEndpoint) onInboundAudio(p zello.StreamPacket) {
 			// omission — so who is talking can only be what the wire said, and
 			// this is the field the frame layer has for a textual source.
 			SrcCallsign: from,
-			Stream:      frames.Stream{ID: stream},
+			Stream:      frames.Stream{ID: stream, Seq: seq},
 			AMBE:        g,
 		})
 	}
