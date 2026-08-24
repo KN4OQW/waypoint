@@ -151,6 +151,20 @@ func (m *Model) BootEnableUnits(paths Paths) []string {
 	return out
 }
 
+// RunningUnits names the units this node is configured to be running, for a caller
+// that has the model but not the Paths — the stack updater, which must know which
+// gateways to restart and health-gate after an upgrade but has no business knowing
+// where their INIs live.
+//
+// It is BootEnableUnits over a zero Paths, and that is sound rather than a fudge:
+// RenderTargets picks a target's Unit from the model alone (GatewayRuns, and the
+// EnableDGId swap), and reads Paths only to fill in each target's Path. The zero
+// value therefore changes which files a target names and never which units the set
+// contains. TestRunningUnitsMatchesBootEnableUnits pins that, so a future target
+// that did make its unit path-dependent would fail there rather than silently give
+// the updater a different answer from the apply loop.
+func (m *Model) RunningUnits() []string { return m.BootEnableUnits(Paths{}) }
+
 // BootDisableUnits is the complement: every unit this daemon manages that the
 // render did NOT ask for. Deriving it (rather than listing displaced and blocked
 // units by hand) is what makes "switched off" and "not started at boot" the same

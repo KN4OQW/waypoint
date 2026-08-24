@@ -280,13 +280,14 @@ settings tab (installed versions, what is available, an Apply button).
    [Revert relies on the repo keeping old versions](#revert-relies-on-the-repo-keeping-old-versions).
 1. **Record** the currently-installed version of every affected package (the
    revert set) in the store.
-2. **Stop** the affected services.
+2. **Stop** the affected services — *all* of them, including units this node does
+   not normally run, so nothing is left running off a half-replaced binary.
 3. **`apt-get install`** the *exact* target versions
    (`waypoint-mmdvmhost=<ver> …`) — never a bare `upgrade`/`dist-upgrade`, so
    apt touches only the named packages.
-4. **Restart** the services.
+4. **Restart** the services **this node is configured to run** (`Plan.RunUnits`).
 5. **Health-gate**: poll until healthy for several consecutive checks —
-   **every affected unit is `active`, and MMDVMHost's modem is open on a node
+   **every restarted unit is `active`, and MMDVMHost's modem is open on a node
    that runs one**. The modem-open signal is ground-truthed: MMDVMHost
    **exits(1)** when its modem will not open (`MMDVM-Host.cpp` `createModem →
    return 1`), so a `waypoint-mmdvm.service` that will not stay cleanly
@@ -294,17 +295,36 @@ settings tab (installed versions, what is available, an Apply button).
    scraping. A brief healthy blip mid-restart does not confirm; the health must
    *sustain*.
 
-   The modem host is included even when the update touched no package that backs
-   it — an update must not leave it down. But *whether this node runs one at all*
-   is a config question (`config.ModemHostRuns`), and the caller answers it
-   (`Plan.RequireMMDVM`). A node with every mode off, or with no modem port set,
-   correctly runs no modem host; gating on a unit that is deliberately stopped
-   would fail every update on it forever, which is the same "always reverts"
-   shape that [#221](https://github.com/KN4OQW/waypoint/issues/221) was
-   investigated through.
+   Which units those are is a **config** question, not an apt one, and the caller
+   answers it from the same desired-state set the apply loop uses
+   (`config.RunningUnits`, i.e. `RenderTargets` — see
+   [architecture.md](architecture.md)). Restarting or gating on a unit this node
+   deliberately does not run would fail every update on it forever:
+
+   - A gateway whose mode is off has **no rendered INI**, because `RenderTargets`
+     only writes one for a mode that runs. Restarting it starts a daemon that
+     exits(1) with `Couldn't open the .ini file`, and the gate then reports
+     `waypoint-<mode>gateway.service is not active`. Measured on the bench node
+     on 2026-08-24: a DMR-only node took a twelve-package update, every package
+     installed cleanly, and the gate reverted it on `waypoint-dgidgateway`. Since
+     almost no node runs every mode, almost no node could take a stack update.
+   - The **modem host** is the same question asked about MMDVMHost, and is
+     handled separately (`Plan.RequireMMDVM`) only because it works the other way
+     round: it is required even when the update touched no package that backs it,
+     since an update must not leave it down. A node with every mode off, or with
+     no modem port set, correctly runs no modem host — the "always reverts" shape
+     that [#221](https://github.com/KN4OQW/waypoint/issues/221) was investigated
+     through.
 6. **Confirm**, or on any failure (a failed install, a failed restart, or a
    health gate that never sustains) **revert**: reinstall the previous versions
    and restart.
+
+   **A revert whose reinstall fails still restarts the services.** The packages
+   stay wherever the failed downgrade left them — that is reported, and recorded
+   as `revert_failed` — but the node does not also lose its radio. This used to
+   return early, so on the bench node a failed revert left every gateway,
+   `waypoint-dmrgateway.service` included, dead until an operator applied config
+   by hand. A node running the wrong versions still beats a silent one.
 
 ### Revert relies on the repo keeping old versions
 
