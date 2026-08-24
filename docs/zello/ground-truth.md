@@ -448,19 +448,26 @@ against the service.
 
 ### Not being a member of a channel is silent
 
-Three states, told apart by measurement on one channel with two accounts:
+Three responses, all observed:
 
 | Situation | What the service does |
 |---|---|
-| Account is a member | `on_channel_status` with `status: online`, `users_online` counting this connection |
-| Account is NOT a member | `on_channel_status` with `status: offline`, `users_online: 0`, and it never changes |
-| No such channel | `on_error` |
+| A channel the account can join | `on_channel_status` with `status: online`, `users_online` counting this connection |
+| A plausible name the account cannot join | `on_channel_status` with `status: offline`, `users_online: 0`, and it never changes |
+| An obviously absent name | `on_error` |
 
-The middle case is the trap. There is no error and no timeout — the connection is
-up, logon succeeded, and the channel simply never comes online. A bridge that
-transmits anyway gets `channel is not ready`; one that waits, waits forever. The
-endpoint must treat a channel that has not come online within a bounded time as a
-configuration fault and say so, because nothing else will.
+The middle case is the trap, and it is worth being precise about what was and was
+not established. What is certain: a logon can succeed, the connection can stay up,
+and the channel can report offline forever with no error of any kind. What is not
+certain is exactly which condition produces that rather than `on_error` —
+membership and a mistyped-but-real name are not distinguishable from the outside,
+and the case that produced it here turned out to be the wrong channel name, not
+the missing membership first assumed.
+
+Either way the lesson holds and it is the actionable one: **the endpoint must
+treat a channel that has not come online within a bounded time as a configuration
+fault and say so**, because the service will not. A bridge that transmits anyway
+gets `channel is not ready`; one that simply waits, waits forever.
 
 ### `no permission` and `invalid username` mean opposite things
 

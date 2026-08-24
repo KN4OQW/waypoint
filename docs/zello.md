@@ -29,10 +29,11 @@ In the Zello app, signed out of your own account or on a second device:
    or `n0call-waypoint` — so people in a channel can tell it is a gateway and not a
    person.
 2. Confirm the account by whatever means Zello asks for.
-3. Add it to each channel you want the node to bridge. This step is easy to
-   forget and gives no error when you do: a channel the account has not joined
-   connects normally and then stays offline forever. If the node says a channel
-   never came online, this is why.
+3. Add it to each channel you want the node to bridge, and note the channel name
+   exactly as the app shows it. Both of these fail silently: if the account
+   cannot join a channel, or the name is even slightly wrong, the node connects
+   normally and the channel simply stays offline forever with no error. If the
+   node reports a channel that never came online, check the spelling first.
 
 Then sign out of it on the phone and leave it alone. Anything signed in to it
 will disconnect the node.
@@ -122,8 +123,8 @@ side does natively.
 | `not enough params` | No token and no key material — the node has nothing to authenticate with. |
 | `not authorized` | The token is not valid. If it is a sample token, it has probably expired. |
 | `channel is not ready` | The channel has not come online yet. The node waits and retries. |
-| The channel stays offline and never comes online | The node's account is not a member of that channel. Add it in the Zello app. A channel the account has joined comes online as soon as the node connects; one it has not joined reports offline forever, with no error. |
-| `on_error` right after connecting | No channel by that name. Check it against the app — this is a different failure from not being a member. |
+| The channel stays offline and never comes online | The node cannot join that channel — either the name is not exactly right, or the account is not a member. Check the name character for character against the app first; it is the more common of the two and neither produces an error. |
+| `on_error` right after connecting | No channel by that name at all. |
 | The channel is silent after a month | A sample development token expired. Switch to the Issuer and Private Key. |
 
 ## Privacy
