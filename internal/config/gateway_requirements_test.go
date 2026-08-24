@@ -573,3 +573,54 @@ func iniValue(t *testing.T, ini, key string) string {
 	t.Fatalf("rendered config carries no %s key", key)
 	return ""
 }
+
+// TestRunningUnitsMatchesBootEnableUnits pins the claim RunningUnits' doc comment
+// makes: RenderTargets picks each target's Unit from the model alone and reads
+// Paths only for the file locations, so answering over a zero Paths gives the
+// stack updater the same unit set the apply loop uses. A future target that made
+// its unit path-dependent would fail here rather than silently hand the updater a
+// different answer.
+func TestRunningUnitsMatchesBootEnableUnits(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Model)
+	}{
+		{"fixture as-is", func(*Model) {}},
+		{"every mode on", func(m *Model) {
+			m.Modes = Modes{DStar: true, DMR: true, YSF: true, P25: true, NXDN: true, M17: true, POCSAG: true, FM: true}
+			m.POCSAG.AuthKey = "k"
+		}},
+		{"every mode off", func(m *Model) { m.Modes = Modes{} }},
+		{"DG-ID swap", func(m *Model) { m.Modes = Modes{YSF: true}; m.YSFGW.EnableDGId = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := fixture()
+			tc.mutate(m)
+			if got, want := m.RunningUnits(), m.BootEnableUnits(testPaths()); !slices.Equal(got, want) {
+				t.Fatalf("RunningUnits() = %v, want the boot set %v", got, want)
+			}
+		})
+	}
+}
+
+// The bench failure of 2026-08-24 stated in config's terms: a DMR-only node is
+// not running the DG-ID gateway, so a stack update that upgrades that package
+// must not restart it or wait for it to become healthy. It was the gate on this
+// unit that reverted an otherwise clean twelve-package update.
+func TestRunningUnitsExcludesGatewaysForDisabledModes(t *testing.T) {
+	m := fixture()
+	m.Modes = Modes{DMR: true}
+
+	running := m.RunningUnits()
+	if !slices.Contains(running, unitDMRGateway) {
+		t.Fatalf("the DMR gateway must be in the running set; got %v", running)
+	}
+	if !slices.Contains(running, unitMMDVM) {
+		t.Fatalf("the modem host must be in the running set; got %v", running)
+	}
+	for _, off := range []string{unitDGIdGateway, unitYSFGateway, unitP25Gateway, unitNXDNGateway, unitM17Gateway, unitDStarGateway, unitDAPNETGateway} {
+		if slices.Contains(running, off) {
+			t.Errorf("%q is in the running set with its mode off; got %v", off, running)
+		}
+	}
+}

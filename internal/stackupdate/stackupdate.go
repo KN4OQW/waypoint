@@ -120,6 +120,23 @@ type Plan struct {
 	Updates   []Update `json:"updates"`
 	Units     []string `json:"units"`  // affected systemd units, deduped, stable order
 	Reason    string   `json:"reason"` // why nothing is available, when !Available
+	// RunUnits is the subset of Units this node is actually meant to be running,
+	// and it is what Apply restarts and health-gates on. Units stays the whole set
+	// because *stopping* is unconditional: a unit must not be left running off a
+	// half-replaced binary whether or not this node is supposed to run it.
+	//
+	// The two differ on every node that does not run every mode — which is nearly
+	// all of them. RenderTargets only writes a gateway's INI when its mode is on,
+	// so restarting waypoint-dgidgateway.service on a DMR-only node starts a daemon
+	// that exits(1) with "Couldn't open the .ini file", and the gate then reports
+	// "waypoint-dgidgateway.service is not active" and reverts a perfectly good
+	// update. Measured on the bench node 2026-08-24: every one of the twelve
+	// packages installed cleanly and the update still failed on that unit.
+	//
+	// Callers narrow it with RestrictToRunning; PlanFrom leaves it equal to Units
+	// so a caller that cannot answer the config question keeps the old behaviour
+	// rather than silently restarting nothing.
+	RunUnits []string `json:"run_units"`
 	// RequireMMDVM adds MMDVMHost's unit to the health gate even when the update
 	// touched no package that backs it — a stack update must not leave the modem
 	// host down. It is set by the caller rather than assumed here, because whether
@@ -127,7 +144,35 @@ type Plan struct {
 	// (config.ModemHostRuns): a node with every mode off, or with no modem port
 	// set, correctly runs no modem host, and gating on a unit that is *meant* to
 	// be stopped would fail every update on it forever.
+	//
+	// RunUnits generalises exactly that reasoning to the gateways. This field is
+	// kept separate because it works the other way round — it ADDS a unit the plan
+	// did not touch — and because MMDVMHost is required even when the update
+	// upgraded no package that backs it.
 	RequireMMDVM bool `json:"require_mmdvm"`
+}
+
+// RestrictToRunning narrows RunUnits to those units the node is configured to run,
+// as answered by config (Model.BootEnableUnits — "what should be running here",
+// derived from the render target set). Units not in `running` are still stopped
+// before the install; they are simply not started again or gated on.
+//
+// A nil or empty `running` is taken at face value — a node that runs nothing has
+// nothing to restart — because the one caller derives it from the same model that
+// decides what to render. It is not a "caller forgot" sentinel; a caller that
+// cannot answer does not call this at all.
+func (p *Plan) RestrictToRunning(running []string) {
+	runs := make(map[string]bool, len(running))
+	for _, u := range running {
+		runs[u] = true
+	}
+	kept := make([]string, 0, len(p.Units))
+	for _, u := range p.Units {
+		if runs[u] {
+			kept = append(kept, u)
+		}
+	}
+	p.RunUnits = kept
 }
 
 // PackageNames returns the package names in the plan, in order.
@@ -287,7 +332,10 @@ func PlanFrom(updates []Update) Plan {
 			units = append(units, unit)
 		}
 	}
-	return Plan{Available: true, Updates: updates, Units: units}
+	// RunUnits starts equal to Units: a caller that never narrows it restarts and
+	// gates on everything, which is the older behaviour, not an update that
+	// restarts nothing.
+	return Plan{Available: true, Updates: updates, Units: units, RunUnits: units}
 }
 
 // Apply performs the transactional stack update. The step ordering is the safety
@@ -325,7 +373,7 @@ func Apply(ctx context.Context, plan Plan, sys System, t Timings, pol Policy) (O
 	if err := sys.Install(ctx, plan.Targets()); err != nil {
 		return revert(ctx, sys, plan, prev, "apt install failed: "+err.Error(), unrevertable)
 	}
-	if err := sys.StartServices(ctx, plan.Units); err != nil {
+	if err := sys.StartServices(ctx, plan.RunUnits); err != nil {
 		return revert(ctx, sys, plan, prev, "restart after install failed: "+err.Error(), unrevertable)
 	}
 	if reason := gate(ctx, sys, plan, t); reason != "" {
@@ -345,7 +393,7 @@ func gate(ctx context.Context, sys System, plan Plan, t Timings) string {
 	if !sleep(ctx, t.SettleDelay) {
 		return "canceled during settle"
 	}
-	gateUnits := plan.Units
+	gateUnits := plan.RunUnits
 	if plan.RequireMMDVM {
 		gateUnits = withMMDVM(gateUnits)
 	}
@@ -376,10 +424,18 @@ func revert(ctx context.Context, sys System, plan Plan, prev map[string]string, 
 	revertPkgs := revertSet(prev, plan.PackageNames())
 	_ = sys.StopServices(ctx, plan.Units)
 	if err := sys.Install(ctx, revertPkgs); err != nil {
+		// The packages stay wherever the failed downgrade left them — but the node
+		// must not also be left with its services down. This used to return here,
+		// before StartServices, so a failed revert took the radio off the air and
+		// did not put it back: on the bench node 2026-08-24 every gateway including
+		// waypoint-dmrgateway.service sat dead until an operator applied config.
+		// Starting them is right whichever versions won: they are the versions the
+		// node has, and a node running the wrong versions still beats a silent one.
+		_ = sys.StartServices(ctx, plan.RunUnits)
 		_ = sys.RecordHistory(historyRows(prev, plan.Updates, ResultRevertFailed))
 		return Outcome{Unrevertable: unrevertable}, fmt.Errorf("stackupdate: REVERT FAILED (%s): %w", reason, err)
 	}
-	if err := sys.StartServices(ctx, plan.Units); err != nil {
+	if err := sys.StartServices(ctx, plan.RunUnits); err != nil {
 		return Outcome{Unrevertable: unrevertable}, fmt.Errorf("stackupdate: reverted packages but restart failed (%s): %w", reason, err)
 	}
 	_ = sys.RecordHistory(historyRows(prev, plan.Updates, ResultReverted))

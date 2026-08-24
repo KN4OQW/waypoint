@@ -87,28 +87,36 @@ func (su *stackUpdater) check(ctx context.Context) (stackupdate.Plan, error) {
 		return stackupdate.Plan{}, err
 	}
 	plan := stackupdate.PlanFrom(stackupdate.ParseUpgradable(out))
-	plan.RequireMMDVM = su.modemHostExpected()
+	su.applyNodeShape(&plan)
 	su.cacheAvailable(plan)
 	return plan, nil
 }
 
-// modemHostExpected answers the one config question the update engine cannot: is
-// this node supposed to be running MMDVMHost at all? The health gate requires that
-// unit so an update never leaves the modem host down — but on a node with every
-// mode off, or with no modem port configured, the unit is *meant* to be stopped,
-// and requiring it would fail every stack update forever with
-// "waypoint-mmdvm.service is not active".
+// applyNodeShape answers the questions the update engine cannot: which of the
+// units it is about to touch this node is meant to be running, and whether it is
+// meant to be running MMDVMHost at all. Both come from one model read, because
+// they are the same question asked about different daemons.
 //
-// An unreadable config answers yes: that is the pre-existing behaviour and the
-// conservative one, since gating on a unit that should be up is a reverted update,
-// while skipping a gate that should have run is an unnoticed dead modem.
-func (su *stackUpdater) modemHostExpected() bool {
+// The gateway half is the newer one. The health gate used to require every unit
+// the update touched, so on a node that does not run every mode — nearly all of
+// them — a stack update restarted gateways whose INIs waypointd never renders,
+// they exited(1) on the missing file, and the gate reverted a clean update. The
+// modem-host reasoning below was already the general answer; it just had not been
+// applied to the gateways.
+//
+// An unreadable config narrows nothing and requires the modem host — the
+// conservative direction on both counts. Restricting on a config we could not read
+// would silently skip restarting gateways that should have come back up, which is
+// a worse failure than a gate that is too strict.
+func (su *stackUpdater) applyNodeShape(plan *stackupdate.Plan) {
 	m, err := config.Load(su.store)
 	if err != nil {
-		log.Printf("stack update: read config for the health gate: %v (requiring the modem host)", err)
-		return true
+		log.Printf("stack update: read config for the health gate: %v (requiring the modem host, restarting every affected unit)", err)
+		plan.RequireMMDVM = true
+		return
 	}
-	return m.ModemHostRuns()
+	plan.RequireMMDVM = m.ModemHostRuns()
+	plan.RestrictToRunning(m.RunningUnits())
 }
 
 // cacheAvailable persists the available updates + a fresh last-check stamp so the
@@ -256,11 +264,17 @@ func (s *server) stackStatus(w http.ResponseWriter, r *http.Request) {
 		Binary:          st.Binary,
 	}
 	if m, err := config.Load(s.store); err == nil {
+		// AllowUnrevertable belongs here as much as the rest: the panel paints its
+		// "updates that cannot be undone are allowed" warning from this field, and
+		// the copy tells the operator to turn the setting back off once the node is
+		// up to date. Omitting it reported false however the node was actually set,
+		// so the one warning that exists to be temporary never appeared at all.
 		resp.Prefs = config.ViewUpdate{
-			Channel:      m.Update.Channel,
-			CheckEnabled: m.Update.CheckEnabled,
-			AutoApply:    m.Update.AutoApply,
-			QuietWindow:  m.Update.QuietWindow,
+			Channel:           m.Update.Channel,
+			CheckEnabled:      m.Update.CheckEnabled,
+			AutoApply:         m.Update.AutoApply,
+			QuietWindow:       m.Update.QuietWindow,
+			AllowUnrevertable: m.Update.AllowUnrevertable,
 		}
 	}
 	if s.stack == nil {
@@ -303,6 +317,9 @@ func (s *server) stackCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSONStatus(w, http.StatusOK, map[string]any{
 		"available": plan.Updates,
 		"units":     plan.Units,
+		// The subset actually restarted and health-gated: on a node that does not
+		// run every mode these differ, and "units" alone would overstate the work.
+		"run_units": plan.RunUnits,
 		"reason":    plan.Reason,
 	})
 }

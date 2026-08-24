@@ -644,3 +644,194 @@ func contains(xs []string, want string) bool {
 	}
 	return false
 }
+
+// --- RunUnits: the node's shape decides what is restarted and gated on ---
+
+// The failure this pins, measured on the bench node 2026-08-24: a DMR-only node
+// took a twelve-package stack update, every package installed, and the gate then
+// reported "waypoint-dgidgateway.service is not active" and tried to revert. It
+// was not active because YSF/DG-ID is switched off, so waypointd never renders
+// DGIdGateway.ini and the daemon exits(1) with "Couldn't open the .ini file".
+// Restarting and gating on a unit the node is not meant to run made the update
+// unpassable on any node short of one running every mode.
+func TestApplyDoesNotStartOrGateUnitsTheNodeDoesNotRun(t *testing.T) {
+	f := &fakeSystem{
+		installed: map[string]string{
+			"waypoint-dmrgateway":  "0~old+wp1",
+			"waypoint-dgidgateway": "0~old+wp1",
+		},
+		healthSeq: []bool{true},
+	}
+	var gated []string
+	f.onHealthy = func(units []string) { gated = append([]string(nil), units...) }
+
+	plan := PlanFrom([]Update{
+		{Package: "waypoint-dmrgateway", From: "0~old+wp1", To: "0~new+wp1"},
+		{Package: "waypoint-dgidgateway", From: "0~old+wp1", To: "0~new+wp1"},
+	})
+	// What config.RunningUnits answers on a DMR-only node: the DG-ID gateway is
+	// upgraded but is not meant to be running.
+	plan.RestrictToRunning([]string{"waypoint-dmrgateway.service"})
+
+	out, err := Apply(context.Background(), plan, f, fastTimings(), Policy{})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !out.Confirmed || out.Reverted {
+		t.Fatalf("expected the update to confirm, got %+v", out)
+	}
+	// Stopping is still unconditional: a unit must not be left running off a
+	// half-replaced binary just because this node does not normally run it.
+	// PlanFrom sorts by package name, so the DG-ID gateway leads.
+	wantStop := []string{"waypoint-dgidgateway.service", "waypoint-dmrgateway.service"}
+	if len(f.stopCalls) != 1 || !reflect.DeepEqual(f.stopCalls[0], wantStop) {
+		t.Fatalf("stop got %v, want the full affected set %v", f.stopCalls, wantStop)
+	}
+	wantStart := []string{"waypoint-dmrgateway.service"}
+	if len(f.startCalls) != 1 || !reflect.DeepEqual(f.startCalls[0], wantStart) {
+		t.Fatalf("start got %v, want only the units this node runs %v", f.startCalls, wantStart)
+	}
+	if !reflect.DeepEqual(gated, wantStart) {
+		t.Fatalf("health gate probed %v, want only %v", gated, wantStart)
+	}
+}
+
+// The clean case beside the failure case: a node that DOES run every affected
+// unit still restarts and gates on every one of them. A fix that quietly stopped
+// restarting real gateways would pass the test above and fail here.
+func TestApplyStartsAndGatesEveryUnitTheNodeDoesRun(t *testing.T) {
+	f := &fakeSystem{
+		installed: map[string]string{
+			"waypoint-dmrgateway":  "0~old+wp1",
+			"waypoint-dgidgateway": "0~old+wp1",
+		},
+		healthSeq: []bool{true},
+	}
+	var gated []string
+	f.onHealthy = func(units []string) { gated = append([]string(nil), units...) }
+
+	plan := PlanFrom([]Update{
+		{Package: "waypoint-dmrgateway", From: "0~old+wp1", To: "0~new+wp1"},
+		{Package: "waypoint-dgidgateway", From: "0~old+wp1", To: "0~new+wp1"},
+	})
+	plan.RestrictToRunning([]string{"waypoint-dmrgateway.service", "waypoint-dgidgateway.service"})
+
+	if _, err := Apply(context.Background(), plan, f, fastTimings(), Policy{}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	want := []string{"waypoint-dgidgateway.service", "waypoint-dmrgateway.service"}
+	if len(f.startCalls) != 1 || !reflect.DeepEqual(f.startCalls[0], want) {
+		t.Fatalf("start got %v, want %v", f.startCalls, want)
+	}
+	if !reflect.DeepEqual(gated, want) {
+		t.Fatalf("health gate probed %v, want %v", gated, want)
+	}
+}
+
+// A caller that never narrows the plan keeps the older behaviour — everything
+// affected is restarted and gated on. PlanFrom must not leave RunUnits empty, or
+// an unnarrowed plan would install packages and start nothing.
+func TestPlanFromRunUnitsDefaultsToEveryAffectedUnit(t *testing.T) {
+	plan := PlanFrom([]Update{
+		{Package: "waypoint-dmrgateway", From: "a", To: "b"},
+		{Package: "waypoint-p25parrot", From: "a", To: "b"}, // no unit; contributes none
+	})
+	if !reflect.DeepEqual(plan.RunUnits, plan.Units) {
+		t.Fatalf("RunUnits %v, want it to default to Units %v", plan.RunUnits, plan.Units)
+	}
+	if len(plan.RunUnits) != 1 {
+		t.Fatalf("RunUnits %v, want just the DMR gateway's unit", plan.RunUnits)
+	}
+}
+
+func TestRestrictToRunning(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		running []string
+		want    []string
+	}{
+		// Plan order, not the caller's: PlanFrom sorts by package name.
+		{"keeps the running subset in plan order", []string{"waypoint-dmrgateway.service", "waypoint-dgidgateway.service"},
+			[]string{"waypoint-dgidgateway.service", "waypoint-dmrgateway.service"}},
+		{"drops units the node does not run", []string{"waypoint-dmrgateway.service"},
+			[]string{"waypoint-dmrgateway.service"}},
+		// A node with every mode off runs no gateway, and that is a real answer,
+		// not a missing one: there is nothing to restart or gate on.
+		{"a node that runs nothing keeps nothing", nil, []string{}},
+		// Units the node runs but this update did not touch are not added — the
+		// plan only ever restarts what it changed.
+		{"never adds an untouched unit", []string{"waypoint-dmrgateway.service", "waypoint-m17gateway.service"},
+			[]string{"waypoint-dmrgateway.service"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := PlanFrom([]Update{
+				{Package: "waypoint-dmrgateway", From: "a", To: "b"},
+				{Package: "waypoint-dgidgateway", From: "a", To: "b"},
+			})
+			before := append([]string(nil), plan.Units...)
+			plan.RestrictToRunning(tc.running)
+			if !reflect.DeepEqual(plan.RunUnits, tc.want) {
+				t.Fatalf("RunUnits = %v, want %v", plan.RunUnits, tc.want)
+			}
+			if !reflect.DeepEqual(plan.Units, before) {
+				t.Fatalf("Units was narrowed to %v; the stop set must stay %v", plan.Units, before)
+			}
+		})
+	}
+}
+
+// --- a failed revert must not leave the node's services down ---
+
+// Before this, revert() returned as soon as the downgrade install failed, without
+// reaching StartServices. On the bench node 2026-08-24 that took the radio off
+// the air: every gateway including waypoint-dmrgateway.service sat dead until an
+// operator applied config by hand. The packages are wherever the failed install
+// left them either way — but a node running the wrong versions still beats a
+// silent one.
+func TestRevertFailureStillStartsTheServicesItStopped(t *testing.T) {
+	f := &fakeSystem{
+		installed: map[string]string{
+			"waypoint-dmrgateway":  "0~old+wp1",
+			"waypoint-dgidgateway": "0~old+wp1",
+		},
+		healthSeq:    []bool{false}, // never sustains -> revert
+		healthDetail: "waypoint-dmrgateway.service is not active",
+		// The pool carries the new versions but not the old ones, so the revert's
+		// install fails exactly the way the bench node's did.
+		pool: map[string]bool{
+			"waypoint-dmrgateway=0~new+wp1":  true,
+			"waypoint-dgidgateway=0~new+wp1": true,
+		},
+	}
+	plan := PlanFrom([]Update{
+		{Package: "waypoint-dmrgateway", From: "0~old+wp1", To: "0~new+wp1"},
+		{Package: "waypoint-dgidgateway", From: "0~old+wp1", To: "0~new+wp1"},
+	})
+	plan.RestrictToRunning([]string{"waypoint-dmrgateway.service"})
+
+	// AllowUnrevertable, or the pre-flight would refuse before any of this runs —
+	// which is the whole reason a revert can fail at all.
+	_, err := Apply(context.Background(), plan, f, fastTimings(), Policy{AllowUnrevertable: true})
+	if err == nil || !strings.Contains(err.Error(), "REVERT FAILED") {
+		t.Fatalf("expected a REVERT FAILED error, got %v", err)
+	}
+	// Two stops and two starts: Apply's own pair around the install, then revert's
+	// stop and the restart that must follow it. One start means the second stop
+	// was never undone — the node left silent, which is the bug.
+	if len(f.stopCalls) != 2 {
+		t.Fatalf("expected Apply's stop and revert's stop, got %d: %v", len(f.stopCalls), f.stopCalls)
+	}
+	if len(f.startCalls) != 2 {
+		t.Fatalf("expected a restart after the failed revert, got %d start call(s): %v", len(f.startCalls), f.startCalls)
+	}
+	last := f.startCalls[len(f.startCalls)-1]
+	if want := []string{"waypoint-dmrgateway.service"}; !reflect.DeepEqual(last, want) {
+		t.Fatalf("restarted %v after the failed revert, want the units this node runs %v", last, want)
+	}
+	// The audit trail still says the revert failed, so an operator is not told
+	// the node is fine merely because its services came back.
+	lastHist := f.history[len(f.history)-1]
+	if lastHist[0].Result != ResultRevertFailed {
+		t.Fatalf("history result %q, want %q", lastHist[0].Result, ResultRevertFailed)
+	}
+}
