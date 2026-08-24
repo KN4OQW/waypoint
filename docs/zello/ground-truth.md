@@ -443,3 +443,36 @@ This is the third documented behaviour of this API that the live service
 contradicts, after the token-less logon returning `not enough params` rather than
 `not authorized`. Treat API.md as a starting point and check anything load-bearing
 against the service.
+
+## Addendum: membership, and two more undocumented codes
+
+### Not being a member of a channel is silent
+
+Three states, told apart by measurement on one channel with two accounts:
+
+| Situation | What the service does |
+|---|---|
+| Account is a member | `on_channel_status` with `status: online`, `users_online` counting this connection |
+| Account is NOT a member | `on_channel_status` with `status: offline`, `users_online: 0`, and it never changes |
+| No such channel | `on_error` |
+
+The middle case is the trap. There is no error and no timeout — the connection is
+up, logon succeeded, and the channel simply never comes online. A bridge that
+transmits anyway gets `channel is not ready`; one that waits, waits forever. The
+endpoint must treat a channel that has not come online within a bounded time as a
+configuration fault and say so, because nothing else will.
+
+### `no permission` and `invalid username` mean opposite things
+
+Measured by sending one account's real username and two wrong ones, each with a
+valid freshly minted token and no password:
+
+- the real username -> `no permission`
+- a wrong username -> `invalid username`
+
+So `invalid username` is "no such account" and `no permission` is "right account,
+not enough to authenticate it". Neither is in the documented error table. Together
+they also settle that **the account password is required even when the token is
+valid** — a token and a username alone are refused.
+
+That is five documented-or-assumed behaviours this API has now contradicted.

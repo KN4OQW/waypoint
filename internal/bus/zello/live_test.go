@@ -28,12 +28,27 @@ func liveConfig(t *testing.T) Config {
 	if ch == "" {
 		t.Skip("set ZELLO_CHANNEL (and ZELLO_USER/ZELLO_PASS/ZELLO_TOKEN) to run the live tests")
 	}
-	return Config{
+	cfg := Config{
 		Channel:   ch,
 		Username:  os.Getenv("ZELLO_USER"),
 		Password:  os.Getenv("ZELLO_PASS"),
 		AuthToken: os.Getenv("ZELLO_TOKEN"),
 	}
+	// Key material wins over a pasted token, which is what the daemon does:
+	// a token minted here is good for a minute and is created fresh, so the
+	// tests exercise the arrangement an operator is meant to run.
+	if issuer, keyFile := os.Getenv("ZELLO_ISSUER"), os.Getenv("ZELLO_KEY_FILE"); issuer != "" && keyFile != "" {
+		key, err := os.ReadFile(keyFile)
+		if err != nil {
+			t.Fatalf("reading ZELLO_KEY_FILE: %v", err)
+		}
+		tok, err := TokenSigner{Issuer: issuer, PrivateKeyPEM: string(key)}.Token(DefaultTokenTTL)
+		if err != nil {
+			t.Fatalf("minting a token: %v", err)
+		}
+		cfg.AuthToken = tok
+	}
+	return cfg
 }
 
 // TestLiveLogonWithoutAToken asks the real server what a username and password

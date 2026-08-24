@@ -184,9 +184,12 @@ func describeError(code string) string {
 		return code + " — too many channels for one connection; consumer Zello allows exactly one"
 	case ErrCodeChannelNotReady:
 		return code + " — wait for the channel to report online before transmitting"
+	case ErrCodeNoPermission:
+		return code + " — the account exists but the logon could not be authenticated; " +
+			"a token and a username are not enough, the account password is required too"
 	case ErrCodeInvalidUsername:
-		return code + " — Zello refuses a logon with no account, including a listen-only one; " +
-			"set a username and password on the account (this is measured behaviour, not what API.md describes)"
+		return code + " — no Zello account by that name; check the spelling against the app " +
+			"(an account with no username at all is refused the same way, including listen-only)"
 	case ErrCodeNotEnoughParams:
 		// Observed against the live service: a logon carrying a username and
 		// password but no auth_token is refused with this, not with "not

@@ -51,10 +51,16 @@ const (
 	ErrCodeInvalidAudio     = "invalid audio packet"
 	ErrCodeChannelsLimit    = "channels limit exceeded"
 
-	// ErrCodeInvalidUsername is NOT in Zello's documented error table. It was
-	// observed against the live service, and it is what an anonymous logon
-	// actually gets — see the note below.
+	// ErrCodeInvalidUsername and ErrCodeNoPermission are NOT in Zello's documented
+	// error table. Both were observed against the live service.
+	//
+	// They are worth telling apart, because they mean opposite things about the
+	// username: `invalid username` is no such account, while `no permission` is
+	// the right account without enough to authenticate it — a token and a
+	// username but no password. Measured on one account by sending its real name
+	// and two wrong ones.
 	ErrCodeInvalidUsername = "invalid username"
+	ErrCodeNoPermission    = "no permission"
 )
 
 // Anonymous logon does not work, whatever API.md says.
