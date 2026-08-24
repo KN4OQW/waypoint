@@ -323,12 +323,29 @@ const SearchPrefixMin = 3
 // # Cost
 //
 // One pass, one 64 KB buffer, no index. Measured over the real August 2026 export
-// (310,364 rows, 6.6 MB) by BenchmarkSearchCallsigns; the comparable exact scan
+// (311,146 rows, 6.6 MB) by BenchmarkSearchCallsigns; the comparable exact scan
 // in LookupCallsign measured 11.8 ms on a Ryzen 7 5700G with the file in page
 // cache, and this does the same read with a prefix compare and a bounded insert
-// on top. A Pi Zero reading from SD is some multiple of that on the first call
-// and page-cached afterwards. The browser debounces at 150 ms and does not ask
-// below SearchPrefixMin, so a keystroke is not a scan — a pause is.
+// on top.
+//
+// On the hardware that matters, measured end to end through HTTPS on a Pi 3
+// (armv7, table on SD): **200-240 ms**, against 43 ms for a below-minimum query
+// that returns before opening the file. So the scan itself is roughly 160-200 ms.
+//
+// An earlier draft of this comment guessed "some multiple of the desktop figure
+// on the first call and page-cached afterwards". The first half was right — it is
+// about 17x — but the second half was wrong: repeated identical queries measured
+// 209, 202 and 230 ms, with no warm-cache improvement at all. The file is already
+// in page cache after the first read; what the time is actually spent on is
+// scanning 311k lines on a 1.2 GHz ARM core, so it is CPU-bound and there is no
+// second call that gets cheaper. What misled the guess was reasoning from the
+// desktop, where the same work is fast enough that the I/O looks like the cost.
+//
+// 200 ms is comfortable for a type-ahead but it is not free, which is why the
+// browser debounces at 150 ms and why a prefix below SearchPrefixMin is answered
+// without touching the file: a keystroke is not a scan, a pause is. If this ever
+// needs to be cheaper, the measurement above says to attack the per-line work,
+// not the read.
 //
 // A limit of zero or less means no limit, matching LookupCallsign. Nothing calls
 // it that way and the HTTP surface always passes one: an unbounded search over
