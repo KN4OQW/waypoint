@@ -2769,7 +2769,8 @@ func main() {
 		s.dp = &dataPlane{
 			hub: s.hub, agg: s.agg,
 			haDiscovery: *haDiscovery, haPrefix: *haPrefix, nodeID: *nodeID, version: Version,
-			seen: map[string]bool{},
+			seen:          map[string]bool{},
+			onTalkerAlias: s.talkerAlias.announce,
 		}
 		s.dp.start(context.Background(), dataPlaneConfigFrom(dpModel.MQTT))
 		// Keep the reflector hostlists fresh for the gateways + pickers. Daily: these

@@ -19,6 +19,7 @@ type repeaterSide struct {
 
 	mu       sync.Mutex
 	received [][]byte
+	all      [][]byte
 	done     chan struct{}
 }
 
@@ -51,11 +52,15 @@ func (r *repeaterSide) serve() {
 		if err != nil {
 			continue
 		}
-		if n == 55 && string(buf[:4]) == "DMRD" {
-			r.mu.Lock()
-			r.received = append(r.received, append([]byte(nil), buf[:n]...))
-			r.mu.Unlock()
+		pkt := append([]byte(nil), buf[:n]...)
+		r.mu.Lock()
+		// Everything, not only voice: a test that asserts a packet type never
+		// ARRIVES cannot do it against a list that was filtered to DMRD.
+		r.all = append(r.all, pkt)
+		if n == 55 && string(pkt[:4]) == "DMRD" {
+			r.received = append(r.received, pkt)
 		}
+		r.mu.Unlock()
 	}
 }
 
@@ -63,6 +68,13 @@ func (r *repeaterSide) got() [][]byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([][]byte(nil), r.received...)
+}
+
+// allGot returns every datagram the gateway sent the repeater side, unfiltered.
+func (r *repeaterSide) allGot() [][]byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([][]byte(nil), r.all...)
 }
 
 // connect sends the DMRC config packet. DMRGateway blocks in "Waiting for MMDVM

@@ -128,10 +128,13 @@ account. Individual callsigns cannot show up as separate Zello senders — that 
 Zello's model, not a limitation Waypoint can code around. The node's account name
 is what the channel sees, which is why it should read as a machine.
 
-**Zello talkers do not yet show up by name on RF.** Each inbound transmission is
-sent with the Zello username as a Talker Alias, but it does not currently reach
-the radio — a receiving set shows the node's DMR ID instead. Voice works in both
-directions; only the name is missing. Tracked as issue #279.
+**Zello talkers show up by name on RF — if the DMR relay is on.** Each inbound
+transmission carries the Zello username as a Talker Alias, so a receiving radio
+shows who is talking rather than the node's bare DMR ID. Two settings under **DMR**
+have to be there for it: a **Talker Alias** template, and the **DMR message
+relay** switched on. The relay is the only place on the node an alias can be added
+to the DMR path, so with it off the name is silently lost — the DMR panel warns
+when that is the case. Voice works in both directions either way.
 
 **One at a time, in both directions.** A bus carries a single talker. If somebody
 keys up on RF while a Zello user is talking, the second one is dropped and the

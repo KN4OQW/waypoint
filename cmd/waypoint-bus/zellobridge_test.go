@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -8,7 +9,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/bus/router"
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/hub"
-	"github.com/KN4OQW/waypoint/internal/talkeralias"
+	"github.com/KN4OQW/waypoint/internal/mqtt"
 )
 
 // The real vocoder is the MD380's firmware on 32-bit ARM and the real Opus codec
@@ -330,65 +331,86 @@ func aliasVoice(stream uint32, from string) frames.Frame {
 	}
 }
 
-// One alias per transmission, not one per frame. A radio needs it once; sending
-// it with every voice frame would put a burst of DMRA on the seam for the whole
-// over.
-func TestTheAliasIsEmittedOncePerTransmission(t *testing.T) {
+// One announcement per transmission, not one per frame. waypointd needs the name
+// once; republishing it with every voice frame would put a burst on the event
+// plane for the whole over.
+func TestTheAliasIsAnnouncedOncePerTransmission(t *testing.T) {
 	a := newZelloAliaser("callsign", 3180202)
 	if a == nil {
 		t.Fatal("aliaser was disabled for a valid template and id")
 	}
 
-	first := a.framesFor(aliasVoice(1, "Booting6228"))
-	if len(first) == 0 {
-		t.Fatal("no alias on the first frame of a transmission")
+	if _, ok := a.noteFor(aliasVoice(1, "Booting6228")); !ok {
+		t.Fatal("no announcement on the first frame of a transmission")
 	}
 	for i := 0; i < 5; i++ {
-		if got := a.framesFor(aliasVoice(1, "Booting6228")); got != nil {
-			t.Fatalf("frame %d of the same stream emitted another alias", i+2)
+		if _, ok := a.noteFor(aliasVoice(1, "Booting6228")); ok {
+			t.Fatalf("frame %d of the same stream announced again", i+2)
 		}
 	}
 
 	// A new transmission gets its own.
-	if got := a.framesFor(aliasVoice(2, "Someone Else")); len(got) == 0 {
-		t.Error("a second transmission got no alias")
+	if _, ok := a.noteFor(aliasVoice(2, "Someone Else")); !ok {
+		t.Error("a second transmission was not announced")
 	}
 }
 
-// The alias decodes back to the Zello name and the node's own DMR ID. This is the
-// end the radio sees, so it is worth asserting against the real decoder rather
-// than trusting the encoder.
-func TestTheAliasCarriesTheZelloNameAndTheNodesID(t *testing.T) {
+// The announcement carries the Zello name and the node's own DMR ID, and is
+// keyed by the stream the audio will ride. All three matter at the far end: the
+// ID because the DMRA frames must be addressed to the transmitting station or
+// MMDVM-Host's slot matching drops them, and the stream id because that is what
+// pairs a name with one transmission.
+func TestTheAnnouncementCarriesTheZelloNameAndTheNodesID(t *testing.T) {
 	a := newZelloAliaser("callsign", 3180202)
-	out := a.framesFor(aliasVoice(1, "Booting6228"))
-	if len(out) == 0 {
-		t.Fatal("no alias frames")
+	n, ok := a.noteFor(aliasVoice(0xC0FFEE, "Booting6228"))
+	if !ok {
+		t.Fatal("no announcement")
 	}
-	id, alias, _, err := talkeralias.Decode(out)
-	if err != nil {
-		t.Fatalf("the emitted frames do not decode: %v", err)
+	if n.Type != mqtt.TalkerAliasNoteType {
+		t.Errorf("type = %q, want %q", n.Type, mqtt.TalkerAliasNoteType)
 	}
-	if id != 3180202 {
-		t.Errorf("alias source id = %d, want the node's own 3180202", id)
+	if n.SrcID != 3180202 {
+		t.Errorf("src id = %d, want the node's own 3180202", n.SrcID)
+	}
+	if n.StreamID != 0xC0FFEE {
+		t.Errorf("stream id = %#x, want 0xc0ffee", n.StreamID)
 	}
 	// Case preserved. A Zello account name is a display name, not a callsign, and
 	// putting "BOOTING6228" on a radio misrepresents what the operator is called.
-	if alias != "Booting6228" {
-		t.Errorf("alias = %q, want the Zello username with its case intact", alias)
+	if n.Name != "Booting6228" {
+		t.Errorf("name = %q, want the Zello username with its case intact", n.Name)
+	}
+	// And it must survive the wire, since that is how it travels.
+	payload, err := json.Marshal(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, ok := mqtt.TranslateTalkerAlias(payload)
+	if !ok {
+		t.Fatal("the note the bus publishes was rejected by the consumer that reads it")
+	}
+	if back != n {
+		t.Errorf("round trip changed the note: %+v -> %+v", n, back)
 	}
 }
 
-// A transmission Zello did not name gets no alias rather than an invented one.
-// Announcing a guess is worse than announcing nothing.
-func TestNoAliasWithoutAName(t *testing.T) {
+// A transmission Zello did not name gets no announcement rather than an invented
+// one. Announcing a guess is worse than announcing nothing — and at the far end an
+// announce-only ID with nothing announced deliberately shows no alias at all.
+func TestNoAnnouncementWithoutAName(t *testing.T) {
 	a := newZelloAliaser("callsign", 3180202)
-	if got := a.framesFor(aliasVoice(1, "")); got != nil {
-		t.Errorf("an unnamed talker produced an alias: %v", got)
+	if _, ok := a.noteFor(aliasVoice(1, "")); ok {
+		t.Error("an unnamed talker was announced")
+	}
+	// A frame with no stream id cannot be paired with a transmission at the far
+	// end, so there is nothing useful to say about it.
+	if _, ok := a.noteFor(aliasVoice(0, "Booting6228")); ok {
+		t.Error("a frame with no stream id was announced")
 	}
 }
 
-// Off is the default and must emit nothing at all — not an empty frame, nothing —
-// so a node that has not asked for this puts no DMRA on the seam.
+// Off is the default and must announce nothing at all, so a node that has not
+// asked for this publishes nothing new.
 func TestTheAliaserIsOffByDefault(t *testing.T) {
 	if a := newZelloAliaser("", 3180202); a != nil {
 		t.Error("an empty template produced an aliaser")
@@ -396,15 +418,16 @@ func TestTheAliaserIsOffByDefault(t *testing.T) {
 	if a := newZelloAliaser("not-a-template", 3180202); a != nil {
 		t.Error("an unrecognised template produced an aliaser")
 	}
-	// No ID means nothing to attribute the alias to. Encoding would fail anyway;
-	// refusing here keeps the failure at configuration rather than per frame.
+	// No ID means nothing to attribute the alias to. Encoding at the far end would
+	// fail anyway; refusing here keeps the failure at configuration rather than per
+	// frame.
 	if a := newZelloAliaser("callsign", 0); a != nil {
 		t.Error("a zero source id produced an aliaser")
 	}
 	// The nil aliaser must be safe to call, because handleFrame does.
 	var nilA *zelloAliaser
-	if got := nilA.framesFor(aliasVoice(1, "x")); got != nil {
-		t.Error("a nil aliaser emitted frames")
+	if _, ok := nilA.noteFor(aliasVoice(1, "x")); ok {
+		t.Error("a nil aliaser announced a talker")
 	}
 }
 
@@ -412,11 +435,11 @@ func TestTheAliaserIsOffByDefault(t *testing.T) {
 // entry for every transmission it has ever carried.
 func TestTheAliaserForgetsAStreamWhenItEnds(t *testing.T) {
 	a := newZelloAliaser("callsign", 3180202)
-	a.framesFor(aliasVoice(1, "Booting6228"))
+	a.noteFor(aliasVoice(1, "Booting6228"))
 	if len(a.sent) != 1 {
 		t.Fatalf("sent has %d entries, want 1", len(a.sent))
 	}
-	a.framesFor(frames.Frame{Kind: frames.KindTerminator, Stream: frames.Stream{ID: 1}})
+	a.noteFor(frames.Frame{Kind: frames.KindTerminator, Stream: frames.Stream{ID: 1}})
 	if len(a.sent) != 0 {
 		t.Errorf("sent still has %d entries after the terminator", len(a.sent))
 	}

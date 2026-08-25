@@ -8,6 +8,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/bus/peer"
 	"github.com/KN4OQW/waypoint/internal/bus/zello"
 	"github.com/KN4OQW/waypoint/internal/config"
+	"github.com/KN4OQW/waypoint/internal/mqtt"
 	"github.com/KN4OQW/waypoint/internal/talkeralias"
 )
 
@@ -226,8 +227,8 @@ func envFor(node string, mode config.Mode, busID string) *peer.Envelope {
 
 // --- Talker Alias for inbound Zello audio -------------------------------------
 
-// zelloAliaser turns "who is talking on Zello" into the DMRA frames a radio
-// displays.
+// zelloAliaser says who is talking on an inbound Zello transmission, so a radio
+// shows a name rather than only the node's own ID.
 //
 // Every inbound Zello transmission is sourced from one DMR ID — the node's own —
 // because a Zello user without a DMR registration has no ID to borrow and one who
@@ -241,6 +242,32 @@ func envFor(node string, mode config.Mode, busID string) *peer.Envelope {
 // test makes it a rule that no phonebook row is ever rendered into one. So an
 // operator's callsign cannot reach this daemon, and the Zello handle is both what
 // is available and what is true.
+//
+// # Why this ANNOUNCES rather than transmits
+//
+// It used to build the DMRA frames here and write them to the DMR attachment's
+// endpoint. That could never have worked, and the correction is worth recording
+// because reading the code does not reveal it — issue #279.
+//
+// This daemon's DMR attachment is a Homebrew MASTER that the local DMRGateway logs
+// into, so anything written to it goes to DMRGateway, not to MMDVM-Host. And
+// DMRGateway's Talker Alias path runs one way only: CDMRGateway::processTalkerAlias
+// reads from the repeater (CMMDVMNetwork::readTalkerAlias) and writes to the
+// upstream networks (CDMRNetwork::writeTalkerAlias). At the pinned 79edbc4 the
+// network side has no DMRA case at all — CDMRNetwork::clock knows DMRD, MSTNAK,
+// RPTACK, MSTCL, MSTPONG and RPTSBKN — so an alias arriving from a bus falls into
+// the closing else and becomes CUtils::dump("Unknown packet from the master").
+//
+// The ordering was wrong as well, independently: the frames went out BEFORE the
+// voice header, because handleFrame emitted them ahead of the router, and the
+// fork's CDMRSlot::setTalkerAlias drops any block whose slot is not already in
+// RPT_NET_STATE::AUDIO for that source. Even a DMRGateway that forwarded them
+// would have shown nothing.
+//
+// So the name is published instead, and waypointd injects it at the DMR relay —
+// the only address MMDVM-Host accepts DMR-network datagrams from, and a seam whose
+// taps run after a datagram has been forwarded, which makes the ordering right by
+// construction rather than by timing.
 type zelloAliaser struct {
 	template talkeralias.Template
 	srcID    uint32
@@ -257,41 +284,36 @@ func newZelloAliaser(template string, srcID uint32) *zelloAliaser {
 	return &zelloAliaser{template: t, srcID: srcID, sent: map[uint32]bool{}}
 }
 
-// framesFor returns the DMRA frames for f, or nil.
+// noteFor returns the announcement for f, or ok=false.
 //
-// nil is the common answer — every frame after the first of a transmission, and
-// every transmission whose talker Zello did not name — and the caller treats it
-// as nothing to do rather than as a failure.
-func (a *zelloAliaser) framesFor(f frames.Frame) [][]byte {
+// ok=false is the common answer — every frame after the first of a transmission,
+// and every transmission whose talker Zello did not name — and the caller treats
+// it as nothing to do rather than as a failure.
+//
+// The name is carried untouched. It is a display name whose case is part of it,
+// and the receiving end knows not to run it through a callsign template; see
+// talkeralias.Emitter.Announce, which is where that decision now lives.
+func (a *zelloAliaser) noteFor(f frames.Frame) (mqtt.TalkerAliasNote, bool) {
 	if a == nil || f.Kind == frames.KindTerminator {
 		if a != nil && f.Kind == frames.KindTerminator {
 			delete(a.sent, f.Stream.ID)
 		}
-		return nil
+		return mqtt.TalkerAliasNote{}, false
 	}
-	if f.SrcCallsign == "" || a.sent[f.Stream.ID] {
-		return nil
+	if f.SrcCallsign == "" || f.Stream.ID == 0 || a.sent[f.Stream.ID] {
+		return mqtt.TalkerAliasNote{}, false
 	}
-	a.sent[f.Stream.ID] = true
-
-	// The Zello name goes on the air as the operator wrote it.
-	//
-	// Deliberately NOT through Template.Render, which uppercases its argument.
-	// That is right for a callsign — a callsign has a canonical form — and wrong
-	// for a Zello account name, which is a display name whose case is part of it:
-	// "Booting6228" would reach the radio as "BOOTING6228". The template's three
-	// shapes are about combining a callsign with a full name, and there is no such
-	// pair here; only one string, from the wire. So the template decides whether
-	// an alias is emitted at all, and the name is passed through untouched.
 	text := strings.TrimSpace(f.SrcCallsign)
 	if text == "" {
-		return nil
+		return mqtt.TalkerAliasNote{}, false
 	}
-	out, err := talkeralias.Encode(a.srcID, text, talkeralias.ChooseFormat(text))
-	if err != nil {
-		return nil
-	}
-	return out
+	a.sent[f.Stream.ID] = true
+	return mqtt.TalkerAliasNote{
+		Type:     mqtt.TalkerAliasNoteType,
+		StreamID: f.Stream.ID,
+		SrcID:    a.srcID,
+		Name:     text,
+	}, true
 }
 
 // SetDecoder replaces the inbound Opus decoder, for when a stream announces a

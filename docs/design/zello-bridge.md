@@ -326,16 +326,55 @@ The outbound direction has no equivalent and cannot. One connection is one logon
 is one Zello identity, so every RF operator reaches the channel as the gateway
 account. That is Zello's model; document it rather than appear to work around it.
 
-**Does not work, and is filed as issue #279.** The DMRA frames are emitted onto
-the DMR attachment's loopback, which on this bus is a local DMRGateway rather
-than MMDVM-Host directly. Tested on air 2026-08-23: the radio shows only the
-node's DMR ID and the alias never appears. The encoding itself is fine — the
-frames decode back correctly in test — so the loss is somewhere between the bus
-and the radio, most likely DMRGateway not forwarding DMRA from a
-`[DMR Network N]`.
+**The bus announces the name; waypointd transmits it.** This was originally built
+the obvious way — encode the DMRA frames here and write them to the DMR
+attachment's endpoint — and that could never have worked. Tested on air
+2026-08-23 the radio showed only the node's DMR ID (issue #279). Two independent
+faults, either one sufficient, and the correction is recorded here because reading
+the code reveals neither.
 
-Voice bridging works in both directions without it; the alias is the one part of
-D6 that does not.
+*DMRGateway drops it.* The bus's DMR attachment is a Homebrew **master** that the
+local DMRGateway logs into, so anything written to it goes to DMRGateway. And
+DMRGateway's Talker Alias path runs one way only: `CDMRGateway::processTalkerAlias`
+reads from the repeater (`CMMDVMNetwork::readTalkerAlias`) and writes to the
+upstream networks (`CDMRNetwork::writeTalkerAlias`). At the pinned `79edbc4` the
+network side has no `DMRA` case at all — `CDMRNetwork::clock` knows `DMRD`,
+`MSTNAK`, `RPTACK`, `MSTCL`, `MSTPONG` and `RPTSBKN` — so an alias arriving from a
+bus falls into the closing `else` and becomes
+`CUtils::dump("Unknown packet from the master")`. With `DisplayLevel=0` and
+`MQTTLevel=1` that dump goes to `dmr-gateway/log`, not the journal, which is why a
+`journalctl` grep found nothing and proved nothing.
+
+*The ordering was wrong too.* The frames went out **before** the voice header,
+because `handleFrame` emitted them ahead of the router — and the fork's
+`CDMRSlot::setTalkerAlias` drops any block whose slot is not already in
+`RPT_NET_STATE::AUDIO` for that source. Even a DMRGateway that forwarded them
+would have shown nothing.
+
+So the name crosses to waypointd on `waypoint/bus/<id>/talker_alias` (see
+[mqtt-topics.md](../mqtt-topics.md)) and the frames are built at the DMR relay.
+That is not a workaround, it is the only place it can be done: MMDVM-Host accepts
+DMR-network datagrams from exactly one address:port (`CUDPSocket::match` compares
+address **and** port), which is [internal/dmrshim](../../internal/dmrshim/), which
+waypointd owns. The relay also fixes the ordering structurally rather than by
+timing — its taps see a datagram *after* it has been forwarded, so the alias
+necessarily follows the header that put the slot into `AUDIO`.
+
+Two consequences worth knowing. **The relay must be on**: with it off there is no
+injection point, waypointd registers no handler, and the DMR panel says so — a
+warning, not a refusal, because the audio still flows and only a name on a screen
+is lost. And **the phonebook is suppressed for that ID**: `General.ID` is
+registered to *this* node, so falling back to it would put the operator's own
+callsign on the screen in place of the caller's. An announcement that loses its
+race with the audio therefore shows no alias at all. A bare number is a worse
+screen; the wrong operator's name is a wrong one.
+
+Rejecting the alternative: forking DMRGateway to add the missing direction is
+~50 lines and would be the general fix, but it is a second C++ fork to rebase, it
+does nothing about the ordering fault, and there is no evidence any real upstream
+network sends `DMRA` toward a repeater — so nothing else would benefit.
+
+Voice bridging works in both directions and never depended on any of this.
 
 ### D7 — UI: an endpoint table and a lane view
 
@@ -571,17 +610,24 @@ process, and nothing has carried real AMBE into a Zello channel or back.
 2. **Zello to RF.** Talk on the phone, hear it out of the radio. Confirms the
    inbound transcode, the injection through `Ingest`, and that the router
    constructs a DMR burst from a synthesised frame.
-3. **Talker Alias, in full.** The DMRA frames are emitted onto the DMR
-   attachment's loopback, which on this bus is a local **DMRGateway**, not
-   MMDVM-Host directly. Nothing has established that DMRGateway forwards them.
-   Check every hop rather than only the radio: capture the loopback with
-   `tcpdump -i lo udp portrange 62031-62034` and confirm the DMRA datagrams
-   leave the bus; confirm they reach MMDVM-Host; confirm the 6X2 Pro displays
-   the Zello username with its case intact. `EmbeddedLCOnly` must be off for TA
-   to pass. **If DMRGateway drops them, say so and do not soften it** — the alias
-   silently never arriving while everything else works is exactly the failure
-   this project's rules exist to catch, and the fallback (emitting toward
-   MMDVM-Host directly, or via the datashim) is a design change, not a tweak.
+3. **Talker Alias, in full.** Settled: DMRGateway does drop it, and the alias is
+   now announced to waypointd and injected at the DMR relay (see D6). What is
+   left to confirm on hardware is the hop chain end to end, and it is worth
+   checking every hop rather than only the radio:
+   - the note leaves the bus — `mosquitto_sub -t 'waypoint/bus/#' -v` shows one
+     `talker_alias` per transmission, with the Zello name and its case intact;
+   - the four DMRA datagrams reach MMDVM-Host — capture the relay's host side
+     with `tcpdump -i lo -nn -X 'udp port 62032'` (the relay's `ShimHostPort`,
+     not 62031: 62031 is DMRGateway's side and the alias does not travel there);
+   - the 6X2 Pro displays the Zello username. `EmbeddedLCOnly` must be off and
+     `InboundTalkerAlias=1` must be in `[DMR Network]`, both of which the
+     renderer handles — check the rendered INI rather than assuming.
+   - **the DMR relay must be switched on**, or there is no injection point at
+     all. The DMR panel warns about exactly this; if the warning is showing, the
+     alias is not a bug to chase.
+   - and the negative case, which is the one that would look like success: with
+     nothing announced, the radio must show the bare ID and **not** this node's
+     own callsign from the phonebook.
 4. **The source ID on the air.** Confirm inbound Zello audio appears as the
    node's own DMR ID and not as 0 or as anything borrowed.
 5. **Arbitration across the seam.** Key up on RF while somebody is talking on

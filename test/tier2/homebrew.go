@@ -139,6 +139,20 @@ func (s *stubMaster) received() [][]byte {
 	return append([][]byte(nil), s.frames...)
 }
 
+// sendRaw pushes an arbitrary datagram down to the gateway, for the cases that are
+// about a packet type the master would send rather than about routing. It needs the
+// login to have completed, because that is when the gateway's address is learned.
+func (s *stubMaster) sendRaw(payload []byte) error {
+	s.mu.Lock()
+	peer := s.peer
+	s.mu.Unlock()
+	if peer == nil {
+		return fmt.Errorf("%s: no gateway peer yet", s.name)
+	}
+	_, err := s.conn.WriteToUDP(payload, peer)
+	return err
+}
+
 // waitLogin blocks until the gateway has completed the login handshake.
 func (s *stubMaster) waitLogin(d time.Duration) bool {
 	deadline := time.Now().Add(d)

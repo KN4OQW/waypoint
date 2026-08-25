@@ -176,7 +176,8 @@ func (s *server) runDMRRelay(ctx context.Context, interval time.Duration) {
 		// Talker Alias injection rides the same tick, immediately after, so it is
 		// handed the shim reconcile has just built or kept — and so a template
 		// change takes effect on the next tick rather than at the next restart.
-		s.talkerAlias.reconcile(s.relay.shimOrNil(), talkerAliasTemplate(m), s.identity)
+		s.talkerAlias.reconcile(s.relay.shimOrNil(), talkerAliasTemplate(m), s.identity,
+			m.TalkerAliasAnnouncedSourceIDs())
 
 		if state == "" {
 			// Switched off. Retract the row rather than leaving a stale verdict on

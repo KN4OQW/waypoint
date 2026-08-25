@@ -28,6 +28,7 @@ import (
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/dmrids"
 	"github.com/KN4OQW/waypoint/internal/hub"
+	"github.com/KN4OQW/waypoint/internal/mqtt"
 )
 
 // releaseTick is how often the run loop checks whether the token holder has gone
@@ -129,7 +130,10 @@ func runOwner(cfgPath, dmridsPath, nodeID string) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	startEventPublisher(ctx, bc.MQTT, bc.Bus.ID, h) // D4: republish events to MQTT (best-effort)
+	pub := startEventPublisher(ctx, bc.MQTT, bc.Bus.ID, h) // D4: republish events to MQTT (best-effort)
+	if pub != nil {
+		io.announce = pub.publishTalkerAlias
+	}
 
 	frameCh := make(chan inbound, 256)
 
@@ -250,9 +254,14 @@ type busIO struct {
 	// mode it occupies on the bus. A destination found here is transcoded rather
 	// than constructed into a mode's wire framing.
 	zello map[config.Mode]zelloSink
-	// alias emits a Talker Alias for inbound Zello audio, so a radio shows who is
+	// alias decides who to name on inbound Zello audio, so a radio shows who is
 	// speaking rather than only the node's own ID.
 	alias *zelloAliaser
+	// announce carries that name to waypointd, which owns the DMR relay and is the
+	// only process that can inject it (issue #279; see zelloAliaser). nil on a node
+	// with no broker, and in tests, where an unnamed caller is the right outcome
+	// rather than an error.
+	announce func(mqtt.TalkerAliasNote)
 }
 
 // handleFrame runs one inbound frame (local loopback datagram or injected member
@@ -281,15 +290,12 @@ func (io *busIO) handleFrame(bus *router.Bus, in inbound) {
 		log.Printf("inbound %s terminator src=%d dst=%d stream=%08x", in.mode, f.SrcID, f.DstID, f.Stream.ID)
 	}
 
-	// A Talker Alias for inbound Zello audio, emitted once per transmission and
-	// before the voice it describes, so a radio has it when the audio opens.
-	if io.alias != nil && io.zello[in.mode] != nil {
-		for _, dg := range io.alias.framesFor(f) {
-			if ep := io.eps[config.ModeDMR]; ep != nil {
-				if err := ep.send(dg); err != nil {
-					log.Printf("send talker alias: %v", err)
-				}
-			}
+	// Who is talking on inbound Zello audio, announced once per transmission and
+	// ahead of the voice it describes, so waypointd has the name before the call
+	// reaches the radio.
+	if io.alias != nil && io.announce != nil && io.zello[in.mode] != nil {
+		if note, ok := io.alias.noteFor(f); ok {
+			io.announce(note)
 		}
 	}
 

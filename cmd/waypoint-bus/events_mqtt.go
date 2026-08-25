@@ -6,10 +6,11 @@ import (
 	"strings"
 	"time"
 
-	mqtt "github.com/eclipse/paho.mqtt.golang"
+	paho "github.com/eclipse/paho.mqtt.golang"
 
 	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/hub"
+	"github.com/KN4OQW/waypoint/internal/mqtt"
 )
 
 // events_mqtt.go closes D4: the bus republishes its events onto the local broker
@@ -112,11 +113,11 @@ func isBusEvent(t string) bool {
 // QoS 0 — the token is never awaited, so a broker hiccup drops the message rather
 // than blocking the drain goroutine (RFC-0008 posture).
 type pahoSink struct {
-	client mqtt.Client
+	client paho.Client
 }
 
 func newPahoSink(broker, busID string) *pahoSink {
-	co := mqtt.NewClientOptions().
+	co := paho.NewClientOptions().
 		AddBroker("tcp://" + broker).
 		SetClientID("waypoint-bus-" + busID).
 		SetAutoReconnect(true).
@@ -125,7 +126,7 @@ func newPahoSink(broker, busID string) *pahoSink {
 		SetKeepAlive(30 * time.Second).
 		SetWriteTimeout(2 * time.Second). // never let a wedged socket hang the drain goroutine
 		SetCleanSession(true)
-	c := mqtt.NewClient(co)
+	c := paho.NewClient(co)
 	c.Connect() // do not wait — connect-retry brings it up; early publishes drop, which is fine
 	return &pahoSink{client: c}
 }
@@ -139,10 +140,36 @@ func (s *pahoSink) Close() { s.client.Disconnect(100) }
 // startEventPublisher wires a bus daemon's hub to MQTT when the rendered config
 // carries a broker (D4). A nil block (tests/demo) means no publishing. Best-effort:
 // it runs in its own goroutine and never touches the media path.
-func startEventPublisher(ctx context.Context, cfg *config.BusMQTT, busID string, h *hub.Hub) {
+//
+// It returns the publisher so the caller can put a talker-alias announcement on
+// the same connection, or nil when there is no broker to publish to.
+func startEventPublisher(ctx context.Context, cfg *config.BusMQTT, busID string, h *hub.Hub) *eventPublisher {
 	if cfg == nil || cfg.Broker == "" {
-		return
+		return nil
 	}
 	p := newEventPublisher(newPahoSink(cfg.Broker, busID), busID, cfg.Prefix)
 	go p.run(ctx, h)
+	return p
+}
+
+// publishTalkerAlias announces who is talking on one transmission, for waypointd
+// to put on the receiving radio (issue #279 — see zelloAliaser for why this daemon
+// cannot transmit it itself).
+//
+// Never retained. The note describes one transmission that is starting now; a
+// broker replaying it to a late subscriber could only ever offer a name for a
+// transmission that has already finished.
+//
+// Best-effort on the same terms as every other bus publish: fire-and-forget QoS 0
+// through the sink, so a wedged broker costs an alias and never a voice frame. It
+// is called on the run loop, so it must not block — pahoSink.Publish does not.
+func (p *eventPublisher) publishTalkerAlias(n mqtt.TalkerAliasNote) {
+	if p == nil {
+		return
+	}
+	payload, err := json.Marshal(n)
+	if err != nil {
+		return
+	}
+	p.sink.Publish(p.topic(config.BusTalkerAliasTopic), false, payload)
 }

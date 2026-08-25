@@ -267,6 +267,9 @@ func (m *Model) dmrProblems() []ModeProblem {
 	}
 	// The message relay, when it was asked for and cannot be wired up.
 	m.dmrShimProblems(add)
+	// And the relay the Talker Alias injector needs, when a Zello bridge is asking
+	// it to name a caller and it is not there.
+	m.zelloTalkerAliasProblems(add)
 	// And the one piece of guidance here that is a guess rather than a fact.
 	m.staticTalkgroupHint(add)
 

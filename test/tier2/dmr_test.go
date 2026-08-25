@@ -245,3 +245,70 @@ func TestTier2_ParrotEcho(t *testing.T) {
 	}
 	t.Logf("PASS: %d frames returned to the repeater side, first: %s", len(echoed), describe(echoed[0]))
 }
+
+// TestTier2_DMRGatewayDropsAnInboundTalkerAlias is the fact the whole Zello
+// talker-alias design rests on, checked against the real pinned binary rather than
+// against a reading of its source (issue #279).
+//
+// The claim: DMRGateway carries Talker Alias in ONE direction only. Its
+// processTalkerAlias reads from the repeater and writes to the upstream networks,
+// and CDMRNetwork::clock — the side facing a master — has no DMRA case at all, so
+// an alias arriving from upstream is dumped as "Unknown packet from the master" and
+// discarded. That is why the bus daemon cannot transmit its own alias and instead
+// announces the name for waypointd to inject at the DMR relay.
+//
+// It is asserted in BOTH directions on purpose. A test that only showed "no DMRA
+// arrived" would pass just as well against a dead route, a wedged gateway, or a
+// master that never logged in — proving nothing. So the same rig must be shown
+// still delivering network→RF voice at the moment the alias goes missing, and the
+// echo path this uses for that is the one TestTier2_ParrotEcho already proves.
+//
+// If a future DMRGateway bump adds the missing direction, this test fails, and
+// that is the point: the announcement path could then be simplified away.
+func TestTier2_DMRGatewayDropsAnInboundTalkerAlias(t *testing.T) {
+	r := startRig(t, true)
+	defer r.stop()
+
+	// The shape DMRGateway itself puts on a master's socket (CDMRNetwork::
+	// writeTalkerAlias): "DMRA", a 4-byte network id, then the alias bytes. The
+	// payload is immaterial — there is no DMRA branch on the inbound side for any
+	// length to reach — so this is the most favourable input the claim could face.
+	id := uint32(dmrID)
+	alias := []byte("DMRA")
+	alias = append(alias, byte(id>>24), byte(id>>16), byte(id>>8), byte(id))
+	alias = append(alias, 0x00, 'K', 'N', '4', 'O', 'Q', 'W')
+	for i := 0; i < 4; i++ { // all four blocks, as a real alias is sent
+		blk := append([]byte(nil), alias...)
+		blk[8] = byte(i)
+		if err := r.bm.sendRaw(blk); err != nil {
+			t.Fatalf("send DMRA block %d: %v", i, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	// The positive control: the same master, the same rig, network→RF voice still
+	// arriving. Without this the negative below is worthless.
+	r.inject(t, retarget(loadCapture(t), 9990, 0xBEEF0001, true))
+	if len(r.rep.got()) == 0 {
+		t.Fatalf("no echo came back down the loopback — the rig is not delivering " +
+			"network->RF voice, so nothing can be concluded about the alias")
+	}
+	t.Logf("PASS (control): %d DMRD frames reached the repeater side", len(r.rep.got()))
+
+	var dmra int
+	for _, d := range r.rep.allGot() {
+		if len(d) >= 4 && string(d[:4]) == "DMRA" {
+			dmra++
+		}
+	}
+	if dmra > 0 {
+		t.Errorf("DMRGateway forwarded %d DMRA datagram(s) to the repeater. The pinned "+
+			"binary now carries Talker Alias network->RF, which the Zello announcement "+
+			"path was built to work around — revisit cmd/waypoint-bus/zellobridge.go "+
+			"and internal/mqtt/talker_alias.go.", dmra)
+		return
+	}
+	t.Logf("PASS: DMRGateway forwarded no DMRA to the repeater while delivering voice normally; " +
+		"an alias from a bus cannot reach the radio through it")
+}

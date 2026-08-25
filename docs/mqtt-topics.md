@@ -130,7 +130,7 @@ in the path.
 |---|---|---|
 | `mmdvm/json` | MMDVM-Host | Per-mode voice traffic → the event stream, last-heard, on-air. |
 | `dmr-gateway/json` | DMRGateway | Its own status plane: `{"status":{"message":"Logged into DMR Network: X"}}` and the failed-login/closing counterparts, published the moment a master accepts or refuses. |
-| `waypoint/bus/#` | Mode-bus daemons | Bus events, mapped 1:1 (below). |
+| `waypoint/bus/#` | Mode-bus daemons | Bus events, mapped 1:1 (below), plus the one control topic (`talker_alias`). |
 
 ### Supervisor events
 
@@ -196,3 +196,32 @@ from a goroutine draining its in-process hub; the hub drops onto a full subscrib
 channel rather than blocking, so a broker hiccup drops events, never voice frames.
 The broker address is rendered into each bus config (never hardcoded); mosquitto is
 localhost-only.
+
+### The one topic that is not an event: `talker_alias`
+
+| Topic | Payload | Retained | Meaning |
+|---|---|---|---|
+| `waypoint/bus/<id>/talker_alias` | `{type,stream_id,src_id,name}` | no | Who is talking on a Zello transmission the bus is about to source, so waypointd can put the name on the receiving radio. |
+
+This one is a **control message, not a `hub.Event`**: it carries a DMR stream id
+and a DMR id, which `hub.Event` has no field for, and it is not something an
+operator reads in the event log. waypointd's consumer branches on the topic before
+the event mapping, so it never reaches the hub; a note arriving on any other topic
+is refused by the event decoder, and an event body arriving on this one is refused
+by the note decoder. It shares the bus prefix (and the bus's one connection) rather
+than opening a topic root or a socket of its own.
+
+It exists because the alias can only be injected by one process, and it is not the
+one that knows the name (issue #279). The bus knows who is talking — Zello says so
+on `on_stream_start` — and cannot deliver it: its DMR attachment is a Homebrew
+master that the local DMRGateway logs into, and DMRGateway forwards Talker Alias
+only repeater→network (at the pinned `79edbc4`, `CDMRNetwork::clock` has no `DMRA`
+case at all, so an alias sent that way is dumped as "Unknown packet from the
+master"). MMDVM-Host accepts DMR-network datagrams from exactly one address:port,
+which is the DMR relay — so waypointd injects, and the relay's taps run *after* a
+datagram is forwarded, which is also the only ordering MMDVM-Host accepts an alias
+in. **With the DMR relay switched off there is nowhere to inject**, waypointd
+registers no handler, and the notes are dropped; the DMR panel says so.
+
+`name` is a Zello display name and is transmitted verbatim — its case is part of
+it, and nothing on the path upper-cases it the way a callsign template would.

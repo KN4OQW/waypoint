@@ -205,6 +205,26 @@ type BusMQTT struct {
 // docs/mqtt-topics.md alongside the RFC-0008 status tree).
 const DefaultBusTopicPrefix = "waypoint/bus"
 
+// BusTalkerAliasTopic is the last segment of <Prefix>/<bus id>/talker_alias: the
+// bus saying who is talking on a transmission it is about to source, so waypointd
+// can put that name on the receiving radio.
+//
+// It rides the bus's existing event plane rather than a new socket because the
+// alias can only be injected by ONE process. MMDVM-Host accepts DMR-network
+// datagrams from exactly one address:port (its configured GatewayAddress:
+// GatewayPort — CUDPSocket::match compares address AND port), which is the DMR
+// relay in internal/dmrshim, which waypointd owns. The bus cannot reach the radio
+// itself: its DMR attachment is a Homebrew master that DMRGateway logs into, and
+// DMRGateway forwards Talker Alias only repeater→network. At the pinned 79edbc4,
+// CDMRNetwork::clock has no DMRA case at all, so an alias sent that way is dumped
+// as "Unknown packet from the master" and discarded.
+//
+// It is deliberately NOT a hub.Event: this is a control message carrying a stream
+// id and a DMR id, not something an operator reads in the event log, and hub.Event
+// has no field for either. The consumer dispatches on this topic segment before
+// the event mapping, so it never reaches TranslateBusEvent.
+const BusTalkerAliasTopic = "talker_alias"
+
 // busMQTT renders the broker+prefix block for a bus or member config, or nil when
 // this node publishes no bus events at all (demo mode and renderer tests leave
 // Paths.MQTTBroker empty) so the config parses cleanly and the daemon simply does

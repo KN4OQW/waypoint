@@ -40,6 +40,11 @@ type dataPlane struct {
 	haPrefix    string
 	nodeID      string
 	version     string
+	// onTalkerAlias receives a bus daemon's statement of who is talking, for the
+	// Talker Alias injector to put on the receiving radio (issue #279). Set once at
+	// construction: the injector reconciles itself on the relay's tick, so the
+	// callback never has to be swapped when the feature is switched on or off.
+	onTalkerAlias func(mqtt.TalkerAliasNote)
 
 	mu      sync.Mutex
 	cur     dataPlaneConfig
@@ -206,6 +211,8 @@ func (dp *dataPlane) reconfigure(ctx context.Context, cfg dataPlaneConfig) {
 				Username:  cfg.Username,
 				Password:  cfg.Password,
 				BusPrefix: cfg.BusPrefix, // D4: also ingest <BusPrefix>/# as hub events
+				// #279: and the talker-alias announcements that ride the same prefix.
+				OnTalkerAlias: dp.onTalkerAlias,
 				// #22: DMRGateway's own status plane, where a failed or successful
 				// master login is announced the moment it happens.
 				GatewayNames: []string{config.MQTTNameDMRGateway},

@@ -3,10 +3,12 @@ package mqtt
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 
+	"github.com/KN4OQW/waypoint/internal/config"
 	"github.com/KN4OQW/waypoint/internal/hub"
 )
 
@@ -21,6 +23,16 @@ type Options struct {
 	// (D4; default "waypoint/bus"). The consumer subscribes <BusPrefix>/# and maps
 	// each JSON payload 1:1 onto a hub.Event.
 	BusPrefix string
+	// OnTalkerAlias, when set, receives each bus announcement of who is talking
+	// (<BusPrefix>/<id>/talker_alias). It is delivered on the paho callback
+	// goroutine, so an implementation must not block — the same goroutine carries
+	// every bus event.
+	//
+	// nil drops the notes, which is right for a consumer that has no injector at
+	// all. waypointd always sets it; whether there is anywhere to PUT an alias (the
+	// DMR relay may be off, the template unset) is the injector's own decision, made
+	// per note, not something to answer by leaving this nil.
+	OnTalkerAlias func(TalkerAliasNote)
 	// GatewayNames are the [MQTT] Name values of the gateway daemons whose own
 	// status planes carry upstream link news — DMRGateway's "Logged into DMR
 	// Network: X" and its failure counterparts (#22). Each is subscribed at
@@ -70,10 +82,14 @@ func Run(ctx context.Context, h *hub.Hub, opts Options) error {
 		// D4: the mode-bus event plane. Each retained/transient message under
 		// <BusPrefix>/<id>/<type> is a hub.Event JSON, mapped 1:1 (no translation
 		// layer). An empty payload is a retained CLEAR (RFC-0008 no-latching) — skipped.
+		//
+		// The talker-alias topic is dispatched here rather than through a second
+		// subscription of its own. Overlapping subscriptions on one paho client mean
+		// the broker matches a message twice and the handler runs twice; keeping it to
+		// one subscription and branching on the topic makes double delivery
+		// impossible rather than merely unlikely.
 		if tok := c.Subscribe(busTopic, 0, func(_ mqtt.Client, msg mqtt.Message) {
-			if e, ok := TranslateBusEvent(msg.Payload()); ok {
-				h.Publish(e)
-			}
+			routeBusMessage(msg.Topic(), msg.Payload(), h, opts.OnTalkerAlias)
 		}); tok.Wait() && tok.Error() != nil {
 			log.Printf("mqtt: subscribe %s failed: %v", busTopic, tok.Error())
 			return
@@ -116,4 +132,21 @@ func Run(ctx context.Context, h *hub.Hub, opts Options) error {
 	<-ctx.Done()
 	client.Disconnect(250)
 	return nil
+}
+
+// routeBusMessage dispatches one message from under <BusPrefix>/#.
+//
+// Split out of the subscription callback so the branch is testable without a
+// broker: which of two handlers a topic reaches is the kind of thing that is
+// obviously right when written and silently wrong after a rename.
+func routeBusMessage(topic string, payload []byte, h *hub.Hub, onTalkerAlias func(TalkerAliasNote)) {
+	if strings.HasSuffix(topic, "/"+config.BusTalkerAliasTopic) {
+		if n, ok := TranslateTalkerAlias(payload); ok && onTalkerAlias != nil {
+			onTalkerAlias(n)
+		}
+		return
+	}
+	if e, ok := TranslateBusEvent(payload); ok {
+		h.Publish(e)
+	}
 }
